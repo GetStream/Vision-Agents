@@ -2,6 +2,50 @@
 
 ## Breaking Changes
 
+### Every client goes to the hosted router unless told otherwise
+
+A client that is given no URL, and finds no `STREAM_ACCELERATION_URL`, now goes to Stream's
+hosted router at `https://accelerate.gcp.stream-io-api.com` instead of `http://localhost:8080`,
+so an app's code never has to name it. The JavaScript, Python, Ruby, PHP, .NET and Rust SDKs
+also reach that router through the authenticating proxy without being told to, as Go already
+did: `authenticate` is on for it unless passed as false. Kotlin's and Dart's `url` are optional
+now, as Swift's already was. A router running locally is named the way it always could be,
+with `url` or `STREAM_ACCELERATION_URL`, and reached by customer id:
+
+```bash
+STREAM_ACCELERATION_URL=http://localhost:8080
+STREAM_ACCELERATION_CUSTOMER_ID=examples
+```
+
+### Every failure is an `error` object with a `type`, a `code` and a `doc_url`
+
+A failure was `{"error": "..."}`; it is now an envelope, `ErrorResponse`, holding an
+`ErrorDetail`:
+
+```json
+{"error": {"message": "no such agent config", "type": "not_found",
+  "code": "agent_config_not_found",
+  "doc_url": "https://getstream.io/agents/docs/api/errors/#agent_config_not_found"}}
+```
+
+`type` is an `ErrorType` and decides the status: `invalid_request` 400, `authentication` 401,
+`permission` 403, `not_found` 404, `method_not_allowed` 405, `not_acceptable` 406, `conflict`
+409, `gone` 410, `payload_too_large` 413, `unsupported_media_type` 415, `rate_limited` 429,
+`internal` 500 and `unavailable` 503. `code` is what to branch on: each type has a code of its own
+name, and the failures worth telling apart have their own (`validation_failed`,
+`missing_customer`, `not_configured`, `agent_config_not_found` and the other `*_not_found`). More
+codes may be added. A failure that is not the caller's is a 500 of type `internal` saying only
+"something went wrong"; quote its `X-Request-Id`. Hand-written routes, the webhooks, an unknown
+route and a refused socket handshake answer with the same envelope, where some answered in plain
+text. A session on a node that cannot be reached is a 503 rather than a 502, and a failed data
+export or change read is a 500 rather than a 503 carrying the database's words. A code has one
+status wherever it is answered: a config, router config or plugin that does not exist is a 404
+even when the body names it (it was a 400 in some places), and a feature this deployment does not
+offer is a 400 `not_configured` (it was a 404 for sessions and recorded responses, a 410 on the
+10DLC webhook). Every operation
+declares its `500`. Go, Python (`plugins/stream`) and JavaScript read the new shape; the other
+SDKs follow.
+
 ### `plugins` is `agent_plugins`, and `plugin_options` moved onto each entry
 
 An agent config's `plugins` is now `agent_plugins`, in `agent.yaml` and on `AgentConfig`,
@@ -465,6 +509,14 @@ ASCII, up to 128 characters) and minting a UUID otherwise; browsers can read it 
 error a request failed with and, for a 5xx, the stack where that error entered the router.
 A 5xx body is now `{"error": "internal error"}` rather than the error's text: quote the
 request id to find the rest in the logs.
+
+### A provider can tell the router that a connection's grant ended
+
+`POST /v1/agents/connectors/events/{connector_id}` (`receiveConnectorEvent`, `security: []`, not client-accessible) takes a built-in connector's provider events. Each request is checked by the verifier the manifest's `channel.verifier` names, with the operator's secret, and an unsigned or stale one is a 401 that changes nothing. Slack's `tokens_revoked` moves the revoked user's connections to `needs_reauthorization`, and `app_uninstalled` moves every connection in that workspace; the next credential resolve on any router then fails at once. A URL verification is answered with its challenge. Point the operator's Slack app's Request URL at `/v1/agents/connectors/events/slack`, subscribe it to both events, and set `SLACK_MCP_SIGNING_SECRET`. A manifest's `channel` block takes `signals`, and may have them without `messages` and `reply`. The Go client and the JavaScript types are regenerated; no SDK wraps the route.
+
+### An app can put its own OAuth client for a connector
+
+`PUT /v1/agents/connectors/{id}/oauth-client` (`setConnectorOAuthClient`, server-side only) stores the OAuth client the app registered with the connector's provider: `client_id`, a write-only `client_secret` and an optional `auth_method` (`none`, `client_secret_basic` or `client_secret_post`). It answers 201 when it stores one and 200 when it replaces one, and never returns the secret. Every consent and every refresh of the app's connections to that connector reads it again, so a rotated secret is put once and used from each connection's next refresh. A connector whose `client.registration` does not list `customer`, such as `slack`, answers 400. `DELETE` on the same path removes it. The operator's own client still comes from `<client.env>_MCP_CLIENT_ID` and `_MCP_CLIENT_SECRET`. The Go client and the JavaScript types are regenerated; other SDKs follow.
 
 ### A connection is connected through the provider's consent
 

@@ -13,23 +13,26 @@ import (
 // which Stream app is its own, which it learns from Stream within a few attempts.
 const streamRetryAfter = 30 * time.Second
 
-// streamUnknown is what work that may be the deployment app's answers until that app's id
-// is known: try again shortly, rather than a guess at which app to act in.
-const streamUnknown = "the router does not know which Stream app is its own yet: try again shortly"
+// errStreamUnknown is what work that may be the deployment app's answers until that app's
+// id is known: try again shortly, rather than a guess at which app to act in.
+var errStreamUnknown = unavailable("the router does not know which Stream app is its own yet: try again shortly")
 
 // writeStreamWaiting answers a request waiting on the deployment's own app: try again.
 func writeStreamWaiting(w http.ResponseWriter) {
 	w.Header().Set("Retry-After", strconv.Itoa(int(streamRetryAfter.Seconds())))
-	writeError(w, http.StatusServiceUnavailable, streamUnknown)
+	writeError(w, errStreamUnknown)
+}
+
+// streamWaitingError is errStreamUnknown with the Retry-After Huma answers it with.
+type streamWaitingError struct{ APIError }
+
+func (streamWaitingError) GetHeaders() http.Header {
+	return http.Header{"Retry-After": {strconv.Itoa(int(streamRetryAfter.Seconds()))}}
 }
 
 // streamWaiting is the same answer from an operation declared in Go.
 func streamWaiting() error {
-	return &apiError{
-		status:  http.StatusServiceUnavailable,
-		headers: http.Header{"Retry-After": {strconv.Itoa(int(streamRetryAfter.Seconds()))}},
-		Message: streamUnknown,
-	}
+	return streamWaitingError{errStreamUnknown}
 }
 
 // mintingKeyHeader names which of the calling app's registered keys a gateway that writes

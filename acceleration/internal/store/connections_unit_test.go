@@ -25,7 +25,7 @@ func (testScheme) Complete(context.Context, core.CompleteInput) (core.StoredCred
 	return core.StoredCredentials{}, core.AccountInfo{}, nil
 }
 
-func (testScheme) Retrieve(_ context.Context, stored core.StoredCredentials, _ core.ResolvedManifest) (core.AccessCredential, core.StoredCredentials, error) {
+func (testScheme) Retrieve(_ context.Context, stored core.StoredCredentials, _ core.ResolvedManifest, _ core.RetrieveOptions) (core.AccessCredential, core.StoredCredentials, error) {
 	return core.AccessCredential{}, stored, nil
 }
 
@@ -66,6 +66,15 @@ func TestAConnectionWithAnUnregisteredAuthSchemeIsRefused(t *testing.T) {
 
 	require.ErrorIs(t, err, ErrUnregisteredScheme)
 	require.ErrorContains(t, err, `"oauth2_code"`)
+}
+
+func TestAConnectionIsNotCreatedWithAProviderUnit(t *testing.T) {
+	connection := appConnection()
+	connection.ProviderUnitID = "106540352242922"
+
+	err := (&Store{}).CreateConnectorConnection(context.Background(), testSchemes, connection)
+
+	require.ErrorContains(t, err, "a provider unit is set on a connection after consent")
 }
 
 func TestAConnectionWithAnUnregisteredTLSSchemeIsRefused(t *testing.T) {

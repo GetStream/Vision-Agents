@@ -44,12 +44,42 @@ func (s *OAuthSuite) TestStartAuthorizeUsesDiscoveryAndDCR() {
 	// Point Slack's origin discovery at the test server by using a plugin whose
 	// endpoint is the test server itself.
 	plugin := Plugin{ID: "slack", Name: "Slack", URL: server.URL + "/mcp"}
-	pending, err := auth.StartAuthorize(context.Background(), plugin, "")
+	pending, err := auth.StartAuthorize(context.Background(), Owner{}, plugin, "")
 	s.Require().NoError(err)
 	s.Equal("dyn-1", pending.ClientID)
 	s.Contains(pending.AuthorizeURL, "client_id=dyn-1")
 	s.Contains(pending.AuthorizeURL, "code_challenge")
 	s.Equal("http://auth.example/token", pending.TokenEndpoint)
+}
+
+// Gong advertises registration, but only for the redirect URIs it has approved.
+func (s *OAuthSuite) TestAPluginThatNeedsAClientNeverRegistersOnTheFly() {
+	registered := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(authServer{
+			AuthorizationEndpoint: "https://app.gong.example/oauth2/authorize",
+			TokenEndpoint:         "https://app.gong.example/oauth2/token",
+			RegistrationEndpoint:  "http://" + r.Host + "/register",
+		})
+	})
+	mux.HandleFunc("/register", func(w http.ResponseWriter, _ *http.Request) {
+		registered = true
+		http.Error(w, `{"error":"invalid_redirect_uri"}`, http.StatusBadRequest)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	auth := &Auth{HTTP: server.Client(), PublicURL: "http://router.example"}
+	plugin := Plugin{ID: "gong", Name: "Gong", URL: server.URL + "/mcp", ClientRequired: true}
+	_, err := auth.StartAuthorize(context.Background(), Owner{}, plugin, "")
+	s.ErrorIs(err, ErrClientRequired)
+	s.False(registered)
+
+	s.T().Setenv("GONG_MCP_CLIENT_ID", "gong-app")
+	pending, err := auth.StartAuthorize(context.Background(), Owner{}, plugin, "")
+	s.Require().NoError(err)
+	s.Contains(pending.AuthorizeURL, "client_id=gong-app")
 }
 
 func (s *OAuthSuite) TestDashboardRedirectNamesTheConnectedPlugin() {
@@ -78,11 +108,11 @@ func (s *OAuthSuite) TestStartAuthorizeFallsBackToOpenIDDiscovery() {
 	plugin := Plugin{ID: "github", Name: "GitHub", URL: server.URL + "/mcp", Scopes: []string{"repo"}}
 	// No registration endpoint and no env client, so the login says what is missing
 	// rather than reaching GitHub's authorize page without a client.
-	_, err := auth.StartAuthorize(context.Background(), plugin, "")
-	s.ErrorContains(err, "GITHUB_MCP_CLIENT_ID")
+	_, err := auth.StartAuthorize(context.Background(), Owner{}, plugin, "")
+	s.ErrorIs(err, ErrClientRequired)
 
 	s.T().Setenv("GITHUB_MCP_CLIENT_ID", "gh-app")
-	pending, err := auth.StartAuthorize(context.Background(), plugin, "")
+	pending, err := auth.StartAuthorize(context.Background(), Owner{}, plugin, "")
 	s.Require().NoError(err)
 	s.Equal("https://github.com/login/oauth/access_token", pending.TokenEndpoint)
 	s.Contains(pending.AuthorizeURL, "https://github.com/login/oauth/authorize?")
@@ -90,12 +120,46 @@ func (s *OAuthSuite) TestStartAuthorizeFallsBackToOpenIDDiscovery() {
 	s.Contains(pending.AuthorizeURL, "scope=repo")
 }
 
+func (s *OAuthSuite) TestAnAgentsOwnClientIsUsedBeforeTheDeployments() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(authServer{
+			AuthorizationEndpoint: "https://accounts.example/authorize",
+			TokenEndpoint:         "https://accounts.example/token",
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	s.T().Setenv("GOOGLE_CALENDAR_MCP_CLIENT_ID", "deployment-client")
+	acme := Owner{CustomerID: "acme", ConfigID: "support"}
+	auth := &Auth{
+		HTTP:      server.Client(),
+		PublicURL: "http://router.example",
+		Clients: func(_ context.Context, owner Owner, pluginID string) (Client, bool, error) {
+			if owner != acme || pluginID != "google_calendar" {
+				return Client{}, false, nil
+			}
+			return Client{ID: "acme-client", Secret: "acme-secret"}, true, nil
+		},
+	}
+	plugin := Plugin{ID: "google_calendar", Name: "Google Calendar", URL: server.URL + "/mcp"}
+
+	pending, err := auth.StartAuthorize(context.Background(), acme, plugin, "")
+	s.Require().NoError(err)
+	s.Equal("acme-client", pending.ClientID)
+	s.Contains(pending.AuthorizeURL, "client_id=acme-client")
+
+	other, err := auth.StartAuthorize(context.Background(), Owner{CustomerID: "globex", ConfigID: "support"}, plugin, "")
+	s.Require().NoError(err)
+	s.Equal("deployment-client", other.ClientID, "another app's agent never gets acme's client")
+}
+
 func (s *OAuthSuite) TestADiscoveryMissWithNeitherDocumentIsReported() {
 	server := httptest.NewServer(http.NotFoundHandler())
 	defer server.Close()
 
 	auth := &Auth{HTTP: server.Client(), PublicURL: "http://router.example"}
-	_, err := auth.StartAuthorize(context.Background(),
+	_, err := auth.StartAuthorize(context.Background(), Owner{},
 		Plugin{ID: "carrier-pigeon", Name: "Pigeon", URL: server.URL + "/mcp"}, "")
 
 	s.ErrorContains(err, "oauth discovery")
@@ -116,7 +180,7 @@ func (s *OAuthSuite) TestExchangeStoresTheAccessToken() {
 	defer server.Close()
 
 	auth := &Auth{HTTP: server.Client(), PublicURL: "http://router.example"}
-	token, err := auth.Exchange(context.Background(), Pending{
+	token, err := auth.Exchange(context.Background(), Owner{}, Pending{
 		ClientID:      "dyn-1",
 		CodeVerifier:  "ver",
 		TokenEndpoint: server.URL + "/token",
@@ -147,7 +211,7 @@ func (s *OAuthSuite) TestMetadataAtTheEndpointsPathIsFoundFirst() {
 	s.T().Setenv("CALENDAR_MCP_CLIENT_ID", "web-client")
 
 	auth := &Auth{HTTP: server.Client(), PublicURL: "https://router.example"}
-	pending, err := auth.StartAuthorize(context.Background(), Plugin{
+	pending, err := auth.StartAuthorize(context.Background(), Owner{}, Plugin{
 		ID: "calendar", Name: "Calendar", URL: server.URL + "/mcp/v1",
 		Scopes:          []string{"calendar.readonly", "calendar.events.readonly"},
 		AuthorizeParams: map[string]string{"access_type": "offline"},
@@ -186,7 +250,7 @@ func (s *OAuthSuite) TestAReadonlyLoginIsForTheReadOnlyResourceAndAsksOnlyToRead
 	s.Require().NoError(err)
 
 	auth := &Auth{HTTP: server.Client(), PublicURL: "https://router.example"}
-	pending, err := auth.StartAuthorize(context.Background(), plugin, "")
+	pending, err := auth.StartAuthorize(context.Background(), Owner{}, plugin, "")
 	s.Require().NoError(err)
 
 	authorize, err := url.Parse(pending.AuthorizeURL)
@@ -217,7 +281,7 @@ func (s *OAuthSuite) TestALoginForSomeToolsetsIsForTheWholeServer() {
 	s.Require().NoError(err)
 
 	auth := &Auth{HTTP: server.Client(), PublicURL: "https://router.example"}
-	pending, err := auth.StartAuthorize(context.Background(), plugin, "")
+	pending, err := auth.StartAuthorize(context.Background(), Owner{}, plugin, "")
 	s.Require().NoError(err)
 
 	authorize, err := url.Parse(pending.AuthorizeURL)
@@ -236,13 +300,13 @@ func (s *OAuthSuite) TestTheDeploymentsOwnClientSendsItsSecret() {
 	defer server.Close()
 	auth := &Auth{HTTP: server.Client()}
 
-	_, err := auth.Exchange(context.Background(), Pending{
+	_, err := auth.Exchange(context.Background(), Owner{}, Pending{
 		PluginID: "calendar", ClientID: "web-client", TokenEndpoint: server.URL,
 	}, "code")
 	s.Require().NoError(err)
-	_, err = auth.Refresh(context.Background(), "calendar", server.URL, "web-client", "ref")
+	_, err = auth.Refresh(context.Background(), Owner{}, "calendar", server.URL, "web-client", "ref")
 	s.Require().NoError(err)
-	_, err = auth.Exchange(context.Background(), Pending{
+	_, err = auth.Exchange(context.Background(), Owner{}, Pending{
 		PluginID: "calendar", ClientID: "registered-on-the-fly", TokenEndpoint: server.URL,
 	}, "code")
 	s.Require().NoError(err)
@@ -283,7 +347,7 @@ func (s *OAuthSuite) TestAServerNamedByURLIsFoundThroughWhatItSaysWhenItRefusesA
 	defer server.Close()
 
 	auth := &Auth{HTTP: server.Client(), PublicURL: "https://router.example"}
-	pending, err := auth.StartAuthorize(context.Background(),
+	pending, err := auth.StartAuthorize(context.Background(), Owner{},
 		Plugin{ID: "notes", Name: "notes", URL: server.URL + "/mcp", ByURL: true}, "")
 	s.Require().NoError(err)
 
@@ -313,7 +377,7 @@ func (s *OAuthSuite) TestAServerNamedByURLNeverTakesTheDeploymentsClient() {
 	s.T().Setenv("NOTES_MCP_CLIENT_ID", "deployment-client")
 
 	auth := &Auth{HTTP: server.Client(), PublicURL: "https://router.example"}
-	_, err := auth.StartAuthorize(context.Background(),
+	_, err := auth.StartAuthorize(context.Background(), Owner{},
 		Plugin{ID: "notes", Name: "notes", URL: server.URL + "/mcp", Scopes: []string{"read"}, ByURL: true}, "")
 
 	s.ErrorContains(err, "does not advertise dynamic client registration")

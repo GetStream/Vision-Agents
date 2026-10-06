@@ -44,11 +44,14 @@ type dataTable struct {
 // this schema's own bookkeeping. Organization-scope policies are absent too, since one
 // organization's decisions cover apps the caller may not have. So are
 // connector_authorization_attempts: one lives minutes, is sealed under this deployment's
-// key and finishes at this deployment's callback, so a copy could only expire.
+// key and finishes at this deployment's callback, so a copy could only expire. And
+// connector_oauth_clients: a client's secret is sealed under this deployment's key, and a
+// client without it cannot authenticate, so the app puts it again where it moved to.
 var dataTables = []dataTable{
 	{name: "agent_configs", customer: "customer_id"},
 	{name: "skills", customer: "customer_id"},
 	{name: "agent_plugin_connections", customer: "customer_id"},
+	{name: "agent_plugin_clients", customer: "customer_id"},
 	// Only the customer's own definitions: the built-ins are under no customer, and every
 	// deployment seeds its own. They come before the connections that pin them.
 	{name: "connector_definitions", customer: "customer_id"},
@@ -340,10 +343,13 @@ func (t dataTable) identity() string {
 	// one, rather than connected with nothing to connect with. Key version 0 and no
 	// expiry are what a connection without credentials holds (20261002193000_connector_connections.sql),
 	// so the source credentials' key version and expiry do not come along either, on an import or
-	// on every change applied after it.
+	// on every change applied after it. Nor does its provider unit: a row in an import is
+	// whatever the importer wrote, and a unit stored from it would route another customer's
+	// events to this one. The reconnect it needs proves the unit again
+	// (SetConnectorConnectionProviderUnit).
 	if t.name == "connector_connections" {
 		return "jsonb_build_object('customer_id', ?::text, 'status', '" + ConnectionNeedsReauthorization + "'," +
-			" 'credentials_kek_version', 0, 'expires_at', NULL)"
+			" 'credentials_kek_version', 0, 'expires_at', NULL, 'provider_unit_id', NULL)"
 	}
 	return fmt.Sprintf("jsonb_build_object('%s', ?::text)", t.customer)
 }

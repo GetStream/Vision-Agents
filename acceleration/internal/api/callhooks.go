@@ -60,7 +60,7 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 	if !s.hooksConfigured() {
 		// Refusing is the only safe answer: without the secret there is no way to tell
 		// Stream from anyone who found the URL, and this path starts agents.
-		http.Error(w, "call events are not configured", http.StatusNotFound)
+		writeError(w, notFound("call events are not configured"))
 		return
 	}
 
@@ -76,7 +76,7 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 
 	eventType := getstream.GetEventType(payload)
 	if eventType == "" {
-		http.Error(w, "could not read that call event", http.StatusBadRequest)
+		writeError(w, invalidRequest("could not read that call event"))
 		return
 	}
 
@@ -84,7 +84,7 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 	case getstream.EventTypeCallSessionStarted:
 		var event callEvent
 		if err := json.Unmarshal(payload, &event); err != nil {
-			http.Error(w, "could not read that call event", http.StatusBadRequest)
+			writeError(w, invalidRequest("could not read that call event"))
 			return
 		}
 		s.dispatchArrivingCall(r, origin, event, payload)
@@ -92,7 +92,7 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 	case getstream.EventTypeCallSessionEnded:
 		var event callEvent
 		if err := json.Unmarshal(payload, &event); err != nil {
-			http.Error(w, "could not read that call event", http.StatusBadRequest)
+			writeError(w, invalidRequest("could not read that call event"))
 			return
 		}
 		s.releaseEndedCall(r, origin, event)

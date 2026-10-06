@@ -5,25 +5,31 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: '#/components/schemas/ErrorResponse'
       description: The request was malformed
     Forbidden:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: '#/components/schemas/ErrorResponse'
       description: 'The caller is known and this operation is server-side only. It needs Stream-Auth-Type: server and a token carrying server: true, which means it cannot be reached from an end user''s device.'
+    InternalError:
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+      description: 'Something went wrong that is not the caller''s doing. The body says only that: quote the response''s X-Request-Id to find out more.'
     NotFound:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: '#/components/schemas/ErrorResponse'
       description: No such modality, provider or shortcut
     Unauthorized:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: '#/components/schemas/ErrorResponse'
       description: The customer header is missing
   schemas:
     ActivityBucket:
@@ -1812,6 +1818,66 @@ components:
       required:
         - name
       type: object
+    ConnectorOAuthClient:
+      description: 'The OAuth client the app registered with a connector''s provider itself. The secret is write-only: no response carries it.'
+      properties:
+        auth_method:
+          $ref: '#/components/schemas/ConnectorOAuthClientAuthMethod'
+        client_id:
+          type: string
+        connector_id:
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        registration:
+          $ref: '#/components/schemas/ConnectorClientRegistrationMethod'
+          description: 'customer: the app''s own client, which every consent and refresh of the connector''s connections then uses.'
+          readOnly: true
+        updated_at:
+          description: When the client, its secret or its method last changed.
+          format: date-time
+          readOnly: true
+          type: string
+      required:
+        - connector_id
+        - registration
+        - client_id
+        - created_at
+        - updated_at
+      type: object
+    ConnectorOAuthClientAuthMethod:
+      description: 'How the app''s own OAuth client authenticates at the token endpoint (RFC 7591 section 2): none for a public client, which has no secret, client_secret_basic or client_secret_post.'
+      enum:
+        - none
+        - client_secret_basic
+        - client_secret_post
+      type: string
+    ConnectorOAuthClientRequest:
+      additionalProperties: false
+      description: The OAuth client the app registered with the connector's provider. An unknown field is refused rather than ignored.
+      properties:
+        auth_method:
+          $ref: '#/components/schemas/ConnectorOAuthClientAuthMethod'
+          description: 'Overrides the connector''s own client.auth_method. Left out, the connector''s applies, and failing that the consent picks: none without a secret, else client_secret_basic where the provider accepts it.'
+        client_id:
+          maxLength: 2048
+          minLength: 1
+          pattern: ^[ -~]+$
+          patternDescription: printable ASCII, RFC 6749 Appendix A.1
+          type: string
+        client_secret:
+          description: Sealed at rest and never returned. Left out for a public client (auth_method none).
+          maxLength: 2048
+          pattern: ^[ -~]+$
+          patternDescription: printable ASCII, RFC 6749 Appendix A.2
+          type: string
+          writeOnly: true
+      required:
+        - client_id
+      type: object
     ConnectorPage:
       properties:
         has_more:
@@ -2228,13 +2294,51 @@ components:
           required:
             - $eq
           type: object
-    Error:
+    ErrorDetail:
+      properties:
+        code:
+          description: What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+          type: string
+        doc_url:
+          description: Where the code is explained.
+          format: uri
+          type: string
+        message:
+          description: What went wrong, for a person to read. Its wording may change; branch on code.
+          type: string
+        type:
+          $ref: '#/components/schemas/ErrorType'
+      required:
+        - message
+        - type
+        - code
+        - doc_url
+      type: object
+    ErrorResponse:
+      description: 'The body of every failure. A failure that is not the caller''s own is a 500 of type internal saying only "something went wrong": quote the response''s X-Request-Id to find out more.'
       properties:
         error:
-          type: string
+          $ref: '#/components/schemas/ErrorDetail'
       required:
         - error
       type: object
+    ErrorType:
+      description: 'The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503.'
+      enum:
+        - invalid_request
+        - authentication
+        - permission
+        - not_found
+        - method_not_allowed
+        - not_acceptable
+        - conflict
+        - gone
+        - payload_too_large
+        - unsupported_media_type
+        - rate_limited
+        - internal
+        - unavailable
+      type: string
     ForkSessionRequest:
       description: Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
       properties:
@@ -3247,6 +3351,9 @@ components:
       properties:
         category:
           type: string
+        client_required:
+          description: True when the provider registers no client on the fly, so a config needs one of the app's own, set with setPluginClient, before anybody can connect the plugin.
+          type: boolean
         description:
           type: string
         id:
@@ -3264,11 +3371,24 @@ components:
         readonly:
           description: True when the plugin has a read-only endpoint an agent may pick on its entry.
           type: boolean
+        redirect_uri:
+          description: The redirect URI that client has to list, which is this deployment's. Only with client_required.
+          readOnly: true
+          type: string
         scopes_supported:
           description: The OAuth scopes an agent may ask for on its entry, as the server advertises them. Absent when the server says nothing, and any scope is then passed through.
           items:
             type: string
           type: array
+        setup_steps:
+          description: What to do there, in order, before pasting the client into setPluginClient. Absent when the catalog has no instructions for the plugin.
+          items:
+            $ref: '#/components/schemas/PluginSetupStep'
+          type: array
+        setup_url:
+          description: Where the app creates that client with the provider. Only with client_required.
+          format: uri
+          type: string
         toolsets:
           description: The groups of tools an agent may limit the plugin to on its entry. Absent when it cannot be limited.
           items:
@@ -3289,11 +3409,30 @@ components:
       required:
         - authorize_url
       type: object
+    PluginClient:
+      description: The OAuth client a config logs a plugin in with. Its secret is sealed and never returned.
+      properties:
+        client_id:
+          description: The client id the provider issued.
+          type: string
+        has_secret:
+          description: Whether a client secret is stored. It is never returned.
+          type: boolean
+      required:
+        - client_id
+        - has_secret
+      type: object
     PluginConnection:
-      description: A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish.
+      description: A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish, unless it has user, when each end user connects it in the conversation.
       properties:
         category:
           type: string
+        client:
+          $ref: '#/components/schemas/PluginClient'
+          description: The OAuth client the config set for the plugin. Absent when it set none.
+        client_required:
+          description: True when nobody can connect the plugin until the config has a client of the app's own, set with setPluginClient.
+          type: boolean
         description:
           type: string
         instance_hint:
@@ -3311,12 +3450,16 @@ components:
         plugin_id:
           type: string
         status:
+          description: The app's login. Always not_connected for a plugin with user, which the app does not log into.
           enum:
             - pending
             - connected
             - failed
             - not_connected
           type: string
+        user:
+          description: 'True when the config names the plugin under user_plugins only: each end user connects their own account in the conversation.'
+          type: boolean
       required:
         - logo_url
         - name
@@ -3350,6 +3493,19 @@ components:
       required:
         - plugin
         - event
+      type: object
+    PluginSetupStep:
+      description: One thing to do with a plugin's provider before its OAuth client can be set.
+      properties:
+        description:
+          description: How to do it with the provider.
+          type: string
+        title:
+          description: What the step does, in a few words.
+          type: string
+      required:
+        - title
+        - description
       type: object
     PluginWithOptions:
       description: One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
@@ -4330,6 +4486,25 @@ components:
         source:
           description: Track or processor source. Omitted requires one unambiguous available source.
           type: string
+      type: object
+    SetPluginClientRequest:
+      description: The OAuth client an app registered with a plugin's provider, with the redirect URI <public url>/v1/agents/plugins/callback.
+      properties:
+        client_id:
+          description: The client id the provider issued.
+          maxLength: 512
+          minLength: 1
+          type: string
+        client_secret:
+          description: The client secret the provider issued. Left out for a public client.
+          maxLength: 512
+          type: string
+          writeOnly: true
+        user:
+          description: 'Also name the plugin under the config''s user_plugins, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it under agent_plugins.'
+          type: boolean
+      required:
+        - client_id
       type: object
     SetSandboxRecipientsRequest:
       properties:
@@ -6531,6 +6706,8 @@ paths:
           description: The document
         "404":
           $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
       security: []
       summary: The router's OAuth client metadata
   /health:
@@ -6543,6 +6720,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/HealthStatus'
           description: The router is serving
+        "500":
+          $ref: '#/components/responses/InternalError'
         "503":
           content:
             application/json:
@@ -6580,11 +6759,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: List the providers configured for a modality and their live health
   /v1/{modality}/routes:
     get:
@@ -6616,11 +6791,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: List the capability shortcuts offered as a choice, each with the models it resolves to
   /v1/{modality}/routes/{target}:
     get:
@@ -6667,11 +6838,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Resolve a provider name or capability shortcut to a ranked candidate list
   /v1/{modality}/stats:
     get:
@@ -6734,11 +6901,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Aggregated usage for the calling customer
   /v1/{modality}/stats/tags:
     get:
@@ -6801,11 +6964,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Aggregated usage broken down by the values of one cost label
   /v1/{modality}/stream:
     get:
@@ -6832,6 +6991,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
       summary: Route one modality over a socket, for a pipeline running elsewhere
   /v1/agents/calls:
     get:
@@ -6895,11 +7056,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: The calls the calling customer has run
   /v1/agents/calls/{id}:
     get:
@@ -6928,11 +7085,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: One call, with whatever was made of it afterwards
   /v1/agents/calls/{id}/events:
     get:
@@ -6970,11 +7123,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: What the conversation decided, and why
   /v1/agents/calls/{id}/timeline:
     get:
@@ -7006,11 +7155,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: The call as it unfolded, said and measured together
   /v1/agents/calls/{id}/token:
     post:
@@ -7045,11 +7190,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: What a browser needs to join this call
   /v1/agents/calls/{id}/transcript:
     get:
@@ -7081,11 +7222,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: What was said on a call
   /v1/agents/campaigns:
     get:
@@ -7106,11 +7243,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: The campaigns the calling customer has
     post:
       description: |-
@@ -7136,12 +7269,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Define a list of people to ring
   /v1/agents/campaigns/{id}:
     get:
@@ -7170,11 +7301,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: One campaign
   /v1/agents/campaigns/{id}/contacts:
     get:
@@ -7205,11 +7332,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Who a campaign is ringing, and how far it has got
     post:
       description: |-
@@ -7248,11 +7371,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Add people to ring
   /v1/agents/campaigns/{id}/pause:
     post:
@@ -7284,11 +7403,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Stop ringing anybody new
   /v1/agents/campaigns/{id}/start:
     post:
@@ -7320,11 +7435,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Start ringing
   /v1/agents/channels:
     get:
@@ -7350,11 +7461,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: List channel lines
     post:
       description: |-
@@ -7383,11 +7490,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Connect a channel line
   /v1/agents/channels/{id}:
     delete:
@@ -7416,11 +7519,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Disconnect a channel line
   /v1/agents/channels/hooks/{token}:
     get:
@@ -7455,6 +7554,8 @@ paths:
           description: That is not this line's verify token
         "410":
           description: No line is connected at this address
+        "500":
+          $ref: '#/components/responses/InternalError'
       security: []
       summary: Answer a channel provider's webhook check
     post:
@@ -7477,6 +7578,8 @@ paths:
           description: No line is connected at this address; stop delivering to it
         "413":
           description: The delivery is over 256 KiB
+        "500":
+          $ref: '#/components/responses/InternalError'
       security: []
       summary: Receive a message on a channel
   /v1/agents/channels/links:
@@ -7507,11 +7610,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Mint a code to claim a number
   /v1/agents/chat-token:
     post:
@@ -7539,11 +7638,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: What a browser needs to read an agent's conversation
   /v1/agents/configs:
     get:
@@ -7575,11 +7670,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: The agent configs the calling customer holds
     post:
       description: |-
@@ -7606,11 +7697,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Store a named configuration a session can be created from
   /v1/agents/configs/{id}:
     delete:
@@ -7638,11 +7725,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Delete an agent config
     get:
       operationId: getAgentConfig
@@ -7670,11 +7753,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: One agent config
     patch:
       description: |-
@@ -7712,11 +7791,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Change some of an agent config
     put:
       description: |-
@@ -7753,11 +7828,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Replace an agent config
   /v1/agents/configs/{id}/plugins:
     get:
@@ -7789,11 +7860,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: The plugin logins this agent holds
   /v1/agents/configs/{id}/plugins/{plugin_id}:
     delete:
@@ -7826,11 +7893,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Drop a plugin login
   /v1/agents/configs/{id}/plugins/{plugin_id}/authorize:
     post:
@@ -7874,12 +7937,85 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Start a plugin login
+  /v1/agents/configs/{id}/plugins/{plugin_id}/client:
+    delete:
+      description: 'Server-side only: it needs a server-side token, so it cannot be reached from an end user''s device.'
+      operationId: deletePluginClient
+      parameters:
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
+        - description: A built-in catalog id such as google_calendar.
+          in: path
+          name: plugin_id
+          required: true
+          schema:
+            description: A built-in catalog id such as google_calendar.
+            type: string
+      responses:
+        "204":
+          description: The client is gone
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Drop the OAuth client an agent logs a plugin in with
+    put:
+      description: |-
+        The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: setPluginClient
+      parameters:
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
+        - description: A built-in catalog id such as google_calendar.
+          in: path
+          name: plugin_id
+          required: true
+          schema:
+            description: A built-in catalog id such as google_calendar.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetPluginClientRequest'
+        required: true
+      responses:
+        "200":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
-      summary: Start a plugin login
+                $ref: '#/components/schemas/PluginClient'
+          description: The client as stored, without its secret
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Set the OAuth client an agent logs a plugin in with
   /v1/agents/connections:
     get:
       description: |-
@@ -7934,11 +8070,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: List connections
     post:
       description: |-
@@ -7966,11 +8098,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Create a connection
   /v1/agents/connections/{id}:
     delete:
@@ -8009,14 +8137,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: Conflict
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Delete a connection
     get:
       description: |-
@@ -8048,11 +8172,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Read a connection
   /v1/agents/connections/{id}/authorizations:
     post:
@@ -8085,11 +8205,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Start a consent
   /v1/agents/connectors:
     get:
@@ -8138,11 +8254,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: List or search connectors
     post:
       description: |-
@@ -8170,11 +8282,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Add a custom MCP connector
   /v1/agents/connectors/{id}:
     get:
@@ -8207,12 +8315,115 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Read a connector
+  /v1/agents/connectors/{id}/oauth-client:
+    delete:
+      description: |-
+        Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: deleteConnectorOAuthClient
+      parameters:
+        - description: The connector, such as github or custom_crm.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connector, such as github or custom_crm.
+            type: string
+      responses:
+        "204":
+          description: The client is removed
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Remove the app's own OAuth client for a connector
+    put:
+      description: |-
+        Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: setConnectorOAuthClient
+      parameters:
+        - description: The connector, such as github or custom_crm.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connector, such as github or custom_crm.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectorOAuthClientRequest'
+        required: true
+      responses:
+        "200":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
-      summary: Read a connector
+                $ref: '#/components/schemas/ConnectorOAuthClient'
+          description: The client was replaced
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorOAuthClient'
+          description: The client was stored
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Set the app's own OAuth client for a connector
+  /v1/agents/connectors/events/{connector_id}:
+    post:
+      description: 'Where a provider delivers the events of a built-in connector: Slack''s tokens_revoked and app_uninstalled to the operator''s Slack app''s Request URL, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector''s manifest names (channel.verifier) against the operator''s secret, and an unsigned or stale one changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves every connection of that account to needs_reauthorization; a message goes to the channel bridge. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.'
+      operationId: receiveConnectorEvent
+      parameters:
+        - description: A built-in connector id such as slack.
+          in: path
+          name: connector_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: The event is taken, or a URL verification's challenge, echoed
+        "401":
+          description: The request is not signed by the provider, or its signed timestamp is more than the manifest's max_age from now
+        "404":
+          description: This connector takes no events here
+        "413":
+          description: The event is over 256 KiB
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Receive a connector's provider event
   /v1/agents/connectors/oauth/callback:
     get:
       description: 'The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.'
@@ -8241,6 +8452,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "403":
           description: The consent was started in another browser
+        "500":
+          $ref: '#/components/responses/InternalError'
       security: []
       summary: Finish a consent
   /v1/agents/connectors/oauth/launch/{id}:
@@ -8261,6 +8474,8 @@ paths:
               schema:
                 type: string
           description: The launch page
+        "500":
+          $ref: '#/components/responses/InternalError'
       security: []
       summary: The page a consent starts on
     post:
@@ -8280,6 +8495,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "403":
           description: Not from the launch page's origin, or not this consent's handoff token
+        "500":
+          $ref: '#/components/responses/InternalError'
       security: []
       summary: Bind a consent to this browser
   /v1/agents/conversations/{cid}/commands/{command_id}:
@@ -8321,11 +8538,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: What a command in this conversation ended as
   /v1/agents/conversations/{cid}/messages:
     get:
@@ -8362,11 +8575,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Read a persistent text conversation
   /v1/agents/guests:
     post:
@@ -8394,14 +8603,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: This app does not admit guests
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Mint a guest so somebody can talk to an agent before signing up
       x-client-accessible: true
   /v1/agents/guests/claim:
@@ -8436,14 +8641,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: That guest was already claimed
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Move a guest's conversations onto the account they turned out to be
   /v1/agents/knowledge:
     post:
@@ -8472,11 +8673,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Fill a knowledge base with what the business wrote down
   /v1/agents/knowledge/documents:
     get:
@@ -8506,11 +8703,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: The documents a knowledge base was filled with
   /v1/agents/knowledge/documents/{id}:
     delete:
@@ -8538,11 +8731,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Take a document out of a knowledge base
     get:
       description: 'What to start from when editing it: post it again under the same source to replace it. A document written before its text was kept comes back without one.'
@@ -8571,11 +8760,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: One document, with the text it was posted as
   /v1/agents/knowledge/documents/{id}/passages:
     get:
@@ -8609,11 +8794,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: What a document was cut into, in order
   /v1/agents/knowledge/urls:
     get:
@@ -8642,11 +8823,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: The pages a knowledge base is kept filled from
     post:
       description: |-
@@ -8675,11 +8852,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Keep a knowledge base filled from a page
   /v1/agents/knowledge/urls/{id}:
     delete:
@@ -8707,11 +8880,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Stop filling a knowledge base from a page
     get:
       operationId: getKnowledgeUrl
@@ -8739,11 +8908,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: One page, and when it was last read
   /v1/agents/knowledge/urls/{id}/index:
     post:
@@ -8775,11 +8940,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Read a page again
   /v1/agents/knowledge/urls/{id}/passages:
     get:
@@ -8813,11 +8974,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: What a page was last read into, in order
   /v1/agents/logs:
     get:
@@ -8886,11 +9043,13 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
         "503":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: Log storage is unavailable.
       summary: Latest structured agent logs, with backward cursor pagination
   /v1/agents/logs/{id}:
@@ -8915,11 +9074,13 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
         "503":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: Log storage is unavailable.
       summary: Redacted structured log details scoped to the customer
   /v1/agents/logs/stream:
@@ -8987,11 +9148,13 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
         "503":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: Log storage is unavailable.
       summary: Read-only SSE of durable logs with replay
   /v1/agents/plugins:
@@ -9022,11 +9185,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: The hosted MCP servers an agent may attach
   /v1/agents/plugins/{plugin_id}/logo:
     get:
@@ -9048,6 +9207,8 @@ paths:
           description: The logo
         "404":
           $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
       security: []
       summary: A plugin's logo
   /v1/agents/plugins/callback:
@@ -9070,6 +9231,8 @@ paths:
       responses:
         "302":
           description: The browser is sent back to the agent editor
+        "500":
+          $ref: '#/components/responses/InternalError'
       security: []
       summary: Finish a plugin login
   /v1/agents/plugins/events/{token}:
@@ -9093,6 +9256,8 @@ paths:
           description: There is no such subscription any more; stop delivering to it
         "413":
           description: The delivery is over 256 KiB
+        "500":
+          $ref: '#/components/responses/InternalError'
       security: []
       summary: Receive a plugin's MCP event
   /v1/agents/sessions:
@@ -9124,14 +9289,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: A session with that id already exists
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Join a call as a voice agent
       x-client-accessible: true
   /v1/agents/sessions/{id}:
@@ -9159,11 +9320,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Delete a session
       x-client-accessible: true
     get:
@@ -9193,11 +9350,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: One session
       x-client-accessible: true
     patch:
@@ -9240,11 +9393,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Change a session
       x-client-accessible: true
   /v1/agents/sessions/{id}/commands/{command_id}:
@@ -9280,11 +9429,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: What is known about one durable command
   /v1/agents/sessions/{id}/commands/{command_id}/interrupt:
     post:
@@ -9322,16 +9467,12 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
         "503":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: The stop was accepted but its durable outcome is unknown. The command is not reported stopped; retry the same command id.
       summary: Stop one named command, and nothing else
   /v1/agents/sessions/{id}/events:
@@ -9339,7 +9480,7 @@ paths:
       description: |-
         A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a `type` and the fields of that event.
         The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
-        Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
+        Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
         A respond command carrying command_id emits command_accepted with a nested command receipt (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text returns the existing IDs without invoking the model again; reuse with different text emits an error. Commands with IDs currently accept text only. After restart an interrupted command is reported, not rerun.
         An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `command_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
         A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent. Together they are why the call went the way it did, and they are also written down, so a finished call replays them from `/v1/agents/calls/{id}/events`.
@@ -9382,6 +9523,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "404":
           $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
       summary: Watch the conversation and answer the model's tool calls
       x-client-accessible: true
       x-client-frames:
@@ -9423,11 +9566,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Continue a conversation as a new one
       x-client-accessible: true
   /v1/agents/sessions/{id}/instructions:
@@ -9460,11 +9599,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Change what the agent is told to be
   /v1/agents/sessions/{id}/interrupt:
     post:
@@ -9490,11 +9625,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Abandon the reply being spoken
   /v1/agents/sessions/{id}/memories:
     delete:
@@ -9523,11 +9654,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Delete what one session remembered
   /v1/agents/sessions/{id}/respond:
     post:
@@ -9567,14 +9694,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: The command ID was already accepted with different content
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Answer a piece of text through the model, as though it had been said
   /v1/agents/sessions/{id}/responses:
     get:
@@ -9620,11 +9743,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: The turns the agent took in a session
       x-client-accessible: true
     post:
@@ -9665,14 +9784,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: The command ID was already accepted with different content
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Ask the agent something and get a handle on the answer
       x-client-accessible: true
   /v1/agents/sessions/{id}/responses/items:
@@ -9729,11 +9844,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: What the agent did, turn by turn, in the order it happened
       x-client-accessible: true
   /v1/agents/sessions/{id}/rewind:
@@ -9768,11 +9879,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Go back to a response and carry on from there
       x-client-accessible: true
   /v1/agents/sessions/{id}/say:
@@ -9805,11 +9912,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Speak a piece of text without going through the model
   /v1/agents/sessions/{id}/settings:
     patch:
@@ -9847,11 +9950,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Change the models and voice of one running session
   /v1/agents/sessions/{id}/stop:
     post:
@@ -9878,11 +9977,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Stop a running session
       x-client-accessible: true
   /v1/agents/sessions/query:
@@ -9915,11 +10010,7 @@ paths:
         "401":
           $ref: '#/components/responses/Unauthorized'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: List or search the caller's sessions
       x-client-accessible: true
   /v1/agents/simulation-runs:
@@ -9964,11 +10055,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: What the simulations have come to, newest first
   /v1/agents/simulation-runs/{id}:
     get:
@@ -9997,11 +10084,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: One run, with the conversations it had
   /v1/agents/simulation-runs/{id}/cancel:
     post:
@@ -10033,11 +10116,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Stop a run
   /v1/agents/simulations:
     get:
@@ -10058,11 +10137,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: The simulations the calling customer has
     post:
       description: |-
@@ -10088,12 +10163,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Write down a conversation to have with an agent
   /v1/agents/simulations/{id}:
     delete:
@@ -10121,11 +10194,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Delete a simulation
     get:
       operationId: getSimulation
@@ -10153,11 +10222,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: One simulation
     put:
       description: |-
@@ -10194,11 +10259,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Replace a simulation
   /v1/agents/simulations/{id}/run:
     post:
@@ -10230,11 +10291,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Have the conversations
   /v1/agents/skills:
     get:
@@ -10263,11 +10320,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: The skills the calling customer has defined
     post:
       description: |-
@@ -10293,12 +10346,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Define a kind of work worth handing to the slower model
   /v1/agents/skills/{id}:
     delete:
@@ -10324,11 +10375,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Delete a skill
     get:
       operationId: getSkill
@@ -10356,11 +10403,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: One skill
     put:
       description: 'Server-side only: it needs a server-side token, so it cannot be reached from an end user''s device.'
@@ -10395,11 +10438,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Replace a skill
   /v1/agents/sync:
     post:
@@ -10432,11 +10471,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Store an agent directory's instructions, skills, knowledge, simulations and settings
   /v1/agents/users/{user_id}/memories:
     delete:
@@ -10464,11 +10499,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Delete everything remembered about one user
   /v1/agents/voices:
     get:
@@ -10489,11 +10520,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: The voices the calling customer has brought with them
     post:
       description: |-
@@ -10520,11 +10547,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Name a voice of the customer's own
   /v1/agents/voices/{id}:
     delete:
@@ -10552,11 +10575,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Delete a voice
     get:
       operationId: getVoice
@@ -10584,11 +10603,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: One voice, with its recordings and what each provider made of them
     put:
       description: |-
@@ -10625,11 +10640,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Rename a voice
   /v1/agents/voices/{id}/prepare:
     post:
@@ -10667,11 +10678,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Teach the text-to-speech providers this voice
   /v1/agents/voices/{id}/preview:
     post:
@@ -10709,11 +10716,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Hear a voice through one provider
   /v1/agents/voices/{id}/samples:
     post:
@@ -10751,11 +10754,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Add a recording to a voice
   /v1/agents/voices/library:
     get:
@@ -10783,11 +10782,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: The voices the speech providers offer
   /v1/agents/voices/library/{provider}/{voice}/preview:
     get:
@@ -10822,11 +10817,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Hear a voice from a provider's library
   /v1/agents/voices/providers:
     get:
@@ -10846,11 +10837,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: The providers a voice can be prepared with
   /v1/classify:
     post:
@@ -10882,19 +10869,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: The classifier is rate limiting. Ask again after a wait.
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
         "503":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: The classifier is overloaded or could not be reached. Ask again after a wait.
       summary: Ask a classifier typed questions about a piece of text
   /v1/data/changes:
@@ -10935,13 +10918,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: The changes since that cursor are no longer kept, so export again.
+        "500":
+          $ref: '#/components/responses/InternalError'
         "503":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: This deployment has no database to read changes from.
       summary: What has happened to this app's rows since a cursor
   /v1/data/export:
@@ -10964,11 +10949,13 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
         "503":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: This deployment has no database to export from.
       summary: Everything this app has, as newline-delimited JSON
   /v1/data/import:
@@ -10999,11 +10986,13 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
         "503":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: This deployment has no database to import into.
       summary: Write an export, or a batch of changes, into this deployment
   /v1/dispatch:
@@ -11046,6 +11035,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
       summary: Wait for inbound calls to answer, as a worker
   /v1/image/generations:
     post:
@@ -11076,11 +11067,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Draw pictures from a prompt, and return them
   /v1/ops/use-cases:
     get:
@@ -11131,14 +11118,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: Conflict
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       security:
         - OpsKey: []
       summary: List use cases waiting on Stream
@@ -11172,14 +11155,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: Conflict
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       security:
         - OpsKey: []
       summary: Get a use case to review
@@ -11218,14 +11197,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: Conflict
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       security:
         - OpsKey: []
       summary: Review a submitted use case
@@ -11252,11 +11227,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Get the business profile
     put:
       description: |-
@@ -11283,11 +11254,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Save the business profile
   /v1/phone/calls:
     post:
@@ -11315,11 +11282,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Place an outbound call and bridge it into a Stream call
   /v1/phone/calls/{vendor_call_id}/digits:
     post:
@@ -11349,11 +11312,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Press digits on a call placed from here
   /v1/phone/calls/transfer:
     post:
@@ -11381,11 +11340,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Bring a human onto a call that is already happening
   /v1/phone/hooks/10dlc:
     post:
@@ -11400,6 +11355,8 @@ paths:
           description: This deployment registers nothing
         "413":
           description: The report is over 64 KiB
+        "500":
+          $ref: '#/components/responses/InternalError'
       security: []
       summary: Receive a 10DLC registration report
   /v1/phone/numbers:
@@ -11428,11 +11385,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: The numbers the calling customer holds
     post:
       operationId: buyPhoneNumber
@@ -11458,11 +11411,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Buy a number, which starts its monthly charge
   /v1/phone/numbers/{e164}:
     delete:
@@ -11487,11 +11436,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Give a number back, which stops its monthly charge
   /v1/phone/numbers/{e164}/attach:
     post:
@@ -11524,11 +11469,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Point a number at a Stream call
   /v1/phone/numbers/available:
     get:
@@ -11618,11 +11559,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Search for numbers to buy, at one vendor or all of them
   /v1/phone/opt-outs:
     get:
@@ -11663,11 +11600,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: List opt-outs
     post:
       description: |-
@@ -11694,11 +11627,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Record an opt-out
   /v1/phone/opt-outs/{id}:
     delete:
@@ -11725,11 +11654,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Revoke an opt-out
   /v1/phone/sandbox:
     get:
@@ -11752,11 +11677,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Get the sandbox
   /v1/phone/sandbox/recipients:
     put:
@@ -11784,11 +11705,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Set the sandbox recipients
   /v1/phone/use-cases:
     get:
@@ -11829,11 +11746,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: List 10DLC use cases
     post:
       description: |-
@@ -11860,11 +11773,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Create a 10DLC use case
   /v1/phone/use-cases/{id}:
     delete:
@@ -11894,14 +11803,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: Conflict
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Delete a 10DLC use case
     get:
       description: Server-side only.
@@ -11928,11 +11833,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Get a 10DLC use case
     put:
       description: |-
@@ -11970,14 +11871,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: Conflict
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Update a 10DLC use case
   /v1/phone/use-cases/{id}/reviews:
     get:
@@ -12025,11 +11922,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: List a use case's review history
   /v1/phone/use-cases/{id}/submit:
     post:
@@ -12063,14 +11956,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: Conflict
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Submit a 10DLC use case for review
   /v1/phone/vendors:
     get:
@@ -12090,11 +11979,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: List the telephony vendors and whether they can be used
   /v1/policies/app:
     get:
@@ -12114,11 +11999,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: The calling app's policy
     put:
       description: |-
@@ -12146,11 +12027,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Replace the calling app's policy
   /v1/policies/organization:
     get:
@@ -12170,11 +12047,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: The calling app's organization's policy
     put:
       description: 'Server-side only: it needs a server-side token, so it cannot be reached from an end user''s device.'
@@ -12199,11 +12072,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Replace the calling app's organization's policy
   /v1/router/configs:
     get:
@@ -12225,11 +12094,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: The router configs the calling customer holds
     post:
       description: |-
@@ -12256,11 +12121,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Store a named set of per-modality routing options
   /v1/router/configs/{id}:
     delete:
@@ -12288,11 +12149,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Delete a router config
     get:
       operationId: getRouterConfig
@@ -12320,11 +12177,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: One router config
     put:
       description: |-
@@ -12361,11 +12214,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Replace a router config
   /v1/search:
     post:
@@ -12391,11 +12240,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Answer a question out of what is true now
       x-client-accessible: true
   /v1/settings/app:
@@ -12417,16 +12262,12 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
         "503":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: Service Unavailable
       summary: What the router does for the calling app
   /v1/settings/app/stream/check:
@@ -12453,19 +12294,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: Conflict
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
         "503":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: Service Unavailable
       summary: Check the calling app's own Stream app
   /v1/settings/app/stream/credentials:
@@ -12498,19 +12335,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: Conflict
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
         "503":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: Service Unavailable
       summary: Register the calling app's own Stream app
   /v1/stats/activity:
@@ -12559,11 +12392,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Who used the calling customer's agents, and how much
   /v1/stats/rollup:
     post:
@@ -12589,11 +12418,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Aggregate request rows into a rollup table
   /v1/stats/spend:
     get:
@@ -12665,11 +12490,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: What the calling customer spent, grouped
   /v1/stats/tags/keys:
     get:
@@ -12721,11 +12542,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Which cost labels the calling customer's spend carries
   /v1/stt/recordings:
     post:
@@ -12755,11 +12572,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Transcribe a recording, off the live path
   /v1/stt/recordings/{id}:
     get:
@@ -12788,11 +12601,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: One transcription job, and its transcript once it has one
   /v1/tts/recordings:
     post:
@@ -12820,11 +12629,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Speak a whole text into one audio file, off the live path
   /v1/tts/recordings/{id}:
     get:
@@ -12853,11 +12658,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: One speech job, and its audio once it has some
   /v1/turns/stats:
     get:
@@ -12910,11 +12711,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Conversational latency for the calling customer
 security:
   - CustomerId: []

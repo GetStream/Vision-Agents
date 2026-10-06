@@ -7,7 +7,7 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.channel_account import ChannelAccount
 from ...models.connect_channel_request import ConnectChannelRequest
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...types import UNSET, Response, Unset
 
 
@@ -33,29 +33,29 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ChannelAccount | Error | None:
+) -> ChannelAccount | ErrorResponse | None:
     if response.status_code == 200:
         response_200 = ChannelAccount.from_dict(response.json())
 
         return response_200
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
 
     if response.status_code == 500:
-        response_500 = Error.from_dict(response.json())
+        response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
 
@@ -67,7 +67,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ChannelAccount | Error]:
+) -> Response[ChannelAccount | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -80,7 +80,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ConnectChannelRequest | Unset = UNSET,
-) -> Response[ChannelAccount | Error]:
+) -> Response[ChannelAccount | ErrorResponse]:
     """Connect a channel line
 
      Stores an app's credentials for a WhatsApp, text or iMessage line and answers with the URL its
@@ -102,7 +102,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ChannelAccount | Error]
+        Response[ChannelAccount | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -120,7 +120,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: ConnectChannelRequest | Unset = UNSET,
-) -> ChannelAccount | Error | None:
+) -> ChannelAccount | ErrorResponse | None:
     """Connect a channel line
 
      Stores an app's credentials for a WhatsApp, text or iMessage line and answers with the URL its
@@ -142,7 +142,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ChannelAccount | Error
+        ChannelAccount | ErrorResponse
     """
 
     return sync_detailed(
@@ -155,7 +155,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ConnectChannelRequest | Unset = UNSET,
-) -> Response[ChannelAccount | Error]:
+) -> Response[ChannelAccount | ErrorResponse]:
     """Connect a channel line
 
      Stores an app's credentials for a WhatsApp, text or iMessage line and answers with the URL its
@@ -177,7 +177,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ChannelAccount | Error]
+        Response[ChannelAccount | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -193,7 +193,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: ConnectChannelRequest | Unset = UNSET,
-) -> ChannelAccount | Error | None:
+) -> ChannelAccount | ErrorResponse | None:
     """Connect a channel line
 
      Stores an app's credentials for a WhatsApp, text or iMessage line and answers with the URL its
@@ -215,7 +215,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ChannelAccount | Error
+        ChannelAccount | ErrorResponse
     """
 
     return (

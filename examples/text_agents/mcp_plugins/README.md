@@ -34,8 +34,20 @@ sandbox: daytona  # Blender, built into the router's sandbox for the render skil
 ```
 
 Not every catalog plugin registers the router as a client by itself. Sentry, Linear,
-Calendly and Cal.com do; the rest need an app of the deployment's own, whose redirect URI
-is the router's `public_url` followed by `/v1/agents/plugins/callback`:
+Calendly and Cal.com do; the rest need an OAuth app of your own, whose redirect URI is the
+router's `public_url` followed by `/v1/agents/plugins/callback`. Each agent holds its own:
+on the dashboard's Tools tab, press **Set up** on the plugin, paste the app's client id and
+secret, and choose whether each user connects in the chat or the agent connects one account.
+The same thing over the API, server-side only:
+
+```bash
+curl -X PUT "$ROUTER/v1/agents/configs/$CONFIG_ID/plugins/google_calendar/client" \
+  -d '{"client_id": "...", "client_secret": "...", "user": true}'
+```
+
+The secret is sealed with the router's `auth.kek` and never returned. A sync warns about a
+`user_plugins` entry that still has none, and a user who asks for it is told it is not
+available. A deployment can instead give every agent the same app through the environment:
 
 | Plugin | What the router needs |
 | --- | --- |
@@ -76,11 +88,14 @@ client by itself, and only an internal app or one published in the Slack Marketp
 MCP:
 
 1. At [api.slack.com/apps](https://api.slack.com/apps), create an app in your workspace.
-   Under **OAuth & Permissions**, add the redirect URL
-   `http://localhost:8080/v1/agents/plugins/callback` (the router's `public_url` +
+   Under **OAuth & Permissions**, add the redirect URL (the router's `public_url` +
    `/v1/agents/plugins/callback`) and the **user token** scopes the agent will ask for.
-2. Put its client id and secret in `.env` as `SLACK_MCP_CLIENT_ID` and
-   `SLACK_MCP_CLIENT_SECRET`, and restart the router.
+   Slack takes only an https redirect URL, so a local router needs an https tunnel as its
+   `public_url`.
+2. On the dashboard, open the agent's Tools, press **Set up** on Slack and paste the app's
+   client id and secret, with "Each user, in the conversation". The page lists these
+   steps too. `SLACK_MCP_CLIENT_ID` and `SLACK_MCP_CLIENT_SECRET` in `.env` still work, for
+   every agent that sets no client of its own.
 
 By default the login asks for `channels:history`, `channels:read`, `chat:write`,
 `search:read.public` and `users:read`: search and read public channels, post, and look
@@ -222,15 +237,11 @@ secret naming them, or `proxy` mode. A `noauth` router treats every caller as th
 backend, and an anonymous caller goes by a name nobody checked, so neither is offered the
 calendar.
 
-Google registers no client on the fly, so the router needs one of its own. In a Google Cloud
+Google registers no client on the fly, so the agent needs one of your own. In a Google Cloud
 project, enable `calendarmcp.googleapis.com`, create an OAuth client of type *Web
 application* whose redirect URI is the router's `public_url` followed by
-`/v1/agents/plugins/callback`, and give the router:
-
-```bash
-GOOGLE_CALENDAR_MCP_CLIENT_ID=...
-GOOGLE_CALENDAR_MCP_CLIENT_SECRET=...
-```
+`/v1/agents/plugins/callback`, and set it on the agent: **Set up** on Google Calendar in the
+Tools tab, with "Each user, in the conversation".
 
 ## Blender: in the sandbox
 

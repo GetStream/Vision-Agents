@@ -14,21 +14,27 @@ import (
 // What the simulation paths say on a deployment that cannot run one. Writing a simulation
 // down only needs a database; having the conversations needs an agent to talk to and a
 // model to play the caller and judge them.
-const (
-	noSimulations        = "simulations are not available: this deployment has no database"
-	cannotRunSimulations = "simulations cannot be run here: this deployment has no sessions or model routing"
-	unknownSimulation    = "no such simulation"
-	unknownSimulationRun = "no such simulation run"
+var (
+	errNoSimulations        = notConfigured("simulations are not available: this deployment has no database")
+	errCannotRunSimulations = notConfigured("simulations cannot be run here: this deployment has no sessions or model routing")
+	errUnknownSimulation    = APIError{
+		Type: ErrorTypeNotFound, Code: codeSimulationNotFound,
+		Message: "no such simulation",
+	}
+	errUnknownSimulationRun = APIError{
+		Type: ErrorTypeNotFound, Code: codeSimulationRunNotFound,
+		Message: "no such simulation run",
+	}
 )
 
 // listSimulations returns the calling customer's simulations, newest first.
 func (s *Server) listSimulations(ctx context.Context, _ *listSimulationsRequest) (*listSimulationsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noSimulations)
+		return nil, errNoSimulations
 	}
 
 	stored, err := s.store.CustomerSimulations(ctx, customerID)
@@ -47,21 +53,21 @@ func (s *Server) listSimulations(ctx context.Context, _ *listSimulationsRequest)
 func (s *Server) createSimulation(ctx context.Context, request *createSimulationRequest) (*createSimulationResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noSimulations)
+		return nil, errNoSimulations
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 
 	simulation := storedSimulation(*request.Body, customerID)
-	if complaint, bad := simulationComplaint(ctx, s, customerID, simulation); bad {
-		return nil, huma.Error400BadRequest(complaint)
+	if failure := simulationComplaint(ctx, s, customerID, simulation); failure != nil {
+		return nil, failure
 	}
 	if err := s.store.CreateSimulation(ctx, &simulation); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &createSimulationResponse{Body: simulationOf(simulation)}, nil
 }
@@ -70,15 +76,15 @@ func (s *Server) createSimulation(ctx context.Context, request *createSimulation
 func (s *Server) getSimulation(ctx context.Context, request *getSimulationRequest) (*getSimulationResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noSimulations)
+		return nil, errNoSimulations
 	}
 
 	simulation, err := s.store.Simulation(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownSimulation)
+		return nil, errUnknownSimulation
 	}
 	return &getSimulationResponse{Body: simulationOf(simulation)}, nil
 }
@@ -88,27 +94,27 @@ func (s *Server) getSimulation(ctx context.Context, request *getSimulationReques
 func (s *Server) updateSimulation(ctx context.Context, request *updateSimulationRequest) (*updateSimulationResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noSimulations)
+		return nil, errNoSimulations
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 
 	existing, err := s.store.Simulation(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownSimulation)
+		return nil, errUnknownSimulation
 	}
 
 	simulation := storedSimulation(*request.Body, customerID)
 	simulation.ID = existing.ID
-	if complaint, bad := simulationComplaint(ctx, s, customerID, simulation); bad {
-		return nil, huma.Error400BadRequest(complaint)
+	if failure := simulationComplaint(ctx, s, customerID, simulation); failure != nil {
+		return nil, failure
 	}
 	if err := s.store.UpdateSimulation(ctx, &simulation); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	simulation.CreatedAt = existing.CreatedAt
@@ -119,14 +125,14 @@ func (s *Server) updateSimulation(ctx context.Context, request *updateSimulation
 func (s *Server) deleteSimulation(ctx context.Context, request *deleteSimulationRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noSimulations)
+		return nil, errNoSimulations
 	}
 
 	if err := s.store.DeleteSimulation(ctx, customerID, request.Id); err != nil {
-		return nil, huma.Error404NotFound(unknownSimulation)
+		return nil, errUnknownSimulation
 	}
 	return nil, nil
 }
@@ -136,21 +142,21 @@ func (s *Server) deleteSimulation(ctx context.Context, request *deleteSimulation
 func (s *Server) runSimulation(ctx context.Context, request *runSimulationRequest) (*runSimulationResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noSimulations)
+		return nil, errNoSimulations
 	}
 	if s.simulations == nil {
-		return nil, huma.Error400BadRequest(cannotRunSimulations)
+		return nil, errCannotRunSimulations
 	}
 
 	if _, err := s.store.Simulation(ctx, customerID, request.Id); err != nil {
-		return nil, huma.Error404NotFound(unknownSimulation)
+		return nil, errUnknownSimulation
 	}
 	run, err := s.simulations.Start(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &runSimulationResponse{Body: simulationRunOf(run, nil)}, nil
 }
@@ -159,10 +165,10 @@ func (s *Server) runSimulation(ctx context.Context, request *runSimulationReques
 func (s *Server) listSimulationRuns(ctx context.Context, request *listSimulationRunsRequest) (*listSimulationRunsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noSimulations)
+		return nil, errNoSimulations
 	}
 
 	filter := store.SimulationRunFilter{
@@ -192,15 +198,15 @@ func (s *Server) listSimulationRuns(ctx context.Context, request *listSimulation
 func (s *Server) getSimulationRun(ctx context.Context, request *getSimulationRunRequest) (*getSimulationRunResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noSimulations)
+		return nil, errNoSimulations
 	}
 
 	run, err := s.store.SimulationRun(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownSimulationRun)
+		return nil, errUnknownSimulationRun
 	}
 	cases, err := s.store.SimulationCases(ctx, run.ID)
 	if err != nil {
@@ -213,18 +219,18 @@ func (s *Server) getSimulationRun(ctx context.Context, request *getSimulationRun
 func (s *Server) cancelSimulationRun(ctx context.Context, request *cancelSimulationRunRequest) (*cancelSimulationRunResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noSimulations)
+		return nil, errNoSimulations
 	}
 	if s.simulations == nil {
-		return nil, huma.Error400BadRequest(cannotRunSimulations)
+		return nil, errCannotRunSimulations
 	}
 
 	run, err := s.simulations.Cancel(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownSimulationRun)
+		return nil, errUnknownSimulationRun
 	}
 	return &cancelSimulationRunResponse{Body: simulationRunOf(run, nil)}, nil
 }
@@ -264,24 +270,24 @@ func simulationComplaint(
 	server *Server,
 	customerID string,
 	simulation store.Simulation,
-) (string, bool) {
+) error {
 	switch {
 	case simulation.Name == "":
-		return "a simulation needs a name", true
+		return invalidRequest("a simulation needs a name")
 	case simulation.ConfigID == "":
-		return "a simulation needs an agent to run against", true
+		return invalidRequest("a simulation needs an agent to run against")
 	case simulation.Scenario == "":
-		return "a simulation needs something to ask", true
+		return invalidRequest("a simulation needs something to ask")
 	case simulation.Assertion == "":
-		return "a simulation needs something to check", true
+		return invalidRequest("a simulation needs something to check")
 	}
 	if err := routing.Tags(simulation.Tags).Validate(); err != nil {
-		return err.Error(), true
+		return invalidRequest(err.Error())
 	}
 	if _, err := server.store.AgentConfig(ctx, customerID, simulation.ConfigID); err != nil {
-		return unknownConfig, true
+		return errUnknownConfig
 	}
-	return "", false
+	return nil
 }
 
 // simulationOf renders a simulation for the wire.
@@ -410,7 +416,7 @@ func (s *Server) registerSimulations(api huma.API) {
 		Responses: map[string]*huma.Response{
 			"201": {Description: "The simulation was stored"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.createSimulation)
 	huma.Register(api, huma.Operation{
 		OperationID: "getSimulation",

@@ -4,7 +4,8 @@ mode: text
 llm: llm-fast
 # The company's accounts: connected once each, on the dashboard, for every conversation.
 agent_plugins:
-  - sentry
+  - name: sentry
+    tools: [find_organizations, find_projects, search_issues, search_errors, get_sentry_resource, analyze_issue_with_seer, update_issue]
   - github
   - hubspot
   - salesforce
@@ -20,7 +21,8 @@ agent_plugins:
 # tools named, or matching a pattern such as get_*, on any plugin or MCP server; left out,
 # all of them.
 user_plugins:
-  - linear
+  - name: linear
+    tools: [list_issues, get_issue, save_issue, list_comments, save_comment, list_projects, get_project, list_cycles, list_teams, list_users, list_issue_statuses]
   # - name: linear
   #   readonly: true
   #   scopes: [read]

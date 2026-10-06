@@ -18,44 +18,47 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 )
 
-// noChannels is what the channel paths say on a deployment that cannot hold the credentials.
+// errNoChannels is what the channel paths say on a deployment that cannot hold the credentials.
 // Sealing them needs a key encryption key, and without one there is nowhere safe to put a
 // WhatsApp token, so the line is refused rather than stored in the clear.
-const noChannels = "channels are not available: no key encryption key configured"
+var errNoChannels = notConfigured("channels are not available: no key encryption key configured")
 
-const unknownAccount = "no such channel account"
+var errUnknownAccount = APIError{
+	Type: ErrorTypeNotFound, Code: codeChannelAccountNotFound,
+	Message: "no such channel account",
+}
 
 // connectChannel stores an app's credentials for a line and says where its provider should
 // deliver.
 func (s *Server) connectChannel(ctx context.Context, request *connectChannelRequest) (*channelAccountResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConfigs)
+		return nil, errNoConfigs
 	}
 	if s.secrets == nil {
-		return nil, huma.Error400BadRequest(noChannels)
+		return nil, errNoChannels
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 
 	body := *request.Body
 	kind := channels.Kind(body.Kind)
 	number := strings.TrimSpace(body.Number)
 	if !kind.Valid() {
-		return nil, huma.Error400BadRequest("no channel called " + body.Kind)
+		return nil, invalidRequest("no channel called " + body.Kind)
 	}
 	if message, ok := channelCredentialsComplaint(kind, body); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	// A number a vendor sells is the one the router can configure and bill, so an SMS line
 	// has to be one the app actually holds rather than one it typed.
 	if kind == channels.SMS {
 		if message, ok := s.ownsNumber(ctx, customerID, number); !ok {
-			return nil, huma.Error400BadRequest(message)
+			return nil, invalidRequest(message)
 		}
 	}
 
@@ -81,7 +84,7 @@ func (s *Server) connectChannel(ctx context.Context, request *connectChannelRequ
 	account.SecretsSealed = sealed
 	account.SecretsKEKVersion = s.secrets.CurrentVersion()
 	if err := s.store.SaveChannelAccount(ctx, &account); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	rendered := s.channelAccountOf(account)
@@ -94,7 +97,7 @@ func (s *Server) connectChannel(ctx context.Context, request *connectChannelRequ
 			return nil, err
 		}
 		if err := telnyx.ConfigureMessaging(ctx, line, rendered.WebhookUrl); err != nil {
-			return nil, huma.Error400BadRequest("stored the credentials, but Telnyx refused to " +
+			return nil, invalidRequest("stored the credentials, but Telnyx refused to " +
 				"deliver to " + rendered.WebhookUrl + ": " + err.Error())
 		}
 		rendered.Delivering = true
@@ -107,7 +110,7 @@ func (s *Server) connectChannel(ctx context.Context, request *connectChannelRequ
 // that line was connected with, so it is that provider or nobody.
 func (s *Server) receiveChannelMessage(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil {
-		writeError(w, http.StatusGone, "this deployment answers on no channels")
+		writeError(w, gone("this deployment answers on no channels"))
 		return
 	}
 	token := r.PathValue("token")
@@ -119,11 +122,11 @@ func (s *Server) receiveChannelMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, channels.MaxDeliveryBytes+1))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, invalidRequest(err.Error()))
 		return
 	}
 	if len(body) > channels.MaxDeliveryBytes {
-		writeError(w, http.StatusRequestEntityTooLarge, "a delivery is at most 256 KiB")
+		writeError(w, payloadTooLarge("a delivery is at most 256 KiB"))
 		return
 	}
 	writeChannelAnswer(w, s.channels.Receive(r.Context(), token, r.Header, body))
@@ -148,27 +151,27 @@ func writeChannelAnswer(w http.ResponseWriter, answer channels.Answer) {
 func (s *Server) linkChannelNumber(ctx context.Context, request *linkChannelRequest) (*channelLinkResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.channels == nil {
-		return nil, huma.Error400BadRequest(noChannels)
+		return nil, errNoChannels
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 
 	config, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownConfig)
+		return nil, errUnknownConfig
 	}
 	if config.Channels.Identity != store.ChannelIdentityLink {
-		return nil, huma.Error400BadRequest(config.Name + " identifies a sender by their number, " +
+		return nil, invalidRequest(config.Name + " identifies a sender by their number, " +
 			"so there is nothing to link: set channels.identity to link to need a code")
 	}
 
 	link, err := s.channels.Link(ctx, customerID, config.ID, request.Body.UserId)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &channelLinkResponse{Body: ChannelLink{Code: link.Code, ExpiresAt: link.ExpiresAt}}, nil
 }
@@ -178,10 +181,10 @@ func (s *Server) linkChannelNumber(ctx context.Context, request *linkChannelRequ
 func (s *Server) listChannelAccounts(ctx context.Context, _ *struct{}) (*listChannelAccountsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConfigs)
+		return nil, errNoConfigs
 	}
 
 	found, err := s.store.ChannelAccounts(ctx, customerID)
@@ -199,10 +202,10 @@ func (s *Server) listChannelAccounts(ctx context.Context, _ *struct{}) (*listCha
 func (s *Server) disconnectChannel(ctx context.Context, request *disconnectChannelRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConfigs)
+		return nil, errNoConfigs
 	}
 
 	found, err := s.store.ChannelAccounts(ctx, customerID)
@@ -214,11 +217,11 @@ func (s *Server) disconnectChannel(ctx context.Context, request *disconnectChann
 			continue
 		}
 		if err := s.store.DeleteChannelAccount(ctx, customerID, account.Kind, account.E164); err != nil {
-			return nil, huma.Error404NotFound(unknownAccount)
+			return nil, errUnknownAccount
 		}
 		return nil, nil
 	}
-	return nil, huma.Error404NotFound(unknownAccount)
+	return nil, errUnknownAccount
 }
 
 // ownsNumber reports whether a number is one this app bought here.

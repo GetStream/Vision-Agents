@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -106,7 +107,7 @@ func (s *SpecSuite) TestAnMCPServersToolsAndInstructionsJoinTheSession() {
 		MCPServers:   []store.MCPServer{{Name: "tablejourney", URL: server.URL, NeedsLogin: &needsLogin}},
 	}
 
-	mcp, tools, _ := attachPlugins(context.Background(), spec, nil, server.Client(), slog.New(slog.DiscardHandler))
+	mcp, tools, _ := attachPlugins(context.Background(), spec, nil, &plugins.Auth{HTTP: server.Client()}, slog.New(slog.DiscardHandler))
 	defer mcp.Close()
 	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp)
 

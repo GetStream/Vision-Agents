@@ -87,6 +87,19 @@ func (s *Scheme) exchange(ctx context.Context, m core.ResolvedManifest, a attemp
 // taken effect at the provider.
 var errNotSent = errors.New("oauth2code: the request was not sent")
 
+// TokenRequest is the token endpoint request every OAuth grant makes, for another scheme to
+// share (oauth2cc): endpoint held to Config.PublicEndpoint as every endpoint here is
+// (checkEndpoint), then form sent as tokenPost sends it, authenticated as c.AuthMethod says
+// (none, client_secret_basic or client_secret_post, RFC 6749 section 2.3.1). An endpoint the
+// check refuses is never dialed, so its error wraps errNotSent and Classify makes it
+// Transient, as it does a request that never reached the wire.
+func (s *Scheme) TokenRequest(ctx context.Context, endpoint string, form url.Values, c Client) (*http.Response, []byte, error) {
+	if err := s.checkEndpoint(ctx, endpoint); err != nil {
+		return nil, nil, fmt.Errorf("%w: %w", errNotSent, err)
+	}
+	return s.tokenPost(ctx, endpoint, form, client{ID: c.ID, Secret: c.Secret, AuthMethod: c.AuthMethod})
+}
+
 // tokenPost sends form to a token or revocation endpoint, authenticated as c, and returns
 // the response with its body read. RFC 7009 section 2.1 has a revocation request
 // authenticate as RFC 6749 section 2.3 says a token request does, so both use this. An error

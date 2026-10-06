@@ -262,13 +262,13 @@ func becauseOf(skipped []acceleration.SkippedVendor) string {
 }
 
 // answer returns what the router sent, raising what it said went wrong instead.
-func answer[T any](ok *T, bad, unauthorized, missing *acceleration.Error, status string) (*T, error) {
+func answer[T any](ok *T, bad, unauthorized, missing *acceleration.ErrorResponse, status string) (*T, error) {
 	if ok != nil {
 		return ok, nil
 	}
-	for _, failure := range []*acceleration.Error{bad, unauthorized, missing} {
+	for _, failure := range []*acceleration.ErrorResponse{bad, unauthorized, missing} {
 		if failure != nil {
-			return nil, fmt.Errorf("stream: %s", failure.Error)
+			return nil, fmt.Errorf("stream: %s", failure.Error.Message)
 		}
 	}
 	return nil, fmt.Errorf("stream: the router answered %s", status)

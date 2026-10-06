@@ -14,8 +14,8 @@ pub const API_KEY_ENV: &str = "STREAM_API_KEY";
 pub const API_SECRET_ENV: &str = "STREAM_API_SECRET";
 pub const AUTHENTICATE_ENV: &str = "STREAM_ACCELERATION_AUTHENTICATE";
 
-/// Where the router is when nothing says otherwise.
-pub const DEFAULT_URL: &str = "http://localhost:8080";
+/// Stream's hosted router, which is where a client goes when nothing says otherwise.
+pub const DEFAULT_URL: &str = "https://accelerate.gcp.stream-io-api.com";
 
 /// How long a token minted here lasts. Short, because one is minted per request.
 pub const TOKEN_VALIDITY_SECONDS: u64 = 60 * 60;
@@ -29,7 +29,8 @@ pub const TOKEN_VALIDITY_SECONDS: u64 = 60 * 60;
 /// Go, Python and JavaScript SDKs read.
 #[derive(Debug, Clone, Default)]
 pub struct ClientOptions {
-    /// The router's base URL. Falls back to `STREAM_ACCELERATION_URL`, then localhost.
+    /// The router's base URL. Falls back to `STREAM_ACCELERATION_URL`, then Stream's hosted
+    /// router, so only a self-hosted or local router needs it.
     pub url: Option<String>,
     /// Who the work is billed to, taken at face value, for a router with no keys in front
     /// of it. Falls back to `STREAM_ACCELERATION_CUSTOMER_ID`.
@@ -47,7 +48,8 @@ pub struct ClientOptions {
     /// the sessions opened belong to that user and their own device can reach them.
     pub user_id: Option<String>,
     /// Whether the router is reached through Stream's authenticating proxy, which wants the
-    /// credential spelled its own way. Falls back to `STREAM_ACCELERATION_AUTHENTICATE`.
+    /// credential spelled its own way. On for the hosted router; anywhere else it falls back
+    /// to `STREAM_ACCELERATION_AUTHENTICATE`.
     pub authenticate: Option<bool>,
     /// The HTTP client to send with, for a caller that wants its own proxy or timeouts.
     pub http: Option<reqwest::Client>,
@@ -101,7 +103,7 @@ impl Backend {
         });
         let authenticate = options
             .authenticate
-            .unwrap_or_else(|| flag(env(AUTHENTICATE_ENV)));
+            .unwrap_or_else(|| flag(env(AUTHENTICATE_ENV)) || url == DEFAULT_URL);
 
         if authenticate && api_key.is_empty() {
             return Err(Error::configuration(format!(

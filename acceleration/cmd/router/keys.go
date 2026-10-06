@@ -54,9 +54,9 @@ func runKeys(args []string, settings config.Config, logger *slog.Logger) error {
 	}
 	defer pgStore.Close()
 
-	sealer, err := auth.NewSealer(settings.Auth.KEK)
+	sealer, err := loadKeyring(settings, "minting a key needs")
 	if err != nil {
-		return fmt.Errorf("minting a key needs auth.kek, which is what seals its secret: %w", err)
+		return err
 	}
 
 	app, err := resolveApp(ctx, pgStore, *appID, *appName, *orgName)

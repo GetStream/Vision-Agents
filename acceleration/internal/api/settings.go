@@ -130,7 +130,7 @@ func (s *Server) registerSettings(api huma.API) {
 func (s *Server) getAppSettings(ctx context.Context, _ *struct{}) (*appSettingsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	settings := StreamSettings{
 		Tenancy:     s.tenancy(),
@@ -149,7 +149,7 @@ func (s *Server) getAppSettings(ctx context.Context, _ *struct{}) (*appSettingsR
 		return nil, streamWaiting()
 	}
 	if err != nil {
-		return nil, huma.Error503ServiceUnavailable("which Stream app this app acts in could not be read")
+		return nil, unavailable("which Stream app this app acts in could not be read")
 	}
 	settings.WritesInto = s.writesInto(customerID, bound.Identity)
 	if readiness, err := s.stream.Readiness(ctx, bound); err == nil {

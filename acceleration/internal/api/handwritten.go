@@ -47,7 +47,10 @@ func documentHandWritten(api huma.API) {
 			"response_started_at, state_started_at, finished_at, duration_ms, saved, " +
 			"persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, " +
 			"title, status, phase, summary, immutable started_at, execution_started_at, finished_at " +
-			"and duration_ms. Activity states are thinking, queued, tools, writing, completed, " +
+			"and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin " +
+			"the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: " +
+			"a client shows it as a button opening authorize_url. Once the user finishes that login " +
+			"the message is sent again with the attachment's status set to connected. Activity states are thinking, queued, tools, writing, completed, " +
 			"failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; " +
 			"tool_ran also includes tool_call_id.\n" +
 			"A respond command carrying command_id emits command_accepted with a nested command " +
@@ -305,6 +308,30 @@ func documentHandWritten(api huma.API) {
 		},
 	})
 	document.AddOperation(&huma.Operation{
+		OperationID: "receiveConnectorEvent",
+		Method:      http.MethodPost,
+		Path:        connectorEventsPath + "{connector_id}",
+		Summary:     "Receive a connector's provider event",
+		Description: "Where a provider delivers the events of a built-in connector: Slack's tokens_revoked " +
+			"and app_uninstalled to the operator's Slack app's Request URL, for one. Unauthenticated " +
+			"because the provider is not a customer: each request is checked by the verifier the " +
+			"connector's manifest names (channel.verifier) against the operator's secret, and an " +
+			"unsigned or stale one changes nothing. A URL verification is answered with its " +
+			"challenge as text/plain. A signal that a grant ended moves every connection of that " +
+			"account to needs_reauthorization; a message goes to the channel bridge. The body is " +
+			"at most 256 KiB. No SDK wraps it: only a provider calls it.",
+		Security: []map[string][]string{},
+		Parameters: []*huma.Param{
+			{Name: "connector_id", In: "path", Description: "A built-in connector id such as slack.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The event is taken, or a URL verification's challenge, echoed", Content: map[string]*huma.MediaType{"text/plain": {Schema: &huma.Schema{Type: huma.TypeString}}}},
+			"401": {Description: "The request is not signed by the provider, or its signed timestamp is more than the manifest's max_age from now"},
+			"404": {Description: "This connector takes no events here"},
+			"413": {Description: "The event is over 256 KiB"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
 		OperationID: "getPluginLogo",
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/plugins/{plugin_id}/logo",
@@ -426,7 +453,7 @@ func documentHandWritten(api huma.API) {
 			"400": {Ref: "#/components/responses/BadRequest"},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
-			"503": {Description: "Log storage is unavailable.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[Error](), true, "")}}},
+			"503": {Description: "Log storage is unavailable.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 		},
 	})
 	document.AddOperation(&huma.Operation{
@@ -441,7 +468,7 @@ func documentHandWritten(api huma.API) {
 			"200": {Description: "One log with full safe metadata.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[AgentLog](), true, "")}}},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
-			"503": {Description: "Log storage is unavailable.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[Error](), true, "")}}},
+			"503": {Description: "Log storage is unavailable.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 			"404": {Ref: "#/components/responses/NotFound"},
 		},
 	})
@@ -470,7 +497,7 @@ func documentHandWritten(api huma.API) {
 			"400": {Ref: "#/components/responses/BadRequest"},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
-			"503": {Description: "Log storage is unavailable.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[Error](), true, "")}}},
+			"503": {Description: "Log storage is unavailable.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 		},
 	})
 	document.AddOperation(&huma.Operation{
@@ -496,7 +523,7 @@ func documentHandWritten(api huma.API) {
 			"400": {Ref: "#/components/responses/BadRequest"},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
-			"503": {Description: "This deployment has no database to export from.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[Error](), true, "")}}},
+			"503": {Description: "This deployment has no database to export from.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 		},
 	})
 	document.AddOperation(&huma.Operation{
@@ -523,7 +550,7 @@ func documentHandWritten(api huma.API) {
 			"400": {Ref: "#/components/responses/BadRequest"},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
-			"503": {Description: "This deployment has no database to import into.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[Error](), true, "")}}},
+			"503": {Description: "This deployment has no database to import into.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 		},
 	})
 	document.AddOperation(&huma.Operation{
@@ -548,8 +575,8 @@ func documentHandWritten(api huma.API) {
 			"400": {Ref: "#/components/responses/BadRequest"},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
-			"410": {Description: "The changes since that cursor are no longer kept, so export again.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[Error](), true, "")}}},
-			"503": {Description: "This deployment has no database to read changes from.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[Error](), true, "")}}},
+			"410": {Description: "The changes since that cursor are no longer kept, so export again.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
+			"503": {Description: "This deployment has no database to read changes from.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 		},
 	})
 }

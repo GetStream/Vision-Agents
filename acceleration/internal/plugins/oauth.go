@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,12 +19,35 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
+// ErrClientRequired is a plugin that registers no OAuth client on the fly, logged into for
+// an agent that set none, on a deployment that has none of its own either.
+var ErrClientRequired = errors.New("needs an OAuth client set for this agent")
+
+// Client is an OAuth client registered with a provider in advance.
+type Client struct {
+	ID     string
+	Secret string
+}
+
+// Owner is the agent config a login is made for.
+type Owner struct {
+	CustomerID string
+	ConfigID   string
+}
+
+// ClientLookup finds the client an agent config set for a plugin. found is false when it
+// set none, which is not an error.
+type ClientLookup func(ctx context.Context, owner Owner, pluginID string) (client Client, found bool, err error)
+
 // Auth is the OAuth 2.1 + PKCE client used to connect a hosted MCP server.
 type Auth struct {
 	// HTTP reaches the servers and their auth servers. Nil reaches only public hosts.
 	HTTP         *http.Client
 	PublicURL    string
 	DashboardURL string
+	// Clients finds the client an agent set for a plugin, which comes before this
+	// deployment's own. Nil means no agent has one.
+	Clients ClientLookup
 }
 
 // Pending is what authorize has to remember so the callback can finish the login.
@@ -71,7 +95,7 @@ type tokenResponse struct {
 const CallbackPath = "/v1/agents/plugins/callback"
 
 // StartAuthorize discovers the provider and returns the URL the browser should open.
-func (a *Auth) StartAuthorize(ctx context.Context, plugin Plugin, instance string) (Pending, error) {
+func (a *Auth) StartAuthorize(ctx context.Context, owner Owner, plugin Plugin, instance string) (Pending, error) {
 	endpoint, err := plugin.Endpoint(instance)
 	if err != nil {
 		return Pending{}, err
@@ -87,9 +111,15 @@ func (a *Auth) StartAuthorize(ctx context.Context, plugin Plugin, instance strin
 
 	clientID := ""
 	if !plugin.ByURL {
-		clientID, _ = envClient(plugin.ID)
+		preregistered, err := a.preregistered(ctx, owner, plugin.ID)
+		if err != nil {
+			return Pending{}, err
+		}
+		clientID = preregistered.ID
 	}
-	if clientID == "" && meta.RegistrationEndpoint != "" {
+	// A plugin that needs a client may still advertise registration, as Gong does for the
+	// clients it has approved: registering would only fail, less clearly than saying so.
+	if clientID == "" && meta.RegistrationEndpoint != "" && !plugin.ClientRequired {
 		registered, err := a.register(ctx, transport, meta.RegistrationEndpoint)
 		if err != nil {
 			return Pending{}, err
@@ -100,10 +130,7 @@ func (a *Auth) StartAuthorize(ctx context.Context, plugin Plugin, instance strin
 		return Pending{}, stack.Wrap(fmt.Errorf("plugins: %s does not advertise dynamic client registration", plugin.Name))
 	}
 	if clientID == "" {
-		return Pending{}, stack.Wrap(fmt.Errorf(
-			"plugins: %s needs %s_MCP_CLIENT_ID (it does not advertise dynamic registration)",
-			plugin.Name, strings.ToUpper(plugin.ID),
-		))
+		return Pending{}, stack.Wrap(fmt.Errorf("plugins: %s %w", plugin.Name, ErrClientRequired))
 	}
 
 	verifier, challenge, err := pkce()
@@ -118,7 +145,7 @@ func (a *Auth) StartAuthorize(ctx context.Context, plugin Plugin, instance strin
 	query := url.Values{}
 	query.Set("response_type", "code")
 	query.Set("client_id", clientID)
-	query.Set("redirect_uri", a.callbackURL())
+	query.Set("redirect_uri", a.CallbackURL())
 	query.Set("state", state)
 	query.Set("code_challenge", challenge)
 	query.Set("code_challenge_method", "S256")
@@ -145,14 +172,16 @@ func (a *Auth) StartAuthorize(ctx context.Context, plugin Plugin, instance strin
 }
 
 // Exchange finishes the login with the code the provider sent back.
-func (a *Auth) Exchange(ctx context.Context, pending Pending, code string) (Token, error) {
+func (a *Auth) Exchange(ctx context.Context, owner Owner, pending Pending, code string) (Token, error) {
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
 	form.Set("code", code)
-	form.Set("redirect_uri", a.callbackURL())
+	form.Set("redirect_uri", a.CallbackURL())
 	form.Set("client_id", pending.ClientID)
 	form.Set("code_verifier", pending.CodeVerifier)
-	setClientSecret(form, pending.PluginID, pending.ClientID)
+	if err := a.setClientSecret(ctx, form, owner, pending.PluginID, pending.ClientID); err != nil {
+		return Token{}, err
+	}
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, pending.TokenEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -189,7 +218,7 @@ func (a *Auth) Exchange(ctx context.Context, pending Pending, code string) (Toke
 }
 
 // Refresh renews an access token. Empty refresh token is a no-op miss.
-func (a *Auth) Refresh(ctx context.Context, pluginID, tokenEndpoint, clientID, refreshToken string) (Token, error) {
+func (a *Auth) Refresh(ctx context.Context, owner Owner, pluginID, tokenEndpoint, clientID, refreshToken string) (Token, error) {
 	if refreshToken == "" || tokenEndpoint == "" {
 		return Token{}, stack.Wrap(fmt.Errorf("plugins: nothing to refresh"))
 	}
@@ -197,7 +226,9 @@ func (a *Auth) Refresh(ctx context.Context, pluginID, tokenEndpoint, clientID, r
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)
 	form.Set("client_id", clientID)
-	setClientSecret(form, pluginID, clientID)
+	if err := a.setClientSecret(ctx, form, owner, pluginID, clientID); err != nil {
+		return Token{}, err
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return Token{}, stack.Wrap(err)
@@ -237,7 +268,9 @@ func (a *Auth) DashboardRedirect(configID, pluginID string) string {
 	return base + "/agents/" + configID + "?plugin_connected=" + url.QueryEscape(pluginID)
 }
 
-func (a *Auth) callbackURL() string {
+// CallbackURL is where a provider sends the browser back to, which an OAuth client
+// registered in advance has to list as a redirect URI.
+func (a *Auth) CallbackURL() string {
 	return a.base() + CallbackPath
 }
 
@@ -366,7 +399,7 @@ func (a *Auth) discoverServer(ctx context.Context, transport *http.Client, issue
 func (a *Auth) register(ctx context.Context, transport *http.Client, endpoint string) (registration, error) {
 	payload, err := json.Marshal(map[string]any{
 		"client_name":                "Vision Agents",
-		"redirect_uris":              []string{a.callbackURL()},
+		"redirect_uris":              []string{a.CallbackURL()},
 		"grant_types":                []string{"authorization_code", "refresh_token"},
 		"response_types":             []string{"code"},
 		"token_endpoint_auth_method": "none",
@@ -401,19 +434,46 @@ func (a *Auth) register(ctx context.Context, transport *http.Client, endpoint st
 	return body, nil
 }
 
-func envClient(pluginID string) (id, secret string) {
-	prefix := strings.ToUpper(pluginID) + "_MCP_"
-	return os.Getenv(prefix + "CLIENT_ID"), os.Getenv(prefix + "CLIENT_SECRET")
+// preregistered is the client a login to a plugin goes through when the provider registers
+// none on the fly: the one the agent set, then this deployment's own. Empty when neither.
+func (a *Auth) preregistered(ctx context.Context, owner Owner, pluginID string) (Client, error) {
+	if a != nil && a.Clients != nil {
+		client, found, err := a.Clients(ctx, owner, pluginID)
+		if err != nil {
+			return Client{}, err
+		}
+		if found {
+			return client, nil
+		}
+	}
+	return envClient(pluginID), nil
 }
 
-// setClientSecret authenticates the deployment's own client at the token endpoint
+// HasClient reports whether a login to the plugin for owner has a client registered in
+// advance, the agent's own or the deployment's.
+func (a *Auth) HasClient(ctx context.Context, owner Owner, pluginID string) (bool, error) {
+	client, err := a.preregistered(ctx, owner, pluginID)
+	return client.ID != "", err
+}
+
+func envClient(pluginID string) Client {
+	prefix := strings.ToUpper(pluginID) + "_MCP_"
+	return Client{ID: os.Getenv(prefix + "CLIENT_ID"), Secret: os.Getenv(prefix + "CLIENT_SECRET")}
+}
+
+// setClientSecret authenticates a preregistered client at the token endpoint
 // (client_secret_post), which is how a provider that registers none on the fly, such as
-// Google, wants it. A client registered on the fly is public and sends none.
-func setClientSecret(form url.Values, pluginID, clientID string) {
-	envID, secret := envClient(pluginID)
-	if envID != "" && envID == clientID && secret != "" {
-		form.Set("client_secret", secret)
+// Google, wants it. The secret is looked up again each time, so a rotated one is used at
+// once. A client registered on the fly is public and sends none.
+func (a *Auth) setClientSecret(ctx context.Context, form url.Values, owner Owner, pluginID, clientID string) error {
+	client, err := a.preregistered(ctx, owner, pluginID)
+	if err != nil {
+		return err
 	}
+	if client.ID != "" && client.ID == clientID && client.Secret != "" {
+		form.Set("client_secret", client.Secret)
+	}
+	return nil
 }
 
 func getJSON(ctx context.Context, transport *http.Client, url string, target any) error {

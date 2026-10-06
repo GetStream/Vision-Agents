@@ -28,8 +28,9 @@ type Scheme interface {
 	// the StoredCredentials; the resolver persists what comes back under the lock. A
 	// failed renewal returns an *OutcomeError and no StoredCredentials, and, while the old
 	// access credential has not expired yet, that credential beside the error, so the call
-	// can still go out.
-	Retrieve(ctx context.Context, stored StoredCredentials, m ResolvedManifest) (AccessCredential, StoredCredentials, error)
+	// can still go out. opts says how long the credential must work and what to call
+	// before a renewal that cannot be taken back (RetrieveOptions).
+	Retrieve(ctx context.Context, stored StoredCredentials, m ResolvedManifest, opts RetrieveOptions) (AccessCredential, StoredCredentials, error)
 	// Wrap applies the credential to every outbound request: a header, a signature or a TLS
 	// client certificate. base is the egress transport (egress.NewClient passes it), so
 	// Wrap runs first and the egress check runs on the request Wrap produced, right before
@@ -72,6 +73,29 @@ type CompleteInput struct {
 	// Supplied is what the developer gave a non-interactive scheme: an API key, a token,
 	// a client secret. It is secret and goes into StoredCredentials, never into AccountInfo.
 	Supplied map[string]string
+}
+
+// RetrieveOptions is what the resolver asks of one Retrieve, beside the stored credentials.
+// The zero value asks for nothing: the scheme renews only inside its own margin and has no
+// checkpoint to call, as when a test calls Retrieve directly.
+type RetrieveOptions struct {
+	// ValidUntil is when the access credential must still work: the call's
+	// CredentialRequest.Deadline. A scheme that can renew renews a credential that expires
+	// at or before it, as it renews one inside its own margin. Zero asks for nothing more
+	// than the margin.
+	ValidUntil time.Time
+	// Checkpoint commits, under the credential store's lock, that the outcome is not known
+	// yet (CredentialStore.Update's checkpoint). A scheme calls it right before a request it
+	// cannot take back, such as spending a rotating refresh token, and sends nothing when it
+	// fails, so a crash or a lost answer is never followed by the same request again. Nil
+	// has nothing to commit.
+	Checkpoint func() error
+	// Refused says the provider refused the access credential stored holds now
+	// (CredentialRequest.Refused): its expiry no longer says it works. A scheme that can
+	// renew renews it, whatever that expiry, as it renews one that is due; one that cannot
+	// returns it as it would otherwise. A provider's clock ahead of the router's, or a token
+	// it ended early, is how a credential that has not expired gets refused.
+	Refused bool
 }
 
 // AccountInfo is what Complete learned that is public: it is stored on the connection,
@@ -120,7 +144,10 @@ func (s StoredCredentials) LogValue() slog.Value {
 type AccessCredential struct {
 	Scheme    string
 	ExpiresAt time.Time
-	secret    json.RawMessage
+	// Revision is the CredentialState.Revision of the StoredCredentials it came from. The
+	// resolver sets it, and Resolver.Invalidate reads it back; a scheme leaves it zero.
+	Revision int
+	secret   json.RawMessage
 }
 
 // NewAccessCredential is how a scheme in its own package builds an AccessCredential at all, since the

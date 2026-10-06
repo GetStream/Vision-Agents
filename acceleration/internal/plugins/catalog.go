@@ -30,6 +30,13 @@ type Plugin struct {
 	// InstanceRequired means the URL is a template that needs a shop or org hostname.
 	InstanceRequired bool   `yaml:"instance_required"`
 	InstanceHint     string `yaml:"instance_hint"`
+	// ClientRequired means the provider registers no OAuth client on the fly, so logging
+	// in needs one registered in advance: the agent's own, or this deployment's.
+	ClientRequired bool `yaml:"client_required"`
+	// SetupURL is where the app creates that client, and SetupSteps what to do there, in
+	// order, for a dashboard to show beside the form the client is pasted into.
+	SetupURL   string      `yaml:"setup_url"`
+	SetupSteps []SetupStep `yaml:"setup_steps"`
 	// Scopes are asked for at consent. Empty asks for none and takes the server's default.
 	Scopes []string `yaml:"scopes"`
 	// ScopesSupported are what the server's protected-resource metadata says it accepts,
@@ -51,6 +58,12 @@ type Plugin struct {
 	// Its login registers a client of its own, never the deployment's, and asks for the
 	// scopes its server advertises when given none.
 	ByURL bool `yaml:"-"`
+}
+
+// SetupStep is one thing to do with the provider before its client can be pasted in.
+type SetupStep struct {
+	Title       string `yaml:"title"`
+	Description string `yaml:"description"`
 }
 
 // Options are what an agent config changes about a catalog plugin.

@@ -55,7 +55,7 @@ func (s *APIKeySuite) SetupTest() {
 func (s *APIKeySuite) TestTheKeyGoesInTheHeaderTheDeveloperNamedInAnyCase() {
 	provider := provider(s.T(), "X-Shop-Access-Token")
 	stored := s.complete(map[string]string{apikey.SuppliedKey: key, apikey.SuppliedHeader: "x-shop-access-token"})
-	credential, _, err := s.scheme.Retrieve(context.Background(), stored, core.ResolvedManifest{})
+	credential, _, err := s.scheme.Retrieve(context.Background(), stored, core.ResolvedManifest{}, core.RetrieveOptions{})
 	s.Require().NoError(err)
 
 	client := &http.Client{Transport: s.scheme.Wrap(provider.Client().Transport, credential)}

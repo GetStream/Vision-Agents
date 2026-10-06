@@ -31,22 +31,22 @@ Go goes first, and later on we update the others.
 
 Everything reads the repo-root `.env` for provider credentials.
 
-The backend and dashboard together:
+Run the router in Docker, with the Volt dashboard's override (see the `dashboard` skill):
 
 ```bash
-docker compose up --build
+docker compose -f compose.yaml -f ../volt-dashboard/docs/local-agents/compose.volt.yaml up -d --build router
 ```
 
-That serves the router on `:8080` and the dashboard on `:3000`, with Postgres on
-`:55432` and Redis on `:56379`. Those two ports are also what the standalone `va-pg`
-and `va-redis` containers use, so stop those first if they are running.
+That serves the router on `:8080`, with Postgres on `:55432` and Redis on `:56379`, its data
+in the `vision-agents_pgdata` volume. Rerun it after router changes so you never test an old
+build. Those two ports are also what the standalone `va-pg` and `va-redis` containers use, so
+stop those first if they are running.
 
-Without Docker, against the same Postgres and Redis:
+`.env` must set `ROUTER_AUTH_KEK` (single-quoted: compose expands a `$` in it) and
+`ROUTER_PUBLIC_URL=http://localhost:8080`. Without the KEK no plugin client secret can be
+saved, and changing it leaves the stored ones unreadable.
 
-```bash
-go run ./cmd/router            # in acceleration/
-npm run dev                    # in dashboard/, needs node >= 20.9
-```
+Logs: `docker compose logs -f router`.
 
 An agent, once the router is up:
 
@@ -81,8 +81,13 @@ is never edited by hand.
 - Describe fields with `doc:` tags and constrain them with `minimum:`, `enum:`, `readOnly:` and
   the rest, so what validates a request is also what documents it. A type's own description goes
   in a `TransformSchema` method, and a named string enum in a `Schema` method using `namedEnum`.
-- Fail with `huma.Error400BadRequest(...)` and its siblings. They answer in the API's
-  `{"error": "..."}` shape, and a request that fails validation is a 400.
+- Fail with an `APIError` (`internal/api/apierror.go`): `invalidRequest(...)`, `notFound(...)`
+  and their siblings, whose type decides the status. A failure answered from several places is
+  an `APIError` value of its own, named `errX` (`errUnknownConfig`, `errNoSessions`, built with
+  `notConfigured(...)` for a feature the deployment lacks), returned as is: one code, one status,
+  everywhere. Every failure is the `{"error": {"message", "type", "code",
+  "doc_url"}}` envelope; any other error an operation returns is a 500 saying only "something went
+  wrong", logged with its stack. A request that fails validation is a 400 `validation_failed`.
 - An operation is server-side only unless it sets `Extensions: {"x-client-accessible": true}`.
 - List endpoints page by cursor. Read the `pagination` skill
   (`.claude/skills/pagination/SKILL.md`) before adding one or a `limit` parameter.

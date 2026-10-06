@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -79,10 +80,10 @@ const (
 	consentAccountMismatch = "account_mismatch"
 )
 
-// noAttempt is the one answer for a callback or a handoff whose attempt cannot be used:
+// errNoAttempt is the one answer for a callback or a handoff whose attempt cannot be used:
 // unknown, expired, already used, sealed for another row, or for a deleted connection. One
 // answer, as store.ErrNoAuthorizationAttempt is one error, so a probe learns nothing.
-const noAttempt = "this consent is unknown, expired or already finished: start it again"
+var errNoAttempt = invalidRequest("this consent is unknown, expired or already finished: start it again")
 
 // AuthorizationKind is why an attempt was started.
 type AuthorizationKind string
@@ -166,18 +167,18 @@ func (s *Server) createAuthorization(ctx context.Context, request *createAuthori
 		return nil, err
 	}
 	if s.connectorSecrets == nil || s.credentials == nil {
-		return nil, huma.Error400BadRequest("consents cannot be started: connectors are not enabled on this deployment")
+		return nil, notConfigured("consents cannot be started: connectors are not enabled on this deployment")
 	}
 	// Checked here, not at the callback: a consent the provider cannot send back would
 	// otherwise be found out only after the user approved it.
 	public := strings.TrimRight(s.publicURL, "/")
 	if public == "" {
-		return nil, huma.Error400BadRequest("consents cannot be started: ROUTER_PUBLIC_URL is not set, " +
+		return nil, notConfigured("consents cannot be started: ROUTER_PUBLIC_URL is not set, " +
 			"so the provider has nowhere to send the browser back to")
 	}
 	scheme, found := s.connectors.Schemes[connection.AuthScheme]
 	if !found {
-		return nil, huma.Error400BadRequest(fmt.Sprintf("auth_scheme %q is not one this deployment has", connection.AuthScheme))
+		return nil, invalidRequest(fmt.Sprintf("auth_scheme %q is not one this deployment has", connection.AuthScheme))
 	}
 	manifest, err := s.connectionManifest(ctx, connection, connection.DefinitionRevision)
 	if err != nil {
@@ -185,13 +186,20 @@ func (s *Server) createAuthorization(ctx context.Context, request *createAuthori
 	}
 	ref := core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}
 	begun, err := scheme.Begin(ctx, core.BeginInput{Ref: ref, Manifest: manifest, RedirectURI: public + ConnectorCallbackPath})
+	// The client comes from the app's own record or the operator's environment
+	// (ConnectorClients), so a connector that takes the app's own and finds none says where
+	// to put it.
+	if errors.Is(err, oauth2code.ErrNoClient) && slices.Contains(manifest.Client.Registration, core.ClientCustomer) {
+		return nil, invalidRequest(fmt.Sprintf("the provider's consent could not be started: %v; "+
+			"put the app's own OAuth client with PUT /v1/agents/connectors/%s/oauth-client", err, connection.ConnectorID))
+	}
 	if err != nil {
 		// A scheme's error carries no secret (core AGENTS.md, «Secrets never print»), and it
 		// is what the backend needs to fix: a missing client, an unreachable server.
-		return nil, huma.Error400BadRequest("the provider's consent could not be started: " + err.Error())
+		return nil, invalidRequest("the provider's consent could not be started: " + err.Error())
 	}
 	if begun.Done {
-		return nil, huma.Error400BadRequest(fmt.Sprintf("auth_scheme %q needs no consent", connection.AuthScheme))
+		return nil, invalidRequest(fmt.Sprintf("auth_scheme %q needs no consent", connection.AuthScheme))
 	}
 	state, err := authorizeState(begun.AuthorizeURL)
 	if err != nil {
@@ -235,7 +243,7 @@ func (s *Server) createAuthorization(ctx context.Context, request *createAuthori
 	})
 	// Deleted between the read above and the insert.
 	if errors.Is(err, store.ErrNoConnectorConnection) {
-		return nil, huma.Error404NotFound(noSuchConnection)
+		return nil, errNoSuchConnection
 	}
 	if err != nil {
 		return nil, err
@@ -285,15 +293,15 @@ const launchPolicy = "default-src 'none'; script-src 'nonce-%s'; connect-src 'se
 
 // serveConnectorLaunch renders the launch page. It names no attempt and checks none: the
 // handoff that follows is what is checked, so the page alone gives nothing away.
-func (s *Server) serveConnectorLaunch(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) serveConnectorLaunch(w http.ResponseWriter, r *http.Request) {
 	dashboard, err := originOf(s.dashboardURL)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "consents cannot be launched: DASHBOARD_BASE_URL is not an http(s) URL")
+		writeFailure(w, r, fmt.Errorf("consents cannot be launched: DASHBOARD_BASE_URL is not an http(s) URL: %w", err))
 		return
 	}
 	nonce, err := randomToken(nonceBytes)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not start the consent")
+		writeFailure(w, r, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -323,60 +331,60 @@ func (s *Server) serveConnectorLaunch(w http.ResponseWriter, _ *http.Request) {
 // the token is single-use.
 func (s *Server) handOffConnectorLaunch(w http.ResponseWriter, r *http.Request) {
 	if s.store == nil || s.connectorSecrets == nil {
-		writeError(w, http.StatusBadRequest, noAttempt)
+		writeError(w, errNoAttempt)
 		return
 	}
 	public, err := originOf(s.publicURL)
 	if err != nil || r.Header.Get("Origin") != public {
-		writeError(w, http.StatusForbidden, "the handoff must come from the launch page")
+		writeError(w, forbidden("the handoff must come from the launch page"))
 		return
 	}
 	var body struct {
 		HandoffToken string `json:"handoff_token"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxHandoffBody)).Decode(&body); err != nil || body.HandoffToken == "" {
-		writeError(w, http.StatusBadRequest, "the handoff needs a handoff_token")
+		writeError(w, invalidRequest("the handoff needs a handoff_token"))
 		return
 	}
 	row, sealed, err := s.openAttemptByID(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNoAuthorizationAttempt) {
-		writeError(w, http.StatusBadRequest, noAttempt)
+		writeError(w, errNoAttempt)
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not read the consent")
+		writeFailure(w, r, err)
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(body.HandoffToken), []byte(sealed.Handoff)) != 1 {
-		writeError(w, http.StatusForbidden, "that is not this consent's handoff token")
+		writeError(w, forbidden("that is not this consent's handoff token"))
 		return
 	}
 	if sealed.Cookie != "" {
-		writeError(w, http.StatusBadRequest, noAttempt)
+		writeError(w, errNoAttempt)
 		return
 	}
 	sealed.Cookie, err = randomToken(handoffBytes)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not start the consent")
+		writeFailure(w, r, err)
 		return
 	}
 	raw, err := json.Marshal(sealed)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not start the consent")
+		writeFailure(w, r, err)
 		return
 	}
 	resealed, err := s.connectorSecrets.SealWithAAD(string(raw), attemptAAD(row.CustomerID, row.ConnectionID, row.ID))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not start the consent")
+		writeFailure(w, r, err)
 		return
 	}
 	err = s.store.HandOffConnectorAuthorizationAttempt(r.Context(), row.ID, row.AttemptSealed, resealed, s.connectorSecrets.CurrentVersion())
 	if errors.Is(err, store.ErrNoAuthorizationAttempt) {
-		writeError(w, http.StatusBadRequest, noAttempt)
+		writeError(w, errNoAttempt)
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not start the consent")
+		writeFailure(w, r, err)
 		return
 	}
 	http.SetCookie(w, s.attemptCookie(row.ID, sealed.Cookie, row.ExpiresAt))
@@ -405,35 +413,35 @@ func (s *Server) finishConnectorConsent(w http.ResponseWriter, r *http.Request) 
 	query := r.URL.Query()
 	states := query["state"]
 	if len(states) != 1 || states[0] == "" {
-		writeError(w, http.StatusBadRequest, "the callback needs exactly one state")
+		writeError(w, invalidRequest("the callback needs exactly one state"))
 		return
 	}
 	if s.store == nil || s.connectorSecrets == nil || s.credentials == nil {
-		writeError(w, http.StatusBadRequest, noAttempt)
+		writeError(w, errNoAttempt)
 		return
 	}
 	row, sealed, err := s.openAttemptByState(ctx, states[0])
 	if errors.Is(err, store.ErrNoAuthorizationAttempt) {
-		writeError(w, http.StatusBadRequest, noAttempt)
+		writeError(w, errNoAttempt)
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not read the consent")
+		writeFailure(w, r, err)
 		return
 	}
 	// An attempt not handed off yet has no cookie value, and an empty cookie must not match it.
 	cookie, err := r.Cookie(attemptCookiePrefix + row.ID)
 	if err != nil || sealed.Cookie == "" || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(sealed.Cookie)) != 1 {
-		writeError(w, http.StatusForbidden, "finish the consent in the browser that started it")
+		writeError(w, forbidden("finish the consent in the browser that started it"))
 		return
 	}
 	consumed, err := s.store.ConsumeConnectorAuthorizationAttempt(ctx, states[0])
 	if errors.Is(err, store.ErrNoAuthorizationAttempt) || err == nil && consumed.ID != row.ID {
-		writeError(w, http.StatusBadRequest, noAttempt)
+		writeError(w, errNoAttempt)
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not read the consent")
+		writeFailure(w, r, err)
 		return
 	}
 	http.SetCookie(w, s.attemptCookie(row.ID, "", time.Time{}))
@@ -441,7 +449,7 @@ func (s *Server) finishConnectorConsent(w http.ResponseWriter, r *http.Request) 
 	outcome := s.completeConsent(ctx, row, sealed, query)
 	destination, err := url.Parse(s.dashboardURL)
 	if err != nil || s.dashboardURL == "" {
-		writeError(w, http.StatusInternalServerError, "the consent ended as "+outcome+", and DASHBOARD_BASE_URL is not set to go back to")
+		writeFailure(w, r, errors.Join(fmt.Errorf("the consent ended as %s, and DASHBOARD_BASE_URL is not set to go back to", outcome), err))
 		return
 	}
 	back := destination.Query()
@@ -535,7 +543,7 @@ func (s *Server) beforeComplete(ctx context.Context, manifest core.ResolvedManif
 func (s *Server) serveConnectorClientMetadata(w http.ResponseWriter, _ *http.Request) {
 	clientID := ConnectorClientMetadataURL(s.publicURL)
 	if clientID == "" {
-		writeError(w, http.StatusNotFound, "no client metadata document: ROUTER_PUBLIC_URL is not an https URL")
+		writeError(w, notFound("no client metadata document: ROUTER_PUBLIC_URL is not an https URL"))
 		return
 	}
 	document := oauth2code.ClientMetadataDocument(clientID,

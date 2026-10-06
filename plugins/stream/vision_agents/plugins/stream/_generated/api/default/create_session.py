@@ -6,7 +6,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.create_session_request import CreateSessionRequest
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...models.session import Session
 from ...types import Response
 
@@ -32,34 +32,34 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | Session | None:
+) -> ErrorResponse | Session | None:
     if response.status_code == 201:
         response_201 = Session.from_dict(response.json())
 
         return response_201
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 404:
-        response_404 = Error.from_dict(response.json())
+        response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
 
     if response.status_code == 409:
-        response_409 = Error.from_dict(response.json())
+        response_409 = ErrorResponse.from_dict(response.json())
 
         return response_409
 
     if response.status_code == 500:
-        response_500 = Error.from_dict(response.json())
+        response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
 
@@ -71,7 +71,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | Session]:
+) -> Response[ErrorResponse | Session]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -84,7 +84,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CreateSessionRequest,
-) -> Response[Error | Session]:
+) -> Response[ErrorResponse | Session]:
     """Join a call as a voice agent
 
      The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it
@@ -102,7 +102,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | Session]
+        Response[ErrorResponse | Session]
     """
 
     kwargs = _get_kwargs(
@@ -120,7 +120,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: CreateSessionRequest,
-) -> Error | Session | None:
+) -> ErrorResponse | Session | None:
     """Join a call as a voice agent
 
      The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it
@@ -138,7 +138,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | Session
+        ErrorResponse | Session
     """
 
     return sync_detailed(
@@ -151,7 +151,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CreateSessionRequest,
-) -> Response[Error | Session]:
+) -> Response[ErrorResponse | Session]:
     """Join a call as a voice agent
 
      The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it
@@ -169,7 +169,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | Session]
+        Response[ErrorResponse | Session]
     """
 
     kwargs = _get_kwargs(
@@ -185,7 +185,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: CreateSessionRequest,
-) -> Error | Session | None:
+) -> ErrorResponse | Session | None:
     """Join a call as a voice agent
 
      The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it
@@ -203,7 +203,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | Session
+        ErrorResponse | Session
     """
 
     return (

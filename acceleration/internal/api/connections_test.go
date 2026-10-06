@@ -431,7 +431,7 @@ func (s *ConnectionsWithoutConnectorsSuite) TestACreateSaysConnectorsAreNotEnabl
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/connections", appOwned("linear"))
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Equal(connectorsOff, failure, "not a scheme or an input the caller never chose")
+	s.Equal(errConnectorsOff.Message, failure, "not a scheme or an input the caller never chose")
 }
 
 func (s *ConnectionsWithoutConnectorsSuite) TestTheListStillAnswers() {

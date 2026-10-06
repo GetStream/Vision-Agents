@@ -62,7 +62,7 @@ func (s *ConnectorsSuite) TestWhatTheRouterReadsToConnectIsNeverShown() {
 	s.Require().NoError(json.Unmarshal(raw, &shown))
 	for _, withheld := range []string{
 		"endpoints", "vars", "authorize_params", "token_params", "identity", "capture",
-		"refresh", "rate_limit", "sources", "hooks", "manifest",
+		"refresh", "rate_limit", "sources", "hooks", "manifest", "channel",
 	} {
 		s.NotContains(shown, withheld)
 	}
@@ -108,9 +108,10 @@ func (s *ConnectorsSuite) TestAnIdThatWouldShadowABuiltInIsRefused() {
 	status, raw := s.serverClient.call(http.MethodPost, "/v1/agents/connectors", s.customConnector("slack"))
 
 	s.Equal(http.StatusBadRequest, status)
-	var answered map[string]string
-	s.Require().NoError(json.Unmarshal(raw, &answered), "the {\"error\": ...} shape: %s", raw)
-	s.Contains(answered["error"], "custom_")
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(raw, &answered), "the error envelope: %s", raw)
+	s.Contains(answered.Error.Message, "custom_")
+	s.Equal(ErrorTypeInvalidRequest, answered.Error.Type)
 	s.Equal(before, s.get("slack"), "the built-in is untouched")
 }
 

@@ -118,6 +118,22 @@ async fn the_proxy_is_given_the_credential_its_own_way() {
 }
 
 #[test]
+fn a_client_that_names_no_router_goes_to_the_hosted_one() {
+    if std::env::var(vision_agents::URL_ENV).is_ok() {
+        return;
+    }
+    let api = Client::new(ClientOptions {
+        api_key: Some("key".into()),
+        token: Some("token-for-jim".into()),
+        user_id: Some("jlahey".into()),
+        ..Default::default()
+    })
+    .unwrap();
+
+    assert_eq!(api.url(), vision_agents::DEFAULT_URL);
+}
+
+#[test]
 fn a_client_that_does_not_say_who_is_calling_is_refused() {
     let refused = Client::new(ClientOptions {
         url: Some("http://localhost:1".into()),

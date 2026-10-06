@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
-import { Backend, ConfigurationError, signToken } from "../src/index.js";
+import { Backend, ConfigurationError, DEFAULT_URL, signToken } from "../src/index.js";
 import { TestRouter, claimsOf } from "./router.js";
 
 describe("Backend", () => {
@@ -24,6 +24,19 @@ describe("Backend", () => {
     const backend = new Backend({ url: "http://localhost:8080" });
 
     await assert.rejects(() => backend.headers(), ConfigurationError);
+  });
+
+  it("goes to the hosted router, through the proxy, when nothing names another", () => {
+    const backend = new Backend({ apiKey: "vak_live_x", token: "token-for-jim" });
+
+    assert.equal(backend.url, DEFAULT_URL);
+    assert.equal(backend.authenticate, true);
+  });
+
+  it("leaves the proxy off for a router it was pointed at", () => {
+    const backend = new Backend({ url: "http://localhost:8080", customerId: "examples" });
+
+    assert.equal(backend.authenticate, false);
   });
 
   it("refuses a request from a key with neither the secret it belongs to nor a token", async () => {

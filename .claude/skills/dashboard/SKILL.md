@@ -37,6 +37,10 @@ Open `https://local.getstream.io:3011/organization/<orgId>/<appId>/agents/` (not
 the dev proxy sets, with Volt's
 CORS origin. Rebuild the router after pulling router changes.
 
+Set `ROUTER_AUTH_KEK` (single-quoted) and `ROUTER_PUBLIC_URL=http://localhost:8080` in the
+repo-root `.env`, which compose hands the router. Without the KEK no plugin client secret can be
+saved, and changing it leaves the stored ones unreadable.
+
 ## How Agents is wired
 
 - Dev-only. `src/api/agents.ts` throws outside `import.meta.env.DEV`.

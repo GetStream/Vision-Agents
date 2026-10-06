@@ -338,7 +338,7 @@ func (s *Service) connection(ctx context.Context, config store.AgentConfig, logi
 	return plugins.Connection{
 		PluginID:    login.PluginID,
 		Endpoint:    endpoint,
-		AccessToken: session.FreshToken(ctx, s.store, &login, s.logger),
+		AccessToken: session.FreshToken(ctx, s.store, s.auth, &login, s.logger),
 	}, nil
 }
 

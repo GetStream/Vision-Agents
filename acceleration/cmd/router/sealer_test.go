@@ -50,6 +50,26 @@ func (s *ConnectorSealerSuite) TestProxyStartsWithoutAKEKWhenConnectorsAreOff() 
 	s.NoError(err)
 }
 
+func (s *ConnectorSealerSuite) TestAKeyringIsBuiltWhenSetEvenIfNothingRequiresIt() {
+	// Channels seal a provider's credentials under the keyring when there is one, though
+	// they do not refuse to start without it, so a key set only as ROUTER_AUTH_KEK_V1 has
+	// to reach them as much as connectors and app mode.
+	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+
+	sealer, err := newSecretSealer(s.settings)
+	s.Require().NoError(err)
+	s.Require().NotNil(sealer)
+	s.Equal(1, sealer.CurrentVersion())
+}
+
+func (s *ConnectorSealerSuite) TestAKeyringNothingRequiresIsStillChecked() {
+	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "two")
+
+	_, err := newSecretSealer(s.settings)
+	s.ErrorContains(err, "channels need ROUTER_AUTH_KEK_VERSION to be a positive integer")
+}
+
 func (s *ConnectorSealerSuite) TestProxyWithConnectorsOnRefusesToStartWithoutAKeyring() {
 	s.settings.Connectors.Enabled = true
 

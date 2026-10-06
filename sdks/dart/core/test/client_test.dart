@@ -53,6 +53,13 @@ void main() {
       expect(request.header('X-Customer-Id'), isNull);
     });
 
+    test('goes to the hosted router when no url is named', () {
+      final backend = Backend(apiKey: 'key', token: () async => 'token');
+
+      expect(backend.url, Backend.defaultUrl);
+      expect(backend.url.toString(), 'https://accelerate.gcp.stream-io-api.com');
+    });
+
     test('refuses an api key with no token before sending anything', () {
       expect(() => Backend(url: Uri.parse('http://x'), apiKey: 'key'), throwsArgumentError);
       expect(() => Backend(url: Uri.parse('http://x')), throwsArgumentError);

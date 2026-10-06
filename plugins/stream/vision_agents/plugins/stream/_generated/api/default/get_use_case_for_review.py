@@ -6,7 +6,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...models.use_case_for_review import UseCaseForReview
 from ...types import Response
 
@@ -27,34 +27,34 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | UseCaseForReview | None:
+) -> ErrorResponse | UseCaseForReview | None:
     if response.status_code == 200:
         response_200 = UseCaseForReview.from_dict(response.json())
 
         return response_200
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 404:
-        response_404 = Error.from_dict(response.json())
+        response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
 
     if response.status_code == 409:
-        response_409 = Error.from_dict(response.json())
+        response_409 = ErrorResponse.from_dict(response.json())
 
         return response_409
 
     if response.status_code == 500:
-        response_500 = Error.from_dict(response.json())
+        response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
 
@@ -66,7 +66,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | UseCaseForReview]:
+) -> Response[ErrorResponse | UseCaseForReview]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -79,7 +79,7 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient,
-) -> Response[Error | UseCaseForReview]:
+) -> Response[ErrorResponse | UseCaseForReview]:
     """Get a use case to review
 
      A use case with its app, profile and history.
@@ -94,7 +94,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | UseCaseForReview]
+        Response[ErrorResponse | UseCaseForReview]
     """
 
     kwargs = _get_kwargs(
@@ -112,7 +112,7 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient,
-) -> Error | UseCaseForReview | None:
+) -> ErrorResponse | UseCaseForReview | None:
     """Get a use case to review
 
      A use case with its app, profile and history.
@@ -127,7 +127,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | UseCaseForReview
+        ErrorResponse | UseCaseForReview
     """
 
     return sync_detailed(
@@ -140,7 +140,7 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient,
-) -> Response[Error | UseCaseForReview]:
+) -> Response[ErrorResponse | UseCaseForReview]:
     """Get a use case to review
 
      A use case with its app, profile and history.
@@ -155,7 +155,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | UseCaseForReview]
+        Response[ErrorResponse | UseCaseForReview]
     """
 
     kwargs = _get_kwargs(
@@ -171,7 +171,7 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient,
-) -> Error | UseCaseForReview | None:
+) -> ErrorResponse | UseCaseForReview | None:
     """Get a use case to review
 
      A use case with its app, profile and history.
@@ -186,7 +186,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | UseCaseForReview
+        ErrorResponse | UseCaseForReview
     """
 
     return (

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -188,14 +187,84 @@ func (s *Store) AddConfigPlugin(ctx context.Context, customerID, configID, plugi
 	return s.UpdateAgentConfig(ctx, &config)
 }
 
-// RemoveConfigPlugin drops a plugin name from a config.
-func (s *Store) RemoveConfigPlugin(ctx context.Context, customerID, configID, pluginID string) error {
-	config, err := s.AgentConfig(ctx, customerID, configID)
-	if err != nil {
-		return err
+// ErrUnknownPluginClient is a plugin no OAuth client was set for on the config.
+var ErrUnknownPluginClient = errors.New("store: no client is set for this plugin")
+
+// SavePluginClient sets the OAuth client a config logs into a plugin with, replacing the
+// one set before.
+func (s *Store) SavePluginClient(ctx context.Context, client *PluginClient) error {
+	if client.CustomerID == "" || client.ConfigID == "" || client.PluginID == "" || client.ClientID == "" {
+		return stack.Wrap(errors.New("store: a customer, a config, a plugin and a client id are required"))
 	}
-	config.AgentPlugins = slices.DeleteFunc(config.AgentPlugins, func(entry PluginEntry) bool { return entry.Name == pluginID })
-	return s.UpdateAgentConfig(ctx, &config)
+	now := time.Now().UTC()
+	client.CreatedAt = now
+	client.UpdatedAt = now
+	_, err := s.db.NewInsert().Model(client).
+		On("CONFLICT (customer_id, config_id, plugin_id) DO UPDATE").
+		Set("client_id = EXCLUDED.client_id").
+		Set("secret_sealed = EXCLUDED.secret_sealed").
+		Set("kek_version = EXCLUDED.kek_version").
+		Set("updated_at = EXCLUDED.updated_at").
+		Returning("created_at").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: save plugin client: %w", err))
+	}
+	return nil
+}
+
+// PluginClient is the OAuth client a config logs into a plugin with.
+func (s *Store) PluginClient(ctx context.Context, customerID, configID, pluginID string) (PluginClient, error) {
+	var client PluginClient
+	err := s.db.NewSelect().Model(&client).
+		Where("customer_id = ?", customerID).
+		Where("config_id = ?", configID).
+		Where("plugin_id = ?", pluginID).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PluginClient{}, stack.Wrap(ErrUnknownPluginClient)
+	}
+	if err != nil {
+		return PluginClient{}, stack.Wrap(fmt.Errorf("store: plugin client: %w", err))
+	}
+	return client, nil
+}
+
+// PluginClients are the plugins a config has an OAuth client set for, by plugin id.
+func (s *Store) PluginClients(ctx context.Context, customerID, configID string) (map[string]PluginClient, error) {
+	var clients []PluginClient
+	err := s.db.NewSelect().Model(&clients).
+		Where("customer_id = ?", customerID).
+		Where("config_id = ?", configID).
+		Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: plugin clients: %w", err))
+	}
+	byPlugin := make(map[string]PluginClient, len(clients))
+	for _, client := range clients {
+		byPlugin[client.PluginID] = client
+	}
+	return byPlugin, nil
+}
+
+// DeletePluginClient forgets the OAuth client a config logs into a plugin with.
+func (s *Store) DeletePluginClient(ctx context.Context, customerID, configID, pluginID string) error {
+	result, err := s.db.NewDelete().Model((*PluginClient)(nil)).
+		Where("customer_id = ?", customerID).
+		Where("config_id = ?", configID).
+		Where("plugin_id = ?", pluginID).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: delete plugin client: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: delete plugin client: %w", err))
+	}
+	if affected == 0 {
+		return stack.Wrap(ErrUnknownPluginClient)
+	}
+	return nil
 }
 
 func (s *Store) pluginConnection(ctx context.Context, customerID, configID, userID, pluginID string) (PluginConnection, error) {

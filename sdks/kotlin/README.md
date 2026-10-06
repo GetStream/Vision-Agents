@@ -15,7 +15,8 @@ which is what Stream's SDKs require.
 ## Using them
 
 ```kotlin
-val agents = VisionAgents(url = "https://your-router", customerId = "acme")
+val agents = VisionAgents(apiKey = "your_api_key")
+agents.setUser(User(id = "jlahey")) { yourBackend.agentToken() }
 
 // In writing. No call is joined, nothing is transcribed or spoken.
 val chat = agents.agent("docs").chat()
@@ -27,6 +28,10 @@ chat.responses.create("What are your opening hours?")
 val voice = VoiceSession.start(context, agents, options = SessionOptions(agent = "docs"))
 voice.join(credentials = yourBackend::callCredentials)
 ```
+
+`VisionAgents(apiKey = ...)` reaches Stream's hosted router; pass `url` for another. A router
+running locally with nothing in front of it is reached by customer id instead:
+`VisionAgents(url = "http://localhost:8080", customerId = "acme")`.
 
 The agent is named rather than configured, and `join` is handed a function rather than minting
 its own token. Both are the same fact: writing configs and minting a call token are server-side

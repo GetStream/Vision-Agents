@@ -46,13 +46,14 @@ use GetStream\VisionAgents\{Backend, Client};
 // A router with nothing in front of it, on a laptop.
 $client = new Client(new Backend(url: 'http://localhost:8080', customerId: 'examples'));
 
-// Your own server, against a hosted router: STREAM_API_KEY and STREAM_API_SECRET are read for you.
-$client = new Client(new Backend(authenticate: true));
+// Your own server, against Stream's hosted router: STREAM_API_KEY and STREAM_API_SECRET are read for you.
+$client = new Client();
 ```
 
 Every argument falls back to the environment: `STREAM_ACCELERATION_URL`,
 `STREAM_ACCELERATION_CUSTOMER_ID`, `STREAM_API_KEY`, `STREAM_API_SECRET`,
-`STREAM_ACCELERATION_AUTHENTICATE`, so `new Client()` is usually enough. Pass the client to
+`STREAM_ACCELERATION_AUTHENTICATE`, so `new Client()` is usually enough. With no URL the client
+goes to Stream's hosted router, through its authenticating proxy. Pass the client to
 anything that talks to the router: `new Agent(..., client: $client)`.
 
 ## Conversations, responses, rewind and fork

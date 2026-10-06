@@ -1026,6 +1026,31 @@ func (s *HarnessSuite) TestAColdLargePrefixIsCompactedPrivately() {
 	s.False(s.harness.Delegating(), "the caller is not waiting for private maintenance")
 }
 
+func (s *HarnessSuite) TestCompactionKeepsWholeTurns() {
+	s.build(true)
+	s.slow.automatic = "The caller asked about their calendar."
+	history := append(longHistory(),
+		llm.Message{Role: llm.User, Content: "ok check it"},
+		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "calendar__list_tools"}}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "c1", Content: "{}"},
+		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "calendar__call_tool"}}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: "{}"},
+		llm.Message{Role: llm.Assistant, Content: "Nothing today."},
+		llm.Message{Role: llm.User, Content: "and linear?"},
+	)
+
+	started, err := s.harness.MaybeCompact(history, compactionMinTokens, 0)
+	s.Require().NoError(err)
+	s.True(started)
+
+	s.eventually(func() bool { return len(compactedIn(s.events.seen())) == 1 },
+		"the conversation was never compacted")
+	prefix := compactedIn(s.events.seen())[0].Prefix
+	s.Equal(llm.User, history[len(prefix)].Role,
+		"the history kept opens on the caller, not on a tool call cut from its turn")
+	s.Equal("ok check it", history[len(prefix)].Content)
+}
+
 func (s *HarnessSuite) TestAnEffectivePrefixCacheKeepsVerbatimHistory() {
 	s.build(true)
 

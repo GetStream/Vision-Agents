@@ -449,3 +449,156 @@ func (s *ChannelSuite) TestABodyThatIsNotJSONIsAnError() {
 	_, err = m.Channel.Read(m.ID, []byte("not json"))
 	s.ErrorContains(err, "inbound body is not a JSON object")
 }
+
+// signalsOnly is a channel block with signals and no messages, in the shape of the built-in
+// user-token Slack connector: the account is the team and the user.
+const signalsOnly = `capture:
+  - name: team_id
+    from: token_response
+    path: $.team.id
+  - name: user_id
+    from: token_response
+    path: $.authed_user.id
+identity: [team_id, user_id]
+channel:
+  verifier:
+    kind: secret_header
+    secret: provider_app
+    header: X-Secret
+  format: json
+  challenge: $.challenge
+  signals:
+    - kind: revoked
+      match:
+        $.event.type: tokens_revoked
+      each: $.event.tokens.oauth[*]
+      identity:
+        team_id: $.team_id
+        user_id: $.event.tokens.oauth[*]
+    - kind: uninstalled
+      match:
+        $.event.type: app_uninstalled
+      identity:
+        team_id: $.team_id
+`
+
+// signalsVariant is signalsOnly with old replaced by new, parsed.
+func (s *ChannelSuite) signalsVariant(old, new string) error {
+	s.Require().Contains(signalsOnly, old)
+	_, err := ParseManifest(minimal(strings.Replace(signalsOnly, old, new, 1)))
+	return err
+}
+
+// readSignalsOnly reads one recorded event with signalsOnly.
+func (s *ChannelSuite) readSignalsOnly(event string) ChannelEvent {
+	m, err := ParseManifest(minimal(signalsOnly))
+	s.Require().NoError(err)
+	read, err := m.Channel.Read(m.ID, s.recorded(event))
+	s.Require().NoError(err)
+	return read
+}
+
+func (s *ChannelSuite) TestARevokedBotTokenEndsTheWorkspacesBotGrant() {
+	read := s.read("slack_bot", "slack_bot.tokens_revoked.json")
+
+	s.Equal([]Signal{{ConnectorID: "slack_bot", Identity: map[string]string{"team_id": "T0000TEAM"}, Kind: SignalRevoked}}, read.Signals)
+	s.Empty(read.Messages)
+}
+
+func (s *ChannelSuite) TestARevokedUserTokenEndsNoBotGrant() {
+	read := s.read("slack_bot", "slack_bot.user_tokens_revoked.json")
+
+	s.Empty(read.Signals)
+	s.Empty(read.Messages)
+}
+
+func (s *ChannelSuite) TestASlackUninstallNamesTheWorkspace() {
+	read := s.read("slack_bot", "slack_bot.app_uninstalled.json")
+
+	s.Equal([]Signal{{ConnectorID: "slack_bot", Identity: map[string]string{"team_id": "T0000TEAM"}, Kind: SignalUninstalled}}, read.Signals)
+}
+
+func (s *ChannelSuite) TestAMessageIsNoSignal() {
+	read := s.read("slack_bot", "slack_bot.message.json")
+
+	s.Empty(read.Signals)
+	s.Len(read.Messages, 1)
+}
+
+func (s *ChannelSuite) TestARevocationOfUserTokensIsOneSignalForEachUser() {
+	read := s.readSignalsOnly("slack_bot.tokens_revoked.json")
+
+	s.Equal([]Signal{
+		{ConnectorID: "example", Identity: map[string]string{"team_id": "T0000TEAM", "user_id": "U0000USER"}, Kind: SignalRevoked},
+		{ConnectorID: "example", Identity: map[string]string{"team_id": "T0000TEAM", "user_id": "U0000OTHER"}, Kind: SignalRevoked},
+	}, read.Signals)
+}
+
+// An uninstall names the team and no user, which is every account of the workspace.
+func (s *ChannelSuite) TestAnUninstallMayNameFewerPartsThanTheIdentity() {
+	read := s.readSignalsOnly("slack_bot.app_uninstalled.json")
+
+	s.Equal([]Signal{{ConnectorID: "example", Identity: map[string]string{"team_id": "T0000TEAM"}, Kind: SignalUninstalled}}, read.Signals)
+}
+
+func (s *ChannelSuite) TestABlockWithOnlySignalsReadsNoMessagesAndStillAnswersAHandshake() {
+	s.Empty(s.readSignalsOnly("slack_bot.message.json").Messages)
+	s.Equal(ChannelEvent{Challenge: "synthetic-challenge-value"}, s.readSignalsOnly("slack_bot.challenge.json"))
+}
+
+func (s *ChannelSuite) TestABlockWithOnlySignalsStoredAsJSONReadsBackTheSameWithoutMessages() {
+	m, err := ParseManifest(minimal(signalsOnly))
+	s.Require().NoError(err)
+	raw, err := json.Marshal(m)
+	s.Require().NoError(err)
+	s.NotContains(string(raw), `"messages"`)
+	s.NotContains(string(raw), `"reply"`)
+	back, err := ParseManifest(raw)
+	s.Require().NoError(err)
+	s.Equal(m, back)
+}
+
+func (s *ChannelSuite) TestABlockWithOnlySignalsHasNoReply() {
+	m, err := ParseManifest(minimal(signalsOnly))
+	s.Require().NoError(err)
+	resolved, err := m.Resolve("oauth2_code", nil, nil)
+	s.Require().NoError(err)
+
+	_, _, err = resolved.Reply(ReplyValues{Text: "hi"})
+	s.ErrorContains(err, "has no channel reply")
+}
+
+func (s *ChannelSuite) TestABlockWithNeitherMessagesNorSignalsIsRefused() {
+	_, err := ParseManifest(minimal(signalsOnly[:strings.Index(signalsOnly, "  signals:")]))
+	s.ErrorContains(err, "channel: reads neither messages nor signals")
+}
+
+func (s *ChannelSuite) TestAReplyWithoutMessagesIsRefused() {
+	err := s.signalsVariant("  signals:", "  reply:\n    url: https://api.example.com/messages\n    body:\n      text: \"{text}\"\n  signals:")
+	s.ErrorContains(err, "channel.messages: is empty: a reply goes back to the thread a message came from")
+}
+
+func (s *ChannelSuite) TestASignalWithoutAMatchIsRefused() {
+	err := s.signalsVariant("      match:\n        $.event.type: app_uninstalled\n", "")
+	s.ErrorContains(err, "channel.signals[1].match: is empty: without one every delivery would be this signal")
+}
+
+func (s *ChannelSuite) TestASignalOfAnUnknownKindIsRefused() {
+	err := s.signalsVariant("kind: uninstalled", "kind: paused")
+	s.ErrorContains(err, `channel.signals[1].kind: "paused" is not one of [revoked uninstalled rotated]`)
+}
+
+func (s *ChannelSuite) TestASignalNamingAPartOutsideTheIdentityIsRefused() {
+	err := s.signalsVariant("      identity:\n        team_id: $.team_id\n", "      identity:\n        enterprise_id: $.enterprise_id\n")
+	s.ErrorContains(err, `channel.signals[0].identity.enterprise_id: "enterprise_id" is not one of identity [team_id user_id]`)
+}
+
+func (s *ChannelSuite) TestASignalPathWhoseWildcardIsNotEachsIsRefused() {
+	err := s.signalsVariant("      each: $.event.tokens.oauth[*]\n", "")
+	s.ErrorContains(err, `channel.signals[0].identity.user_id: "$.event.tokens.oauth[*]": has [*] but channel.signals[0].each is empty`)
+}
+
+func (s *ChannelSuite) TestASignalMatchIsAboutTheWholeEvent() {
+	err := s.signalsVariant("        $.event.type: tokens_revoked", "        $.event.tokens.oauth[*]: U0000USER")
+	s.ErrorContains(err, "a match is about the whole event, not one of its accounts")
+}

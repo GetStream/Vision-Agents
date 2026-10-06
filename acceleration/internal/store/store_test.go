@@ -72,8 +72,8 @@ func (s *StoreSuite) SetupTest() {
 			" turns, turn_stats_hourly, turn_stats_daily, calls, call_events, phone_numbers,"+
 			" voices, agent_sessions, agent_responses, agent_response_items, users,"+
 			" policies, app_organizations, call_resources, organizations, agent_configs,"+
-			" agent_plugin_connections, data_changes, data_change_capture, stream_apps, connector_definitions,"+
-			" connector_connections, connector_authorization_attempts CASCADE",
+			" agent_plugin_connections, agent_plugin_clients, data_changes, data_change_capture, stream_apps, connector_definitions,"+
+			" connector_connections, connector_authorization_attempts, connector_oauth_clients CASCADE",
 	)
 	s.Require().NoError(err)
 }

@@ -29,9 +29,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 )
 
-// noStreams is what the modality socket says on a deployment that inspects routing without
+// errNoStreams is what the modality socket says on a deployment that inspects routing without
 // serving it.
-const noStreams = "this deployment does not stream this modality"
+var errNoStreams = notConfigured("this deployment does not stream")
 
 // startWait bounds how long a socket waits to be told what it is for. A caller that
 // upgraded and then said nothing is holding a connection and a goroutine for no reason.
@@ -138,12 +138,16 @@ func (s start) options(config store.RouterConfig) (options.STT, options.TTS, opt
 func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 	customerID, ok := CustomerFrom(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "the "+CustomerHeader+" header is required")
+		writeError(w, errMissingCustomer)
 		return
 	}
 	modality := routing.Modality(r.PathValue("modality"))
-	if s.streams == nil || !s.serves(modality) {
-		writeError(w, http.StatusNotFound, noStreams)
+	if s.streams == nil {
+		writeError(w, errNoStreams)
+		return
+	}
+	if !s.serves(modality) {
+		writeError(w, unknownModality(Modality(modality)))
 		return
 	}
 
@@ -205,7 +209,7 @@ func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 		}
 		err = s.streamSTS(ctx, out, request, conversation, opening.Tools, opening.SampleRate)
 	default:
-		err = errors.New(noStreams)
+		err = unknownModality(Modality(modality))
 	}
 	if err != nil {
 		out.failed(err)

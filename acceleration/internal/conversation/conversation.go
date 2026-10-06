@@ -74,7 +74,8 @@ type Message struct {
 	// Files are what the agent's own code made for this reply, such as a rendered image.
 	Files []sandbox.Attachment `json:"files,omitempty"`
 	// Authorizations ask the end user to connect a plugin the reply needed (authorizations.go).
-	Authorizations []plugins.Authorization `json:"authorizations,omitempty"`
+	// They are written among the attachments, by MarshalJSON.
+	Authorizations []plugins.Authorization `json:"-"`
 	Saved          bool                    `json:"saved"`
 	Error          string                  `json:"persistence_error,omitempty"`
 
@@ -177,6 +178,8 @@ type Conversation struct {
 	// tools describes the caller's tools for this session: titles, and which a person's
 	// device runs.
 	tools map[string]ToolDisplay
+	// asked are the finished replies that asked the end user for a login (authorizations.go).
+	asked []Message
 	// reasoning is the model's thinking for the current reply. It is shown to watchers
 	// through ephemeral updates only and is never persisted.
 	reasoning liveReasoning
@@ -1355,6 +1358,7 @@ func (c *Conversation) finish(state string) {
 	m.Sequence++
 	c.save()
 	c.publish(*m)
+	c.rememberAsked(*m)
 }
 func (c *Conversation) publish(m Message) {
 	if c.emit != nil {

@@ -67,7 +67,7 @@ func (secretValue) Schema(huma.Registry) *huma.Schema {
 func (v secretValue) reveal(apiKey string) (streamapp.Secret, error) {
 	var secret string
 	if err := json.Unmarshal(v.raw, &secret); err != nil || secret == "" || len(secret) > maxSecretLength {
-		return streamapp.Secret{}, huma.Error400BadRequest("the secret of key " + apiKey +
+		return streamapp.Secret{}, invalidRequest("the secret of key " + apiKey +
 			" must be a string of at most " + strconv.Itoa(maxSecretLength) + " characters")
 	}
 	return streamapp.NewSecret(secret), nil
@@ -124,24 +124,24 @@ func (s *Server) registerStreamCredentials(api huma.API) {
 func (s *Server) registrar(ctx context.Context) (string, *streamapp.Stored, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return "", nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return "", nil, errMissingCustomer
 	}
 	var stored *streamapp.Stored
 	if s.stream != nil {
 		stored, ok = s.stream.Stored()
 	}
 	if !ok {
-		return "", nil, huma.Error400BadRequest("an app registers its own Stream app only when the " +
+		return "", nil, invalidRequest("an app registers its own Stream app only when the " +
 			"router runs with stream.tenancy=app")
 	}
 	// A proxy that does not say what kind of caller it vouched for passes every caller
 	// as a backend, and a page must never be able to hand the router somebody's keys.
 	if s.authMode == auth.Proxy && (!s.proxyDeclaresKind || KindFrom(ctx) != auth.KindServer) {
-		return "", nil, huma.Error403Forbidden("registering a Stream app needs a proxy that declares " +
+		return "", nil, forbidden("registering a Stream app needs a proxy that declares " +
 			"the caller a server, with auth.proxy_declares_kind on")
 	}
 	if slices.Contains(s.denyRegistration, customerID) {
-		return "", nil, huma.Error403Forbidden("this app may not register a Stream app of its own")
+		return "", nil, forbidden("this app may not register a Stream app of its own")
 	}
 	return customerID, stored, nil
 }
@@ -160,7 +160,7 @@ func (s *Server) updateAppStreamCredentials(ctx context.Context, request *stream
 
 	if len(sent.Keys) == 0 {
 		if sent.Proof == nil {
-			return nil, huma.Error400BadRequest("disconnecting needs a proof: a key and secret of the app")
+			return nil, invalidRequest("disconnecting needs a proof: a key and secret of the app")
 		}
 		secret, err := sent.Proof.APISecret.reveal(sent.Proof.APIKey)
 		if err != nil {
@@ -183,7 +183,7 @@ func (s *Server) updateAppStreamCredentials(ctx context.Context, request *stream
 	}
 	for _, key := range sent.Keys {
 		if holds(key.APIKey) {
-			return nil, huma.Error400BadRequest("key " + key.APIKey + " is named twice")
+			return nil, invalidRequest("key " + key.APIKey + " is named twice")
 		}
 		secret, err := key.APISecret.reveal(key.APIKey)
 		if err != nil {
@@ -196,7 +196,7 @@ func (s *Server) updateAppStreamCredentials(ctx context.Context, request *stream
 		keys = append(keys, one)
 	}
 	if sent.PrimaryKey != "" && !holds(sent.PrimaryKey) {
-		return nil, huma.Error400BadRequest("the primary key " + sent.PrimaryKey + " is not one of the keys")
+		return nil, invalidRequest("the primary key " + sent.PrimaryKey + " is not one of the keys")
 	}
 	allowGuests := before.AllowGuests
 	if sent.AllowGuests != nil {
@@ -225,7 +225,7 @@ func (s *Server) checkAppStreamCredentials(ctx context.Context, _ *struct{}) (*s
 	}
 	err = stored.CheckApp(ctx, s.stream, customerID, func(customer string, app int64) { s.stopActingIn(customer, app) })
 	if errors.Is(err, store.ErrNoStreamApp) {
-		return nil, huma.Error400BadRequest("this app has not registered a Stream app of its own")
+		return nil, invalidRequest("this app has not registered a Stream app of its own")
 	}
 	if err != nil && !errors.Is(err, streamapp.ErrStreamAppDisconnected) {
 		return nil, err
@@ -265,17 +265,17 @@ func (s *Server) stopActingIn(customerID string, app int64) {
 func registrationFailure(err error) error {
 	switch {
 	case errors.Is(err, streamapp.ErrKeyRefused):
-		return huma.Error400BadRequest(strings.TrimPrefix(err.Error(), "streamapp: "))
+		return invalidRequest(strings.TrimPrefix(err.Error(), "streamapp: "))
 	case errors.Is(err, store.ErrStreamAppChanged):
-		return huma.Error409Conflict("the app's Stream credentials changed since they were read: read them again")
+		return conflict("the app's Stream credentials changed since they were read: read them again")
 	case errors.Is(err, store.ErrStreamAppTaken):
-		return huma.Error409Conflict("that Stream app is registered by another app")
+		return conflict("that Stream app is registered by another app")
 	case errors.Is(err, store.ErrStreamAppKeyTaken):
-		return huma.Error409Conflict("one of those keys belongs to another app's Stream app")
+		return conflict("one of those keys belongs to another app's Stream app")
 	case errors.Is(err, store.ErrNoStreamApp):
-		return huma.Error400BadRequest("this app has not registered a Stream app of its own")
+		return invalidRequest("this app has not registered a Stream app of its own")
 	}
-	return huma.Error503ServiceUnavailable("Stream could not be asked about the keys: try again")
+	return unavailable("Stream could not be asked about the keys: try again")
 }
 
 // updatedBy is who to record as having written an app's credentials.

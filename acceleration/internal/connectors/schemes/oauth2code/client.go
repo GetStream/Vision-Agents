@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // clientName is how the router names itself to an authorization server, in a registration
@@ -31,7 +32,8 @@ var (
 // but is not listed until a client record can hold a private key (T19).
 var supportedMethods = []core.ClientAuthMethod{core.AuthNone, core.AuthClientSecretBasic, core.AuthClientSecretPost}
 
-// Client is a preregistered OAuth client: the operator's app or a customer's own.
+// Client is a preregistered OAuth client: the operator's app, a customer's own, or the one
+// the router created for the customer (managed).
 type Client struct {
 	ID     string
 	Secret string
@@ -39,7 +41,7 @@ type Client struct {
 	AuthMethod core.ClientAuthMethod
 }
 
-// ClientLookup finds the preregistered client of one kind (operator or customer) for this
+// ClientLookup finds the preregistered client of one kind (operator, customer or managed) for this
 // connection's connector. found is false when there is none, which is not an error: the next
 // mechanism in client.registration is tried.
 type ClientLookup func(ctx context.Context, ref core.ConnectionRef, m core.ResolvedManifest, registration core.ClientRegistrationMethod) (c Client, found bool, err error)
@@ -75,8 +77,17 @@ type client struct {
 // registrationOrder is the order client.registration's mechanisms are tried in, whatever order
 // the manifest lists them in. A preregistered client comes first and CIMD before DCR, as MCP 2025-11-25
 // «Client Registration Approaches» orders them; a customer's client before the operator's,
-// because a customer who registered its own app chose it over ours (T19).
-var registrationOrder = []core.ClientRegistrationMethod{core.ClientCustomer, core.ClientOperator, core.ClientCIMD, core.ClientDCR}
+// because a customer who registered its own app chose it over ours (T19). The app the router
+// created for the customer (managed) also comes before the operator's, which falls back to the
+// deployment's environment: that shared app serves only Stream's own agents (channels doc on
+// connectors/planning, «Each customer has its own Slack app»). A customer has one record per
+// connector, of one registration (store.ConnectorOAuthClient), so customer and managed are
+// never both found.
+var registrationOrder = []core.ClientRegistrationMethod{core.ClientCustomer, core.ClientManaged, core.ClientOperator, core.ClientCIMD, core.ClientDCR}
+
+// preregistered is the registrations whose client ClientLookup finds, and whose secret is
+// looked up again at each use.
+var preregistered = []core.ClientRegistrationMethod{core.ClientCustomer, core.ClientManaged, core.ClientOperator}
 
 // pickClient is the first client the manifest's client.registration allows that is available.
 func (s *Scheme) pickClient(ctx context.Context, ref core.ConnectionRef, m core.ResolvedManifest, d server, redirectURI string) (client, error) {
@@ -85,7 +96,7 @@ func (s *Scheme) pickClient(ctx context.Context, ref core.ConnectionRef, m core.
 			continue
 		}
 		switch registration {
-		case core.ClientCustomer, core.ClientOperator:
+		case core.ClientCustomer, core.ClientManaged, core.ClientOperator:
 			if s.cfg.Clients == nil {
 				continue
 			}
@@ -118,10 +129,25 @@ func (s *Scheme) pickClient(ctx context.Context, ref core.ConnectionRef, m core.
 	return client{}, fmt.Errorf("%w (client.registration %v)", ErrNoClient, m.Client.Registration)
 }
 
+// ClientRemovedError is a preregistered client the lookup no longer finds: the app removed
+// its client record, or the operator's variables are gone. It comes as an InvalidGrant
+// *core.OutcomeError, so the resolver moves the connection to needs_reauthorization.
+type ClientRemovedError struct {
+	Registration core.ClientRegistrationMethod
+}
+
+func (e *ClientRemovedError) Error() string {
+	whose := "app's"
+	if e.Registration == core.ClientOperator {
+		whose = "operator's"
+	}
+	return "oauth2code: the " + whose + " OAuth client for this connector was removed; the connection needs a reconnect"
+}
+
 // clientSecret is c with the secret the token request needs: a preregistered client's is
 // looked up again, so the attempt never carried it.
 func (s *Scheme) clientSecret(ctx context.Context, ref core.ConnectionRef, m core.ResolvedManifest, c client) (client, error) {
-	if c.RegistrationMethod != core.ClientCustomer && c.RegistrationMethod != core.ClientOperator {
+	if !slices.Contains(preregistered, c.RegistrationMethod) {
 		return c, nil
 	}
 	if s.cfg.Clients == nil {
@@ -131,7 +157,16 @@ func (s *Scheme) clientSecret(ctx context.Context, ref core.ConnectionRef, m cor
 	if err != nil {
 		return client{}, fmt.Errorf("oauth2code: %s client: %w", c.RegistrationMethod, err)
 	}
-	if !ok || found.ID != c.ID {
+	if !ok {
+		// The record is gone (DELETE .../oauth-client, AI-846) or the operator's variables are
+		// unset: no retry brings the client back, and the grant was issued to it, so only a
+		// reconnect with whatever client is there now helps.
+		return client{}, &core.OutcomeError{
+			Outcome: core.Outcome{Kind: core.OutcomeInvalidGrant},
+			Err:     stack.Wrap(&ClientRemovedError{Registration: c.RegistrationMethod}),
+		}
+	}
+	if found.ID != c.ID {
 		return client{}, fmt.Errorf("oauth2code: the %s client changed during the consent; start it again", c.RegistrationMethod)
 	}
 	c.Secret = found.Secret

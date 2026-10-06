@@ -109,8 +109,9 @@ the other commands that read them there.
 | `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |
 | `ROUTER_AUTH_KEK_VERSION` | Which keyring version seals new connector credentials, defaults to `1`. Every `ROUTER_AUTH_KEK_V<n>` that is set still opens its rows, so moving this back to an older version is safe |
 | `ROUTER_CONNECTORS_ENABLED` | `true` turns connectors on. The router then needs the keyring version `ROUTER_AUTH_KEK_VERSION` names, in every auth mode, and refuses to start without it. Off by default |
+| `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. See [Daily limits](#daily-limits) |
-| `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `500000`. `0` turns it off |
+| `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `5000000`. `0` turns it off |
 | `ROUTER_SPECULATIVE_REPLIES` | `true` starts each reply while the flow controller is still deciding whether the words were meant for the agent, and holds it until the ruling says to answer. Saves the ruling's round trip on answered turns and pays for the replies a ruling drops. Off by default |
 | `ROUTER_TRUSTED_PROXIES` | CIDR ranges your own proxies sit in, comma separated, e.g. `10.0.0.0/8`. Decides how much of `X-Forwarded-For` is believed. Unset means none of it is, and the connection's address is used |
 | `ROUTER_DATA_MOVE_RETENTION` | How long recorded changes are kept while a customer moves between deployments, defaults to `168h`. See [Moving a customer](#moving-a-customer) |
@@ -324,7 +325,7 @@ Two things are counted, per UTC day, and reaching either refuses the next respon
 | Counted | Default | Why |
 | ------- | ------- | --- |
 | Model responses | 200 | What "200 messages a day" means |
-| Tokens | 500,000 | A backstop for the caller who asks for few responses and makes each one enormous. Roughly 2,500 tokens for a turn carrying instructions and history, so it should not be what an ordinary day hits first |
+| Tokens | 5,000,000 | A backstop for the caller who asks for few responses and makes each one enormous. A turn of an agent with a few MCP servers carries tens of thousands of tokens of tool definitions, so it should not be what an ordinary day hits first |
 
 Each is counted against two buckets: the `user_id` the caller's token names, scoped
 to the customer who minted it, and the address the request came from. Both matter.

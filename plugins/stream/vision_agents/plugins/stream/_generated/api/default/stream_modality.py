@@ -6,7 +6,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...models.modality import Modality
 from ...types import Response
 
@@ -27,25 +27,30 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Any | Error | None:
+) -> Any | ErrorResponse | None:
     if response.status_code == 101:
         response_101 = cast(Any, None)
         return response_101
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
 
     if response.status_code == 404:
-        response_404 = Error.from_dict(response.json())
+        response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 500:
+        response_500 = ErrorResponse.from_dict(response.json())
+
+        return response_500
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -55,7 +60,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Any | Error]:
+) -> Response[Any | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -68,7 +73,7 @@ def sync_detailed(
     modality: Modality,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Any | Error]:
+) -> Response[Any | ErrorResponse]:
     """Route one modality over a socket, for a pipeline running elsewhere
 
      A WebSocket, which OpenAPI cannot describe past the upgrade. This is the routing the agent does,
@@ -129,7 +134,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Error]
+        Response[Any | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -147,7 +152,7 @@ def sync(
     modality: Modality,
     *,
     client: AuthenticatedClient | Client,
-) -> Any | Error | None:
+) -> Any | ErrorResponse | None:
     """Route one modality over a socket, for a pipeline running elsewhere
 
      A WebSocket, which OpenAPI cannot describe past the upgrade. This is the routing the agent does,
@@ -208,7 +213,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | Error
+        Any | ErrorResponse
     """
 
     return sync_detailed(
@@ -221,7 +226,7 @@ async def asyncio_detailed(
     modality: Modality,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Any | Error]:
+) -> Response[Any | ErrorResponse]:
     """Route one modality over a socket, for a pipeline running elsewhere
 
      A WebSocket, which OpenAPI cannot describe past the upgrade. This is the routing the agent does,
@@ -282,7 +287,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Error]
+        Response[Any | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -298,7 +303,7 @@ async def asyncio(
     modality: Modality,
     *,
     client: AuthenticatedClient | Client,
-) -> Any | Error | None:
+) -> Any | ErrorResponse | None:
     """Route one modality over a socket, for a pipeline running elsewhere
 
      A WebSocket, which OpenAPI cannot describe past the upgrade. This is the routing the agent does,
@@ -359,7 +364,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | Error
+        Any | ErrorResponse
     """
 
     return (

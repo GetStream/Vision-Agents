@@ -6,7 +6,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...models.review_page import ReviewPage
 from ...types import UNSET, Response, Unset
 
@@ -39,34 +39,34 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | ReviewPage | None:
+) -> ErrorResponse | ReviewPage | None:
     if response.status_code == 200:
         response_200 = ReviewPage.from_dict(response.json())
 
         return response_200
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
 
     if response.status_code == 404:
-        response_404 = Error.from_dict(response.json())
+        response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
 
     if response.status_code == 500:
-        response_500 = Error.from_dict(response.json())
+        response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
 
@@ -78,7 +78,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | ReviewPage]:
+) -> Response[ErrorResponse | ReviewPage]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -93,7 +93,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
-) -> Response[Error | ReviewPage]:
+) -> Response[ErrorResponse | ReviewPage]:
     """List a use case's review history
 
      Every move the use case made and who made it, oldest first.
@@ -110,7 +110,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | ReviewPage]
+        Response[ErrorResponse | ReviewPage]
     """
 
     kwargs = _get_kwargs(
@@ -132,7 +132,7 @@ def sync(
     client: AuthenticatedClient | Client,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
-) -> Error | ReviewPage | None:
+) -> ErrorResponse | ReviewPage | None:
     """List a use case's review history
 
      Every move the use case made and who made it, oldest first.
@@ -149,7 +149,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | ReviewPage
+        ErrorResponse | ReviewPage
     """
 
     return sync_detailed(
@@ -166,7 +166,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
-) -> Response[Error | ReviewPage]:
+) -> Response[ErrorResponse | ReviewPage]:
     """List a use case's review history
 
      Every move the use case made and who made it, oldest first.
@@ -183,7 +183,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | ReviewPage]
+        Response[ErrorResponse | ReviewPage]
     """
 
     kwargs = _get_kwargs(
@@ -203,7 +203,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
-) -> Error | ReviewPage | None:
+) -> ErrorResponse | ReviewPage | None:
     """List a use case's review history
 
      Every move the use case made and who made it, oldest first.
@@ -220,7 +220,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | ReviewPage
+        ErrorResponse | ReviewPage
     """
 
     return (

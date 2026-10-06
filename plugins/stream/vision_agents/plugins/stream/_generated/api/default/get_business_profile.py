@@ -6,7 +6,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.business_profile import BusinessProfile
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...types import Response
 
 
@@ -22,34 +22,34 @@ def _get_kwargs() -> dict[str, Any]:
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> BusinessProfile | Error | None:
+) -> BusinessProfile | ErrorResponse | None:
     if response.status_code == 200:
         response_200 = BusinessProfile.from_dict(response.json())
 
         return response_200
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
 
     if response.status_code == 404:
-        response_404 = Error.from_dict(response.json())
+        response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
 
     if response.status_code == 500:
-        response_500 = Error.from_dict(response.json())
+        response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
 
@@ -61,7 +61,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[BusinessProfile | Error]:
+) -> Response[BusinessProfile | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -73,7 +73,7 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-) -> Response[BusinessProfile | Error]:
+) -> Response[BusinessProfile | ErrorResponse]:
     """Get the business profile
 
      Who the app said it is, and the brand a vendor registered it as.
@@ -85,7 +85,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[BusinessProfile | Error]
+        Response[BusinessProfile | ErrorResponse]
     """
 
     kwargs = _get_kwargs()
@@ -100,7 +100,7 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-) -> BusinessProfile | Error | None:
+) -> BusinessProfile | ErrorResponse | None:
     """Get the business profile
 
      Who the app said it is, and the brand a vendor registered it as.
@@ -112,7 +112,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        BusinessProfile | Error
+        BusinessProfile | ErrorResponse
     """
 
     return sync_detailed(
@@ -123,7 +123,7 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-) -> Response[BusinessProfile | Error]:
+) -> Response[BusinessProfile | ErrorResponse]:
     """Get the business profile
 
      Who the app said it is, and the brand a vendor registered it as.
@@ -135,7 +135,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[BusinessProfile | Error]
+        Response[BusinessProfile | ErrorResponse]
     """
 
     kwargs = _get_kwargs()
@@ -148,7 +148,7 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-) -> BusinessProfile | Error | None:
+) -> BusinessProfile | ErrorResponse | None:
     """Get the business profile
 
      Who the app said it is, and the brand a vendor registered it as.
@@ -160,7 +160,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        BusinessProfile | Error
+        BusinessProfile | ErrorResponse
     """
 
     return (

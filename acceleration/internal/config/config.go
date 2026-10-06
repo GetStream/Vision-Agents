@@ -266,10 +266,10 @@ func Defaults() Config {
 		Addr:         ":8080",
 		DashboardURL: "http://localhost:3000",
 		// A day's allowance for one end user. The token limit is a backstop under the
-		// message count rather than a second cap: at roughly 2,500 tokens for a turn
-		// carrying instructions and some history, 200 messages is about 500,000 tokens,
-		// so it should only be reached by somebody making a few enormous requests.
-		RateLimit: RateLimit{MessagesPerDay: 200, TokensPerDay: 500_000},
+		// message count rather than a second cap: an agent with a few MCP servers sends
+		// tens of thousands of tokens of tool definitions with every turn, so 200 messages
+		// can come to millions of tokens.
+		RateLimit: RateLimit{MessagesPerDay: 200, TokensPerDay: 5_000_000},
 		DataMove:  DataMove{Retention: 7 * 24 * time.Hour},
 		Sandbox:   Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
 	}

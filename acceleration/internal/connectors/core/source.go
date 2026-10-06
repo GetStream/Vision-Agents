@@ -38,9 +38,12 @@ type ResolvedBinding struct {
 	Binding    Binding
 	Connection Connection
 	Manifest   ResolvedManifest
-	// Transport already carries the resolver and the egress policy, so a ToolSource cannot
-	// get the wrapping order wrong or skip the egress check.
-	Transport func(context.Context) (http.RoundTripper, error)
+	// HTTP is the connection's outbound client, from Transports.Client. It already carries
+	// the resolver, the scheme and the egress policy, in that order, so a ToolSource cannot
+	// get the wrapping order wrong or skip the egress check. It is a client, not a
+	// RoundTripper, because the redirect policy that keeps a credential in its origin is the
+	// client's (egress.NewClient). Send with it as it is; never replace its Transport.
+	HTTP *http.Client
 }
 
 // Binding attaches a connector's tools to an agent config under an alias.

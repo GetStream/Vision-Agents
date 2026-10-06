@@ -32,7 +32,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/apikey"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2cc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	dlctelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/dlc/telnyx"
@@ -216,9 +218,10 @@ func logLevel(settings config.Config) slog.Level {
 }
 
 // newSecretSealer builds the keyring the secrets the router holds for its customers are
-// sealed under, connector credentials and Stream app keys, and nil when nothing that holds
-// one is on. It does not depend on auth.mode: a proxy deployment holds them as much as an
-// api_key one does.
+// sealed under: connector credentials, Stream app keys and channel credentials. Connectors
+// and app mode refuse to start without one; channels use it when it is set and are off
+// otherwise, so it is nil only when nothing requires it and no key is set. It does not
+// depend on auth.mode: a proxy deployment holds them as much as an api_key one does.
 //
 // The keyring is every ROUTER_AUTH_KEK_V1, _V2 and so on that is set, with
 // ROUTER_AUTH_KEK_VERSION naming the one that seals new rows. That variable picks the
@@ -234,7 +237,10 @@ func newSecretSealer(settings config.Config) (*auth.Sealer, error) {
 		holders = append(holders, "stream.tenancy="+config.TenancyApp)
 	}
 	if len(holders) == 0 {
-		return nil, nil
+		if !keyringSet(settings) {
+			return nil, nil
+		}
+		return loadKeyring(settings, "channels need")
 	}
 	// The setting that needs the keyring is what each refusal names, so whoever reads it
 	// knows which change brought it on.
@@ -242,6 +248,28 @@ func newSecretSealer(settings config.Config) (*auth.Sealer, error) {
 	if len(holders) == 1 {
 		needs = holders[0] + " needs"
 	}
+	return loadKeyring(settings, needs)
+}
+
+// keyringSet reports whether any key of the keyring is set: auth.kek, or a
+// ROUTER_AUTH_KEK_V<n>.
+func keyringSet(settings config.Config) bool {
+	if settings.Auth.KEK != "" {
+		return true
+	}
+	for _, variable := range os.Environ() {
+		name, key, _ := strings.Cut(variable, "=")
+		if strings.HasPrefix(name, authKEKEnvVar+"_V") && key != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// loadKeyring reads every ROUTER_AUTH_KEK_V<n> and auth.kek into a keyring, with
+// ROUTER_AUTH_KEK_VERSION naming the writer. needs says which setting requires it, for
+// each refusal to name.
+func loadKeyring(settings config.Config, needs string) (*auth.Sealer, error) {
 	current := auth.KEKVersion
 	if configured := os.Getenv(authKEKVersionEnvVar); configured != "" {
 		version, err := strconv.Atoi(configured)
@@ -286,43 +314,53 @@ func newSecretSealer(settings config.Config) (*auth.Sealer, error) {
 	return auth.NewSealerWithKeyring(current, keys)
 }
 
-// connectorHTTPTimeout bounds one outbound request oauth2_code makes: a discovery fetch, a
-// client registration or a code exchange. 10 s is the prototype's (defaultHTTPClient in
+// connectorHTTPTimeout bounds one outbound request oauth2_code or oauth2_client_credentials
+// makes: a discovery fetch, a client registration, a code exchange or a token request. 10 s is the prototype's (defaultHTTPClient in
 // internal/mcp/oauth.go on codex/connector-support at cf62af0d), not a measured one.
 const connectorHTTPTimeout = 10 * time.Second
 
 // newConnectorRegistry is the connector adapters this deployment has: none when connectors
 // are off, so no connection and no custom connector can name a scheme, and oauth2_code,
-// api_key, bearer and none when they are on. A new scheme is one more entry in the list
+// oauth2_client_credentials, api_key, bearer and none when they are on. A new scheme is one more entry in the list
 // below. It follows the sealer: without a keyring no attempt or grant can be sealed,
 // so a scheme registered without one would take connections nothing could ever authorize.
 //
 // ClientMetadataURL is where the API serves the router's client metadata document
 // (api.ConnectorClientMetadataPath under public_url), and empty, which turns CIMD off, when
-// public_url is not https: CIMD section 3 allows only an https client_id URL. Clients is nil, so
-// no operator or customer client is found until client records exist (AI-846); only cimd and
-// dcr can supply a client.
-func newConnectorRegistry(settings config.Config) (core.Registry, error) {
+// public_url is not https: CIMD section 3 allows only an https client_id URL. clients finds a
+// client registered in advance: the app's own from its record, the operator's from the
+// environment (api.ConnectorClients).
+func newConnectorRegistry(settings config.Config, clients oauth2code.ClientLookup) (core.Registry, error) {
 	if !settings.Connectors.Enabled {
 		return core.Registry{}, nil
 	}
-	code, err := oauth2code.New(connectorSchemeConfig(settings))
+	code, err := oauth2code.New(connectorSchemeConfig(settings, clients))
+	if err != nil {
+		return core.Registry{}, err
+	}
+	clientCredentials, err := oauth2cc.New(oauth2cc.Config{HTTP: egress.NewClient(connectorHTTPTimeout, nil)})
 	if err != nil {
 		return core.Registry{}, err
 	}
 	schemes := map[string]core.Scheme{}
-	for _, scheme := range []core.Scheme{code, apikey.New(), bearer.New(), none.New()} {
+	for _, scheme := range []core.Scheme{code, clientCredentials, apikey.New(), bearer.New(), none.New()} {
 		schemes[scheme.Name()] = scheme
 	}
-	return core.Registry{Schemes: schemes}, nil
+	// The verifiers a manifest's channel.verifier.kind may name; a new one is one more entry.
+	verifiers := map[string]core.Verifier{}
+	for _, verifier := range []core.Verifier{hmacheader.New()} {
+		verifiers[verifier.Name()] = verifier
+	}
+	return core.Registry{Schemes: schemes, Verifiers: verifiers}, nil
 }
 
 // connectorSchemeConfig is the oauth2code.Config newConnectorRegistry starts the scheme with.
 // A test runs it against a loopback fake by replacing HTTP and PublicEndpoint, which egress
 // refuses loopback for, and keeps the rest.
-func connectorSchemeConfig(settings config.Config) oauth2code.Config {
+func connectorSchemeConfig(settings config.Config, clients oauth2code.ClientLookup) oauth2code.Config {
 	return oauth2code.Config{
 		HTTP:              egress.NewClient(connectorHTTPTimeout, nil),
+		Clients:           clients,
 		ClientMetadataURL: api.ConnectorClientMetadataURL(settings.PublicURL),
 	}
 }
@@ -359,9 +397,9 @@ func newAuthenticator(settings config.Config, configs *appconfig.Store, logger *
 		return nil, fmt.Errorf("auth.mode=%s needs postgres.dsn, because that is where the keys are",
 			auth.APIKey)
 	}
-	sealer, err := auth.NewSealer(settings.Auth.KEK)
+	sealer, err := loadKeyring(settings, "auth.mode="+string(auth.APIKey)+" needs")
 	if err != nil {
-		return nil, fmt.Errorf("auth.mode=%s needs auth.kek: %w", auth.APIKey, err)
+		return nil, err
 	}
 
 	return auth.New(mode, configs.Lookup(sealer))
@@ -401,10 +439,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if settings.Connectors.Enabled {
 		connectorSecrets = secrets
 	}
-	connectors, err := newConnectorRegistry(settings)
-	if err != nil {
-		return err
-	}
 
 	// Postgres and Redis are optional so the API can be brought up for inspection before
 	// the data stores exist. /health reports what is missing.
@@ -417,6 +451,17 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer pgStore.Close()
 	} else {
 		logger.Warn("no database configured, statistics will not be recorded", "setting", "postgres.dsn")
+	}
+	// After the store, which holds the apps' own OAuth clients oauth2_code looks up.
+	connectors, err := newConnectorRegistry(settings, api.ConnectorClients(pgStore, connectorSecrets, os.Getenv))
+	if err != nil {
+		return err
+	}
+	// Nothing asks it for a credential yet: the session's dispatcher will (T21, AI-851). The
+	// events endpoint revokes through it.
+	connectorResolver, err := newConnectorResolver(connectors, pgStore, connectorSecrets)
+	if err != nil {
+		return err
 	}
 
 	var liveClient *live.Client
@@ -760,9 +805,15 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer directory.Close()
 	}
 
+	pluginAuth := &plugins.Auth{
+		PublicURL:    settings.PublicURL,
+		DashboardURL: settings.DashboardURL,
+		Clients:      session.PluginClients(pgStore, secrets),
+	}
+
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
-	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, streamClients, logger)
+	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, streamClients, pluginAuth, logger)
 	if err != nil {
 		return err
 	}
@@ -803,7 +854,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		events, err = pluginevents.New(pluginevents.Options{
 			Store:    pgStore,
 			Sessions: sessions,
-			Auth:     &plugins.Auth{PublicURL: settings.PublicURL, DashboardURL: settings.DashboardURL},
+			Auth:     pluginAuth,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -939,6 +990,12 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Auth:              authenticator,
 		Logger:            logger,
 	}
+	// A nil *resolver.Resolver in the interface would not be a nil interface, so the absence
+	// stays absent, and the events endpoint takes no events without it.
+	if connectorResolver != nil {
+		options.ConnectorResolver = connectorResolver
+		options.ConnectorEventSecrets = api.ConnectorEventSecrets(os.Getenv)
+	}
 	if streamClients.PerApp() {
 		// Each registered app signs its own hooks and mints its own tokens, so only work in
 		// the deployment's own app goes without.
@@ -962,15 +1019,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if base != nil {
 		options.Knowledge = base
 	}
-	// A channel's provider credentials are sealed under the same key as the stored key
-	// secrets. Without one the channel paths refuse to hold them, which is better than
-	// keeping a WhatsApp token in the clear, and nothing is delivered because nothing can
-	// be connected. A message that arrives opens a conversation from a row, so answering
-	// one needs a database and sessions as well.
-	if settings.Auth.KEK != "" {
-		if options.Secrets, err = auth.NewSealer(settings.Auth.KEK); err != nil {
-			return err
-		}
+	// A channel's provider credentials are sealed under the same keyring as the other
+	// secrets the router holds. Without one the channel paths refuse to hold them, which is
+	// better than keeping a WhatsApp token in the clear, and nothing is delivered because
+	// nothing can be connected. A message that arrives opens a conversation from a row, so
+	// answering one needs a database and sessions as well.
+	if secrets != nil {
+		options.Secrets = secrets
 		if pgStore != nil && sessions != nil {
 			inbound, err := channels.New(channels.Options{
 				Store:    pgStore,
@@ -986,8 +1041,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 			defer inbound.Close()
 		}
 	} else {
-		logger.Warn("no auth.kek set, so no channel can be connected: "+
-			"there is nowhere safe to keep a provider's credentials",
+		logger.Warn("no key encryption keyring set (ROUTER_AUTH_KEK_V1), so no channel can be "+
+			"connected: there is nowhere safe to keep a provider's credentials",
 			"endpoint", "POST /v1/agents/channels")
 	}
 
@@ -1128,6 +1183,7 @@ func buildSessions(
 	finding *searchrouter.Router,
 	judging *lcmrouter.Router,
 	stream *streamapp.Clients,
+	pluginAuth *plugins.Auth,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.LLM == nil {
@@ -1170,7 +1226,7 @@ func buildSessions(
 		Transcript:         transcriptFor(),
 		Configs:            configs,
 		Directory:          directory,
-		PluginAuth:         &plugins.Auth{PublicURL: settings.PublicURL, DashboardURL: settings.DashboardURL},
+		PluginAuth:         pluginAuth,
 	})
 }
 

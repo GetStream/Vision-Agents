@@ -492,6 +492,61 @@ func (s *FakeProviderSuite) TestCommaScopesAnswersInSlackShapeThatTheSlackManife
 	s.Equal(srv.UserID, account.Metadata["user_id"])
 }
 
+func (s *FakeProviderSuite) TestClientCredentialsIssuesAnAccessTokenAloneToAnAuthenticatedClient() {
+	srv := fakeprovider.New(s.T(), fakeprovider.ClientCredentials)
+	grant := url.Values{"grant_type": {"client_credentials"}}
+
+	status, body := s.post(srv, fakeprovider.PathToken, grant, true)
+	s.Equal(http.StatusOK, status)
+	s.NotContains(body, "refresh_token", "RFC 6749 §4.4.3")
+	s.Equal(http.StatusOK, s.call(srv, body["access_token"].(string)).StatusCode)
+
+	status, body = s.post(srv, fakeprovider.PathToken, grant, false)
+	s.Equal(http.StatusUnauthorized, status, "§4.4.2: the client must authenticate")
+	s.Equal("invalid_client", body["error"])
+	s.Equal(2, srv.ClientCredentialsGrants())
+
+	srv.Use()
+	status, body = s.post(srv, fakeprovider.PathToken, grant, true)
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("unsupported_grant_type", body["error"], "without the personality the grant is not offered")
+}
+
+func (s *FakeProviderSuite) TestClientCredentialsTokensExpireAndRevokeOneByOne() {
+	srv := fakeprovider.New(s.T(), fakeprovider.ClientCredentials)
+	grant := url.Values{"grant_type": {"client_credentials"}}
+	_, first := s.post(srv, fakeprovider.PathToken, grant, true)
+	_, second := s.post(srv, fakeprovider.PathToken, grant, true)
+
+	status, _ := s.post(srv, fakeprovider.PathRevoke, url.Values{"token": {first["access_token"].(string)}}, true)
+	s.Equal(http.StatusOK, status)
+	s.Equal(http.StatusUnauthorized, s.call(srv, first["access_token"].(string)).StatusCode)
+	s.Equal(http.StatusOK, s.call(srv, second["access_token"].(string)).StatusCode, "each request is a grant of its own")
+
+	srv.Advance(fakeprovider.AccessTTL)
+	s.Equal(http.StatusUnauthorized, s.call(srv, second["access_token"].(string)).StatusCode)
+}
+
+func (s *FakeProviderSuite) TestNoExpiresInLeavesTheLifetimeOutButTokensStillEnd() {
+	srv := fakeprovider.New(s.T(), fakeprovider.ClientCredentials, fakeprovider.NoExpiresIn)
+	_, body := s.post(srv, fakeprovider.PathToken, url.Values{"grant_type": {"client_credentials"}}, true)
+	s.NotContains(body, "expires_in")
+	s.NotContains(s.connect(srv, nil), "expires_in", "the code exchange too")
+
+	srv.Advance(fakeprovider.AccessTTL)
+	s.Equal(http.StatusUnauthorized, s.call(srv, body["access_token"].(string)).StatusCode)
+}
+
+func (s *FakeProviderSuite) TestIdentityURLPutsTheIdentityURLThatTheSalesforceManifestCapturesInTheTokenResponse() {
+	srv := fakeprovider.New(s.T(), fakeprovider.ClientCredentials, fakeprovider.IdentityURL)
+	_, body := s.post(srv, fakeprovider.PathToken, url.Values{"grant_type": {"client_credentials"}}, true)
+	s.Equal(srv.IdentityURL, body["id"])
+
+	account := s.apply("../providers/salesforce.yaml", nil, body)
+	s.Equal(srv.IdentityURL, account.AccountID)
+	s.Equal(srv.IdentityURL, s.connect(srv, nil)["id"], "the code exchange carries it too")
+}
+
 func (s *FakeProviderSuite) TestSwitchAccountMakesTheNextConsentAnotherUsersAndKeepsTheFirstGrantsUser() {
 	srv := fakeprovider.New(s.T(), fakeprovider.CommaScopes)
 	first := s.connect(srv, url.Values{"scope": {"chat:write"}})

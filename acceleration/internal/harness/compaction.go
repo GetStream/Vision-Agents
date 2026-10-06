@@ -45,6 +45,11 @@ func (h *Harness) MaybeCompact(history []llm.Message, inputTokens, cachedTokens 
 	}
 
 	prefixLength := len(history) - compactionKeepRecent
+	// What is kept starts at something the caller said. Cut mid-turn, it would open on a
+	// tool call or result without what led to it, which Gemini refuses outright.
+	for prefixLength > 0 && history[prefixLength].Role != llm.User {
+		prefixLength--
+	}
 	if prefixLength <= 0 {
 		return false, nil
 	}

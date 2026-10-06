@@ -14,13 +14,13 @@ import (
 func (s *Server) createSession(ctx context.Context, request *createSessionRequest) (*createSessionResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.sessions == nil {
-		return nil, huma.Error404NotFound(noSessions)
+		return nil, errNoSessions
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 
 	// A config is read before the session is created rather than inside it, so a caller
@@ -28,10 +28,7 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 	// ignored it.
 	config, failure := s.configFor(ctx, customerID, request.Body.ConfigId, request.Body.Agent)
 	if failure != nil {
-		if failure.status == notFound {
-			return nil, huma.Error404NotFound(failure.message)
-		}
-		return nil, huma.Error400BadRequest(failure.message)
+		return nil, failure
 	}
 
 	spec := specOf(*request.Body, customerID, config)
@@ -44,7 +41,7 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 	spec.CallerKind = KindFrom(ctx)
 	created, err := s.sessions.Create(ctx, spec)
 	if errors.Is(err, session.ErrSessionExists) {
-		return nil, huma.Error409Conflict(err.Error())
+		return nil, conflict(err.Error())
 	}
 	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
 		return nil, err
@@ -53,7 +50,7 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 		// Everything that can go wrong here is the caller's spec or a provider that would
 		// not start, and both are worth reading rather than a 500 with the detail in a
 		// log the caller cannot see.
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &createSessionResponse{Body: sessionOf(created)}, nil
 }

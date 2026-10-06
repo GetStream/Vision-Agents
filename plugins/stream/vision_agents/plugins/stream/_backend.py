@@ -17,7 +17,8 @@ AUTHENTICATE_ENV = "STREAM_ACCELERATION_AUTHENTICATE"
 
 CUSTOMER_HEADER = "X-Customer-Id"
 USER_HEADER = "X-Stream-User-Id"
-DEFAULT_URL = "http://localhost:8080"
+# Stream's hosted router, which is where a client goes when nothing says otherwise.
+DEFAULT_URL = "https://accelerate.gcp.stream-io-api.com"
 
 # How long a token minted here lasts. Short, because it is minted per request and a stolen
 # one should stop working sooner than the credential behind it.
@@ -34,7 +35,8 @@ class Backend:
     anything acting on one person's behalf.
 
     Attributes:
-        url: The router's base URL. Defaults to ``STREAM_ACCELERATION_URL``, then localhost.
+        url: The router's base URL. Defaults to ``STREAM_ACCELERATION_URL``, then Stream's
+            hosted router, so only a self-hosted or local router needs it.
         customer_id: Who the work is billed to, taken at face value. What a router running
             without keys in front of it reads. Defaults to
             ``STREAM_ACCELERATION_CUSTOMER_ID``.
@@ -48,10 +50,10 @@ class Backend:
             speaks for the app itself, which is what a backend does and what keeps the
             per-user daily limits out of it.
         authenticate: Whether the router is reached through Stream's authenticating proxy,
-            which is what every hosted deployment sits behind. Opt in rather than inferred
-            from holding a credential, because a Stream key and secret are in the environment
-            for plenty of reasons that have nothing to do with this router. Defaults to
-            ``STREAM_ACCELERATION_AUTHENTICATE``.
+            which is what every hosted deployment sits behind. On for the hosted router.
+            Anywhere else it is opt in rather than inferred from holding a credential, because
+            a Stream key and secret are in the environment for plenty of reasons that have
+            nothing to do with this router. Defaults to ``STREAM_ACCELERATION_AUTHENTICATE``.
         user: The user this is acting for, as chat and video want them. The id is what the
             router reads; a name is what a transcript shows without a second lookup.
         acting_for: The end user a server-side credential speaks for. Unlike ``user_id``
@@ -85,7 +87,9 @@ class Backend:
         if self.api_secret is None:
             self.api_secret = "" if self.token else os.environ.get(API_SECRET_ENV, "")
         if self.authenticate is None:
-            self.authenticate = _flag(os.environ.get(AUTHENTICATE_ENV))
+            self.authenticate = (
+                _flag(os.environ.get(AUTHENTICATE_ENV)) or self.url == DEFAULT_URL
+            )
 
         if self.user and not self.user_id:
             self.user_id = str(self.user.get("id", ""))

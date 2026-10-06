@@ -26,8 +26,11 @@ from .agent_response_item_page import AgentResponseItemPage
 from .agent_response_item_payload import AgentResponseItemPayload
 from .agent_response_page import AgentResponsePage
 from .agent_response_status import AgentResponseStatus
+from .app_settings import AppSettings
 from .attach_number_request import AttachNumberRequest
 from .attached_number import AttachedNumber
+from .authorization import Authorization
+from .authorization_kind import AuthorizationKind
 from .authorize_plugin_request import AuthorizePluginRequest
 from .available_number import AvailableNumber
 from .budget import Budget
@@ -95,6 +98,9 @@ from .connector_client_alg import ConnectorClientAlg
 from .connector_client_auth_method import ConnectorClientAuthMethod
 from .connector_client_registration_method import ConnectorClientRegistrationMethod
 from .connector_input import ConnectorInput
+from .connector_o_auth_client import ConnectorOAuthClient
+from .connector_o_auth_client_auth_method import ConnectorOAuthClientAuthMethod
+from .connector_o_auth_client_request import ConnectorOAuthClientRequest
 from .connector_page import ConnectorPage
 from .connector_tool_grant import ConnectorToolGrant
 from .contact import Contact
@@ -120,11 +126,16 @@ from .decision_kind import DecisionKind
 from .dispatch_setting import DispatchSetting
 from .endpointing import Endpointing
 from .equals_type_1 import EqualsType1
-from .error import Error
+from .error_detail import ErrorDetail
+from .error_response import ErrorResponse
+from .error_type import ErrorType
 from .fork_session_request import ForkSessionRequest
 from .fork_session_request_custom import ForkSessionRequestCustom
 from .generated_image import GeneratedImage
 from .generated_image_media_type import GeneratedImageMediaType
+from .get_connector_client_metadata_response_200 import (
+    GetConnectorClientMetadataResponse200,
+)
 from .get_conversation_messages_response_200 import GetConversationMessagesResponse200
 from .granularity import Granularity
 from .guest_user import GuestUser
@@ -192,10 +203,12 @@ from .place_call_request_tags import PlaceCallRequestTags
 from .placed_call import PlacedCall
 from .plugin import Plugin
 from .plugin_authorization import PluginAuthorization
+from .plugin_client import PluginClient
 from .plugin_connection import PluginConnection
 from .plugin_connection_status import PluginConnectionStatus
 from .plugin_event import PluginEvent
 from .plugin_event_arguments import PluginEventArguments
+from .plugin_setup_step import PluginSetupStep
 from .plugin_with_options import PluginWithOptions
 from .policy import Policy
 from .policy_tags import PolicyTags
@@ -257,6 +270,7 @@ from .session_tool_approval import SessionToolApproval
 from .session_tool_executor import SessionToolExecutor
 from .session_tool_parameters import SessionToolParameters
 from .session_video import SessionVideo
+from .set_plugin_client_request import SetPluginClientRequest
 from .set_sandbox_recipients_request import SetSandboxRecipientsRequest
 from .simulation import Simulation
 from .simulation_case import SimulationCase
@@ -282,6 +296,17 @@ from .speech_request import SpeechRequest
 from .speech_request_tags import SpeechRequestTags
 from .spend_bucket import SpendBucket
 from .stats_bucket import StatsBucket
+from .stream_app_state import StreamAppState
+from .stream_check import StreamCheck
+from .stream_credentials import StreamCredentials
+from .stream_key_input import StreamKeyInput
+from .stream_key_state import StreamKeyState
+from .stream_key_state_signs_webhooks import StreamKeyStateSignsWebhooks
+from .stream_key_state_status import StreamKeyStateStatus
+from .stream_settings import StreamSettings
+from .stream_tenancy import StreamTenancy
+from .stream_type_state import StreamTypeState
+from .stream_writes_into import StreamWritesInto
 from .sts_options import StsOptions
 from .sts_options_overwrites import StsOptionsOverwrites
 from .sts_options_turn_detection import StsOptionsTurnDetection
@@ -369,8 +394,11 @@ __all__ = (
     "AgentResponseItemPayload",
     "AgentResponsePage",
     "AgentResponseStatus",
+    "AppSettings",
     "AttachNumberRequest",
     "AttachedNumber",
+    "Authorization",
+    "AuthorizationKind",
     "AuthorizePluginRequest",
     "AvailableNumber",
     "Budget",
@@ -434,6 +462,9 @@ __all__ = (
     "ConnectorClientAuthMethod",
     "ConnectorClientRegistrationMethod",
     "ConnectorInput",
+    "ConnectorOAuthClient",
+    "ConnectorOAuthClientAuthMethod",
+    "ConnectorOAuthClientRequest",
     "ConnectorPage",
     "ConnectorToolGrant",
     "Contact",
@@ -459,11 +490,14 @@ __all__ = (
     "DispatchSetting",
     "Endpointing",
     "EqualsType1",
-    "Error",
+    "ErrorDetail",
+    "ErrorResponse",
+    "ErrorType",
     "ForkSessionRequest",
     "ForkSessionRequestCustom",
     "GeneratedImage",
     "GeneratedImageMediaType",
+    "GetConnectorClientMetadataResponse200",
     "GetConversationMessagesResponse200",
     "Granularity",
     "GuestUser",
@@ -531,10 +565,12 @@ __all__ = (
     "PlacedCall",
     "Plugin",
     "PluginAuthorization",
+    "PluginClient",
     "PluginConnection",
     "PluginConnectionStatus",
     "PluginEvent",
     "PluginEventArguments",
+    "PluginSetupStep",
     "PluginWithOptions",
     "Policy",
     "PolicyTags",
@@ -596,6 +632,7 @@ __all__ = (
     "SessionToolExecutor",
     "SessionToolParameters",
     "SessionVideo",
+    "SetPluginClientRequest",
     "SetSandboxRecipientsRequest",
     "Simulation",
     "SimulationCase",
@@ -621,6 +658,17 @@ __all__ = (
     "SpeechRequestTags",
     "SpendBucket",
     "StatsBucket",
+    "StreamAppState",
+    "StreamCheck",
+    "StreamCredentials",
+    "StreamKeyInput",
+    "StreamKeyState",
+    "StreamKeyStateSignsWebhooks",
+    "StreamKeyStateStatus",
+    "StreamSettings",
+    "StreamTenancy",
+    "StreamTypeState",
+    "StreamWritesInto",
     "StsOptions",
     "StsOptionsOverwrites",
     "StsOptionsTurnDetection",

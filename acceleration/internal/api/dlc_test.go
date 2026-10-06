@@ -107,7 +107,7 @@ func (s *DLCSuite) SetupSuite() {
 // Every test is an app of its own, so what one spent of its sandbox is not another's.
 func (s *DLCSuite) SetupTest() {
 	s.useApp(s.data.createApp())
-	s.staff = &testClient{suite: &s.RouterSuite, header: http.Header{opsKeyHeader: {suiteOpsKey}}, kind: unauthenticated}
+	s.staff = &testClient{suite: &s.RouterSuite, header: http.Header{opsKeyHeader: {suiteOpsKey}}, kind: noCredential}
 }
 
 func (s *DLCSuite) completeProfile() {
@@ -220,7 +220,7 @@ func (s *DLCSuite) TestAReportNotSignedByTheVendorIsRefused() {
 func (s *DLCSuite) TestOnlyStreamStaffReviewUseCases() {
 	s.Equal(http.StatusUnauthorized, s.serverClient.do(http.MethodGet, "/v1/ops/use-cases", nil, nil),
 		"an app's own backend is not staff")
-	wrong := &testClient{suite: &s.RouterSuite, header: http.Header{opsKeyHeader: {"guess"}}, kind: unauthenticated}
+	wrong := &testClient{suite: &s.RouterSuite, header: http.Header{opsKeyHeader: {"guess"}}, kind: noCredential}
 	s.Equal(http.StatusUnauthorized, wrong.do(http.MethodGet, "/v1/ops/use-cases", nil, nil))
 
 	sent := s.submitted()

@@ -19,8 +19,8 @@ using GetStream.VisionAgents;
 // A router with nothing in front of it, which is a laptop.
 using var api = new VisionAgentsClient(new VisionAgentsOptions { Url = "http://localhost:8080", CustomerId = "examples" });
 
-// A hosted router, through Stream's authenticating proxy.
-using var hosted = new VisionAgentsClient(new VisionAgentsOptions { ApiKey = key, ApiSecret = secret, Authenticate = true });
+// Stream's hosted router, through its authenticating proxy. The default when no Url is set.
+using var hosted = new VisionAgentsClient(new VisionAgentsOptions { ApiKey = key, ApiSecret = secret });
 
 // From IHttpClientFactory, which owns the handler.
 var pooled = new VisionAgentsClient(factory.CreateClient("vision-agents"));
@@ -28,7 +28,8 @@ var pooled = new VisionAgentsClient(factory.CreateClient("vision-agents"));
 
 Every option left null falls back to the environment the other SDKs read:
 `STREAM_ACCELERATION_URL`, `STREAM_ACCELERATION_CUSTOMER_ID`, `STREAM_API_KEY`,
-`STREAM_API_SECRET` and `STREAM_ACCELERATION_AUTHENTICATE`. A failure raises
+`STREAM_API_SECRET` and `STREAM_ACCELERATION_AUTHENTICATE`. With no URL at all the client goes
+to Stream's hosted router. A failure raises
 `RouterException`, carrying the status, the operation and what the router said.
 
 ## An agent

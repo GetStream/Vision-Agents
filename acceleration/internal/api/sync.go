@@ -144,24 +144,24 @@ func (s *Server) registerSync(api huma.API) {
 func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syncAgentResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 
 	body := request.Body
 	name := strings.TrimSpace(body.Name)
 	hash := strings.TrimSpace(body.Hash)
 	if name == "" {
-		return nil, huma.Error400BadRequest("an agent config needs a name")
+		return nil, invalidRequest("an agent config needs a name")
 	}
 	if hash == "" {
-		return nil, huma.Error400BadRequest("a hash is required, so a second sync can do nothing")
+		return nil, invalidRequest("a hash is required, so a second sync can do nothing")
 	}
 
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConfigs)
+		return nil, errNoConfigs
 	}
 	if message, ok := syncComplaint(body); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 
 	existing, found, err := s.configs.AgentConfigByName(ctx, customerID, name)
@@ -175,7 +175,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok, err := s.unboundConnectors(ctx, customerID, body.Connectors); err != nil {
 		return nil, err
 	} else if !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	config := existing
 	if !found {
@@ -183,44 +183,49 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	}
 	applySettings(&config, body)
 	if message, ok := textThinkingComplaint(&config, body.ThinkingLlm); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if message, ok := pluginEventsComplaint(config); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if message, ok := pluginEntriesComplaint(config); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if message, ok := mcpServersComplaint(config); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	servers, message, ok := s.describedMCPServers(ctx, config.MCPServers, existing.MCPServers)
 	if !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	config.MCPServers = servers
 	warnings, message, ok := s.channelsWarnings(ctx, config)
 	if !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
+	unclientable, err := s.pluginClientWarnings(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+	warnings = append(warnings, unclientable...)
 	if message, ok := pluginAliasComplaint(config); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 
 	documents := documentsOf(body.Knowledge)
 	namespace := ""
 	if len(documents) > 0 {
 		if s.knowledge == nil {
-			return nil, huma.Error400BadRequest(noKnowledge)
+			return nil, errNoKnowledge
 		}
 		namespace = name
 		if _, _, err := s.fillKnowledge(ctx, customerID, namespace, documents, nil); err != nil {
-			return nil, huma.Error400BadRequest(err.Error())
+			return nil, invalidRequest(err.Error())
 		}
 	}
 	if body.KnowledgeUrls != nil && len(*body.KnowledgeUrls) > 0 {
 		if s.pages == nil {
-			return nil, huma.Error400BadRequest(noKnowledgeURLs)
+			return nil, errNoKnowledgeURLs
 		}
 		namespace = name
 		for _, page := range *body.KnowledgeUrls {
@@ -229,7 +234,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 			wanted.Description = value(page.Description)
 			wanted.RefreshHours = value(page.RefreshHours)
 			if _, err := s.pages.Add(ctx, customerID, wanted); err != nil {
-				return nil, huma.Error400BadRequest(err.Error())
+				return nil, invalidRequest(err.Error())
 			}
 		}
 	}
@@ -255,11 +260,11 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 
 	if found {
 		if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
-			return nil, huma.Error400BadRequest(err.Error())
+			return nil, invalidRequest(err.Error())
 		}
 	} else {
 		if err := s.configs.CreateAgentConfig(ctx, &config); err != nil {
-			return nil, huma.Error400BadRequest(err.Error())
+			return nil, invalidRequest(err.Error())
 		}
 	}
 
@@ -267,7 +272,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	// agent has no id to hang them off until it has been stored.
 	if len(skills) > 0 {
 		if err := s.upsertSkills(ctx, customerID, config.ID, skills); err != nil {
-			return nil, huma.Error400BadRequest(err.Error())
+			return nil, invalidRequest(err.Error())
 		}
 	}
 	if body.Simulations != nil {

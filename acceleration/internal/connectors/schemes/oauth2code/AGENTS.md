@@ -1,6 +1,6 @@
 # internal/connectors/schemes/oauth2code
 
-The `oauth2_code` scheme: the OAuth 2.0 authorization code grant with PKCE S256 (RFC 6749 §4.1, RFC 7636), one implementation for every provider a manifest describes. `Begin` and `Complete` (part 1, AI-834) acquire the grant; `Retrieve`, `Wrap`, `Classify` and `Revoke` (part 2, AI-836) renew it, apply it, read what a provider answered and end it. The lock, the checkpoint and the status a connection moves to are the resolver's (T12), not this package's.
+The `oauth2_code` scheme: the OAuth 2.0 authorization code grant with PKCE S256 (RFC 6749 §4.1, RFC 7636), one implementation for every provider a manifest describes. `Begin` and `Complete` (part 1, AI-834) acquire the grant; `Retrieve`, `Wrap`, `Classify` and `Revoke` (part 2, AI-836) renew it, apply it, read what a provider answered and end it. The lock, what the checkpoint commits and the status a connection moves to are the resolver's (`internal/connectors/resolver`); this package only says when, by calling `core.RetrieveOptions.Checkpoint` before a refresh.
 
 ## Flow
 
@@ -12,8 +12,8 @@ Begin(Ref, Manifest, RedirectURI)
              resource or issuer) is skipped, and only if none is usable is it an error naming every failure
   endpoints  every endpoint, pinned or discovered, passes Config.PublicEndpoint (egress) with its query removed
   PKCE       refuse a server listing methods without S256; refuse one found through RFC 9728 that lists none
-  client     customer, operator (ClientLookup), cimd (Config.ClientMetadataURL), dcr (RFC 7591), in that order,
-             each only if client.registration names it
+  client     customer, managed, operator (ClientLookup), cimd (Config.ClientMetadataURL), dcr (RFC 7591), in
+             that order, each only if client.registration names it
   URL        authorize endpoint + authorize_params + response_type, client_id, redirect_uri, state,
              code_challenge, S256, resource, scope joined by scopes.separator
   -> AuthorizeURL, State (JSON: state, verifier, redirect URI, client, issuer, token endpoint, resource,
@@ -31,18 +31,22 @@ Complete(Ref, Manifest, State, Query)
   -> StoredCredentials{Scheme: oauth2_code, Version: 1, Payload: ref, client, endpoints, tokens, expiry,
      refresh expiry, scopes}, AccountInfo
 
-Retrieve(stored, m)
-  due        expiry known and within refresh.margin (default 1 min, the prototype's); otherwise -> the token, stored as is
-  none       no refresh token: still valid -> the token; expired -> InvalidGrant
-  refresh    endpoints.refresh or the token endpoint, checkEndpoint; client secret looked up again by payload ref;
-             grant_type, refresh_token, scope (granted scopes, only with scopes.send_on_refresh), resource
+Retrieve(stored, m, opts)
+  due        expiry known and within refresh.margin (default 1 min, the prototype's) or at or before
+             opts.ValidUntil, or opts.Refused (the provider refused it), whatever the expiry;
+             otherwise -> the token, stored as is
+  none       no refresh token: still valid or no known expiry -> the token; expired -> InvalidGrant
+  refresh    endpoints.refresh or the token endpoint, checkEndpoint; client secret looked up again by payload ref
+             (none found -> InvalidGrant, ClientRemovedError; another client_id -> "changed during the consent");
+             grant_type, refresh_token, scope (granted scopes, only with scopes.send_on_refresh), resource;
+             opts.Checkpoint right before the first request leaves (an error sends nothing)
   classify   Classify on the answer; a 2xx without a readable token is Uncertain; an error member Classify does
              not name, or any other refusal, is Transient
   grace      Uncertain and refresh.grace > 0 and the window the first attempt opened still running -> the same
              refresh token once more (the retired one still works there); never without a grace
   -> AccessCredential, new StoredCredentials (new refresh token if one came, refresh_ttl expiry), or
      *core.OutcomeError and no StoredCredentials, with the old AccessCredential beside it while that has not
-     expired; stored is never written to. A
+     expired and was not refused; stored is never written to. A
      refresh token dying before the next refresh logs a warning
 
 Classify(resp, body, err)
@@ -79,6 +83,8 @@ Revoke(stored, m)           endpoints.revoke or the discovered revocation_endpoi
 - **`private_key_jwt` is built, not offered.** `PrivateKeyJWT` (`privatekeyjwt.go`) makes the assertion (OIDC Core §9, RFC 7523 §2.2, §3); `supportedMethods` leaves the method out until a client record can hold a private key (T19).
 - **The redirect URI is bound to the attempt.** `Complete` sends the one `Begin` used (RFC 6749 §4.1.3); `CompleteInput` has none to confuse it with.
 - **Every hardcoded value cites its source** beside it: an RFC section, the CIMD draft (`draft-ietf-oauth-client-id-metadata-document-02`), MCP authorization 2025-11-25, a vendor page when no RFC defines the behaviour (the `claims` challenge is Microsoft's, `invalid_refresh_token`, `internal_error` and `fatal_error` are Slack's), or a line of the prototype `internal/mcp/oauth.go` or `internal/connectors/runtime.go` on `codex/connector-support` at `cf62af0d`.
+- **A removed client is a reconnect, not a retry.** When the lookup finds no preregistered client (the app deleted its record, `DELETE /v1/agents/connectors/{id}/oauth-client`, AI-846; or the operator's variables are unset), `clientSecret` returns an InvalidGrant `*core.OutcomeError` wrapping `ClientRemovedError` and sends nothing, so the resolver moves the connection to `needs_reauthorization`. Check: `go test -run 'TestOAuth2CodeSuite/TestARefreshAfterTheAppsClientWasRemoved' ./internal/connectors/schemes/oauth2code` and `go test -tags integration -run 'TestResolverSuite/TestARefreshAfterTheClientWasRemoved' ./internal/connectors/resolver`.
+- **Two pieces are exported for `oauth2cc`**, so both OAuth schemes send a token request and a bearer token alike: `(*Scheme).TokenRequest` (checkEndpoint, then tokenPost with an exported `Client`; a refused endpoint wraps errNotSent) and `Bearer(base, accessToken)`, which `Wrap` uses. `oauth2cc` reads answers with this scheme's `Classify`. Check: `grep -n 'oauth2code\.' internal/connectors/schemes/oauth2cc/scheme.go`.
 - **The CIMD document is built here, served by the API.** `ClientMetadataDocument(clientID, redirectURIs)` is what T17 serves at `Config.ClientMetadataURL`.
 
 ## Tests

@@ -437,6 +437,82 @@ func (s *DisplaySuite) TestALoginAPluginAsksForIsAttachedToTheReplyAndRestored()
 		ThumbURL:     logo,
 		TitleLink:    "https://accounts.google.com/o/oauth2/v2/auth?state=s1",
 	}}, page.Messages[1].Authorizations)
+	// A session's client reads the login where a Chat client does: among the attachments.
+	encoded, err := json.Marshal(page.Messages[1])
+	s.Require().NoError(err)
+	var wire struct {
+		Attachments    []map[string]any `json:"attachments"`
+		Authorizations any              `json:"authorizations"`
+	}
+	s.Require().NoError(json.Unmarshal(encoded, &wire))
+	s.Nil(wire.Authorizations)
+	s.Require().NotEmpty(wire.Attachments)
+	login := wire.Attachments[len(wire.Attachments)-1]
+	s.Equal(plugins.AuthorizationType, login["type"])
+	s.Equal("google_calendar", login["plugin_id"])
+	s.Equal("https://accounts.google.com/o/oauth2/v2/auth?state=s1", login["authorize_url"])
+}
+
+func (s *DisplaySuite) TestAFinishedLoginMarksTheReplyThatAskedForIt() {
+	c := s.open("on_call")
+	c.AcceptLogins([]string{"google_calendar"})
+	asked, err := c.BeginCommand("command-a", "When am I free?", "")
+	s.Require().NoError(err)
+	calendar, ok := plugins.Lookup("google_calendar")
+	s.Require().True(ok)
+	c.Observe(agent.ToolStarted{ID: "list", Tool: "google_calendar__list_tools", StartedAt: time.Now().UTC()})
+	c.Observe(agent.ToolRan{ID: "list", Tool: "google_calendar__list_tools",
+		Result: plugins.AuthorizationResult(calendar, "https://accounts.google.com/o/oauth2/v2/auth?state=s1", "")})
+	c.Observe(agent.Responded{})
+	saved(s.T(), c)
+	// The caller has moved on by the time the provider hands them back.
+	_, err = c.BeginCommand("command-b", "And tomorrow?", "")
+	s.Require().NoError(err)
+
+	_, _, ok = s.service.Connected("someone-elses-state")
+	s.False(ok)
+	held, pluginID, ok := s.service.Connected("s1")
+	s.Require().True(ok)
+	s.Same(c, held)
+	s.Equal("google_calendar", pluginID)
+	saved(s.T(), c)
+
+	s.Contains(s.raw(asked.AssistantMessageID), `"status":"connected"`)
+	c.Release()
+	page, err := s.service.HistoryForCaller(s.T().Context(), "customer", "on_call", c.CID(), "", "employee")
+	s.Require().NoError(err)
+	var reply Message
+	for _, m := range page.Messages {
+		if m.ID == asked.AssistantMessageID {
+			reply = m
+		}
+	}
+	s.Require().Len(reply.Authorizations, 1)
+	s.Equal(plugins.AuthorizationConnected, reply.Authorizations[0].Status)
+}
+
+func (s *DisplaySuite) TestAFollowUpShowsOnlyTheReply() {
+	c := s.open("on_call")
+	_, err := c.BeginCommand("command-a", "Tell Nash a joke on Slack", "")
+	s.Require().NoError(err)
+	c.Observe(agent.Responded{})
+	saved(s.T(), c)
+
+	followed, err := c.BeginFollowUp("Slack is connected now. Carry on.")
+	s.Require().NoError(err)
+	_, err = c.BeginFollowUp("Slack is connected now. Carry on.")
+	s.Error(err, "one reply runs at a time")
+	c.Observe(agent.Responded{})
+	saved(s.T(), c)
+
+	s.Equal("assistant", s.stored(followed.AssistantMessageID).Role)
+	s.Equal("command-a", s.stored(followed.AssistantMessageID).QuestionID)
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.Len(s.db.messages, 3, "the question, the reply that asked for a login and the one carrying on")
+	for _, m := range s.db.messages {
+		s.NotContains(m["text"], "Carry on")
+	}
 }
 
 func (s *DisplaySuite) open(agentID string) *Conversation {
