@@ -129,7 +129,30 @@ func (s *TransportsSuite) TestAResolverRefusalSendsNothing() {
 	s.Empty(s.provider.received())
 }
 
-func (s *TransportsSuite) TestARefusalOfTheCurrentCredentialNeedsAReconnectAndIsNotRetried() {
+// TestARefusedCredentialIsRenewedAndTheRequestSentOnceMore: the provider ended token-1
+// before the expiry the router knows (its clock runs ahead, or it revoked the access token
+// alone). The grant still works, so the resolver renews past token-1 and the request goes
+// again, with its body, and the connection stays connected.
+func (s *TransportsSuite) TestARefusedCredentialIsRenewedAndTheRequestSentOnceMore() {
+	s.resolver.refresh = "token-2"
+	s.provider.accept("token-2")
+	s.provider.refuse("token-1")
+
+	response, err := s.post(s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, response.StatusCode)
+	s.True(s.resolver.isConnected())
+	received := s.provider.received()
+	s.Require().Len(received, 2)
+	s.Equal([]string{"token-1", "token-2"}, s.provider.tokens())
+	s.Equal(body, received[1].body)
+	s.True(received[1].signatureMatches)
+}
+
+// TestARefusedCredentialNothingRenewsNeedsAReconnect: a static key, or a token without a
+// refresh token, comes back the same, so only a new grant helps.
+func (s *TransportsSuite) TestARefusedCredentialNothingRenewsNeedsAReconnect() {
 	s.provider.refuse("token-1")
 
 	response, err := s.post(s.client(), s.provider.URL+"/mcp")
@@ -141,9 +164,24 @@ func (s *TransportsSuite) TestARefusalOfTheCurrentCredentialNeedsAReconnectAndIs
 	s.Len(s.provider.received(), 1)
 }
 
+// TestARefusedRenewalIsTheAnswer: the refresh itself is refused (invalid_grant at the token
+// endpoint), which the resolver acts on; the provider's 401 is the answer.
+func (s *TransportsSuite) TestARefusedRenewalIsTheAnswer() {
+	s.resolver.refreshRefused = true
+	s.provider.refuse("token-1")
+
+	response, err := s.post(s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusUnauthorized, response.StatusCode)
+	s.Equal("refused", s.read(response))
+	s.False(s.resolver.isConnected())
+	s.Len(s.provider.received(), 1)
+}
+
 // TestARefusalOfACredentialAnotherRouterRenewedIsRetriedOnceWithTheRenewedOne: the request
 // left with token-1 while another router renewed it to token-2, so the provider refuses
-// token-1. The resolver keeps the connection, hands out token-2, and the request goes again
+// token-1. The resolver hands out token-2 without renewing again, and the request goes again
 // with its body.
 func (s *TransportsSuite) TestARefusalOfACredentialAnotherRouterRenewedIsRetriedOnceWithTheRenewedOne() {
 	s.provider.accept("token-2")
@@ -179,14 +217,8 @@ func (s *TransportsSuite) TestARefusedRequestIsSentAgainOnlyOnce() {
 	s.Equal([]string{"token-1", "token-2"}, s.provider.tokens())
 }
 
-func (s *TransportsSuite) TestARefusalOfTheRetriedCredentialIsToldToo() {
-	renewed := false
-	s.provider.onRequest(func() {
-		if !renewed {
-			renewed = true
-			s.resolver.renew("token-2")
-		}
-	})
+func (s *TransportsSuite) TestARefusalOfTheRenewedCredentialNeedsAReconnect() {
+	s.resolver.refresh = "token-2"
 	s.provider.refuse("token-1", "token-2")
 
 	response, err := s.post(s.client(), s.provider.URL+"/mcp")
@@ -194,23 +226,30 @@ func (s *TransportsSuite) TestARefusalOfTheRetriedCredentialIsToldToo() {
 	s.Require().NoError(err)
 	s.Equal(http.StatusUnauthorized, response.StatusCode)
 	s.Equal([]string{"token-1", "token-2"}, s.provider.tokens())
-	s.False(s.resolver.isConnected(), "the provider refused the current credential on the retry")
+	s.False(s.resolver.isConnected(), "the provider refused the credential just renewed")
 }
 
+// TestABodyThatCannotBeReadAgainIsNotSentAgain: the credential is still renewed, so the next
+// call carries the renewed one.
 func (s *TransportsSuite) TestABodyThatCannotBeReadAgainIsNotSentAgain() {
+	s.resolver.refresh = "token-2"
 	s.provider.accept("token-2")
-	s.provider.onRequest(func() { s.resolver.renew("token-2") })
 	s.provider.refuse("token-1")
+	client := s.client()
 	// A reader http.NewRequest does not know, so the request has no GetBody.
 	request, err := http.NewRequest(http.MethodPost, s.provider.URL+"/mcp", io.MultiReader(strings.NewReader(body)))
 	s.Require().NoError(err)
 
-	response, err := s.client().Do(request)
+	response, err := client.Do(request)
 
 	s.Require().NoError(err)
 	defer response.Body.Close()
 	s.Equal(http.StatusUnauthorized, response.StatusCode)
 	s.Len(s.provider.received(), 1)
+	next, err := s.post(client, s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, next.StatusCode)
+	s.Equal([]string{"token-1", "token-2"}, s.provider.tokens())
 }
 
 func (s *TransportsSuite) TestA401TheSchemeFindsNothingInLeavesTheConnectionAlone() {
@@ -292,6 +331,36 @@ func (s *TransportsSuite) TestReplacingTheTransportOfOneClientLeavesTheConnectio
 	s.Equal([]string{"token-1"}, s.provider.tokens())
 }
 
+// TestAClientUnusedForIdleAfterIsDropped: connection-1 is asked for and sent with at t0,
+// connection-3 sent with again at t0+80s. Building a client for connection-2 at t0+95s drops
+// connection-1's, which closes its idle connection, and keeps connection-3's pool.
+func (s *TransportsSuite) TestAClientUnusedForIdleAfterIsDropped() {
+	clock := &clock{now: time.Now()}
+	transports, err := core.NewTransports(core.TransportsConfig{Resolver: s.resolver, Timeout: requestTimeout,
+		NewClient: loopback(s.provider.Client()), Now: clock.Now})
+	s.Require().NoError(err)
+	kept := transports.Client(core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-3"}, s.scheme)
+	for _, client := range []*http.Client{transports.Client(s.ref, s.scheme), kept} {
+		response, err := s.post(client, s.provider.URL+"/mcp")
+		s.Require().NoError(err)
+		s.read(response)
+	}
+	clock.Add(80 * time.Second)
+	response, err := s.post(kept, s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+	s.read(response)
+	s.Equal(2, s.provider.opened())
+	clock.Add(15 * time.Second)
+
+	transports.Client(core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-2"}, s.scheme)
+
+	s.Eventually(func() bool { return s.provider.closed() == 1 }, closedWithin, 10*time.Millisecond)
+	response, err = s.post(kept, s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+	s.read(response)
+	s.Equal(2, s.provider.opened(), "connection-3 still has its idle connection")
+}
+
 func (s *TransportsSuite) TestTransportsNeedAResolver() {
 	_, err := core.NewTransports(core.TransportsConfig{})
 
@@ -360,6 +429,7 @@ var errNotConnected = errors.New("the connection is not connected")
 
 // memoryResolver is one connection's credential state in memory, with the semantics of
 // core.Resolver: Resolve renews a credential that expires before the call's deadline, and
+// one the provider refused (CredentialRequest.Refused) while it is still the current one;
 // Invalidate moves the connection out of connected only when the refused credential is the
 // current one and had not expired.
 type memoryResolver struct {
@@ -368,6 +438,11 @@ type memoryResolver struct {
 	revision  int
 	expires   time.Time
 	connected bool
+	// refresh is the token a renewal of a refused credential gets; empty when nothing
+	// renews it, so it comes back the same.
+	refresh string
+	// refreshRefused makes that renewal fail as a refused refresh does: needs_reauthorization.
+	refreshRefused bool
 }
 
 func (r *memoryResolver) Resolve(_ context.Context, _ core.ConnectionRef, req core.CredentialRequest) (core.AccessCredential, error) {
@@ -375,6 +450,15 @@ func (r *memoryResolver) Resolve(_ context.Context, _ core.ConnectionRef, req co
 	defer r.mu.Unlock()
 	if !r.connected {
 		return core.AccessCredential{}, errNotConnected
+	}
+	if req.Refused != nil && req.Refused.Revision == r.revision {
+		switch {
+		case r.refreshRefused:
+			r.connected = false
+			return core.AccessCredential{}, errNotConnected
+		case r.refresh != "":
+			r.token, r.revision = r.refresh, r.revision+1
+		}
 	}
 	if !r.expires.IsZero() && !req.Deadline.IsZero() && !req.Deadline.Before(r.expires) {
 		r.token, r.revision, r.expires = "renewed", r.revision+1, req.Deadline.Add(time.Hour)
@@ -417,6 +501,24 @@ func (r *memoryResolver) isConnected() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.connected
+}
+
+// clock is the time Transports judges unused clients by, moved by the test.
+type clock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *clock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *clock) Add(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
 }
 
 const signingName = "signing"

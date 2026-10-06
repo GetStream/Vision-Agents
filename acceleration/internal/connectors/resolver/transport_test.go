@@ -54,14 +54,33 @@ func (s *TransportSuite) SetupTest() {
 	s.f = newFixture(s.T(), s.dsn, s.db)
 }
 
-// TestATokenTheProviderRefusesMovesTheConnectionToNeedsReauthorization: the fake's clock
-// moves past the token's expiry and the router's does not, so the provider refuses a token
-// the router believes live. That refusal says the grant is gone: the connection needs a
-// reconnect, and the call is not sent again.
-func (s *TransportSuite) TestATokenTheProviderRefusesMovesTheConnectionToNeedsReauthorization() {
+// TestATokenTheProviderEndedEarlyIsRefreshedAndTheCallRetried: the fake's clock moves past
+// the token's expiry and the router's does not, so the provider refuses a token the router
+// believes live. The grant still works: the token is refreshed, the call goes once more,
+// and the connection stays connected.
+func (s *TransportSuite) TestATokenTheProviderEndedEarlyIsRefreshedAndTheCallRetried() {
 	ref := s.f.connected()
 	client := s.transports(s.f.srv.Client().Transport).Client(ref, s.f.scheme(s.f.srv.Client()))
 	s.Equal(http.StatusOK, s.call(client))
+	revision, refreshes := s.f.stored(ref).Revision, s.f.srv.Refreshes()
+
+	s.f.srv.Advance(fakeprovider.AccessTTL + time.Second)
+
+	s.Equal(http.StatusOK, s.call(client))
+	connection := s.f.stored(ref)
+	s.Equal(store.ConnectionConnected, connection.Status)
+	s.Equal(revision+1, connection.Revision)
+	s.Equal(refreshes+1, s.f.srv.Refreshes())
+	s.Equal(3, s.f.srv.Hits(fakeprovider.PathMCP), "the first call, the refused one and its retry")
+}
+
+// TestARefusedRefreshMovesTheConnectionToNeedsReauthorization: the provider refuses the token
+// and then the refresh (invalid_grant). Only a reconnect helps, and the call is not sent again.
+func (s *TransportSuite) TestARefusedRefreshMovesTheConnectionToNeedsReauthorization() {
+	ref := s.f.connected()
+	client := s.transports(s.f.srv.Client().Transport).Client(ref, s.f.scheme(s.f.srv.Client()))
+	s.Equal(http.StatusOK, s.call(client))
+	s.f.srv.Use(fakeprovider.InvalidGrant)
 
 	s.f.srv.Advance(fakeprovider.AccessTTL + time.Second)
 
