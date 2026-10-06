@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // clientName is how the router names itself to an authorization server, in a registration
@@ -128,6 +129,21 @@ func (s *Scheme) pickClient(ctx context.Context, ref core.ConnectionRef, m core.
 	return client{}, fmt.Errorf("%w (client.registration %v)", ErrNoClient, m.Client.Registration)
 }
 
+// ClientRemovedError is a preregistered client the lookup no longer finds: the app removed
+// its client record, or the operator's variables are gone. It comes as an InvalidGrant
+// *core.OutcomeError, so the resolver moves the connection to needs_reauthorization.
+type ClientRemovedError struct {
+	Registration core.ClientRegistrationMethod
+}
+
+func (e *ClientRemovedError) Error() string {
+	whose := "app's"
+	if e.Registration == core.ClientOperator {
+		whose = "operator's"
+	}
+	return "oauth2code: the " + whose + " OAuth client for this connector was removed; the connection needs a reconnect"
+}
+
 // clientSecret is c with the secret the token request needs: a preregistered client's is
 // looked up again, so the attempt never carried it.
 func (s *Scheme) clientSecret(ctx context.Context, ref core.ConnectionRef, m core.ResolvedManifest, c client) (client, error) {
@@ -141,7 +157,16 @@ func (s *Scheme) clientSecret(ctx context.Context, ref core.ConnectionRef, m cor
 	if err != nil {
 		return client{}, fmt.Errorf("oauth2code: %s client: %w", c.RegistrationMethod, err)
 	}
-	if !ok || found.ID != c.ID {
+	if !ok {
+		// The record is gone (DELETE .../oauth-client, AI-846) or the operator's variables are
+		// unset: no retry brings the client back, and the grant was issued to it, so only a
+		// reconnect with whatever client is there now helps.
+		return client{}, &core.OutcomeError{
+			Outcome: core.Outcome{Kind: core.OutcomeInvalidGrant},
+			Err:     stack.Wrap(&ClientRemovedError{Registration: c.RegistrationMethod}),
+		}
+	}
+	if found.ID != c.ID {
 		return client{}, fmt.Errorf("oauth2code: the %s client changed during the consent; start it again", c.RegistrationMethod)
 	}
 	c.Secret = found.Secret

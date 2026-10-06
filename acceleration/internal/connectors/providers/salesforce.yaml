@@ -18,8 +18,9 @@
 #          at 863835e9a4e4c92bf0080b7152f06ecc94f0a108, opened October 2, 2026.
 id: salesforce
 # A new revision for any change to what this file says; see AGENTS.md. 2 renames
-# client.policy to client.registration.
-revision: 2
+# client.policy to client.registration; 3 adds oauth2_client_credentials and
+# refresh.access_ttl.
+revision: 3
 # [proto]:96-98
 name: Salesforce
 category: Customers
@@ -57,9 +58,21 @@ endpoints:
   # endpoints above are pinned, so oauth2_code discovers nothing and needs it here. Whether
   # Salesforce's authorization server reads it is not on any source above. # unverified
   resource: https://api.salesforce.com/{mcp_path}
-# Authorization code with PKCE S256: [oidc]. Row 1 also lists oauth2_client_credentials and
-# oauth2_jwt_bearer, which are not registered schemes yet; they join with their schemes.
-schemes: [oauth2_code]
+# Authorization code with PKCE S256: [oidc]. Client credentials, for a connection the app
+# owns, with no person to consent: row 1 («client credentials with a "Run As" user»), and
+# Salesforce's own description of the flow, a connected app's consumer key and secret as
+# client id and secret, with a «Run As» user the tokens act for («Configuring the flow»,
+# developer.salesforce.com/blogs/2023/03/using-the-client-credentials-flow-for-easier-api-
+# authentication, read 2026-10-06). That app lives in the customer's org, so its id and
+# secret are supplied per connection, not an operator or customer client record. Row 1
+# also lists oauth2_jwt_bearer, which is not a registered scheme yet; it joins with it.
+#
+# oauth2_client_credentials posts to endpoints.token below, the login host. The blog's
+# example URL is login.salesforce.com; [oidc]'s grant_types_supported lists only
+# authorization_code and refresh_token (2026-10-06T19:21:49Z), and third-party guides say
+# the flow needs the org's My Domain token URL. Which is right is not checked: Salesforce's
+# help page on the flow renders client-side and could not be read. # unverified
+schemes: [oauth2_code, oauth2_client_credentials]
 client:
   # An External Client App the operator or the customer registers in Salesforce: the core
   # fixture and the architecture doc's «A manifest, for scale» (our policy, not a vendor
@@ -92,10 +105,17 @@ identity: [identity_url]
 # no HTTP source exists yet to call the org's own host.
 refresh:
   # Not rotating, a one-minute margin: the core fixture and the doc's «A manifest, for
-  # scale»; the margin is the prototype's (row 15 of «Axes where providers differ»). The
-  # token response has no expires_in ([sdk] reads none), so no access_ttl is written either:
-  # the session timeout is the org's setting. # unverified
+  # scale»; the margin is the prototype's (row 15 of «Axes where providers differ»).
   margin: 60s
+  # The token response has no expires_in ([sdk] reads none), and a token lives as long as
+  # the org's session timeout, which each org sets. Without an access_ttl no scheme knows
+  # when to renew, and oauth2_client_credentials refuses such a token (ErrNoLifetime). 15
+  # minutes is the shortest timeout an org can set, so a token is renewed before any org
+  # ends it: «Modify Session Security Settings» in Salesforce's Security Guide gives the
+  # range 15 minutes to 24 hours, as search results quote it on 2026-10-06; the page itself
+  # answered 403 and was not read. The cost is one token request per 14 minutes per
+  # connection under either scheme. # unverified
+  access_ttl: 15m
 rate_limit:
   # Per org: row 16 of «Axes where providers differ», here the tenant.
   per: tenant

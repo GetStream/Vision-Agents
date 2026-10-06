@@ -39,17 +39,17 @@ func (s *ConnectorRegistrySuite) TestWithConnectorsOffNoSchemeIsRegistered() {
 	s.Empty(registry.Schemes, "no connection or custom connector can name one")
 }
 
-func (s *ConnectorRegistrySuite) TestWithConnectorsOnTheFourSchemesAreRegisteredByName() {
+func (s *ConnectorRegistrySuite) TestWithConnectorsOnTheFiveSchemesAreRegisteredByName() {
 	s.settings.Connectors.Enabled = true
 
 	registry, err := newConnectorRegistry(s.settings, nil)
 
 	s.Require().NoError(err)
-	for _, name := range []string{"oauth2_code", "api_key", "bearer", "none"} {
+	for _, name := range []string{"oauth2_code", "oauth2_client_credentials", "api_key", "bearer", "none"} {
 		s.Require().Contains(registry.Schemes, name)
 		s.Equal(name, registry.Schemes[name].Name())
 	}
-	s.Len(registry.Schemes, 4)
+	s.Len(registry.Schemes, 5)
 }
 
 // TestAnHTTPSPublicURLIsTheClientIDUnderCIMD pins the client_id the router hands an

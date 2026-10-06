@@ -403,6 +403,56 @@ func (s *OAuth2CodeSuite) TestARefreshLooksThePreregisteredClientSecretUpAgain()
 	s.Equal("invalid_client", refused.Code)
 }
 
+// DELETE /v1/agents/connectors/{id}/oauth-client (AI-846) removes the app's client record.
+// The grant was issued to that client, so the refresh says the client is gone and needs a
+// reconnect, sends nothing, and is InvalidGrant, which the resolver turns into
+// needs_reauthorization.
+func (s *OAuth2CodeSuite) TestARefreshAfterTheAppsClientWasRemovedSaysSoAndIsInvalidGrant() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.preregistered(srv)
+	resolved.Client.Registration = []core.ClientRegistrationMethod{core.ClientCustomer}
+	removed := false
+	lookup := func(context.Context, core.ConnectionRef, core.ResolvedManifest, core.ClientRegistrationMethod) (oauth2code.Client, bool, error) {
+		return oauth2code.Client{ID: srv.ClientID, Secret: srv.ClientSecret}, !removed, nil
+	}
+	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: lookup, Now: s.clock})
+	stored, _, err := s.connect(srv, scheme, resolved)
+	s.Require().NoError(err)
+
+	removed = true
+	s.now = s.now.Add(fakeprovider.AccessTTL)
+	_, _, err = scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
+	s.Equal(core.OutcomeInvalidGrant, s.outcome(err).Kind)
+	var gone *oauth2code.ClientRemovedError
+	s.Require().ErrorAs(err, &gone)
+	s.Equal(core.ClientCustomer, gone.Registration)
+	s.ErrorContains(err, "the app's OAuth client for this connector was removed; the connection needs a reconnect")
+	s.NotContains(err.Error(), "changed during the consent")
+	s.Equal(0, srv.Refreshes(), "nothing was sent")
+}
+
+// A client record that is there but names another client_id is still the other case: the
+// app registered a new client while the consent was open.
+func (s *OAuth2CodeSuite) TestARefreshWithAnotherClientInTheRecordSaysTheClientChanged() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.preregistered(srv)
+	resolved.Client.Registration = []core.ClientRegistrationMethod{core.ClientCustomer}
+	id := srv.ClientID
+	lookup := func(context.Context, core.ConnectionRef, core.ResolvedManifest, core.ClientRegistrationMethod) (oauth2code.Client, bool, error) {
+		return oauth2code.Client{ID: id, Secret: srv.ClientSecret}, true, nil
+	}
+	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: lookup, Now: s.clock})
+	stored, _, err := s.connect(srv, scheme, resolved)
+	s.Require().NoError(err)
+
+	id = "another-client"
+	s.now = s.now.Add(fakeprovider.AccessTTL)
+	_, _, err = scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
+	s.ErrorContains(err, "the customer client changed during the consent")
+	var gone *oauth2code.ClientRemovedError
+	s.False(errors.As(err, &gone))
+}
+
 func (s *OAuth2CodeSuite) TestARefreshTokenDyingBeforeTheNextRefreshIsWarnedAboutWithoutATokenInTheLog() {
 	srv := fakeprovider.New(s.T())
 	resolved := s.preregistered(srv)

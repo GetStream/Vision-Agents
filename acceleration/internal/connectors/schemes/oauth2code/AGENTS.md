@@ -36,7 +36,8 @@ Retrieve(stored, m, opts)
              opts.ValidUntil, or opts.Refused (the provider refused it), whatever the expiry;
              otherwise -> the token, stored as is
   none       no refresh token: still valid or no known expiry -> the token; expired -> InvalidGrant
-  refresh    endpoints.refresh or the token endpoint, checkEndpoint; client secret looked up again by payload ref;
+  refresh    endpoints.refresh or the token endpoint, checkEndpoint; client secret looked up again by payload ref
+             (none found -> InvalidGrant, ClientRemovedError; another client_id -> "changed during the consent");
              grant_type, refresh_token, scope (granted scopes, only with scopes.send_on_refresh), resource;
              opts.Checkpoint right before the first request leaves (an error sends nothing)
   classify   Classify on the answer; a 2xx without a readable token is Uncertain; an error member Classify does
@@ -82,6 +83,8 @@ Revoke(stored, m)           endpoints.revoke or the discovered revocation_endpoi
 - **`private_key_jwt` is built, not offered.** `PrivateKeyJWT` (`privatekeyjwt.go`) makes the assertion (OIDC Core §9, RFC 7523 §2.2, §3); `supportedMethods` leaves the method out until a client record can hold a private key (T19).
 - **The redirect URI is bound to the attempt.** `Complete` sends the one `Begin` used (RFC 6749 §4.1.3); `CompleteInput` has none to confuse it with.
 - **Every hardcoded value cites its source** beside it: an RFC section, the CIMD draft (`draft-ietf-oauth-client-id-metadata-document-02`), MCP authorization 2025-11-25, a vendor page when no RFC defines the behaviour (the `claims` challenge is Microsoft's, `invalid_refresh_token`, `internal_error` and `fatal_error` are Slack's), or a line of the prototype `internal/mcp/oauth.go` or `internal/connectors/runtime.go` on `codex/connector-support` at `cf62af0d`.
+- **A removed client is a reconnect, not a retry.** When the lookup finds no preregistered client (the app deleted its record, `DELETE /v1/agents/connectors/{id}/oauth-client`, AI-846; or the operator's variables are unset), `clientSecret` returns an InvalidGrant `*core.OutcomeError` wrapping `ClientRemovedError` and sends nothing, so the resolver moves the connection to `needs_reauthorization`. Check: `go test -run 'TestOAuth2CodeSuite/TestARefreshAfterTheAppsClientWasRemoved' ./internal/connectors/schemes/oauth2code` and `go test -tags integration -run 'TestResolverSuite/TestARefreshAfterTheClientWasRemoved' ./internal/connectors/resolver`.
+- **Two pieces are exported for `oauth2cc`**, so both OAuth schemes send a token request and a bearer token alike: `(*Scheme).TokenRequest` (checkEndpoint, then tokenPost with an exported `Client`; a refused endpoint wraps errNotSent) and `Bearer(base, accessToken)`, which `Wrap` uses. `oauth2cc` reads answers with this scheme's `Classify`. Check: `grep -n 'oauth2code\.' internal/connectors/schemes/oauth2cc/scheme.go`.
 - **The CIMD document is built here, served by the API.** `ClientMetadataDocument(clientID, redirectURIs)` is what T17 serves at `Config.ClientMetadataURL`.
 
 ## Tests
