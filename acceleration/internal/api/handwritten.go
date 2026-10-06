@@ -226,6 +226,83 @@ func documentHandWritten(api huma.API) {
 			"302": {Description: "The browser is sent back to the agent editor"},
 		},
 	})
+	// The consent flow's browser routes (authorizations.go). Unauthenticated, as the plugin
+	// callback is: a browser carries no credential of this API's, and what each one checks
+	// instead is in its description.
+	document.AddOperation(&huma.Operation{
+		OperationID: "getConnectorLaunchPage",
+		Method:      http.MethodGet,
+		Path:        connectorLaunchPath + "{id}",
+		Summary:     "The page a consent starts on",
+		Description: "The launch_url of an authorization, opened in a popup by the dashboard. The page " +
+			"waits for the dashboard's origin to post the handoff token, trades it for the provider's " +
+			"authorize URL and goes there. Unauthenticated because a browser opens it; the page " +
+			"names no attempt and is the same for every one.",
+		Security: []map[string][]string{},
+		Parameters: []*huma.Param{
+			{Name: "id", In: "path", Description: "The authorization.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The launch page", Content: map[string]*huma.MediaType{"text/html": {Schema: &huma.Schema{Type: huma.TypeString}}}},
+		},
+	})
+	document.AddOperation(&huma.Operation{
+		OperationID: "handOffConnectorLaunch",
+		Method:      http.MethodPost,
+		Path:        connectorLaunchPath + "{id}",
+		Summary:     "Bind a consent to this browser",
+		Description: "What the launch page posts: `{\"handoff_token\": ...}`, from the router's own origin " +
+			"only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in " +
+			"this browser, and answers `{\"authorization_url\": ...}`, the provider's authorize URL. " +
+			"Unauthenticated because a browser sends it; the handoff token is the secret.",
+		Security: []map[string][]string{},
+		Parameters: []*huma.Param{
+			{Name: "id", In: "path", Description: "The authorization.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The cookie is set and the authorize URL returned"},
+			"400": {Ref: "#/components/responses/BadRequest"},
+			"403": {Description: "Not from the launch page's origin, or not this consent's handoff token"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
+		OperationID: "finishConnectorConsent",
+		Method:      http.MethodGet,
+		Path:        ConnectorCallbackPath,
+		Summary:     "Finish a consent",
+		Description: "The redirect URI a provider sends the browser back to. The state must name an " +
+			"open consent, the browser must hold the cookie the handoff set, and the consent is " +
+			"used once. The router then exchanges the code and sends the browser to the dashboard " +
+			"with connection_id and status: connected, denied, failed, or account_mismatch when a " +
+			"reconnect came back with another provider account and the old grant was kept. " +
+			"Unauthenticated because the browser arrives from the provider.",
+		Security: []map[string][]string{},
+		Parameters: []*huma.Param{
+			{Name: "state", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "code", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "iss", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "error", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
+		},
+		Responses: map[string]*huma.Response{
+			"302": {Description: "The browser is sent back to the dashboard"},
+			"400": {Ref: "#/components/responses/BadRequest"},
+			"403": {Description: "The consent was started in another browser"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
+		OperationID: "getConnectorClientMetadata",
+		Method:      http.MethodGet,
+		Path:        ConnectorClientMetadataPath,
+		Summary:     "The router's OAuth client metadata",
+		Description: "The OAuth Client ID Metadata Document a provider that supports it fetches, " +
+			"at the URL that is the router's client_id. Served only when ROUTER_PUBLIC_URL is " +
+			"https. Unauthenticated because the provider fetches it.",
+		Security: []map[string][]string{},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The document", Content: map[string]*huma.MediaType{"application/json": {Schema: &huma.Schema{Type: huma.TypeObject}}}},
+			"404": {Ref: "#/components/responses/NotFound"},
+		},
+	})
 	document.AddOperation(&huma.Operation{
 		OperationID: "getPluginLogo",
 		Method:      http.MethodGet,
