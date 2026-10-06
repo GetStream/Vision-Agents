@@ -527,6 +527,16 @@ func (s *FakeProviderSuite) TestClientCredentialsTokensExpireAndRevokeOneByOne()
 	s.Equal(http.StatusUnauthorized, s.call(srv, second["access_token"].(string)).StatusCode)
 }
 
+func (s *FakeProviderSuite) TestNoExpiresInLeavesTheLifetimeOutButTokensStillEnd() {
+	srv := fakeprovider.New(s.T(), fakeprovider.ClientCredentials, fakeprovider.NoExpiresIn)
+	_, body := s.post(srv, fakeprovider.PathToken, url.Values{"grant_type": {"client_credentials"}}, true)
+	s.NotContains(body, "expires_in")
+	s.NotContains(s.connect(srv, nil), "expires_in", "the code exchange too")
+
+	srv.Advance(fakeprovider.AccessTTL)
+	s.Equal(http.StatusUnauthorized, s.call(srv, body["access_token"].(string)).StatusCode)
+}
+
 func (s *FakeProviderSuite) TestIdentityURLPutsTheIdentityURLThatTheSalesforceManifestCapturesInTheTokenResponse() {
 	srv := fakeprovider.New(s.T(), fakeprovider.ClientCredentials, fakeprovider.IdentityURL)
 	_, body := s.post(srv, fakeprovider.PathToken, url.Values{"grant_type": {"client_credentials"}}, true)

@@ -59,6 +59,12 @@ var (
 	ErrTokenTypeNotRevocable = errors.New("oauth2cc: the provider does not revoke access tokens")
 )
 
+// ErrNoLifetime is a token response without expires_in for a manifest without
+// refresh.access_ttl. Such a token would be handed out until the provider ends it, and
+// nothing renews it then, though a new one costs one request. So the scheme refuses it: at
+// Complete nothing is connected, and the manifest needs an access_ttl.
+var ErrNoLifetime = errors.New("oauth2cc: the token response has no expires_in and the manifest sets no refresh.access_ttl, so the token could never be renewed in time")
+
 // refusedClient are the token endpoint error codes that say the client itself is refused,
 // so only new client credentials, a reconnect, help: RFC 6749 section 5.2's invalid_client
 // («Client authentication failed») and unauthorized_client («not authorized to use this
@@ -168,9 +174,10 @@ func (s *Scheme) Complete(ctx context.Context, in core.CompleteInput) (core.Stor
 
 // Retrieve hands out the access token in stored until it is inside the margin of its expiry
 // or expires at or before opts.ValidUntil, and then asks the token endpoint for a new one
-// with the stored client (RFC 6749 section 4.4.2). A token with no known expiry is never
-// replaced early. A failed request returns a *core.OutcomeError and no StoredCredentials,
-// with the old token beside it while that has not expired.
+// with the stored client (RFC 6749 section 4.4.2). Every token mint issues has an expiry
+// (ErrNoLifetime); one stored without it is due at once. A failed request returns a
+// *core.OutcomeError and no StoredCredentials, with the old token beside it while that has
+// not expired.
 //
 // opts.Checkpoint is never called: a client credentials request spends nothing. No refresh
 // token goes out (section 4.4.3: none is issued), the client's secret stays valid whatever
@@ -189,7 +196,7 @@ func (s *Scheme) Retrieve(ctx context.Context, stored core.StoredCredentials, m 
 	if opts.ValidUntil.After(due) {
 		due = opts.ValidUntil
 	}
-	if current.ExpiresAt.IsZero() || due.Before(current.ExpiresAt) {
+	if !current.ExpiresAt.IsZero() && due.Before(current.ExpiresAt) {
 		return credential(current), stored, nil
 	}
 	next, _, err := s.mint(ctx, m, current)
@@ -304,6 +311,9 @@ func (s *Scheme) mint(ctx context.Context, m core.ResolvedManifest, client paylo
 			next := client
 			next.AccessToken = token.AccessToken
 			next.ExpiresAt = expiresAt(m, token.ExpiresIn, s.now())
+			if next.ExpiresAt.IsZero() {
+				return payload{}, nil, stack.Wrap(ErrNoLifetime)
+			}
 			return next, raw, nil
 		}
 		// RFC 6749 section 5.1: access_token is REQUIRED. Nothing was spent, so asking again
@@ -391,8 +401,8 @@ func authMethod(m core.ResolvedManifest) (core.ClientAuthMethod, error) {
 }
 
 // expiresAt is when a token issued at now expires: expires_in (RFC 6749 section 5.1,
-// RECOMMENDED there), else the manifest's refresh.access_ttl, else never as far as the
-// scheme knows.
+// RECOMMENDED there), else the manifest's refresh.access_ttl, else zero, which mint refuses
+// (ErrNoLifetime).
 func expiresAt(m core.ResolvedManifest, expiresIn json.Number, now time.Time) time.Time {
 	if seconds, err := expiresIn.Int64(); err == nil && seconds > 0 {
 		return now.Add(time.Duration(seconds) * time.Second)

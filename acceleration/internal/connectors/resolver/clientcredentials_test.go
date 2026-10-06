@@ -19,9 +19,10 @@ import (
 
 // The built-in Salesforce manifest, seeded as the router seeds it with its endpoints pointed
 // at the fake, and a connection the app owns: its client goes in once, no browser opens,
-// and every later token comes from the same client, with no reconnect.
+// and every later token comes from the same client, with no reconnect. The fake answers as
+// Salesforce does, without expires_in, so the manifest's access_ttl (15 minutes) decides.
 func (s *ResolverSuite) TestAnAppOwnedSalesforceConnectionResolvesATokenWithoutABrowser() {
-	s.f.srv.Use(fakeprovider.ClientCredentials, fakeprovider.IdentityURL)
+	s.f.srv.Use(fakeprovider.ClientCredentials, fakeprovider.IdentityURL, fakeprovider.NoExpiresIn)
 	ref := s.salesforceConnection()
 	s.Equal(0, s.f.srv.Hits(fakeprovider.PathAuthorize), "no browser")
 	s.Equal(1, s.f.srv.ClientCredentialsGrants(), "the client went in once, and its first token with it")
@@ -33,9 +34,9 @@ func (s *ResolverSuite) TestAnAppOwnedSalesforceConnectionResolvesATokenWithoutA
 	s.Equal(oauth2cc.Name, first.Scheme)
 	s.True(s.f.works(first))
 	s.Equal(1, s.f.srv.ClientCredentialsGrants(), "the stored token is handed out until it is due")
+	s.True(first.ExpiresAt.Equal(s.f.clock.Now().Add(15*time.Minute)), "access_ttl, not the fake's hour")
 
-	s.f.due()
-	s.f.srv.Advance(fakeprovider.AccessTTL + time.Second)
+	s.f.clock.Add(15 * time.Minute)
 	renewed, err := r.Resolve(s.f.ctx, ref, core.CredentialRequest{})
 	s.Require().NoError(err)
 	s.True(s.f.token(first) != s.f.token(renewed), "a new token")

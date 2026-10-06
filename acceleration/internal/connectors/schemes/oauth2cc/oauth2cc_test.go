@@ -184,6 +184,74 @@ func (s *OAuth2CCSuite) TestATokenThatOutlivesValidUntilIsNotReplaced() {
 	s.Equal(1, srv.ClientCredentialsGrants())
 }
 
+// A token response without expires_in (RFC 6749 section 5.1 only RECOMMENDS it, and
+// Salesforce sends none) lives the manifest's refresh.access_ttl, and is replaced inside the
+// margin before that ends, though the provider would take it longer.
+func (s *OAuth2CCSuite) TestATokenWithoutExpiresInIsReplacedBeforeTheManifestsAccessTTLEnds() {
+	srv := fakeprovider.New(s.T(), fakeprovider.ClientCredentials, fakeprovider.NoExpiresIn)
+	scheme := s.scheme(srv.Client())
+	m := manifest(srv)
+	m.Refresh.AccessTTL = core.Duration(15 * time.Minute)
+	stored := s.complete(srv, scheme, m)
+	credential, _, err := scheme.Retrieve(s.ctx, stored, m, core.RetrieveOptions{})
+	s.Require().NoError(err)
+	s.WithinDuration(s.now.Add(15*time.Minute), credential.ExpiresAt, 0)
+
+	s.now = s.now.Add(15*time.Minute - 61*time.Second)
+	_, again, err := scheme.Retrieve(s.ctx, stored, m, core.RetrieveOptions{})
+	s.Require().NoError(err)
+	s.Equal(stored, again, "outside the margin of the access_ttl")
+
+	s.now = s.now.Add(2 * time.Second)
+	renewed, next, err := scheme.Retrieve(s.ctx, stored, m, core.RetrieveOptions{})
+	s.Require().NoError(err)
+	s.Equal(2, srv.ClientCredentialsGrants())
+	s.True(s.token(stored) != s.token(next))
+	s.WithinDuration(s.now.Add(15*time.Minute), renewed.ExpiresAt, 0)
+}
+
+// A call that outlives the access_ttl gets a new token for it, even with the margin far off.
+func (s *OAuth2CCSuite) TestATokenWithoutExpiresInIsReplacedWhenValidUntilOutlivesTheAccessTTL() {
+	srv := fakeprovider.New(s.T(), fakeprovider.ClientCredentials, fakeprovider.NoExpiresIn)
+	scheme := s.scheme(srv.Client())
+	m := manifest(srv)
+	m.Refresh.AccessTTL = core.Duration(15 * time.Minute)
+	stored := s.complete(srv, scheme, m)
+
+	s.now = s.now.Add(5 * time.Minute)
+	credential, _, err := scheme.Retrieve(s.ctx, stored, m, core.RetrieveOptions{ValidUntil: s.now.Add(12 * time.Minute)})
+	s.Require().NoError(err)
+	s.Equal(2, srv.ClientCredentialsGrants())
+	s.WithinDuration(s.now.Add(15*time.Minute), credential.ExpiresAt, 0)
+}
+
+// With neither expires_in nor refresh.access_ttl a token would be handed out until the
+// provider ends it, and then never renewed. Complete refuses it, so nothing is connected.
+func (s *OAuth2CCSuite) TestATokenWithNoKnownLifetimeIsRefusedAtComplete() {
+	srv := fakeprovider.New(s.T(), fakeprovider.ClientCredentials, fakeprovider.NoExpiresIn)
+	_, _, err := s.scheme(srv.Client()).Complete(s.ctx, core.CompleteInput{Manifest: manifest(srv), Supplied: supplied(srv)})
+	s.ErrorIs(err, oauth2cc.ErrNoLifetime)
+	s.ErrorContains(err, "refresh.access_ttl")
+}
+
+// Stored credentials without an expiry (none are written now) are due at once.
+func (s *OAuth2CCSuite) TestAStoredTokenWithoutAnExpiryIsReplacedAtOnce() {
+	srv := fakeprovider.New(s.T(), fakeprovider.ClientCredentials)
+	scheme := s.scheme(srv.Client())
+	stored := s.complete(srv, scheme, manifest(srv))
+	var payload map[string]any
+	s.Require().NoError(json.Unmarshal(stored.Payload, &payload))
+	delete(payload, "expires_at")
+	raw, err := json.Marshal(payload)
+	s.Require().NoError(err)
+	stored.Payload = raw
+
+	credential, _, err := scheme.Retrieve(s.ctx, stored, manifest(srv), core.RetrieveOptions{})
+	s.Require().NoError(err)
+	s.Equal(2, srv.ClientCredentialsGrants())
+	s.False(credential.ExpiresAt.IsZero())
+}
+
 // A client credentials request spends nothing (no refresh token, RFC 6749 section 4.4.3),
 // so there is nothing for the resolver's checkpoint to guard.
 func (s *OAuth2CCSuite) TestReplacingATokenNeverCheckpoints() {
@@ -417,7 +485,7 @@ func (s *OAuth2CCSuite) TestRevokingAnAccessTokenTheProviderDoesNotRevokeSaysSo(
 // none added: a connection is made from the client alone, and its account id is the
 // identity URL the token response carries, as the manifest's capture and identity rules say.
 func (s *OAuth2CCSuite) TestTheSalesforceManifestConnectsWithoutABrowser() {
-	srv := fakeprovider.New(s.T(), fakeprovider.ClientCredentials, fakeprovider.IdentityURL)
+	srv := fakeprovider.New(s.T(), fakeprovider.ClientCredentials, fakeprovider.IdentityURL, fakeprovider.NoExpiresIn)
 	sent := &recorder{next: srv.Client().Transport}
 	scheme := s.scheme(&http.Client{Transport: sent})
 	resolved := salesforce(s.T(), nil)
@@ -437,6 +505,7 @@ func (s *OAuth2CCSuite) TestTheSalesforceManifestConnectsWithoutABrowser() {
 	credential, _, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, s.wrapped(srv, scheme, credential))
+	s.WithinDuration(s.now.Add(15*time.Minute), credential.ExpiresAt, 0, "no expires_in, so the manifest's access_ttl")
 }
 
 func (s *OAuth2CCSuite) TestTheSalesforceSandboxGetsItsTokenFromTheSandboxLoginHost() {

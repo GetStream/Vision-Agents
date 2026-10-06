@@ -154,6 +154,10 @@ const (
 	// (§4.4.3: «A refresh token SHOULD NOT be included»). Without it the grant gets
 	// unsupported_grant_type, as from a server that does not offer it (§5.2).
 	ClientCredentials Personality = "client_credentials"
+	// NoExpiresIn leaves expires_in out of every token response, which RFC 6749 §5.1 only
+	// RECOMMENDS, as Salesforce does (its Mobile SDK reads none: OAuth2.java:1325-1336 at
+	// 863835e9). Tokens still end after AccessTTL.
+	NoExpiresIn Personality = "no_expires_in"
 	// IdentityURL adds id, the identity URL IdentityURL holds, to every token response, as
 	// Salesforce does: its Mobile SDK reads id from each token endpoint response
 	// (SalesforceMobileSDK-Android OAuth2.java:1332 at 863835e9, cited in

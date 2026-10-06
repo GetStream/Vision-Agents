@@ -521,6 +521,9 @@ func (s *Server) shape(body map[string]any, g *grant) map[string]any {
 	if s.is(IdentityURL) {
 		body["id"] = s.IdentityURL
 	}
+	if s.is(NoExpiresIn) {
+		delete(body, "expires_in")
+	}
 	if s.is(CallbackRealmID) {
 		// The refresh token's lifetime in seconds. oauth-jsclient README lists
 		// x_refresh_token_expires_in in its token object, the shape every token response
