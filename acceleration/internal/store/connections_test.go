@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"testing/fstest"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -830,4 +831,217 @@ func (s *StoreSuite) TestHandoffsRacingFromOneReadReplaceTheBlobExactlyOnce() {
 		s.True(errors.Is(err, ErrNoAuthorizationAttempt), "a handoff that loses is told the attempt is handed off: %v", err)
 	}
 	s.Equal(1, won)
+}
+
+// lineManifest is a built-in whose events arrive at one URL for every customer: verified with
+// the operator's secret, each message naming the unit that received it, the shape of the
+// WhatsApp fixture (internal/connectors/core/testdata/manifests/whatsapp.yaml) cut down.
+const lineManifest = `
+id: line
+revision: 1
+name: Line
+schemes: [test_key]
+client:
+  env: LINE
+channel:
+  verifier:
+    kind: hmac_header
+    secret: operator
+    header: X-Signature
+    algorithm: sha256
+    encoding: hex
+    signed: "{body}"
+  format: json
+  messages:
+    provider_unit_id: $.unit
+    thread_key:
+      - name: from
+        path: $.from
+    author_id: $.from
+    provider_message_id: $.id
+    text: $.text
+  reply:
+    url: https://line.example/{provider_unit_id}/messages
+    body:
+      to: "{thread.from}"
+      text: "{text}"
+`
+
+// ownLineManifest is lineManifest verified with the customer's own provider app instead, so
+// each customer's events arrive at a URL of their own.
+var ownLineManifest = strings.Replace(strings.Replace(lineManifest, "id: line", "id: own_line", 1),
+	"secret: operator", "secret: provider_app", 1)
+
+// lineConnection creates an app-owned connection of the customer's to a built-in channel
+// connector, seeding it from raw first.
+func (s *StoreSuite) lineConnection(customerID, raw string) ConnectorConnection {
+	manifest := parsed(s.T(), raw)
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, fstest.MapFS{manifest.ID + ".yaml": {Data: []byte(raw)}}))
+	connection := appConnection()
+	connection.CustomerID = customerID
+	connection.ConnectorID = manifest.ID
+	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, testSchemes, connection))
+	return *connection
+}
+
+func (s *StoreSuite) TestAConnectionIsFoundByItsConnectorAndProviderUnitWithoutItsCustomer() {
+	connection := s.lineConnection("acme-app", lineManifest)
+	s.lineConnection("acme-app", lineManifest)
+	s.Require().NoError(s.store.SetConnectorConnectionProviderUnit(s.ctx, "acme-app", connection.ID, "106540352242922"))
+
+	found, err := s.store.ConnectorConnectionByProviderUnit(s.ctx, "line", "106540352242922")
+
+	s.Require().NoError(err)
+	s.Equal(connection.ID, found.ID)
+	s.Equal("acme-app", found.CustomerID, "the event names no customer; the connection does")
+	s.Equal("106540352242922", found.ProviderUnitID)
+}
+
+func (s *StoreSuite) TestAProviderUnitNoConnectionHoldsIsNotFound() {
+	connection := s.lineConnection("acme-app", lineManifest)
+	s.Require().NoError(s.store.SetConnectorConnectionProviderUnit(s.ctx, "acme-app", connection.ID, "unit-1"))
+
+	_, err := s.store.ConnectorConnectionByProviderUnit(s.ctx, "line", "unit-2")
+
+	s.ErrorIs(err, ErrNoConnectorConnection)
+}
+
+func (s *StoreSuite) TestAProviderUnitAnotherCustomerHoldsIsRefused() {
+	first := s.lineConnection("acme-app", lineManifest)
+	second := s.lineConnection("other-app", lineManifest)
+	s.Require().NoError(s.store.SetConnectorConnectionProviderUnit(s.ctx, "acme-app", first.ID, "unit-1"))
+
+	err := s.store.SetConnectorConnectionProviderUnit(s.ctx, "other-app", second.ID, "unit-1")
+
+	s.ErrorIs(err, ErrProviderUnitTaken)
+	found, err := s.store.ConnectorConnectionByProviderUnit(s.ctx, "line", "unit-1")
+	s.Require().NoError(err)
+	s.Equal(first.ID, found.ID, "the first holder keeps the unit")
+}
+
+func (s *StoreSuite) TestDeletingAConnectionFreesItsProviderUnit() {
+	first := s.lineConnection("acme-app", lineManifest)
+	second := s.lineConnection("other-app", lineManifest)
+	s.Require().NoError(s.store.SetConnectorConnectionProviderUnit(s.ctx, "acme-app", first.ID, "unit-1"))
+	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, "acme-app", first.ID))
+
+	_, err := s.store.ConnectorConnectionByProviderUnit(s.ctx, "line", "unit-1")
+	s.ErrorIs(err, ErrNoConnectorConnection, "a deleted connection is not routed to")
+
+	s.Require().NoError(s.store.SetConnectorConnectionProviderUnit(s.ctx, "other-app", second.ID, "unit-1"))
+	found, err := s.store.ConnectorConnectionByProviderUnit(s.ctx, "line", "unit-1")
+	s.Require().NoError(err)
+	s.Equal(second.ID, found.ID)
+}
+
+func (s *StoreSuite) TestTheSameProviderUnitUnderAnotherConnectorIsAllowed() {
+	other := strings.Replace(lineManifest, "id: line", "id: line_two", 1)
+	first := s.lineConnection("acme-app", lineManifest)
+	second := s.lineConnection("other-app", other)
+	s.Require().NoError(s.store.SetConnectorConnectionProviderUnit(s.ctx, "acme-app", first.ID, "unit-1"))
+
+	s.Require().NoError(s.store.SetConnectorConnectionProviderUnit(s.ctx, "other-app", second.ID, "unit-1"))
+
+	found, err := s.store.ConnectorConnectionByProviderUnit(s.ctx, "line_two", "unit-1")
+	s.Require().NoError(err)
+	s.Equal(second.ID, found.ID)
+	found, err = s.store.ConnectorConnectionByProviderUnit(s.ctx, "line", "unit-1")
+	s.Require().NoError(err)
+	s.Equal(first.ID, found.ID)
+}
+
+func (s *StoreSuite) TestANewProviderUnitReplacesAndFreesTheOldOne() {
+	connection := s.lineConnection("acme-app", lineManifest)
+	s.Require().NoError(s.store.SetConnectorConnectionProviderUnit(s.ctx, "acme-app", connection.ID, "unit-1"))
+
+	s.Require().NoError(s.store.SetConnectorConnectionProviderUnit(s.ctx, "acme-app", connection.ID, "unit-2"))
+
+	_, err := s.store.ConnectorConnectionByProviderUnit(s.ctx, "line", "unit-1")
+	s.ErrorIs(err, ErrNoConnectorConnection)
+	found, err := s.store.ConnectorConnectionByProviderUnit(s.ctx, "line", "unit-2")
+	s.Require().NoError(err)
+	s.Equal(connection.ID, found.ID)
+}
+
+func (s *StoreSuite) TestAnotherCustomersConnectionTakesNoProviderUnitFromMe() {
+	theirs := s.lineConnection("other-app", lineManifest)
+
+	err := s.store.SetConnectorConnectionProviderUnit(s.ctx, "acme-app", theirs.ID, "unit-1")
+
+	s.ErrorIs(err, ErrNoConnectorConnection)
+}
+
+func (s *StoreSuite) TestADeletedConnectionTakesNoProviderUnit() {
+	connection := s.lineConnection("acme-app", lineManifest)
+	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, "acme-app", connection.ID))
+
+	err := s.store.SetConnectorConnectionProviderUnit(s.ctx, "acme-app", connection.ID, "unit-1")
+
+	s.ErrorIs(err, ErrNoConnectorConnection)
+}
+
+func (s *StoreSuite) TestAConnectorWhoseEventsURLNamesTheCustomerTakesNoProviderUnit() {
+	own := s.lineConnection("acme-app", ownLineManifest)
+	tools := s.connection("acme-app", nil)
+
+	s.ErrorIs(s.store.SetConnectorConnectionProviderUnit(s.ctx, "acme-app", own.ID, "T0001"), ErrNoSharedWebhook,
+		"two customers' own apps may sit in one workspace")
+	s.ErrorIs(s.store.SetConnectorConnectionProviderUnit(s.ctx, "acme-app", tools.ID, "T0001"), ErrNoSharedWebhook,
+		"a connector with no channel has no events to route")
+}
+
+func (s *StoreSuite) TestACustomDefinitionTakesNoProviderUnit() {
+	custom, err := s.store.CreateConnectorDefinition(s.ctx, "acme-app",
+		parsed(s.T(), strings.Replace(lineManifest, "id: line", "id: custom_line", 1)))
+	s.Require().NoError(err)
+	connection := appConnection()
+	connection.ConnectorID = custom.ID
+	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, testSchemes, connection))
+
+	err = s.store.SetConnectorConnectionProviderUnit(s.ctx, "acme-app", connection.ID, "unit-1")
+
+	s.ErrorIs(err, ErrNoSharedWebhook, "one customer's definition does not speak for the operator's app")
+}
+
+func (s *StoreSuite) TestCustomersRacingForOneProviderUnitLeaveOneHolder() {
+	// Each customer is a router of its own with a pool of its own, connected before they all
+	// start at once, so the writes overlap in Postgres rather than queue on one pool.
+	const customers = 8
+	connections := make([]ConnectorConnection, customers)
+	routers := make([]*Store, customers)
+	for i := range customers {
+		connections[i] = s.lineConnection("app-"+newID(), lineManifest)
+		router, err := Open(s.dsn)
+		s.Require().NoError(err)
+		s.T().Cleanup(func() { router.Close() })
+		s.Require().NoError(router.Ping(s.ctx))
+		routers[i] = router
+	}
+	errs := make([]error, customers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, router := range routers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs[i] = router.SetConnectorConnectionProviderUnit(s.ctx, connections[i].CustomerID, connections[i].ID, "unit-1")
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	winner := -1
+	for i, err := range errs {
+		if err == nil {
+			s.Equal(-1, winner, "a second customer also took the unit")
+			winner = i
+			continue
+		}
+		s.True(errors.Is(err, ErrProviderUnitTaken), "a customer that loses is told the unit is taken: %v", err)
+	}
+	s.Require().NotEqual(-1, winner)
+	found, err := s.store.ConnectorConnectionByProviderUnit(s.ctx, "line", "unit-1")
+	s.Require().NoError(err)
+	s.Equal(connections[winner].ID, found.ID)
 }

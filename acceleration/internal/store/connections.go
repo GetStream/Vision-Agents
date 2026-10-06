@@ -67,6 +67,19 @@ var ErrUnregisteredScheme = errors.New("store: no such scheme is registered")
 // (core.Manifest.Schemes), so a registered scheme alone is not enough.
 var ErrSchemeNotAllowed = errors.New("store: the connector does not allow this scheme")
 
+// ErrProviderUnitTaken says another live connection of the same connector already holds the
+// provider unit id, whoever's it is. A unit takes the events of one connection only
+// (connector_connections_provider_unit_idx), so the second is refused rather than share it.
+var ErrProviderUnitTaken = errors.New("store: another connection of this connector holds the provider unit")
+
+// ErrNoSharedWebhook says a connection's connector is not one events URL for every customer,
+// so the URL already names the customer and the connection takes no provider unit id.
+var ErrNoSharedWebhook = errors.New("store: the connector's events are not routed by provider unit")
+
+// providerUnitIndex is the unique index ErrProviderUnitTaken stands for
+// (20261006194000_connector_connections_provider_unit.sql).
+const providerUnitIndex = "connector_connections_provider_unit_idx"
+
 // ErrNoAuthorizationAttempt says the attempt is absent, expired, already consumed, or for a
 // connection that was deleted. One error for all four, so a callback learns nothing about
 // which.
@@ -95,6 +108,9 @@ type ConnectorConnection struct {
 	AccountID     string            `bun:"account_id,notnull"`
 	Status        string            `bun:"status,notnull"`
 	GrantedScopes []string          `bun:"granted_scopes,type:jsonb,notnull"`
+	// ProviderUnitID is the routing key of a shared webhook, such as a WhatsApp
+	// phone_number_id: empty unless SetConnectorConnectionProviderUnit wrote it.
+	ProviderUnitID string `bun:"provider_unit_id,nullzero"`
 	// Revision advances with every new stored credentials, which are sealed against it.
 	Revision int `bun:"revision,notnull"`
 	// CredentialsSealed is core.StoredCredentials sealed under CredentialsKEKVersion, with
@@ -183,6 +199,11 @@ func (s *Store) CreateConnectorConnection(ctx context.Context, registry core.Reg
 	if len(connection.CredentialsSealed) > 0 {
 		return stack.Wrap(errors.New("store: credentials are saved onto a connection after it exists, not with it"))
 	}
+	// A unit routes another customer's events away once it is stored, so only a write that
+	// checks the connector routes by it stores one.
+	if connection.ProviderUnitID != "" {
+		return stack.Wrap(errors.New("store: a provider unit is set on a connection after consent, not with it"))
+	}
 	// Definitions are never updated or deleted, so a revision found here stays.
 	definition, err := s.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, connection.DefinitionRevision)
 	if err != nil {
@@ -243,6 +264,87 @@ func (s *Store) ConnectorConnection(ctx context.Context, customerID, id string) 
 		return ConnectorConnection{}, stack.Wrap(fmt.Errorf("store: connector connection: %w", err))
 	}
 	return connection, nil
+}
+
+// ConnectorConnectionByProviderUnit returns the one live connection of the connector that
+// holds the provider unit id, whichever customer's it is: the event of a shared webhook names
+// no customer, and this is how the Router finds it. The caller verifies the event first.
+func (s *Store) ConnectorConnectionByProviderUnit(ctx context.Context, connectorID, providerUnitID string) (ConnectorConnection, error) {
+	if connectorID == "" || providerUnitID == "" {
+		return ConnectorConnection{}, stack.Wrap(errors.New("store: a connector and a provider unit id are required"))
+	}
+	var connection ConnectorConnection
+	err := s.db.NewSelect().Model(&connection).
+		Where("connector_id = ?", connectorID).
+		Where("provider_unit_id = ?", providerUnitID).
+		Where("deleted_at IS NULL").
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ConnectorConnection{}, stack.Wrap(fmt.Errorf("%w: %s unit %s", ErrNoConnectorConnection, connectorID, providerUnitID))
+	}
+	if err != nil {
+		return ConnectorConnection{}, stack.Wrap(fmt.Errorf("store: connector connection by provider unit: %w", err))
+	}
+	return connection, nil
+}
+
+// SetConnectorConnectionProviderUnit stores the provider unit a consent proved is the
+// customer's on one live connection of theirs, replacing any it held. Of two connections of
+// one connector, only the first to store a unit holds it: the second gets
+// ErrProviderUnitTaken until the first is deleted. A connector whose events URL names the
+// customer gets ErrNoSharedWebhook (sharedWebhook).
+func (s *Store) SetConnectorConnectionProviderUnit(ctx context.Context, customerID, id, providerUnitID string) error {
+	if customerID == "" || id == "" || providerUnitID == "" {
+		return stack.Wrap(errors.New("store: a customer, a connection id and a provider unit id are required"))
+	}
+	connection, err := s.ConnectorConnection(ctx, customerID, id)
+	if err != nil {
+		return err
+	}
+	// Definitions are never updated or deleted, so the revision the connection pins stays.
+	definition, err := s.ConnectorDefinition(ctx, customerID, connection.ConnectorID, connection.DefinitionRevision)
+	if err != nil {
+		return err
+	}
+	if !sharedWebhook(definition) {
+		return stack.Wrap(fmt.Errorf("%w: %s revision %d", ErrNoSharedWebhook, connection.ConnectorID, connection.DefinitionRevision))
+	}
+	result, err := s.db.NewUpdate().Model((*ConnectorConnection)(nil)).
+		Set("provider_unit_id = ?", providerUnitID).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("cc.customer_id = ?", customerID).
+		Where("cc.id = ?", id).
+		Where("cc.deleted_at IS NULL").
+		Exec(ctx)
+	if constraint(err) == providerUnitIndex {
+		return stack.Wrap(fmt.Errorf("%w: %s unit %s", ErrProviderUnitTaken, connection.ConnectorID, providerUnitID))
+	}
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: set provider unit: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: set provider unit: %w", err))
+	}
+	// Deleted since it was read.
+	if affected == 0 {
+		return stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorConnection, id))
+	}
+	return nil
+}
+
+// sharedWebhook is whether a definition's events arrive at one URL for every customer, so
+// only the provider unit in an event names the customer. That is a built-in channel verified
+// with the operator's own secret (core.SecretOperator: one operator app, such as a WhatsApp
+// Tech Provider app, for every customer) that reads a unit from each message. A channel
+// verified with the customer's own provider app has its own events URL (architecture doc on
+// connectors/planning, «Decisions, 2026-10-05», item 4), so two customers may hold one unit there: two Slack apps
+// installed in one workspace. A custom definition is one customer's, so it does not speak
+// for the operator's app.
+func sharedWebhook(definition ConnectorDefinition) bool {
+	channel := definition.Manifest.Channel
+	return definition.CustomerID == BuiltinCustomer && channel != nil &&
+		channel.Verifier.Secret == core.SecretOperator && channel.Messages.ProviderUnitID != ""
 }
 
 // ConnectorConnectionsByOwner lists one owner's live connections, newest first, one more
