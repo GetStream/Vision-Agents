@@ -244,8 +244,8 @@ func (s *PluginsSuite) TestAClientIsOnlyForAPluginWithAnOAuthLogin() {
 	status, failure := s.serverClient.failure(http.MethodPut,
 		"/v1/agents/configs/"+agent.Id+"/plugins/carrier-pigeon/client", SetPluginClientRequest{ClientId: "x"})
 
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, unknownPlugin)
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, errUnknownPlugin.Message)
 }
 
 func (s *PluginsSuite) TestAnEndUsersDeviceMayNotSetAClient() {
