@@ -181,7 +181,7 @@ func (s *Server) revokeAccount(ctx context.Context, m core.Manifest, signal core
 		// A connection deleted since the lookup has no grant left to end, so it counts as
 		// revoked and the rest of the account's connections are still revoked on this
 		// delivery. Revoke itself leaves one already needs_reauthorization as it is.
-		err := s.connectorResolver.Revoke(ctx, ref, signal.Kind)
+		err := s.connectorResolver.Revoke(ctx, ref, signal.Kind, signal.At)
 		if err != nil && !errors.Is(err, store.ErrNoConnectorConnection) {
 			return err
 		}

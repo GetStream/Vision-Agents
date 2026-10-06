@@ -454,6 +454,26 @@ func (s *PGSealedSuite) TestTheAccountAConsentFoundIsWrittenBesideTheCredentials
 	s.Equal([]string{"chat:write"}, stored.GrantedScopes)
 }
 
+func (s *PGSealedSuite) TestWhenAConsentConnectedIsKeptAndARefreshKeepsIt() {
+	ref := s.connected("acme-app", tokens{Access: "a", Refresh: "r"}, time.Time{})
+	credentialStore := s.credentialStore(s.v1)
+	connected := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	s.Require().NoError(credentialStore.Update(s.ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+		state.ConnectedAt = connected
+		return true, nil
+	}))
+
+	s.Require().NoError(credentialStore.Update(s.ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+		s.True(connected.Equal(state.ConnectedAt), "what the consent wrote is what the next use sees")
+		state.Credentials = credentials(tokens{Access: "a2", Refresh: "r2"})
+		return true, nil
+	}))
+
+	stored := s.stored(ref)
+	s.Require().NotNil(stored.ConnectedAt)
+	s.True(connected.Equal(*stored.ConnectedAt))
+}
+
 func (s *PGSealedSuite) TestTheRevisionIsNotTheCallbacksToMove() {
 	ref := s.connected("acme-app", tokens{Access: "a", Refresh: "r"}, time.Time{})
 

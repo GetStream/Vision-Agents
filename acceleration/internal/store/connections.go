@@ -131,6 +131,10 @@ type ConnectorConnection struct {
 	CreatedAt             time.Time       `bun:"created_at,notnull"`
 	UpdatedAt             time.Time       `bun:"updated_at,notnull"`
 	DeletedAt             *time.Time      `bun:"deleted_at"`
+
+	// ConnectedAt is when a consent last stored credentials (core.CredentialState.ConnectedAt).
+	// Nil until one did, and for a connection connected before the column existed.
+	ConnectedAt *time.Time `bun:"connected_at"`
 }
 
 // ConnectorTool is one tool a connection offered when it was last checked, with the digest

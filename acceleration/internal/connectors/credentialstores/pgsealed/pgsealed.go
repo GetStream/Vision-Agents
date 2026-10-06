@@ -116,6 +116,9 @@ func (l *locked) state() core.CredentialState {
 	if l.connection.ExpiresAt != nil {
 		state.ExpiresAt = *l.connection.ExpiresAt
 	}
+	if l.connection.ConnectedAt != nil {
+		state.ConnectedAt = *l.connection.ConnectedAt
+	}
 	return state
 }
 
@@ -155,6 +158,11 @@ func (b *CredentialStore) commit(ref core.ConnectionRef, stored *locked, state *
 	if !state.ExpiresAt.IsZero() {
 		expires := state.ExpiresAt.UTC().Truncate(time.Microsecond)
 		connection.ExpiresAt = &expires
+	}
+	connection.ConnectedAt = nil
+	if !state.ConnectedAt.IsZero() {
+		connected := state.ConnectedAt.UTC().Truncate(time.Microsecond)
+		connection.ConnectedAt = &connected
 	}
 	if err := save(); err != nil {
 		*connection = previous

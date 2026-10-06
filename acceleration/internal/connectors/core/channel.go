@@ -53,6 +53,9 @@ type SignalRule struct {
 	// manifest's identity. It names every part, or fewer for an event about every account
 	// that has them (Signal.Identity).
 	Identity map[string]string `yaml:"identity" json:"identity"`
+	// At is the path of when the provider says the event happened, in whole Unix seconds,
+	// read into Signal.At. Empty when the event does not say.
+	At string `yaml:"at,omitempty" json:"at,omitempty"`
 }
 
 // VerifierRule names the verifier that checks an inbound request and the parameters it reads.
@@ -137,11 +140,35 @@ type ReplyRule struct {
 	Window Duration `yaml:"window,omitempty" json:"window,omitzero"`
 	// AfterWindow is the body sent once Window has passed, such as an approved template.
 	AfterWindow map[string]any `yaml:"after_window,omitempty" json:"after_window,omitempty"`
+	// Accepted is values a 2xx answer's JSON body must have for the reply to count as sent,
+	// compared as exact strings as messages.match is, for a provider that answers a refusal
+	// with a 2xx, such as Slack's {"ok": false}. Empty means every 2xx is sent.
+	Accepted map[string]string `yaml:"accepted,omitempty" json:"accepted,omitempty"`
 }
 
 // IsZero is whether the block declares no reply, as MessageRule.IsZero.
 func (rule ReplyRule) IsZero() bool {
-	return rule.URL == "" && len(rule.Body) == 0 && rule.Window == 0 && len(rule.AfterWindow) == 0
+	return rule.URL == "" && len(rule.Body) == 0 && rule.Window == 0 && len(rule.AfterWindow) == 0 &&
+		len(rule.Accepted) == 0
+}
+
+// Accepts is whether a 2xx answer's body says the reply was sent: it has every Accepted
+// value. An error means a body Accepted reads is not a JSON object.
+func (rule ReplyRule) Accepts(body []byte) (bool, error) {
+	if len(rule.Accepted) == 0 {
+		return true, nil
+	}
+	root, err := decodeBody(FormatJSON, body)
+	if err != nil {
+		return false, err
+	}
+	for _, path := range slices.Sorted(maps.Keys(rule.Accepted)) {
+		value, found, err := readPath(root, path, nil)
+		if err != nil || !found || value != rule.Accepted[path] {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // VerifierKind is the registered verifier a channel uses.
@@ -436,6 +463,17 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 		fail("channel.reply.after_window", "is set exactly when window is: it is what is sent once the window has passed")
 	}
 	m.checkBody(fail, "channel.reply.after_window", c.Reply.AfterWindow, inputs, captures, extra)
+	for _, path := range slices.Sorted(maps.Keys(c.Reply.Accepted)) {
+		field := "channel.reply.accepted." + path
+		if _, err := parsePath(path); err != nil {
+			fail(field, "%v", err)
+		} else if strings.Contains(path, "[*]") {
+			fail(field, "an answer is about one reply, so it has no [*]")
+		}
+		if c.Reply.Accepted[path] == "" {
+			fail(field, "is empty")
+		}
+	}
 }
 
 // checkSignals reports every problem in channel.signals, each naming its field. Paths follow
@@ -494,6 +532,12 @@ func (m Manifest) checkSignals(fail func(field, format string, args ...any)) {
 				fail(field+".identity."+name, "%q is not one of identity %v", name, m.Identity)
 			}
 			checkPath(field+".identity."+name, rule.Identity[name])
+		}
+		if rule.At != "" {
+			checkPath(field+".at", rule.At)
+			if strings.Contains(rule.At, "[*]") {
+				fail(field+".at", "an event happened once, so it has no [*]")
+			}
 		}
 	}
 }
@@ -605,6 +649,20 @@ func (rule SignalRule) read(root any, connectorID string) ([]Signal, error) {
 			return nil, err
 		}
 	}
+	var at time.Time
+	if rule.At != "" {
+		value, found, err := readPath(root, rule.At, nil)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			seconds, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %q is not whole Unix seconds", rule.At, value)
+			}
+			at = time.Unix(seconds, 0).UTC()
+		}
+	}
 	bindings := [][]int{nil}
 	if rule.Each != "" {
 		var err error
@@ -627,7 +685,7 @@ func (rule SignalRule) read(root any, connectorID string) ([]Signal, error) {
 			identity[name] = value
 		}
 		if identity != nil {
-			signals = append(signals, Signal{ConnectorID: connectorID, Identity: identity, Kind: rule.Kind})
+			signals = append(signals, Signal{ConnectorID: connectorID, Identity: identity, Kind: rule.Kind, At: at})
 		}
 	}
 	return signals, nil
