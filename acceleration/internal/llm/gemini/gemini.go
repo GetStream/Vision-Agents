@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ProviderName is the stable name used in routing config and stats.
@@ -104,7 +105,7 @@ func New(options Options) (*openaicompat.LLM, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("gemini: " + apiKeyEnvVar + " is required")
+		return nil, stack.Wrap(errors.New("gemini: " + apiKeyEnvVar + " is required"))
 	}
 	if options.Model == "" {
 		options.Model = defaultModel
@@ -118,7 +119,7 @@ func New(options Options) (*openaicompat.LLM, error) {
 		if err := model.Validate(
 			llm.ResponseParams{Reasoning: llm.ReasoningParams{Effort: options.ReasoningEffort}},
 		); err != nil {
-			return nil, fmt.Errorf("gemini: %s: %w", options.Model, err)
+			return nil, stack.Wrap(fmt.Errorf("gemini: %s: %w", options.Model, err))
 		}
 		model.DefaultEffort = options.ReasoningEffort
 	}

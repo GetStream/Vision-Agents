@@ -31,6 +31,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -158,7 +159,7 @@ func New(options Options) (*STT, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, fmt.Errorf("grok: api key is required (set %s)", apiKeyEnvVar)
+		return nil, stack.Wrap(fmt.Errorf("grok: api key is required (set %s)", apiKeyEnvVar))
 	}
 	if options.Model == "" {
 		options.Model = DefaultModel
@@ -167,13 +168,13 @@ func New(options Options) (*STT, error) {
 		options.URL = DefaultURL
 	}
 	if !strings.HasPrefix(options.URL, "ws://") && !strings.HasPrefix(options.URL, "wss://") {
-		return nil, fmt.Errorf("grok: url must be ws:// or wss://, got %s", options.URL)
+		return nil, stack.Wrap(fmt.Errorf("grok: url must be ws:// or wss://, got %s", options.URL))
 	}
 	if len(options.Keyterms) > stt.MaxKeyterms {
-		return nil, fmt.Errorf("grok: at most %d keyterms, got %d", stt.MaxKeyterms, len(options.Keyterms))
+		return nil, stack.Wrap(fmt.Errorf("grok: at most %d keyterms, got %d", stt.MaxKeyterms, len(options.Keyterms)))
 	}
 	if options.SmartTurn < 0 || options.SmartTurn > 1 {
-		return nil, fmt.Errorf("grok: smart turn threshold must be between 0 and 1, got %v", options.SmartTurn)
+		return nil, stack.Wrap(fmt.Errorf("grok: smart turn threshold must be between 0 and 1, got %v", options.SmartTurn))
 	}
 	if options.HandshakeTimeout == 0 {
 		options.HandshakeTimeout = 30 * time.Second
@@ -199,7 +200,7 @@ func (s *STT) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
-		return errors.New("grok: already started")
+		return stack.Wrap(errors.New("grok: already started"))
 	}
 	s.started = true
 	s.mu.Unlock()
@@ -210,9 +211,9 @@ func (s *STT) Start(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, s.endpoint(), header)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("grok: dial: %w (http %d)", err, response.StatusCode)
+			return stack.Wrap(fmt.Errorf("grok: dial: %w (http %d)", err, response.StatusCode))
 		}
-		return fmt.Errorf("grok: dial: %w", err)
+		return stack.Wrap(fmt.Errorf("grok: dial: %w", err))
 	}
 	s.conn = conn
 
@@ -326,25 +327,25 @@ func (s *STT) endpoint() string {
 // audio the server is not yet listening to.
 func (s *STT) handshake() error {
 	if err := s.conn.SetReadDeadline(time.Now().Add(s.options.HandshakeTimeout)); err != nil {
-		return fmt.Errorf("grok: read handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("grok: read handshake: %w", err))
 	}
 	_, raw, err := s.conn.ReadMessage()
 	if err != nil {
-		return fmt.Errorf("grok: read handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("grok: read handshake: %w", err))
 	}
 	if err := s.conn.SetReadDeadline(time.Time{}); err != nil {
-		return fmt.Errorf("grok: read handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("grok: read handshake: %w", err))
 	}
 
 	var message serverMessage
 	if err := json.Unmarshal(raw, &message); err != nil {
-		return fmt.Errorf("grok: decode handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("grok: decode handshake: %w", err))
 	}
 	if message.Type == eventError {
-		return fmt.Errorf("grok: handshake rejected: %s", message.Message)
+		return stack.Wrap(fmt.Errorf("grok: handshake rejected: %s", message.Message))
 	}
 	if message.Type != eventCreated {
-		return fmt.Errorf("grok: expected %q, got %q", eventCreated, message.Type)
+		return stack.Wrap(fmt.Errorf("grok: expected %q, got %q", eventCreated, message.Type))
 	}
 	return nil
 }
@@ -368,7 +369,7 @@ func (s *STT) flush() {
 func (s *STT) write(messageType int, payload []byte) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.conn.WriteMessage(messageType, payload)
+	return stack.Wrap(s.conn.WriteMessage(messageType, payload))
 }
 
 // readLoop translates server frames into events until the connection ends.

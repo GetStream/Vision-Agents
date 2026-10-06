@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 var errBadCursor = errors.New("cursor is not one this list handed out")
@@ -24,11 +26,11 @@ func decodeCursor[T any](value *string) (*T, error) {
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(*value)
 	if err != nil {
-		return nil, errBadCursor
+		return nil, stack.Wrap(errBadCursor)
 	}
 	var position T
 	if err := json.Unmarshal(raw, &position); err != nil {
-		return nil, errBadCursor
+		return nil, stack.Wrap(errBadCursor)
 	}
 	return &position, nil
 }

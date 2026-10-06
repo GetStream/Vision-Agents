@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
 )
 
@@ -58,38 +59,38 @@ func NewCartesia(options CartesiaOptions) (*Cartesia, error) {
 // the endpoint asks for, and sending more would not make the clone better.
 func (c *Cartesia) Prepare(ctx context.Context, request Request) (string, error) {
 	if err := request.Validate(); err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 
 	body := newForm()
 	if err := body.file("clip", request.Samples[0]); err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 	if err := body.field("name", request.Name); err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 	if err := body.field("description", request.Description); err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 	if err := body.field("language", c.options.Language); err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 	content, contentType, err := body.done()
 	if err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 
 	url := strings.TrimSuffix(c.options.BaseURL, "/") + "/voices/clone"
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, url, content)
 	if err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 	c.authorize(httpRequest)
 	httpRequest.Header.Set("Content-Type", contentType)
 
 	response, err := c.client.Do(httpRequest)
 	if err != nil {
-		return "", fmt.Errorf("voices: cartesia clone: %w", err)
+		return "", stack.Wrap(fmt.Errorf("voices: cartesia clone: %w", err))
 	}
 	defer response.Body.Close()
 
@@ -101,10 +102,10 @@ func (c *Cartesia) Prepare(ctx context.Context, request Request) (string, error)
 		ID string `json:"id"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&created); err != nil {
-		return "", fmt.Errorf("voices: cartesia clone: decode: %w", err)
+		return "", stack.Wrap(fmt.Errorf("voices: cartesia clone: decode: %w", err))
 	}
 	if created.ID == "" {
-		return "", errors.New("voices: cartesia took the recording but named no voice")
+		return "", stack.Wrap(errors.New("voices: cartesia took the recording but named no voice"))
 	}
 	return created.ID, nil
 }
@@ -118,13 +119,13 @@ func (c *Cartesia) Delete(ctx context.Context, externalID string) error {
 	url := strings.TrimSuffix(c.options.BaseURL, "/") + "/voices/" + externalID
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	c.authorize(httpRequest)
 
 	response, err := c.client.Do(httpRequest)
 	if err != nil {
-		return fmt.Errorf("voices: cartesia delete: %w", err)
+		return stack.Wrap(fmt.Errorf("voices: cartesia delete: %w", err))
 	}
 	defer response.Body.Close()
 
@@ -180,13 +181,13 @@ func (c *Cartesia) List(ctx context.Context) ([]Library, error) {
 		}
 		httpRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
-			return nil, err
+			return nil, stack.Wrap(err)
 		}
 		c.authorize(httpRequest)
 
 		response, err := c.client.Do(httpRequest)
 		if err != nil {
-			return nil, fmt.Errorf("voices: cartesia list: %w", err)
+			return nil, stack.Wrap(fmt.Errorf("voices: cartesia list: %w", err))
 		}
 		var listed struct {
 			Data []struct {
@@ -211,7 +212,7 @@ func (c *Cartesia) List(ctx context.Context) ([]Library, error) {
 		err = json.NewDecoder(response.Body).Decode(&listed)
 		response.Body.Close()
 		if err != nil {
-			return nil, fmt.Errorf("voices: cartesia list: decode: %w", err)
+			return nil, stack.Wrap(fmt.Errorf("voices: cartesia list: decode: %w", err))
 		}
 
 		for _, voice := range listed.Data {
@@ -247,13 +248,13 @@ func (c *Cartesia) Preview(ctx context.Context, id string) (Speech, error) {
 	url := strings.TrimSuffix(c.options.BaseURL, "/") + "/voices/" + id + "?expand[]=preview_file_url"
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return Speech{}, err
+		return Speech{}, stack.Wrap(err)
 	}
 	c.authorize(httpRequest)
 
 	response, err := c.client.Do(httpRequest)
 	if err != nil {
-		return Speech{}, fmt.Errorf("voices: cartesia preview: %w", err)
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: cartesia preview: %w", err))
 	}
 	defer response.Body.Close()
 
@@ -264,10 +265,10 @@ func (c *Cartesia) Preview(ctx context.Context, id string) (Speech, error) {
 		Preview string `json:"preview_file_url"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&voice); err != nil {
-		return Speech{}, fmt.Errorf("voices: cartesia preview: decode: %w", err)
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: cartesia preview: decode: %w", err))
 	}
 	if voice.Preview == "" {
-		return Speech{}, fmt.Errorf("voices: cartesia has published no sample of %s", id)
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: cartesia has published no sample of %s", id))
 	}
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+c.options.APIKey)

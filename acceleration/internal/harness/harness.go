@@ -28,6 +28,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	llmoptions "github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Default is the harness every agent runs unless its config names another. It is named so
@@ -167,7 +168,7 @@ type Harness struct {
 // given are already started.
 func New(options Options) (*Harness, error) {
 	if options.Model == nil && options.Subagent == nil && options.OpenSubagent == nil {
-		return nil, errors.New("harness: a model session is required")
+		return nil, stack.Wrap(errors.New("harness: a model session is required"))
 	}
 	if options.Tasks <= 0 {
 		options.Tasks = defaultTasks
@@ -415,7 +416,7 @@ func (h *Harness) Requested(turnID string, calls []llm.ToolCall) {
 // Decide asks the fast flow controller what to do with an evolving transcript.
 func (h *Harness) Decide(turn FlowTurn) error {
 	if h.flow == nil {
-		return errors.New("harness: a flow controller is required")
+		return stack.Wrap(errors.New("harness: a flow controller is required"))
 	}
 	return h.flow.Decide(turn)
 }
@@ -779,10 +780,10 @@ func identifiersAlreadyComplete(history []llm.Message) bool {
 func (h *Harness) Delegate(skillName, prompt, turnID string, parts []llm.ContentPart, history []llm.Message) (string, error) {
 	skill, ok := h.options.Skills.Lookup(skillName)
 	if !ok || h.tasks == nil {
-		return "", fmt.Errorf("harness: skill %q is not available", skillName)
+		return "", stack.Wrap(fmt.Errorf("harness: skill %q is not available", skillName))
 	}
 	if strings.TrimSpace(prompt) == "" {
-		return "", errors.New("harness: delegation needs a prompt")
+		return "", stack.Wrap(errors.New("harness: delegation needs a prompt"))
 	}
 	if history == nil {
 		h.mu.Lock()

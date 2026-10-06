@@ -7,16 +7,18 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // CreateRecording accepts a job and fills in its id and timestamps. It is written before
 // anything is sent to a provider, so a caller handed an id can always ask about it.
 func (s *Store) CreateRecording(ctx context.Context, recording *Recording) error {
 	if recording.CustomerID == "" {
-		return errors.New("store: customer id is required")
+		return stack.Wrap(errors.New("store: customer id is required"))
 	}
 	if recording.Modality == "" {
-		return errors.New("store: a recording names the modality it is for")
+		return stack.Wrap(errors.New("store: a recording names the modality it is for"))
 	}
 
 	recording.ID = newID()
@@ -29,7 +31,7 @@ func (s *Store) CreateRecording(ctx context.Context, recording *Recording) error
 	}
 
 	if _, err := s.db.NewInsert().Model(recording).Exec(ctx); err != nil {
-		return fmt.Errorf("store: create recording: %w", err)
+		return stack.Wrap(fmt.Errorf("store: create recording: %w", err))
 	}
 	return nil
 }
@@ -78,7 +80,7 @@ func (s *Store) FinishRecording(ctx context.Context, id, provider, model string,
 // Recording returns one job a customer holds.
 func (s *Store) Recording(ctx context.Context, customerID, id string) (Recording, error) {
 	if customerID == "" || id == "" {
-		return Recording{}, errors.New("store: a customer and a recording id are required")
+		return Recording{}, stack.Wrap(errors.New("store: a customer and a recording id are required"))
 	}
 
 	var recording Recording
@@ -88,10 +90,10 @@ func (s *Store) Recording(ctx context.Context, customerID, id string) (Recording
 		Limit(1).
 		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Recording{}, fmt.Errorf("store: there is no recording %s", id)
+		return Recording{}, stack.Wrap(fmt.Errorf("store: there is no recording %s", id))
 	}
 	if err != nil {
-		return Recording{}, fmt.Errorf("store: recording: %w", err)
+		return Recording{}, stack.Wrap(fmt.Errorf("store: recording: %w", err))
 	}
 	return recording, nil
 }

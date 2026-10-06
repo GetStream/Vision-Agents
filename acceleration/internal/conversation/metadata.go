@@ -15,6 +15,8 @@ import (
 	"unicode/utf8"
 
 	getstream "github.com/GetStream/getstream-go/v5"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 const (
@@ -149,18 +151,18 @@ func metadataOf(message Message, visible []string) (supportMessage, error) {
 func decodeMetadata(raw any) (supportMessage, error) {
 	encoded, err := json.Marshal(raw)
 	if err != nil || len(encoded) == 0 || len(encoded) > maxSupportMessageBytes {
-		return supportMessage{}, errors.New("invalid observable message metadata")
+		return supportMessage{}, stack.Wrap(errors.New("invalid observable message metadata"))
 	}
 	var metadata supportMessage
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&metadata) != nil || !errors.Is(decoder.Decode(&struct{}{}), io.EOF) {
-		return supportMessage{}, errors.New("invalid observable message metadata")
+		return supportMessage{}, stack.Wrap(errors.New("invalid observable message metadata"))
 	}
 	if metadata.SchemaVersion != supportMessageVersion || metadata.Sequence < 0 ||
 		!observableState(metadata.State) || len(metadata.Tools) > maxDisplayItems ||
 		len(metadata.Sources) > maxDisplayItems {
-		return supportMessage{}, errors.New("invalid observable message metadata")
+		return supportMessage{}, stack.Wrap(errors.New("invalid observable message metadata"))
 	}
 	seenTools := map[string]struct{}{}
 	for _, tool := range metadata.Tools {
@@ -168,20 +170,20 @@ func decodeMetadata(raw any) (supportMessage, error) {
 		// Timing is the one part a client cannot derive from the name and status.
 		expected.StartedAt, expected.FinishedAt, expected.DurationMS = tool.StartedAt, tool.FinishedAt, tool.DurationMS
 		if !ok || !sameDisplay(tool, expected) && !(tool.Status == "failed" && tool.Summary == "Stopped before completion.") || !validTiming(tool) {
-			return supportMessage{}, errors.New("invalid observable message metadata")
+			return supportMessage{}, stack.Wrap(errors.New("invalid observable message metadata"))
 		}
 		if _, exists := seenTools[tool.ID]; exists {
-			return supportMessage{}, errors.New("invalid observable message metadata")
+			return supportMessage{}, stack.Wrap(errors.New("invalid observable message metadata"))
 		}
 		seenTools[tool.ID] = struct{}{}
 	}
 	seenSources := map[string]struct{}{}
 	for _, source := range metadata.Sources {
 		if !validSource(Source(source)) {
-			return supportMessage{}, errors.New("invalid observable message metadata")
+			return supportMessage{}, stack.Wrap(errors.New("invalid observable message metadata"))
 		}
 		if _, exists := seenSources[source.ID]; exists {
-			return supportMessage{}, errors.New("invalid observable message metadata")
+			return supportMessage{}, stack.Wrap(errors.New("invalid observable message metadata"))
 		}
 		seenSources[source.ID] = struct{}{}
 	}
@@ -191,7 +193,7 @@ func decodeMetadata(raw any) (supportMessage, error) {
 func decodeRuntime(raw any) (runtimeMessage, error) {
 	encoded, err := json.Marshal(raw)
 	if err != nil || len(encoded) > 8<<10 {
-		return runtimeMessage{}, errors.New("invalid runtime message metadata")
+		return runtimeMessage{}, stack.Wrap(errors.New("invalid runtime message metadata"))
 	}
 	var runtime runtimeMessage
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
@@ -199,7 +201,7 @@ func decodeRuntime(raw any) (runtimeMessage, error) {
 	if decoder.Decode(&runtime) != nil || !errors.Is(decoder.Decode(&struct{}{}), io.EOF) ||
 		(runtime.Role != "user" && runtime.Role != "assistant") ||
 		!observableState(runtime.State) || runtime.StartedAt.IsZero() || runtime.StateStartedAt.IsZero() {
-		return runtimeMessage{}, errors.New("invalid runtime message metadata")
+		return runtimeMessage{}, stack.Wrap(errors.New("invalid runtime message metadata"))
 	}
 	return runtime, nil
 }
@@ -209,7 +211,7 @@ func messageFromWire(id, text string, custom map[string]any) (Message, error) {
 	runtimeRaw, runtimeOK := custom["support_runtime"]
 	metadataRaw, metadataOK := custom["support_message"]
 	if !runtimeOK || !metadataOK {
-		return Message{}, errors.New("schema-v1 message metadata is unavailable")
+		return Message{}, stack.Wrap(errors.New("schema-v1 message metadata is unavailable"))
 	}
 	runtime, err := decodeRuntime(runtimeRaw)
 	if err != nil {
@@ -219,7 +221,7 @@ func messageFromWire(id, text string, custom map[string]any) (Message, error) {
 	if err != nil || runtime.State != metadata.State ||
 		runtime.TextLayout < 0 || runtime.TextLayout > 1 || runtime.AnswerStart < 0 || runtime.AnswerStart > utf8.RuneCountInString(text) ||
 		id == "" || len(id) > 128 || len(runtime.CommandID) > 128 || len(runtime.TurnID) > 128 {
-		return Message{}, errors.New("invalid schema-v1 message metadata")
+		return Message{}, stack.Wrap(errors.New("invalid schema-v1 message metadata"))
 	}
 	message := Message{
 		CommandID: runtime.CommandID, TurnID: runtime.TurnID, ID: id,

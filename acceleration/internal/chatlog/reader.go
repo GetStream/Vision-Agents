@@ -8,6 +8,8 @@ import (
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // transcriptLimit is how much of a conversation is read back at once. Stream caps a page
@@ -72,7 +74,7 @@ func NewReader(options ReaderOptions) (*Reader, error) {
 // wrong to.
 func (r *Reader) Transcript(ctx context.Context, agentID string) ([]Spoken, error) {
 	if agentID == "" {
-		return nil, errors.New("chatlog: an agent id is required")
+		return nil, stack.Wrap(errors.New("chatlog: an agent id is required"))
 	}
 
 	limit := transcriptLimit
@@ -90,7 +92,7 @@ func (r *Reader) Transcript(ctx context.Context, agentID string) ([]Spoken, erro
 			Data:     &getstream.ChannelInput{CreatedByID: &createdBy},
 		})
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	said := make([]Spoken, 0, len(response.Data.Messages))

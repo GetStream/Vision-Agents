@@ -9,6 +9,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -181,7 +182,7 @@ func (s *Server) fillKnowledge(
 	for _, document := range documents {
 		source := strings.TrimSpace(document.Source)
 		if source == "" {
-			return 0, 0, errors.New("every document needs a source, which is what its passages are keyed by")
+			return 0, 0, stack.Wrap(errors.New("every document needs a source, which is what its passages are keyed by"))
 		}
 		// A document that is only whitespace is skipped rather than refused: a directory
 		// posted whole often has one in it, and failing the lot over it helps nobody.
@@ -200,7 +201,7 @@ func (s *Server) fillKnowledge(
 	}
 
 	if len(passages) == 0 {
-		return 0, 0, errors.New("there is nothing to read in these documents")
+		return 0, 0, stack.Wrap(errors.New("there is nothing to read in these documents"))
 	}
 	base := knowledge.Scoped(customerID, namespace)
 	if err := s.knowledge.Upsert(ctx, base, passages); err != nil {

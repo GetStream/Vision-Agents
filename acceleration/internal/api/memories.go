@@ -8,6 +8,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 const noMemory = "memory is not available: no memory provider configured"
@@ -88,5 +89,5 @@ func memoryFailure(err error) error {
 	if errors.Is(err, session.ErrNoMemory) {
 		return huma.Error400BadRequest(noMemory)
 	}
-	return err
+	return stack.Wrap(err)
 }

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // libraryTTL is how long a provider's catalogue is trusted. Voices are added to a library
@@ -102,7 +104,7 @@ func (c *Catalogue) List(ctx context.Context, provider string) ([]Library, error
 		lister, ok := c.listers[provider]
 		if !ok {
 			c.mu.Unlock()
-			return nil, fmt.Errorf("voices: %s publishes no voice library", provider)
+			return nil, stack.Wrap(fmt.Errorf("voices: %s publishes no voice library", provider))
 		}
 		wanted[provider] = lister
 	} else {
@@ -131,9 +133,9 @@ func (c *Catalogue) List(ctx context.Context, provider string) ([]Library, error
 		return strings.ToLower(found[i].Name) < strings.ToLower(found[j].Name)
 	})
 	if len(found) == 0 && len(failures) > 0 {
-		return nil, errors.Join(failures...)
+		return nil, stack.Wrap(errors.Join(failures...))
 	}
-	return found, errors.Join(failures...)
+	return found, stack.Wrap(errors.Join(failures...))
 }
 
 // Preview returns a sample of one voice speaking.
@@ -142,7 +144,7 @@ func (c *Catalogue) Preview(ctx context.Context, provider, id string) (Speech, e
 	lister, ok := c.listers[provider]
 	c.mu.Unlock()
 	if !ok {
-		return Speech{}, fmt.Errorf("voices: %s publishes no voice library", provider)
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: %s publishes no voice library", provider))
 	}
 	return lister.Preview(ctx, id)
 }
@@ -163,7 +165,7 @@ func (c *Catalogue) listOne(ctx context.Context, provider string, lister Lister)
 		if ok {
 			return held.voices, nil
 		}
-		return nil, fmt.Errorf("voices: list %s: %w", provider, err)
+		return nil, stack.Wrap(fmt.Errorf("voices: list %s: %w", provider, err))
 	}
 	for i := range voices {
 		voices[i].Provider = provider

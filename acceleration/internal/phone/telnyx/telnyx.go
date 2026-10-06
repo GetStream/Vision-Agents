@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 const apiKeyEnvVar = "TELNYX_API_KEY"
@@ -68,7 +69,7 @@ func New(options Options) (*Provider, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("telnyx: " + apiKeyEnvVar + " is required")
+		return nil, stack.Wrap(errors.New("telnyx: " + apiKeyEnvVar + " is required"))
 	}
 	if options.ConnectionID == "" {
 		options.ConnectionID = os.Getenv("TELNYX_CONNECTION_ID")
@@ -94,7 +95,7 @@ func New(options Options) (*Provider, error) {
 // SearchNumbers returns numbers Telnyx is offering in a country.
 func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
 	if search.Country == "" {
-		return nil, errors.New("telnyx: a country is required to search for numbers")
+		return nil, stack.Wrap(errors.New("telnyx: a country is required to search for numbers"))
 	}
 
 	// Telnyx filters with bracketed query parameters rather than a request body.
@@ -163,7 +164,7 @@ func (p *Provider) Dials(phone.CallFeature) bool { return true }
 // read off the offer just before ordering it, while the number is still for sale.
 func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Number, error) {
 	if order.E164 == "" {
-		return phone.Number{}, errors.New("telnyx: a number is required")
+		return phone.Number{}, stack.Wrap(errors.New("telnyx: a number is required"))
 	}
 
 	cost, err := p.priceOf(ctx, order.E164)
@@ -213,7 +214,7 @@ func (p *Provider) ConfigureInbound(ctx context.Context, inbound phone.Inbound) 
 		return err
 	}
 	if p.connectionID == "" {
-		return errors.New("telnyx: a connection id is required to route calls to the bridge")
+		return stack.Wrap(errors.New("telnyx: a connection id is required to route calls to the bridge"))
 	}
 	id, err := p.idFor(ctx, inbound.E164)
 	if err != nil {
@@ -228,10 +229,10 @@ func (p *Provider) ConfigureInbound(ctx context.Context, inbound phone.Inbound) 
 // SIP is inbound only, so the vendor originates and the agent is already waiting on it.
 func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dialed, error) {
 	if err := outbound.Validate(); err != nil {
-		return phone.Dialed{}, fmt.Errorf("telnyx: %w", err)
+		return phone.Dialed{}, stack.Wrap(fmt.Errorf("telnyx: %w", err))
 	}
 	if p.connectionID == "" {
-		return phone.Dialed{}, errors.New("telnyx: a connection id is required to place a call")
+		return phone.Dialed{}, stack.Wrap(errors.New("telnyx: a connection id is required to place a call"))
 	}
 
 	// The person is called from one of this service's numbers and the answered leg is
@@ -268,10 +269,10 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 // so the agent stays bridged to the call while the menu is answered.
 func (p *Provider) SendDigits(ctx context.Context, vendorCallID, digits string) error {
 	if vendorCallID == "" {
-		return errors.New("telnyx: pressing digits needs the call to press them on")
+		return stack.Wrap(errors.New("telnyx: pressing digits needs the call to press them on"))
 	}
 	if digits == "" {
-		return errors.New("telnyx: pressing needs digits to press")
+		return stack.Wrap(errors.New("telnyx: pressing needs digits to press"))
 	}
 
 	path := "/v2/calls/" + url.PathEscape(vendorCallID) + "/actions/send_dtmf"
@@ -298,14 +299,14 @@ func (p *Provider) priceOf(ctx context.Context, e164 string) (int64, error) {
 			return dollarsToMicros(number.CostInformation.MonthlyCost), nil
 		}
 	}
-	return 0, fmt.Errorf("telnyx: %s is not for sale", e164)
+	return 0, stack.Wrap(fmt.Errorf("telnyx: %s is not for sale", e164))
 }
 
 // idFor finds Telnyx's own identifier for a number this account owns, which is what
 // changing or releasing it needs.
 func (p *Provider) idFor(ctx context.Context, e164 string) (string, error) {
 	if e164 == "" {
-		return "", errors.New("telnyx: a number is required")
+		return "", stack.Wrap(errors.New("telnyx: a number is required"))
 	}
 
 	query := url.Values{"filter[phone_number]": {e164}}
@@ -319,7 +320,7 @@ func (p *Provider) idFor(ctx context.Context, e164 string) (string, error) {
 			return number.ID, nil
 		}
 	}
-	return "", fmt.Errorf("telnyx: %s is not one of this account's numbers", e164)
+	return "", stack.Wrap(fmt.Errorf("telnyx: %s is not one of this account's numbers", e164))
 }
 
 func (p *Provider) do(ctx context.Context, method, path string, query url.Values, body, into any) error {
@@ -332,14 +333,14 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("telnyx: encode %s: %w", path, err)
+			return stack.Wrap(fmt.Errorf("telnyx: encode %s: %w", path, err))
 		}
 		payload = bytes.NewReader(encoded)
 	}
 
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, payload)
 	if err != nil {
-		return fmt.Errorf("telnyx: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("telnyx: %s: %w", path, err))
 	}
 	request.Header.Set("Authorization", "Bearer "+p.apiKey)
 	request.Header.Set("Accept", "application/json")
@@ -349,20 +350,20 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("telnyx: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("telnyx: %s: %w", path, err))
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return fmt.Errorf("telnyx: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail)))
+		return stack.Wrap(fmt.Errorf("telnyx: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return fmt.Errorf("telnyx: decode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("telnyx: decode %s: %w", path, err))
 	}
 	return nil
 }

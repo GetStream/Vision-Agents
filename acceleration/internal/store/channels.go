@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ErrUnknownChannelAccount is a webhook token nobody connected, or one whose account has
@@ -15,7 +17,7 @@ var ErrUnknownChannelAccount = errors.New("store: there is no such channel accou
 // ChannelAccounts returns the lines one app has connected, oldest first.
 func (s *Store) ChannelAccounts(ctx context.Context, customerID string) ([]ChannelAccount, error) {
 	if customerID == "" {
-		return nil, errors.New("store: a customer is required")
+		return nil, stack.Wrap(errors.New("store: a customer is required"))
 	}
 
 	var accounts []ChannelAccount
@@ -25,7 +27,7 @@ func (s *Store) ChannelAccounts(ctx context.Context, customerID string) ([]Chann
 		Order("created_at").
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("store: channel accounts: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: channel accounts: %w", err))
 	}
 	return accounts, nil
 }
@@ -33,7 +35,7 @@ func (s *Store) ChannelAccounts(ctx context.Context, customerID string) ([]Chann
 // ChannelAccount is the line one app connected on a channel for a number.
 func (s *Store) ChannelAccount(ctx context.Context, customerID, kind, e164 string) (ChannelAccount, error) {
 	if customerID == "" || kind == "" || e164 == "" {
-		return ChannelAccount{}, ErrUnknownChannelAccount
+		return ChannelAccount{}, stack.Wrap(ErrUnknownChannelAccount)
 	}
 
 	var account ChannelAccount
@@ -45,10 +47,10 @@ func (s *Store) ChannelAccount(ctx context.Context, customerID, kind, e164 strin
 		Limit(1).
 		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ChannelAccount{}, ErrUnknownChannelAccount
+		return ChannelAccount{}, stack.Wrap(ErrUnknownChannelAccount)
 	}
 	if err != nil {
-		return ChannelAccount{}, fmt.Errorf("store: channel account: %w", err)
+		return ChannelAccount{}, stack.Wrap(fmt.Errorf("store: channel account: %w", err))
 	}
 	return account, nil
 }
@@ -78,7 +80,7 @@ func (s *Store) ChannelAccountByToken(ctx context.Context, token string) (Channe
 // The token survives a reconnection, so the URL the provider was given goes on working.
 func (s *Store) SaveChannelAccount(ctx context.Context, account *ChannelAccount) error {
 	if account.CustomerID == "" || account.Kind == "" || account.E164 == "" || account.Token == "" {
-		return errors.New("store: a customer, a kind, a number and a token are required")
+		return stack.Wrap(errors.New("store: a customer, a kind, a number and a token are required"))
 	}
 	now := time.Now().UTC()
 	account.UpdatedAt = now
@@ -89,7 +91,7 @@ func (s *Store) SaveChannelAccount(ctx context.Context, account *ChannelAccount)
 		account.ID = newID()
 		account.CreatedAt = now
 		if _, err := s.db.NewInsert().Model(account).Exec(ctx); err != nil {
-			return fmt.Errorf("store: connect channel account: %w", err)
+			return stack.Wrap(fmt.Errorf("store: connect channel account: %w", err))
 		}
 		return nil
 	case err != nil:
@@ -105,7 +107,7 @@ func (s *Store) SaveChannelAccount(ctx context.Context, account *ChannelAccount)
 		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: save channel account: %w", err)
+		return stack.Wrap(fmt.Errorf("store: save channel account: %w", err))
 	}
 	return nil
 }
@@ -122,14 +124,14 @@ func (s *Store) DeleteChannelAccount(ctx context.Context, customerID, kind, e164
 		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: disconnect channel account: %w", err)
+		return stack.Wrap(fmt.Errorf("store: disconnect channel account: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: disconnect channel account: %w", err)
+		return stack.Wrap(fmt.Errorf("store: disconnect channel account: %w", err))
 	}
 	if affected == 0 {
-		return ErrUnknownChannelAccount
+		return stack.Wrap(ErrUnknownChannelAccount)
 	}
 	return nil
 }
@@ -155,7 +157,7 @@ func (s *Store) ConfigOnChannel(ctx context.Context, customerID, kind, number st
 		return AgentConfig{}, false, nil
 	}
 	if err != nil {
-		return AgentConfig{}, false, fmt.Errorf("store: config on channel: %w", err)
+		return AgentConfig{}, false, stack.Wrap(fmt.Errorf("store: config on channel: %w", err))
 	}
 	return config, true, nil
 }
@@ -214,11 +216,11 @@ func (s *Store) SaveChannelIdentity(ctx context.Context, identity *ChannelIdenti
 // SaveChannelLink stores a code somebody may text to claim their number.
 func (s *Store) SaveChannelLink(ctx context.Context, link *ChannelLink) error {
 	if link.Code == "" || link.CustomerID == "" || link.ConfigID == "" || link.UserID == "" {
-		return errors.New("store: a code, a customer, an agent and a user are required")
+		return stack.Wrap(errors.New("store: a code, a customer, an agent and a user are required"))
 	}
 	link.CreatedAt = time.Now().UTC()
 	if _, err := s.db.NewInsert().Model(link).Exec(ctx); err != nil {
-		return fmt.Errorf("store: save channel link: %w", err)
+		return stack.Wrap(fmt.Errorf("store: save channel link: %w", err))
 	}
 	return nil
 }

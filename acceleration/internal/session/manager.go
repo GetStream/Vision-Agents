@@ -32,6 +32,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
@@ -184,47 +185,47 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 // session would hold a model session and a place in a call that nobody holds a handle to.
 func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if err := spec.Normalize(); err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	// Refuse unsupported voice modes before opening a call or persistent resource.
 	if spec.Native() && m.options.STS == nil {
-		return nil, errors.New("session: this deployment routes no speech-to-speech model")
+		return nil, stack.Wrap(errors.New("session: this deployment routes no speech-to-speech model"))
 	}
 	if !spec.Text && !spec.Native() {
 		if m.options.STT == nil {
-			return nil, errors.New("session: an stt router is required for voice sessions")
+			return nil, stack.Wrap(errors.New("session: an stt router is required for voice sessions"))
 		}
 		if m.options.TTS == nil {
-			return nil, errors.New("session: a tts router is required for voice sessions")
+			return nil, stack.Wrap(errors.New("session: a tts router is required for voice sessions"))
 		}
 	}
 
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		return nil, errors.New("session: the manager is shut down")
+		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
 	}
 	_, live := m.sessions[spec.ID]
 	m.mu.Unlock()
 	if live {
-		return nil, ErrSessionExists
+		return nil, stack.Wrap(ErrSessionExists)
 	}
 	// The id is the row's primary key whoever owns it, so one somebody already used would
 	// write this session over theirs.
 	if m.options.Store != nil {
 		taken, err := m.options.Store.SessionExists(ctx, spec.ID)
 		if err != nil {
-			return nil, err
+			return nil, stack.Wrap(err)
 		}
 		if taken {
-			return nil, ErrSessionExists
+			return nil, stack.Wrap(ErrSessionExists)
 		}
 	}
 
 	var remembering memory.Store
 	if spec.Memory.UserID != "" {
 		if m.options.Memory == nil {
-			return nil, ErrNoMemory
+			return nil, stack.Wrap(ErrNoMemory)
 		}
 		remembering = m.options.Memory
 	}
@@ -243,16 +244,16 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	var previous []llm.Message
 	if spec.PersistConversation {
 		if !spec.Text {
-			return nil, errors.New("persistent conversations require text mode")
+			return nil, stack.Wrap(errors.New("persistent conversations require text mode"))
 		}
 		service, err := m.Conversations()
 		if err != nil {
-			return nil, err
+			return nil, stack.Wrap(err)
 		}
 		var truncated bool
 		conv, previous, truncated, err = service.OpenForCallerWithCustom(ctx, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
 		if err != nil {
-			return nil, err
+			return nil, stack.Wrap(err)
 		}
 		spec.ConversationID = conv.CID()
 		conv.ShowTools(spec.VisibleTools)
@@ -281,7 +282,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 				spec.Recall.AgentID, spec.Recall.ConversationID, spec.Caller.UserID)
 			if err != nil {
 				conv.Release()
-				return nil, fmt.Errorf("session: reading the conversation being forked: %w", err)
+				return nil, stack.Wrap(fmt.Errorf("session: reading the conversation being forked: %w", err))
 			}
 			previous = append(recalled, previous...)
 			spec.ContextTruncated = spec.ContextTruncated || cut
@@ -294,12 +295,12 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	} else if spec.ConversationID != "" {
 		service, err := m.Conversations()
 		if err != nil {
-			return nil, err
+			return nil, stack.Wrap(err)
 		}
 		var truncated bool
 		previous, truncated, err = service.ContextForCaller(ctx, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID)
 		if err != nil {
-			return nil, err
+			return nil, stack.Wrap(err)
 		}
 		spec.ContextTruncated = truncated
 	}
@@ -311,12 +312,12 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 
 	skills, err := m.skills(ctx, spec)
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	box, err := m.box(spec)
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	// A text session joins nothing, so no edge is opened for it. Everything downstream
@@ -329,13 +330,13 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	default:
 		edge, err = m.options.Edge(spec, m.logger)
 		if err != nil {
-			return nil, err
+			return nil, stack.Wrap(err)
 		}
 	}
 
 	line, err := m.line(spec)
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	created := &Session{
@@ -369,7 +370,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if line != nil || m.reading(spec) || m.searching(spec) {
 		builtin, err := harness.DefaultTools()
 		if err != nil {
-			return nil, err
+			return nil, stack.Wrap(err)
 		}
 		tools = append(tools, builtin.Tools...)
 	}
@@ -402,7 +403,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	screening, err := m.guardrail(ctx, spec)
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	if screening != nil {
 		created.closers = append(created.closers, func() {
@@ -468,7 +469,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		Logger:             m.logger,
 	})
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	if box != nil {
@@ -520,7 +521,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// returned would hang up on the caller immediately.
 	if err := created.voiceAgent.Join(context.WithoutCancel(ctx)); err != nil {
 		created.Close()
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	if spec.Greeting != "" {
@@ -535,7 +536,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 		if err := greet(ctx, greeting); err != nil {
 			created.Close()
-			return nil, fmt.Errorf("session: greet: %w", err)
+			return nil, stack.Wrap(fmt.Errorf("session: greet: %w", err))
 		}
 	}
 
@@ -568,12 +569,12 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if m.closed {
 		m.mu.Unlock()
 		created.Close()
-		return nil, errors.New("session: the manager is shut down")
+		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
 	}
 	if _, raced := m.sessions[created.id]; raced {
 		m.mu.Unlock()
 		created.Close()
-		return nil, ErrSessionExists
+		return nil, stack.Wrap(ErrSessionExists)
 	}
 	m.sessions[created.id] = created
 	m.mu.Unlock()
@@ -1019,7 +1020,7 @@ func (m *Manager) Delete(ctx context.Context, id string, owner Owner) error {
 // every session and every agent.
 func (m *Manager) TruncateMemories(ctx context.Context, customerID, userID string) error {
 	if m.options.Memory == nil {
-		return ErrNoMemory
+		return stack.Wrap(ErrNoMemory)
 	}
 	return m.options.Memory.Truncate(ctx, customerID, userID)
 }
@@ -1028,7 +1029,7 @@ func (m *Manager) TruncateMemories(ctx context.Context, customerID, userID strin
 // session is the customer's: the id alone says nothing about whose it is.
 func (m *Manager) ForgetSession(ctx context.Context, customerID, sessionID string) error {
 	if m.options.Memory == nil {
-		return ErrNoMemory
+		return stack.Wrap(ErrNoMemory)
 	}
 	return m.options.Memory.ForgetRun(ctx, customerID, sessionID)
 }
@@ -1077,7 +1078,7 @@ func (m *Manager) box(spec Spec) (sandbox.Sandbox, error) {
 		return nil, nil
 	}
 	if spec.Sandbox != daytonaProvider {
-		return nil, fmt.Errorf("session: there is no sandbox provider called %q", spec.Sandbox)
+		return nil, stack.Wrap(fmt.Errorf("session: there is no sandbox provider called %q", spec.Sandbox))
 	}
 	return daytona.New(daytona.Options{Config: spec.SandboxOptions, Logger: m.logger})
 }
@@ -1111,8 +1112,8 @@ func (m *Manager) guardrail(ctx context.Context, spec Spec) (guardrail.Guardrail
 	// arrives. Refusing is the honest answer - the alternative is a guardrail that is
 	// configured, reported, and enforcing nothing.
 	if spec.Native() {
-		return nil, errors.New(
-			"session: a speech-to-speech agent answers the caller directly, so a guardrail cannot screen its turns")
+		return nil, stack.Wrap(errors.New(
+			"session: a speech-to-speech agent answers the caller directly, so a guardrail cannot screen its turns"))
 	}
 
 	policy, err := guardrail.Parse(spec.Guardrail)
@@ -1141,7 +1142,7 @@ func (m *Manager) line(spec Spec) (agent.Telephony, error) {
 		return nil, nil
 	}
 	if m.options.Phone == nil {
-		return nil, errors.New("session: this deployment has no telephony, so a number cannot be used")
+		return nil, stack.Wrap(errors.New("session: this deployment has no telephony, so a number cannot be used"))
 	}
 
 	return m.options.Phone.Line(phone.LineOptions{

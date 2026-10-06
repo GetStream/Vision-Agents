@@ -20,6 +20,7 @@ import (
 	"github.com/redis/rueidis"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 )
 
@@ -100,10 +101,10 @@ func (l *Limiter) Allow(ctx context.Context, customerID string, caller routing.C
 			return nil
 		}
 		if l.limits.MessagesPerDay > 0 && spent.messages >= l.limits.MessagesPerDay {
-			return fmt.Errorf("%w: %d messages a day", ErrExhausted, l.limits.MessagesPerDay)
+			return stack.Wrap(fmt.Errorf("%w: %d messages a day", ErrExhausted, l.limits.MessagesPerDay))
 		}
 		if l.limits.TokensPerDay > 0 && spent.tokens >= l.limits.TokensPerDay {
-			return fmt.Errorf("%w: %d tokens a day", ErrExhausted, l.limits.TokensPerDay)
+			return stack.Wrap(fmt.Errorf("%w: %d tokens a day", ErrExhausted, l.limits.TokensPerDay))
 		}
 	}
 	return nil
@@ -155,7 +156,7 @@ type spend struct {
 func (l *Limiter) spent(ctx context.Context, key string) (spend, error) {
 	entries, err := l.redis.Do(ctx, l.redis.B().Hgetall().Key(key).Build()).AsStrMap()
 	if err != nil {
-		return spend{}, fmt.Errorf("quota: read %s: %w", key, err)
+		return spend{}, stack.Wrap(fmt.Errorf("quota: read %s: %w", key, err))
 	}
 	return spend{
 		messages: parseInt(entries[messagesField]),

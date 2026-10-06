@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // UpsertPluginConnection writes a pending or connected login for one plugin on one config,
@@ -15,7 +17,7 @@ import (
 // the same owner replaces the previous attempt rather than leaving two pending rows.
 func (s *Store) UpsertPluginConnection(ctx context.Context, conn *PluginConnection) error {
 	if conn.CustomerID == "" || conn.ConfigID == "" || conn.PluginID == "" {
-		return errors.New("store: a customer, a config and a plugin are required")
+		return stack.Wrap(errors.New("store: a customer, a config and a plugin are required"))
 	}
 
 	now := time.Now().UTC()
@@ -36,7 +38,7 @@ func (s *Store) UpsertPluginConnection(ctx context.Context, conn *PluginConnecti
 			Where("id = ?", conn.ID).
 			Exec(ctx)
 		if err != nil {
-			return fmt.Errorf("store: update plugin connection: %w", err)
+			return stack.Wrap(fmt.Errorf("store: update plugin connection: %w", err))
 		}
 		return nil
 	}
@@ -47,7 +49,7 @@ func (s *Store) UpsertPluginConnection(ctx context.Context, conn *PluginConnecti
 	conn.ID = newID()
 	conn.CreatedAt = now
 	if _, err := s.db.NewInsert().Model(conn).Exec(ctx); err != nil {
-		return fmt.Errorf("store: create plugin connection: %w", err)
+		return stack.Wrap(fmt.Errorf("store: create plugin connection: %w", err))
 	}
 	return nil
 }
@@ -77,7 +79,7 @@ func (s *Store) PluginConnectionByState(ctx context.Context, state string) (Plug
 // user's own logins are not among them: every session of the config would use them.
 func (s *Store) PluginConnections(ctx context.Context, customerID, configID string) ([]PluginConnection, error) {
 	if customerID == "" || configID == "" {
-		return nil, errors.New("store: a customer and a config are required")
+		return nil, stack.Wrap(errors.New("store: a customer and a config are required"))
 	}
 
 	var conns []PluginConnection
@@ -89,7 +91,7 @@ func (s *Store) PluginConnections(ctx context.Context, customerID, configID stri
 		Order("created_at DESC").
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("store: plugin connections: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: plugin connections: %w", err))
 	}
 	return conns, nil
 }
@@ -120,7 +122,7 @@ func (s *Store) UserPluginConnection(ctx context.Context, customerID, configID, 
 // SavePluginConnection writes tokens and status after the callback, or after a refresh.
 func (s *Store) SavePluginConnection(ctx context.Context, conn *PluginConnection) error {
 	if conn.ID == "" {
-		return errors.New("store: a plugin connection id is required")
+		return stack.Wrap(errors.New("store: a plugin connection id is required"))
 	}
 	conn.UpdatedAt = time.Now().UTC()
 	result, err := s.db.NewUpdate().Model(conn).
@@ -130,11 +132,11 @@ func (s *Store) SavePluginConnection(ctx context.Context, conn *PluginConnection
 		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: save plugin connection: %w", err)
+		return stack.Wrap(fmt.Errorf("store: save plugin connection: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: save plugin connection: %w", err)
+		return stack.Wrap(fmt.Errorf("store: save plugin connection: %w", err))
 	}
 	if affected == 0 {
 		return unknownPluginConnection(conn.ID)
@@ -145,7 +147,7 @@ func (s *Store) SavePluginConnection(ctx context.Context, conn *PluginConnection
 // DeletePluginConnection marks the app's login as gone.
 func (s *Store) DeletePluginConnection(ctx context.Context, customerID, configID, pluginID string) error {
 	if customerID == "" || configID == "" || pluginID == "" {
-		return errors.New("store: a customer, a config and a plugin are required")
+		return stack.Wrap(errors.New("store: a customer, a config and a plugin are required"))
 	}
 
 	result, err := s.db.NewUpdate().Model((*PluginConnection)(nil)).
@@ -161,11 +163,11 @@ func (s *Store) DeletePluginConnection(ctx context.Context, customerID, configID
 		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: delete plugin connection: %w", err)
+		return stack.Wrap(fmt.Errorf("store: delete plugin connection: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: delete plugin connection: %w", err)
+		return stack.Wrap(fmt.Errorf("store: delete plugin connection: %w", err))
 	}
 	if affected == 0 {
 		return unknownPluginConnection(pluginID)
@@ -210,13 +212,13 @@ func (s *Store) pluginConnection(ctx context.Context, customerID, configID, user
 		return PluginConnection{}, unknownPluginConnection(pluginID)
 	}
 	if err != nil {
-		return PluginConnection{}, fmt.Errorf("store: plugin connection: %w", err)
+		return PluginConnection{}, stack.Wrap(fmt.Errorf("store: plugin connection: %w", err))
 	}
 	return conn, nil
 }
 
 func unknownPluginConnection(id string) error {
-	return fmt.Errorf("store: there is no plugin connection %s", id)
+	return stack.Wrap(fmt.Errorf("store: there is no plugin connection %s", id))
 }
 
 func isUnknownPlugin(err error) bool {

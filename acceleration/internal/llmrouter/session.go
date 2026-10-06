@@ -14,6 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 )
 
@@ -130,7 +131,7 @@ func (s *Session) Close() error {
 	for _, child := range children {
 		failures = append(failures, child.Close())
 	}
-	return errors.Join(append(failures, s.provider.Close())...)
+	return stack.Wrap(errors.Join(append(failures, s.provider.Close())...))
 }
 
 // observe records statistics as a response settles.
@@ -203,7 +204,7 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	closed := s.closed
 	s.mu.Unlock()
 	if closed {
-		return nil, errors.New("llmrouter: session is closed")
+		return nil, stack.Wrap(errors.New("llmrouter: session is closed"))
 	}
 	ctx, span := tracer.Start(ctx, "llm.create")
 	defer span.End()
@@ -211,11 +212,11 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	// session answers many turns: a socket goes on sending frames and a call goes on
 	// talking long after whatever opened it was let through.
 	if err := s.quota.Allow(ctx, s.owner.CustomerID, s.owner.Caller); err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	if s.admit != nil {
 		if _, err := s.admit(ctx, s.owner.CustomerID); err != nil {
-			return nil, err
+			return nil, stack.Wrap(err)
 		}
 	}
 	// The screen is started before the model is asked so the two overlap from the first
@@ -226,17 +227,17 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	}
 	stream, err := s.create(ctx, params)
 	if err == nil || ctx.Err() != nil || s.fallback == nil || params.PreviousResponseID != "" || params.Conversation != "" {
-		return screened(stream, verdict), err
+		return screened(stream, verdict), stack.Wrap(err)
 	}
 	var apiError *openai.Error
 	// 402 is the provider's billing, not the request: Gemini answers it for every request
 	// once prepaid credit runs out, and a call pinned to it would never be answered again.
 	if errors.As(err, &apiError) && apiError.StatusCode < 500 && apiError.StatusCode != 401 && apiError.StatusCode != 402 && apiError.StatusCode != 403 && apiError.StatusCode != 404 && apiError.StatusCode != 408 && apiError.StatusCode != 429 {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	alternate, fallbackErr := s.fallback(ctx, params)
 	if fallbackErr != nil {
-		return nil, errors.Join(err, fallbackErr)
+		return nil, stack.Wrap(errors.Join(err, fallbackErr))
 	}
 	return screened(alternate, verdict), nil
 }

@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Script is a response a test writes as it goes.
@@ -111,7 +112,7 @@ func (s *Script) Advance(w *llm.ResponseWriter) bool {
 func (s *Script) Err() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.failure
+	return stack.Wrap(s.failure)
 }
 
 // Close abandons the response, which is what the code under test calls to barge in.

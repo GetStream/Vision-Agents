@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -291,13 +292,13 @@ func (r *Registrar) do(ctx context.Context, method, path string, body, into any)
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return nil, fmt.Errorf("telnyx: encode %s: %w", path, err)
+			return nil, stack.Wrap(fmt.Errorf("telnyx: encode %s: %w", path, err))
 		}
 		payload = bytes.NewReader(encoded)
 	}
 	request, err := http.NewRequestWithContext(ctx, method, r.baseURL+path, payload)
 	if err != nil {
-		return nil, fmt.Errorf("telnyx: %s: %w", path, err)
+		return nil, stack.Wrap(fmt.Errorf("telnyx: %s: %w", path, err))
 	}
 	request.Header.Set("Authorization", "Bearer "+r.apiKey)
 	request.Header.Set("Accept", "application/json")
@@ -307,22 +308,22 @@ func (r *Registrar) do(ctx context.Context, method, path string, body, into any)
 
 	response, err := r.client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("telnyx: %s: %w", path, err)
+		return nil, stack.Wrap(fmt.Errorf("telnyx: %s: %w", path, err))
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return nil, fmt.Errorf("telnyx: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail)))
+		return nil, stack.Wrap(fmt.Errorf("telnyx: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
 	}
 	raw, err := io.ReadAll(response.Body)
 	if err != nil {
-		return nil, fmt.Errorf("telnyx: read %s: %w", path, err)
+		return nil, stack.Wrap(fmt.Errorf("telnyx: read %s: %w", path, err))
 	}
 	if into == nil {
 		return raw, nil
 	}
 	if err := json.Unmarshal(raw, into); err != nil {
-		return nil, fmt.Errorf("telnyx: decode %s: %w", path, err)
+		return nil, stack.Wrap(fmt.Errorf("telnyx: decode %s: %w", path, err))
 	}
 	return raw, nil
 }

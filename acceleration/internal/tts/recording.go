@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"strings"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Recording is a whole text to speak into one file, off the live path.
@@ -41,7 +43,7 @@ type Recording struct {
 // Validate reports whether there is anything to say.
 func (r Recording) Validate() error {
 	if strings.TrimSpace(r.Text) == "" {
-		return errors.New("tts: there is nothing to say")
+		return stack.Wrap(errors.New("tts: there is nothing to say"))
 	}
 	return nil
 }

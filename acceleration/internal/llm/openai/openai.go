@@ -26,6 +26,7 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ProviderName is the stable name used in routing config and stats.
@@ -155,7 +156,7 @@ func New(options Options) (*LLM, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("openai: " + apiKeyEnvVar + " is required")
+		return nil, stack.Wrap(errors.New("openai: " + apiKeyEnvVar + " is required"))
 	}
 	if options.Model == "" {
 		options.Model = defaultModel
@@ -175,7 +176,7 @@ func New(options Options) (*LLM, error) {
 		if err := capabilities.Validate(
 			llm.ResponseParams{Reasoning: llm.ReasoningParams{Effort: options.ReasoningEffort}},
 		); err != nil {
-			return nil, fmt.Errorf("openai: %s: %w", options.Model, err)
+			return nil, stack.Wrap(fmt.Errorf("openai: %s: %w", options.Model, err))
 		}
 		capabilities.DefaultEffort = options.ReasoningEffort
 	}
@@ -204,16 +205,16 @@ func (l *LLM) Client() *openai.Client { return &l.client }
 // Create asks for one response and returns the stream it arrives on.
 func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	if len(params.Input) == 0 && params.PreviousResponseID == "" && params.Conversation == "" {
-		return nil, errors.New("openai: a request needs input, a previous response or a conversation")
+		return nil, stack.Wrap(errors.New("openai: a request needs input, a previous response or a conversation"))
 	}
 	if err := l.capabilities.Validate(params); err != nil {
-		return nil, fmt.Errorf("openai: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("openai: %w", err))
 	}
 
 	l.mu.Lock()
 	if l.closed {
 		l.mu.Unlock()
-		return nil, errors.New("openai: provider is closed")
+		return nil, stack.Wrap(errors.New("openai: provider is closed"))
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, l.options.Timeout)
 	id := l.nextID.Add(1)
@@ -225,7 +226,7 @@ func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Strea
 		_ = upstream.Close()
 		cancel()
 		l.forget(id)
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	return llm.NewStream(
 		llm.StreamOptions{
@@ -359,7 +360,7 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 }
 
 // Err is the provider failure that ended the stream, if there was one.
-func (p *puller) Err() error { return p.err }
+func (p *puller) Err() error { return stack.Wrap(p.err) }
 
 // Close abandons the response. It only cancels: the upstream is released by the goroutine
 // reading it, once the cancellation has unblocked it.

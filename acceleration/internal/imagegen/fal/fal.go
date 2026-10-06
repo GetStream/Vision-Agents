@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ProviderName is how this provider is named in stats.
@@ -103,18 +104,18 @@ func New(options Options) (*Provider, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("fal: " + apiKeyEnvVar + " is required")
+		return nil, stack.Wrap(errors.New("fal: " + apiKeyEnvVar + " is required"))
 	}
 	segments := strings.Split(options.Model, "/")
 	if len(segments) < 2 || slices.Contains(segments, "") {
-		return nil, fmt.Errorf("fal: %q is not a FAL model such as alibaba/qwen-image-3/text-to-image", options.Model)
+		return nil, stack.Wrap(fmt.Errorf("fal: %q is not a FAL model such as alibaba/qwen-image-3/text-to-image", options.Model))
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
 	}
 	base, err := url.Parse(options.BaseURL)
 	if err != nil || base.Host == "" {
-		return nil, fmt.Errorf("fal: %q is not a queue address", options.BaseURL)
+		return nil, stack.Wrap(fmt.Errorf("fal: %q is not a queue address", options.BaseURL))
 	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
@@ -267,18 +268,22 @@ func (p *Provider) input(request imagegen.Request, format string) ([]byte, error
 	switch {
 	case request.Width != 0:
 		if request.Width < minSide || request.Width > maxSide || request.Height < minSide || request.Height > maxSide {
-			return nil, fmt.Errorf("fal: %s draws from %d to %d pixels a side, not %dx%d",
-				p.model, minSide, maxSide, request.Width, request.Height)
+			return nil, stack.Wrap(fmt.Errorf("fal: %s draws from %d to %d pixels a side, not %dx%d",
+				p.model, minSide, maxSide, request.Width, request.Height))
 		}
 		sent.ImageSize = size{Width: request.Width, Height: request.Height}
 	case request.AspectRatio != "":
 		shape, ok := shapes[request.AspectRatio]
 		if !ok {
-			return nil, fmt.Errorf("fal: %s draws 1:1, 4:3, 3:4, 16:9 and 9:16, not %s", p.model, request.AspectRatio)
+			return nil, stack.Wrap(fmt.Errorf("fal: %s draws 1:1, 4:3, 3:4, 16:9 and 9:16, not %s", p.model, request.AspectRatio))
 		}
 		sent.ImageSize = shape
 	}
-	return json.Marshal(sent)
+	body, err := json.Marshal(sent)
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	return body, nil
 }
 
 // decode reads the pictures out of a finished job.
@@ -353,11 +358,11 @@ func failure(accepted bool, err error) *imagegen.Error {
 // call makes one request to the queue and returns what it answered.
 func (p *Provider) call(ctx context.Context, method, endpoint string, body []byte, limit int64) ([]byte, error) {
 	if !p.pinned(endpoint) {
-		return nil, fmt.Errorf("fal: %s is not this model's queue", endpoint)
+		return nil, stack.Wrap(fmt.Errorf("fal: %s is not this model's queue", endpoint))
 	}
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("fal: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("fal: %w", err))
 	}
 	request.Header.Set("Authorization", "Key "+p.apiKey)
 	if body != nil {
@@ -366,19 +371,19 @@ func (p *Provider) call(ctx context.Context, method, endpoint string, body []byt
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("fal: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("fal: %w", err))
 	}
 	defer response.Body.Close()
 
 	answer, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
-		return nil, fmt.Errorf("fal: reading the answer: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("fal: reading the answer: %w", err))
 	}
 	if int64(len(answer)) > limit {
-		return nil, fmt.Errorf("fal: the answer is larger than %d bytes", limit)
+		return nil, stack.Wrap(fmt.Errorf("fal: the answer is larger than %d bytes", limit))
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, &refusal{status: response.StatusCode, body: answer}
+		return nil, stack.Wrap(&refusal{status: response.StatusCode, body: answer})
 	}
 	return answer, nil
 }

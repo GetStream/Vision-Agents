@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // nonPublicPrefixes are the address blocks no connector endpoint may resolve to. Each one
@@ -112,7 +114,7 @@ func NewClient(timeout time.Duration, wrap func(http.RoundTripper) http.RoundTri
 func (p policy) validate(ctx context.Context, raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
-		return fmt.Errorf("egress: endpoint must be a public HTTPS URL without userinfo, query or fragment")
+		return stack.Wrap(fmt.Errorf("egress: endpoint must be a public HTTPS URL without userinfo, query or fragment"))
 	}
 	if err := checkURL(parsed); err != nil {
 		return err
@@ -174,13 +176,13 @@ func sameHost(a, b string) bool {
 func checkURL(target *url.URL) error {
 	host := target.Hostname()
 	if target.Scheme != "https" || host == "" || target.User != nil {
-		return fmt.Errorf("egress: only HTTPS URLs with a host and without userinfo are allowed")
+		return stack.Wrap(fmt.Errorf("egress: only HTTPS URLs with a host and without userinfo are allowed"))
 	}
 	if _, err := port(target); err != nil {
 		return err
 	}
 	if _, err := netip.ParseAddr(host); err != nil && numericHost(host) {
-		return fmt.Errorf("egress: host is neither an IP address nor a domain name")
+		return stack.Wrap(fmt.Errorf("egress: host is neither an IP address nor a domain name"))
 	}
 	return nil
 }
@@ -192,7 +194,7 @@ func port(target *url.URL) (int, error) {
 	}
 	value, err := strconv.Atoi(raw)
 	if err != nil || value < 1 || value > 65535 {
-		return 0, fmt.Errorf("egress: port must be between 1 and 65535")
+		return 0, stack.Wrap(fmt.Errorf("egress: port must be between 1 and 65535"))
 	}
 	return value, nil
 }
@@ -283,20 +285,20 @@ func (p policy) resolve(ctx context.Context, host string) ([]netip.Addr, error) 
 func (p policy) publicAddresses(ctx context.Context, host string) error {
 	if ip, err := netip.ParseAddr(host); err == nil {
 		if !isPublic(ip) {
-			return fmt.Errorf("egress: endpoint host is not publicly routable")
+			return stack.Wrap(fmt.Errorf("egress: endpoint host is not publicly routable"))
 		}
 		return nil
 	}
 	if strings.Contains(host, "%") {
-		return fmt.Errorf("egress: scoped IP addresses are not allowed")
+		return stack.Wrap(fmt.Errorf("egress: scoped IP addresses are not allowed"))
 	}
 	ips, err := p.resolver.LookupNetIP(ctx, "ip", host)
 	if err != nil || len(ips) == 0 {
-		return fmt.Errorf("egress: endpoint host could not be resolved")
+		return stack.Wrap(fmt.Errorf("egress: endpoint host could not be resolved"))
 	}
 	for _, ip := range ips {
 		if !isPublic(ip) {
-			return fmt.Errorf("egress: endpoint host resolved to a non-public address")
+			return stack.Wrap(fmt.Errorf("egress: endpoint host resolved to a non-public address"))
 		}
 	}
 	return nil

@@ -8,6 +8,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ProviderName is the stable name used in routing config and stats.
@@ -38,7 +39,7 @@ func New(options Options) (*openaicompat.LLM, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("xai: " + apiKeyEnvVar + " is required")
+		return nil, stack.Wrap(errors.New("xai: " + apiKeyEnvVar + " is required"))
 	}
 	if options.Model == "" {
 		options.Model = defaultModel

@@ -17,6 +17,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ErrRateLimited is a provider saying it is being asked too often. Waiting and asking again
@@ -131,17 +133,17 @@ type Request struct {
 // Validate reports what would make a request meaningless, so a provider does not have to.
 func (r Request) Validate() error {
 	if len(r.Questions) == 0 {
-		return errors.New("lcm: at least one question is required")
+		return stack.Wrap(errors.New("lcm: at least one question is required"))
 	}
 	for id, question := range r.Questions {
 		if strings.TrimSpace(question.Instructions) == "" {
-			return fmt.Errorf("lcm: question %q has no instructions", id)
+			return stack.Wrap(fmt.Errorf("lcm: question %q has no instructions", id))
 		}
 		switch question.Type {
 		case TypeChoice, TypeScore, TypeNoul:
 		default:
-			return fmt.Errorf("lcm: question %q asks for %q, which is not a question type",
-				id, question.Type)
+			return stack.Wrap(fmt.Errorf("lcm: question %q asks for %q, which is not a question type",
+				id, question.Type))
 		}
 	}
 	return nil

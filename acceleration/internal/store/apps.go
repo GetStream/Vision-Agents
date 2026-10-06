@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ErrNoAPIKey says no live key has that id. It is one error for every reason a key might
@@ -90,7 +92,7 @@ type APIKeyOwner struct {
 // having written an app row for it must not have every end user turned away because of it.
 func (s *Store) AppSettingsFor(ctx context.Context, appID string) (AppSettings, error) {
 	if appID == "" {
-		return AppSettings{}, errors.New("store: an app id is required")
+		return AppSettings{}, stack.Wrap(errors.New("store: an app id is required"))
 	}
 
 	var app App
@@ -103,7 +105,7 @@ func (s *Store) AppSettingsFor(ctx context.Context, appID string) (AppSettings, 
 		return AppSettings{}, nil
 	}
 	if err != nil {
-		return AppSettings{}, fmt.Errorf("store: app settings: %w", err)
+		return AppSettings{}, stack.Wrap(fmt.Errorf("store: app settings: %w", err))
 	}
 	return app.Settings, nil
 }
