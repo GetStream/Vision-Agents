@@ -494,7 +494,7 @@ func same(a, b core.StoredCredentials) bool {
 // query value (QueryEscape, which url.Values.Encode uses), a path segment (PathEscape), and a
 // URL's path, fragment and userinfo (what URL.String writes for each); and escaped as slog
 // writes a string value, with strconv.Quote in the text handler and JSON string escapes
-// without HTML escaping in the JSON one (log/slog text_handler.go and json_handler.go,
+// without HTML escaping in the JSON one (log/slog handler.go:572-577 and json_handler.go:181-185,
 // go1.27). Texts are not decoded instead, since a log line can hold a URL and cannot be
 // decoded as a whole.
 func forms(secret string) []string {
