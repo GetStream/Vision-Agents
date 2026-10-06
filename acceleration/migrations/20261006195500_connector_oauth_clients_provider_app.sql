@@ -15,6 +15,13 @@
 --     and repeats.
 --   - registration gains managed, an app the router created for the customer (T54). Still
 --     checked by the store (store.PutConnectorOAuthClient), not by a CHECK.
+--   - stream_app_pk is the Stream app the record was created in, and the one the provider app's
+--     work is finished in (architecture doc on connectors/planning, decision 7: «provider apps
+--     keep a stream_app_pk pin»). It is 20261006180000_stream_app_pins.sql's pin: NULL is the
+--     deployment's own app. A customer holds one Stream app at a time (stream_apps.customer_id
+--     is its primary key), so a re-registration moves the customer and leaves the pin: a Slack
+--     app created while the customer was in app 4242 still writes into 4242. Set when the row
+--     is created; a put that replaces the row keeps it.
 --   - signing_secret_sealed is the secret the provider signs the app's inbound requests with,
 --     sealed under signing_kek_version with the customer, the connector and the provider app
 --     id as AAD (api.providerAppAAD), so it opens only for the app it was issued for. It has a
@@ -31,6 +38,7 @@
 -- signing_secret_sealed. Carrying the table would need both to.
 
 ALTER TABLE connector_oauth_clients ADD COLUMN provider_app_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE connector_oauth_clients ADD COLUMN stream_app_pk BIGINT;
 ALTER TABLE connector_oauth_clients ADD COLUMN signing_secret_sealed BYTEA NOT NULL DEFAULT ''::bytea;
 -- Key versions start at 1 (auth.NewSealerWithKeyring); 0 is no secret.
 ALTER TABLE connector_oauth_clients ADD COLUMN signing_kek_version INTEGER NOT NULL DEFAULT 0;
@@ -54,4 +62,5 @@ ALTER TABLE connector_oauth_clients DROP CONSTRAINT connector_oauth_clients_sign
 ALTER TABLE connector_oauth_clients DROP CONSTRAINT connector_oauth_clients_signing_secret;
 ALTER TABLE connector_oauth_clients DROP COLUMN signing_kek_version;
 ALTER TABLE connector_oauth_clients DROP COLUMN signing_secret_sealed;
+ALTER TABLE connector_oauth_clients DROP COLUMN stream_app_pk;
 ALTER TABLE connector_oauth_clients DROP COLUMN provider_app_id;

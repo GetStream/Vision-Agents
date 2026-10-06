@@ -328,3 +328,50 @@ func (s *StoreSuite) TestRecordsWithoutAProviderAppDoNotCollide() {
 	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM connector_oauth_clients WHERE provider_app_id = ''").Scan(&rows))
 	s.Equal(2, rows)
 }
+
+// Acme was in Stream app 4242 when the router created its Slack app, then registered app 5555:
+// the provider app's work still goes to 4242, where its threads were made.
+func (s *StoreSuite) TestARecordKeepsTheStreamAppItWasCreatedIn() {
+	s.oauthClient("acme-app", "acme_chat", func(c *ConnectorOAuthClient) {
+		c.Registration, c.ProviderAppID, c.StreamAppPK = core.ClientManaged, "A012ABCD0A0", 4242
+	})
+
+	rotated := s.oauthClient("acme-app", "acme_chat", func(c *ConnectorOAuthClient) {
+		c.Registration, c.ProviderAppID, c.StreamAppPK = core.ClientManaged, "A012ABCD0A0", 5555
+	})
+
+	s.Equal(int64(4242), rotated.StreamAppPK, "the put hands back the pin the record has")
+	found, err := s.store.ConnectorOAuthClientByProviderApp(s.ctx, "acme_chat", "A012ABCD0A0")
+	s.Require().NoError(err)
+	s.Equal(int64(4242), found.StreamAppPK)
+}
+
+func (s *StoreSuite) TestARecordMadeInTheDeploymentsAppHasNoPin() {
+	s.oauthClient("acme-app", "acme_chat", nil)
+
+	var pinned bool
+	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+		"SELECT stream_app_pk IS NOT NULL FROM connector_oauth_clients WHERE customer_id = 'acme-app'").Scan(&pinned))
+	s.False(pinned, "NULL is the deployment's own app, as on every other pinned table")
+}
+
+func (s *StoreSuite) TestARewrapOfAnOAuthClientAppliesOnlyToTheSecretItRead() {
+	put := s.managedClient("acme-app", "acme_chat", "A012ABCD0A0")
+
+	applied, err := s.store.RewrapConnectorOAuthClientSigningSecret(s.ctx, "acme-app", "acme_chat", put.SigningSecretSealed, []byte("signing under v2"), 2)
+	s.Require().NoError(err)
+	s.True(applied)
+	stale, err := s.store.RewrapConnectorOAuthClientSigningSecret(s.ctx, "acme-app", "acme_chat", put.SigningSecretSealed, []byte("from a stale read"), 3)
+	s.Require().NoError(err)
+	s.False(stale, "the secret it read was replaced meanwhile")
+	applied, err = s.store.RewrapConnectorOAuthClientSecret(s.ctx, "acme-app", "acme_chat", put.SecretSealed, []byte("client under v2"), 2)
+	s.Require().NoError(err)
+	s.True(applied)
+
+	found, err := s.store.ConnectorOAuthClient(s.ctx, "acme-app", "acme_chat")
+	s.Require().NoError(err)
+	s.Equal([]byte("signing under v2"), found.SigningSecretSealed)
+	s.Equal(2, found.SigningKEKVersion)
+	s.Equal([]byte("client under v2"), found.SecretSealed)
+	s.Equal(2, found.KEKVersion)
+}

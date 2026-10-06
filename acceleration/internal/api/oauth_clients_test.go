@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
@@ -317,6 +318,58 @@ func (s *OAuthClientsSuite) TestAProviderAppWithoutASigningSecretIsNotFound() {
 
 	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
 	s.Empty(secret, "no event verifies under an empty key")
+}
+
+func (s *OAuthClientsSuite) TestASigningSecretSealedUnderAnOlderKeyIsSealedAgainOnUse() {
+	app := s.providerApp("github", core.ClientCustomer, "client-secret", "signing-secret")
+	rotated := s.rotatedKeyring()
+
+	_, secret, err := ProviderApp(context.Background(), s.store, rotated, "github", app.ProviderAppID)
+
+	s.Require().NoError(err)
+	s.Equal("signing-secret", secret)
+	found, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "github")
+	s.Require().NoError(err)
+	s.Equal(2, found.SigningKEKVersion)
+	_, secret, err = ProviderApp(context.Background(), s.store, s.onlyTheNewKey(), "github", app.ProviderAppID)
+	s.Require().NoError(err, "the old key can go")
+	s.Equal("signing-secret", secret)
+}
+
+func (s *OAuthClientsSuite) TestAClientSecretSealedUnderAnOlderKeyIsSealedAgainOnUse() {
+	id := s.customConnector("  registration: [managed]")
+	s.providerApp(id, core.ClientManaged, "the-routers-secret", "")
+	lookup := func(secrets *auth.Sealer) (oauth2code.Client, bool, error) {
+		return ConnectorClients(s.store, secrets, func(string) string { return "" })(context.Background(),
+			core.ConnectionRef{CustomerID: s.customerID()}, core.ResolvedManifest{ConnectorID: id}, core.ClientManaged)
+	}
+
+	found, ok, err := lookup(s.rotatedKeyring())
+
+	s.Require().NoError(err)
+	s.True(ok)
+	s.Equal("the-routers-secret", found.Secret)
+	record, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), id)
+	s.Require().NoError(err)
+	s.Equal(2, record.KEKVersion)
+	found, _, err = lookup(s.onlyTheNewKey())
+	s.Require().NoError(err, "the old key can go")
+	s.Equal("the-routers-secret", found.Secret)
+}
+
+// rotatedKeyring is the suite's key as version 1 and a new current version 2, as a deployment
+// holds them between adding a key and removing the old one.
+func (s *OAuthClientsSuite) rotatedKeyring() *auth.Sealer {
+	keyring, err := auth.NewSealerWithKeyring(2, map[int]string{1: suiteKEK, 2: suiteKEK + " v2"})
+	s.Require().NoError(err)
+	return keyring
+}
+
+// onlyTheNewKey is the keyring once version 1 is removed.
+func (s *OAuthClientsSuite) onlyTheNewKey() *auth.Sealer {
+	keyring, err := auth.NewSealerWithKeyring(2, map[int]string{2: suiteKEK + " v2"})
+	s.Require().NoError(err)
+	return keyring
 }
 
 // providerApp stores the test app's record for connector as the router would write one it
