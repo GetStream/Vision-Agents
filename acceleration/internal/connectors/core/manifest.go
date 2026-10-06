@@ -64,6 +64,9 @@ type Manifest struct {
 	RateLimit RateLimitRule       `yaml:"rate_limit,omitempty" json:"rate_limit,omitzero"`
 	Sources   []SourceRule        `yaml:"sources,omitempty" json:"sources,omitempty"`
 	Hooks     map[string]HookName `yaml:"hooks,omitempty" json:"hooks,omitempty"`
+	// Channel is how the connector is an inbound channel (channel.go). A connector has
+	// sources, a channel, or both.
+	Channel *ChannelRule `yaml:"channel,omitempty" json:"channel,omitempty"`
 }
 
 // Input is one value a connection is created with. It has an enum or a pattern, so what a
@@ -436,7 +439,7 @@ func (m Manifest) Validate() error {
 		if !identifier.MatchString(role) {
 			fail(field, "%q is not a lowercase identifier", role)
 		}
-		if err := m.checkTemplate(m.Endpoints[role], inputs, captures); err != nil {
+		if err := m.checkTemplate(m.Endpoints[role], inputs, captures, nil); err != nil {
 			fail(field, "%v", err)
 		}
 	}
@@ -495,6 +498,10 @@ func (m Manifest) Validate() error {
 		}
 	}
 
+	if m.Channel != nil {
+		m.checkChannel(fail, inputs, captures)
+	}
+
 	for _, point := range slices.Sorted(maps.Keys(m.Hooks)) {
 		field := "hooks." + point
 		if !slices.Contains(hookPoints, point) {
@@ -546,7 +553,7 @@ func (m Manifest) Resolve(scheme string, inputs, metadata map[string]string) (Re
 
 	endpoints := map[string]string{}
 	for _, role := range slices.Sorted(maps.Keys(m.Endpoints)) {
-		endpoint, complete, err := m.render(m.Endpoints[role], resolved, metadata)
+		endpoint, complete, err := m.render(m.Endpoints[role], resolved, metadata, nil)
 		if err != nil {
 			return ResolvedManifest{}, stack.Wrap(fmt.Errorf("manifest %q: endpoints.%s: %w", m.ID, role, err))
 		}
@@ -558,7 +565,14 @@ func (m Manifest) Resolve(scheme string, inputs, metadata map[string]string) (Re
 	for point, name := range m.Hooks {
 		hooks[point] = string(name)
 	}
+	var channel *ChannelRule
+	if m.Channel != nil {
+		copied := *m.Channel
+		channel = &copied
+	}
 	return ResolvedManifest{
+		Channel:         channel,
+		vars:            maps.Clone(m.Vars),
 		ConnectorID:     m.ID,
 		Revision:        m.Revision,
 		Scheme:          scheme,
@@ -669,8 +683,9 @@ func (in Input) check(value string) error {
 }
 
 // checkTemplate is whether every placeholder in a template names something the manifest
-// declares, and whether the template can only become an https URL.
-func (m Manifest) checkTemplate(template string, inputs map[string]Input, captures map[string]CaptureRule) error {
+// declares, and whether the template can only become an https URL. extra is the names a
+// channel reply adds, values from a message, which may sit anywhere outside the host.
+func (m Manifest) checkTemplate(template string, inputs map[string]Input, captures map[string]CaptureRule, extra map[string]bool) error {
 	if strings.ContainsAny(placeholder.ReplaceAllString(template, ""), "{}") {
 		return stack.Wrap(fmt.Errorf("%q has a brace outside a {name} placeholder", template))
 	}
@@ -716,6 +731,15 @@ func (m Manifest) checkTemplate(template string, inputs map[string]Input, captur
 			}
 			continue
 		}
+		if extra[name] {
+			if match[0] < authorityEnd {
+				return stack.Wrap(fmt.Errorf("{%s} is in the host: a value from a message never picks where a request goes", name))
+			}
+			continue
+		}
+		if extra != nil && (strings.HasPrefix(name, threadPrefix) || name == replyProviderUnitID) {
+			return stack.Wrap(fmt.Errorf("{%s} is not a declared thread key part or provider_unit_id", name))
+		}
 		_, input := inputs[name]
 		_, isVar := m.Vars[name]
 		if !input && !isVar {
@@ -732,8 +756,9 @@ func (m Manifest) checkTemplate(template string, inputs map[string]Input, captur
 // does not have yet. A var goes in as written; an input or a captured value goes in only as
 // unreserved characters that are not a dot segment, or, for a captured value with
 // host_suffixes, as the whole origin a template starts with. So neither can move the
-// request to another host, nor remove a path segment the template wrote.
-func (m Manifest) render(template string, inputs, metadata map[string]string) (rendered string, complete bool, err error) {
+// request to another host, nor remove a path segment the template wrote. extra is a channel
+// reply's values from a message, which go in as an input does.
+func (m Manifest) render(template string, inputs, metadata, extra map[string]string) (rendered string, complete bool, err error) {
 	var b strings.Builder
 	last := 0
 	for _, match := range placeholder.FindAllStringSubmatchIndex(template, -1) {
@@ -745,6 +770,9 @@ func (m Manifest) render(template string, inputs, metadata map[string]string) (r
 			continue
 		}
 		value, ok := inputs[name]
+		if fromMessage, isExtra := extra[name]; isExtra {
+			value = fromMessage
+		}
 		if captured, isCaptured := strings.CutPrefix(name, metadataPrefix); isCaptured {
 			if value, ok = metadata[captured]; !ok {
 				return "", false, nil

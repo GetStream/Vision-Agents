@@ -30,4 +30,9 @@ type ResolvedManifest struct {
 	Capture   []CaptureRule
 	Refresh   RefreshPolicy
 	RateLimit RateLimitRule
+	// Channel is the manifest's channel block, or nil when the connector is no inbound
+	// channel. Reply reads it.
+	Channel *ChannelRule
+	// vars are the manifest's vars, which a reply template may name.
+	vars map[string]Var
 }
