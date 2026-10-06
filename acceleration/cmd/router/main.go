@@ -418,6 +418,12 @@ func run(settings config.Config, logger *slog.Logger) error {
 	} else {
 		logger.Warn("no database configured, statistics will not be recorded", "setting", "postgres.dsn")
 	}
+	// Nothing asks it for a credential yet: the session's dispatcher will (T21, AI-851).
+	connectorResolver, err := newConnectorResolver(connectors, pgStore, connectorSecrets)
+	if err != nil {
+		return err
+	}
+	_ = connectorResolver
 
 	var liveClient *live.Client
 	if settings.Redis.Addr != "" {
