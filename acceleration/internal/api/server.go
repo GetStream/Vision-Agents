@@ -235,6 +235,10 @@ type Options struct {
 	// revokes through it when a provider says a grant ended. Absent when connectors are off,
 	// in which case the endpoint takes no events.
 	ConnectorResolver core.Resolver
+	// ConnectorTransports builds each connection's outbound client over ConnectorResolver.
+	// The validate endpoint lists a connection's tools through it. Absent when connectors are
+	// off, in which case no connection can be validated.
+	ConnectorTransports *core.Transports
 	// ConnectorEventSecrets finds the secret a connector's events are verified with
 	// (ConnectorEventSecrets reads the operator's from the environment). Absent, the
 	// endpoint takes no events.
@@ -304,6 +308,10 @@ type Server struct {
 	eventSecrets      EventSecretLookup
 	channelBridge     ChannelBridge
 	trusted           []netip.Prefix
+
+	// connectorTransports is what the validate endpoint reaches a connection's tools through.
+	connectorTransports *core.Transports
+
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
 	serverSide *http.ServeMux
@@ -439,6 +447,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		}
 		server.connectorSecrets, server.credentials = options.ConnectorSecrets, credentials
 	}
+	server.connectorTransports = options.ConnectorTransports
 	if server.channelBridge == nil {
 		server.channelBridge = droppingBridge{logger: logger}
 	}

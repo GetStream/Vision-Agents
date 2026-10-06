@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -364,6 +365,44 @@ func sharedWebhook(definition ConnectorDefinition) bool {
 	channel := definition.Manifest.Channel
 	return definition.CustomerID == BuiltinCustomer && channel != nil &&
 		channel.Verifier.Secret == core.SecretOperator && channel.Messages.ProviderUnitID != ""
+}
+
+// SetConnectorConnectionTools stores the tools a validate found on one live connection of the
+// customer's, with the digest of the list and when it was checked, replacing what it held. It
+// writes only those three columns, as a credentials write leaves them out
+// (credentialColumns), so neither puts back a stale copy of the other.
+func (s *Store) SetConnectorConnectionTools(ctx context.Context, customerID, id string, tools []ConnectorTool, digest string, checkedAt time.Time) error {
+	if customerID == "" || id == "" {
+		return stack.Wrap(errors.New("store: a customer and a connection id are required"))
+	}
+	if tools == nil {
+		tools = []ConnectorTool{}
+	}
+	raw, err := json.Marshal(tools)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: encode connector connection tools: %w", err))
+	}
+	checked := checkedAt.UTC().Truncate(time.Microsecond)
+	result, err := s.db.NewUpdate().Model((*ConnectorConnection)(nil)).
+		Set("cached_tools = ?::jsonb", string(raw)).
+		Set("tools_digest = ?", digest).
+		Set("tools_checked_at = ?", checked).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("cc.customer_id = ?", customerID).
+		Where("cc.id = ?", id).
+		Where("cc.deleted_at IS NULL").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: set connector connection tools: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: set connector connection tools: %w", err))
+	}
+	if affected == 0 {
+		return stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorConnection, id))
+	}
+	return nil
 }
 
 // ConnectorConnectionsByOwner lists one owner's live connections, newest first, one more

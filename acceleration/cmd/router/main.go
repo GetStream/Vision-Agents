@@ -34,6 +34,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2cc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
@@ -351,7 +352,12 @@ func newConnectorRegistry(settings config.Config, clients oauth2code.ClientLooku
 	for _, verifier := range []core.Verifier{hmacheader.New()} {
 		verifiers[verifier.Name()] = verifier
 	}
-	return core.Registry{Schemes: schemes, Verifiers: verifiers}, nil
+	// The tool sources a manifest's sources[].kind may name; a new one is one more entry.
+	sources := map[string]core.ToolSource{}
+	for _, source := range []core.ToolSource{mcp.New()} {
+		sources[source.Kind()] = source
+	}
+	return core.Registry{Schemes: schemes, Verifiers: verifiers, ToolSources: sources}, nil
 }
 
 // connectorSchemeConfig is the oauth2code.Config newConnectorRegistry starts the scheme with.
@@ -457,9 +463,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	// Nothing asks it for a credential yet: the session's dispatcher will (T21, AI-851). The
-	// events endpoint revokes through it.
+	// The validate endpoint asks it for a credential, and the session's dispatcher will (T21,
+	// AI-851). The events endpoint revokes through it.
 	connectorResolver, err := newConnectorResolver(connectors, pgStore, connectorSecrets)
+	if err != nil {
+		return err
+	}
+	connectorTransports, err := newConnectorTransports(connectorResolver)
 	if err != nil {
 		return err
 	}
@@ -994,6 +1004,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// stays absent, and the events endpoint takes no events without it.
 	if connectorResolver != nil {
 		options.ConnectorResolver = connectorResolver
+		options.ConnectorTransports = connectorTransports
 		options.ConnectorEventSecrets = api.ConnectorEventSecrets(os.Getenv)
 	}
 	if streamClients.PerApp() {

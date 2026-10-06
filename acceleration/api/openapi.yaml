@@ -1634,6 +1634,23 @@ components:
         - created_at
         - updated_at
       type: object
+    ConnectionCredentials:
+      additionalProperties: false
+      description: Credentials for a connection, under the revision the caller last read. An unknown field is refused rather than ignored.
+      properties:
+        expected_revision:
+          description: The connection's revision as last read. A connection that has moved past it is refused with a 409, so two writers never replace each other's credentials unseen.
+          format: int64
+          minimum: 1
+          type: integer
+        values:
+          additionalProperties:
+            type: string
+          description: 'What the connection''s auth_scheme takes, write-only. api_key: api_key and header. bearer: token. none: nothing, which activates the connection. oauth2_client_credentials: client_id and client_secret, which are tried at the token endpoint at once. oauth2_code: a grant the provider already issued, as access_token, refresh_token (optional), expires_at (RFC 3339) and scope (the granted scopes joined as the connector''s scopes are); its endpoints and client are the connector''s, never the caller''s.'
+          type: object
+      required:
+        - expected_revision
+      type: object
     ConnectionOwner:
       additionalProperties: false
       description: 'Whose a connection is: the app''s, which any of its agents may be bound to, or one user''s.'
@@ -1704,6 +1721,76 @@ components:
         - connected
         - needs_reauthorization
         - disconnected
+      type: string
+    ConnectionTool:
+      properties:
+        description:
+          type: string
+        input_schema:
+          additionalProperties: {}
+          description: The JSON Schema of its arguments.
+          type: object
+        name:
+          description: The tool's name at the provider. An agent config grants it by this name.
+          type: string
+        schema_digest:
+          description: The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again.
+          type: string
+      required:
+        - name
+        - description
+        - input_schema
+        - schema_digest
+      type: object
+    ConnectionTools:
+      description: 'The tools a connection offered when it was last validated, in one piece: the provider''s own list, not a page of one.'
+      properties:
+        checked_at:
+          description: When the list was read. Absent until a validate listed it.
+          format: date-time
+          type: string
+        connection_id:
+          type: string
+        digest:
+          description: The digest of the whole list. Absent until a validate listed it.
+          type: string
+        tools:
+          items:
+            $ref: '#/components/schemas/ConnectionTool'
+          nullable: true
+          type: array
+      required:
+        - connection_id
+        - tools
+      type: object
+    ConnectionValidation:
+      description: Whether a connection's credential works, found by asking the provider for its tools.
+      properties:
+        checked_at:
+          description: When the tools were listed. Absent until a validate listed them.
+          format: date-time
+          type: string
+        connection_id:
+          type: string
+        error:
+          description: Why the status is not connected, for a person to read.
+          type: string
+        status:
+          $ref: '#/components/schemas/ConnectionValidationStatus'
+        tools_digest:
+          description: The digest of the tools the connection offers, as GET .../tools shows them. Absent until a validate listed them.
+          type: string
+      required:
+        - connection_id
+        - status
+      type: object
+    ConnectionValidationStatus:
+      description: 'connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps. failed: the provider could not be reached or listed nothing usable; error says why.'
+      enum:
+        - connected
+        - pending
+        - needs_reauthorization
+        - failed
       type: string
     Connector:
       description: 'A connector: an account elsewhere an agent may reach, built in or the app''s own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.'
@@ -8207,6 +8294,117 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Start a consent
+  /v1/agents/connections/{id}/credentials:
+    put:
+      description: |-
+        Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: putConnectionCredentials
+      parameters:
+        - description: The connection, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connection, as returned when it was created.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectionCredentials'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Connection'
+          description: The connection, connected
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Set a connection's credentials
+  /v1/agents/connections/{id}/tools:
+    get:
+      description: |-
+        The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: listConnectionTools
+      parameters:
+        - description: The connection, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connection, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionTools'
+          description: The connection's tools
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: List a connection's tools
+  /v1/agents/connections/{id}/validate:
+    post:
+      description: |-
+        Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. Who may validate it is who may read it.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: validateConnection
+      parameters:
+        - description: The connection, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connection, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionValidation'
+          description: What the validate found
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Validate a connection
   /v1/agents/connectors:
     get:
       description: |-
