@@ -10,6 +10,26 @@
  */
 
 export type paths = {
+    readonly "/.well-known/oauth-client-metadata": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The router's OAuth client metadata
+         * @description The OAuth Client ID Metadata Document a provider that supports it fetches, at the URL that is the router's client_id. Served only when ROUTER_PUBLIC_URL is https. Unauthenticated because the provider fetches it.
+         */
+        readonly get: operations["getConnectorClientMetadata"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/health": {
         readonly parameters: {
             readonly query?: never;
@@ -657,6 +677,28 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/connections/{id}/authorizations": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Start a consent
+         * @description Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["createAuthorization"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/connectors": {
         readonly parameters: {
             readonly query?: never;
@@ -701,6 +743,50 @@ export type paths = {
         readonly get: operations["getConnector"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connectors/oauth/callback": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Finish a consent
+         * @description The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
+         */
+        readonly get: operations["finishConnectorConsent"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connectors/oauth/launch/{id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The page a consent starts on
+         * @description The launch_url of an authorization, opened in a popup by the dashboard. The page waits for the dashboard's origin to post the handoff token, trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens it; the page names no attempt and is the same for every one.
+         */
+        readonly get: operations["getConnectorLaunchPage"];
+        readonly put?: never;
+        /**
+         * Bind a consent to this browser
+         * @description What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. Unauthenticated because a browser sends it; the handoff token is the secret.
+         */
+        readonly post: operations["handOffConnectorLaunch"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3105,6 +3191,26 @@ export type components = {
             /** @description The Stream call type. Omit for "agent". */
             readonly call_type?: string;
         };
+        /** @description A consent in flight for one connection: the page that starts it in a browser and the token that binds it to that browser. */
+        readonly Authorization: {
+            /**
+             * Format: date-time
+             * @description When the attempt ends, 10 minutes after it began. A callback after that is refused.
+             */
+            readonly expires_at: string;
+            /** @description Handed to the launch page by postMessage, never put in a URL. It binds the attempt to the browser that opens launch_url. */
+            readonly handoff_token: string;
+            /** @description The attempt. */
+            readonly id: string;
+            readonly kind: components["schemas"]["AuthorizationKind"];
+            /** @description The router's page to open in a popup from the dashboard. It asks the opener for handoff_token and then sends the browser to the provider. */
+            readonly launch_url: string;
+        };
+        /**
+         * @description consent for a connection no account was connected to yet, reconnect for one that has been connected before, which must come back with the same provider account.
+         * @enum {string}
+         */
+        readonly AuthorizationKind: "consent" | "reconnect";
         readonly AuthorizePluginRequest: {
             /** @description The shop hostname. Required for plugins that have no single global URL. */
             readonly instance_url?: string;
@@ -6416,6 +6522,27 @@ export type components = {
 };
 export type $defs = Record<string, never>;
 export interface operations {
+    readonly getConnectorClientMetadata: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The document */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": Record<string, never>;
+                };
+            };
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
     readonly getHealth: {
         readonly parameters: {
             readonly query?: never;
@@ -7910,6 +8037,42 @@ export interface operations {
             };
         };
     };
+    readonly createAuthorization: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The consent is waiting for its browser */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Authorization"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Internal Server Error */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     readonly listConnectors: {
         readonly parameters: {
             readonly query?: {
@@ -8018,6 +8181,89 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["Error"];
                 };
+            };
+        };
+    };
+    readonly finishConnectorConsent: {
+        readonly parameters: {
+            readonly query?: {
+                readonly code?: string;
+                readonly error?: string;
+                readonly iss?: string;
+                readonly state?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The browser is sent back to the dashboard */
+            readonly 302: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            /** @description The consent was started in another browser */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly getConnectorLaunchPage: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The authorization. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The launch page */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "text/html": string;
+                };
+            };
+        };
+    };
+    readonly handOffConnectorLaunch: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The authorization. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The cookie is set and the authorize URL returned */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            /** @description Not from the launch page's origin, or not this consent's handoff token */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
