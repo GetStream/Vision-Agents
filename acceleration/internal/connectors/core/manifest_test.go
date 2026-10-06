@@ -62,10 +62,11 @@ func minimal(extra string) []byte {
 	return []byte("id: example\nrevision: 1\nname: Example\nschemes: [oauth2_code]\n" + extra)
 }
 
-func (s *ManifestSuite) TestEveryStressTestManifestLoads() {
+// The 12 stress-test manifests and the 4 channel ones (channel_test.go).
+func (s *ManifestSuite) TestEveryFixtureManifestLoads() {
 	paths, err := filepath.Glob(filepath.Join("testdata", "manifests", "*.yaml"))
 	s.Require().NoError(err)
-	s.Require().Len(paths, 12)
+	s.Require().Len(paths, 16)
 	for _, path := range paths {
 		raw, err := os.ReadFile(path)
 		s.Require().NoError(err)
