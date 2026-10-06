@@ -33,8 +33,9 @@ Complete(Ref, Manifest, State, Query)
 
 Retrieve(stored, m, opts)
   due        expiry known and within refresh.margin (default 1 min, the prototype's) or at or before
-             opts.ValidUntil; otherwise -> the token, stored as is
-  none       no refresh token: still valid -> the token; expired -> InvalidGrant
+             opts.ValidUntil, or opts.Refused (the provider refused it), whatever the expiry;
+             otherwise -> the token, stored as is
+  none       no refresh token: still valid or no known expiry -> the token; expired -> InvalidGrant
   refresh    endpoints.refresh or the token endpoint, checkEndpoint; client secret looked up again by payload ref;
              grant_type, refresh_token, scope (granted scopes, only with scopes.send_on_refresh), resource;
              opts.Checkpoint right before the first request leaves (an error sends nothing)
@@ -44,7 +45,7 @@ Retrieve(stored, m, opts)
              refresh token once more (the retired one still works there); never without a grace
   -> AccessCredential, new StoredCredentials (new refresh token if one came, refresh_ttl expiry), or
      *core.OutcomeError and no StoredCredentials, with the old AccessCredential beside it while that has not
-     expired; stored is never written to. A
+     expired and was not refused; stored is never written to. A
      refresh token dying before the next refresh logs a warning
 
 Classify(resp, body, err)

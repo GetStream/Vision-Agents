@@ -9,12 +9,14 @@ Resolve(ref, req)
   row         store.ConnectorConnection, every call, no lock      deleted -> store.ErrNoConnectorConnection
   fast path   connected, cache[ref].revision == row.revision,     -> cached credential
               younger than maxAge, ExpiresAt after req.Deadline
+              never when req.Refused is set
   slow path   on a goroutine; the caller's ctx ending returns ctx's error at once
     load      definition at the row's definition_revision (outside the lock)
     lock      CredentialStore.Update(ctx, ...)                    ctx bounds only the wait
     status    not connected -> ErrNotConnected
     Retrieve  scheme.Retrieve(detached, ..., opts)                context.WithoutCancel + retrieveTimeout
       ValidUntil  req.Deadline: the scheme renews a credential that expires before it
+      Refused     req.Refused is still the stored revision: renew whatever the expiry
       Checkpoint  called by the scheme right before a refresh:
                   commit needs_reauthorization + lostRefresh, lock still held
     outcome   nil              -> connected, last_error "", expiry, new credentials (revision + 1)
