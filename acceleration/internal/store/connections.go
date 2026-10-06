@@ -280,7 +280,7 @@ func (s *Store) ConnectorConnectionsByOwner(ctx context.Context, customerID stri
 // so nothing can use it from here on, whether or not a config still binds it. It is the
 // forced delete; DeleteUnboundConnectorConnection is the one that refuses a bound connection.
 func (s *Store) DeleteConnectorConnection(ctx context.Context, customerID, id string) error {
-	affected, err := s.softDeleteConnection(ctx, customerID, id, false)
+	affected, err := softDeleteConnection(ctx, s.db, customerID, id, false)
 	if err != nil {
 		return err
 	}
@@ -293,27 +293,42 @@ func (s *Store) DeleteConnectorConnection(ctx context.Context, customerID, id st
 // DeleteUnboundConnectorConnection soft deletes a live connection as DeleteConnectorConnection
 // does, unless a live agent config of the customer's binds it as its fixed connection.
 //
-// The check is a NOT EXISTS inside the UPDATE, so no bind can commit between a check and the
-// delete. Under READ COMMITTED a statement sees the rows committed before it began
-// (https://www.postgresql.org/docs/current/transaction-iso.html#XACT-READ-COMMITTED), so a
-// bind that commits after this UPDATE began is not seen; closing that takes the config write
-// too (AI-889).
+// It locks the connection FOR UPDATE first, and checks for a binding in the UPDATE after.
+// A config write locks each connection it binds before it writes the binding
+// (lockBoundConnections), so a bind in progress holds the delete at the lock until it
+// commits. Under READ COMMITTED each statement sees the rows committed before it began
+// (https://www.postgresql.org/docs/current/transaction-iso.html#XACT-READ-COMMITTED), so the
+// UPDATE, begun after the wait, sees a binding that committed during it. Checked in the
+// locking statement itself, it would not: a statement that waits for a row lock re-checks
+// only that row.
 func (s *Store) DeleteUnboundConnectorConnection(ctx context.Context, customerID, id string) error {
-	affected, err := s.softDeleteConnection(ctx, customerID, id, true)
-	if err != nil {
-		return err
+	if customerID == "" || id == "" {
+		return stack.Wrap(errors.New("store: a customer and a connection id are required"))
 	}
-	if affected == 1 {
+	return stack.Wrap(s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var locked string
+		err := tx.NewSelect().Model((*ConnectorConnection)(nil)).Column("cc.id").
+			Where("cc.customer_id = ?", customerID).
+			Where("cc.id = ?", id).
+			Where("cc.deleted_at IS NULL").
+			For("UPDATE").
+			Scan(ctx, &locked)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: %s", ErrNoConnectorConnection, id)
+		}
+		if err != nil {
+			return fmt.Errorf("store: lock connector connection: %w", err)
+		}
+		affected, err := softDeleteConnection(ctx, tx, customerID, id, true)
+		if err != nil {
+			return err
+		}
+		// The row is live and locked by this transaction, so only a binding stops the UPDATE.
+		if affected == 0 {
+			return fmt.Errorf("%w: %s", ErrConnectorConnectionBound, id)
+		}
 		return nil
-	}
-	// Nothing was deleted, so the connection was gone or bound when the UPDATE looked. This
-	// read only names which: it decides no write, so a bind or unbind landing since can at
-	// most mislabel the refusal, never delete a bound row. A live connection it finds unbound
-	// was unbound after the UPDATE refused it, and a retry deletes it.
-	if _, err := s.ConnectorConnectionReferenced(ctx, customerID, id); err != nil {
-		return err
-	}
-	return stack.Wrap(fmt.Errorf("%w: %s", ErrConnectorConnectionBound, id))
+	}))
 }
 
 // boundByConfig is true for a connection cc that a live agent config of the same customer
@@ -335,12 +350,12 @@ const boundByConfig = `EXISTS (
 // softDeleteConnection marks a live connection deleted and drops its credentials in one
 // statement, and when unbound is set only if no config binds it. It returns the rows it
 // changed: one, or none.
-func (s *Store) softDeleteConnection(ctx context.Context, customerID, id string, unbound bool) (int64, error) {
+func softDeleteConnection(ctx context.Context, db bun.IDB, customerID, id string, unbound bool) (int64, error) {
 	if customerID == "" || id == "" {
 		return 0, stack.Wrap(errors.New("store: a customer and a connection id are required"))
 	}
 	now := time.Now().UTC()
-	query := s.db.NewUpdate().Model((*ConnectorConnection)(nil)).
+	query := db.NewUpdate().Model((*ConnectorConnection)(nil)).
 		Set("status = ?", ConnectionDisconnected).
 		Set("credentials_sealed = ?", []byte{}).
 		Set("credentials_kek_version = 0").

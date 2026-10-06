@@ -5,9 +5,12 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
@@ -18,6 +21,9 @@ import (
 
 type ConfigsSuite struct {
 	RouterSuite
+	// describing runs whenever the router asks a config's MCP server about itself, which a
+	// save does between checking the config and writing it. Nil runs nothing.
+	describing atomic.Pointer[func()]
 }
 
 func TestConfigsSuite(t *testing.T) {
@@ -26,9 +32,16 @@ func TestConfigsSuite(t *testing.T) {
 
 // SetupSuite registers the scheme the built-ins name, so the app can define a custom
 // connector of its own, and seeds the built-ins as a router start does. Seeding is
-// idempotent, so suites running beside this one see the same rows.
+// idempotent, so suites running beside this one see the same rows. An MCP server is
+// reached by no one, as mcpTransport's default, after running describing.
 func (s *ConfigsSuite) SetupSuite() {
 	s.connectors = core.Registry{Schemes: map[string]core.Scheme{"oauth2_code": namedScheme("oauth2_code")}}
+	s.pluginHTTP = &http.Client{Transport: roundTripper(func(*http.Request) (*http.Response, error) {
+		if describing := s.describing.Load(); describing != nil {
+			(*describing)()
+		}
+		return nil, errors.New("tests reach no real MCP server")
+	})}
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
@@ -668,6 +681,35 @@ func (s *ConfigsSuite) TestAFixedBindingToADeletedConnectionIsRefused() {
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, connection)
+}
+
+// The save checks the connection, then asks its MCP servers about themselves, then writes.
+// A delete in between is seen by the write, which runs in a transaction of its own (AI-889).
+func (s *ConfigsSuite) TestAFixedBindingToAConnectionDeletedDuringTheSaveIsRefused() {
+	connection := s.connection("")
+	var once sync.Once
+	deleted := make(chan error, 1)
+	describing := func() {
+		once.Do(func() {
+			deleted <- s.store.DeleteUnboundConnectorConnection(context.Background(), s.customerID(), connection)
+		})
+	}
+	s.describing.Store(&describing)
+	defer s.describing.Store(nil)
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name":        "support",
+		"mcp_servers": []map[string]any{{"name": "crm", "url": "https://crm.example.com/mcp"}},
+		"connectors":  []map[string]any{fixedSlack("inbox", connection)},
+	})
+
+	s.Require().Len(deleted, 1, "the connection was deleted while the save described its MCP server")
+	s.Require().NoError(<-deleted)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, connection)
+	var listed []AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs", nil, &listed))
+	s.Empty(listed, "nothing is stored")
 }
 
 func (s *ConfigsSuite) TestAFixedBindingNeedsAConnection() {

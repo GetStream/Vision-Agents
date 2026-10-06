@@ -281,7 +281,8 @@ func (s *DataMoveSuite) TestADeleteIsReplayedToo() {
 // config without being named anywhere.
 func (s *DataMoveSuite) TestAConfigsBindingsMoveWithIt() {
 	config := &AgentConfig{CustomerID: "acme", Name: "bound", Connectors: []ConnectorBinding{{
-		Name: "crm", ConnectorID: "slack", Connection: ConnectionBinding{Type: "fixed", ConnectionID: "connection-1"},
+		// Per session: a fixed binding needs a live connection of the source's to be stored.
+		Name: "crm", ConnectorID: "slack", Connection: ConnectionBinding{Type: "session"},
 		Tools: []ToolGrant{{Name: "search", SchemaDigest: strings.Repeat("a", 64)}}, Required: true,
 	}}}
 	s.Require().NoError(s.source.CreateAgentConfig(s.ctx, config))
