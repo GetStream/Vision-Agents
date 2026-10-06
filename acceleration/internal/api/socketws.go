@@ -44,11 +44,11 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "the "+CustomerHeader+" header is required")
+		writeError(w, errMissingCustomer)
 		return
 	}
 	if s.sessions == nil {
-		writeError(w, http.StatusNotFound, noSessions)
+		writeError(w, errNoSessions)
 		return
 	}
 
@@ -91,7 +91,7 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 
 	config, failure := s.configFor(ctx, customerID, start.Session.ConfigId, start.Session.Agent)
 	if failure != nil {
-		refuse(failure.message)
+		refuse(failure.Error())
 		return
 	}
 	if value(start.Session.Text) {

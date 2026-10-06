@@ -1,27 +1,33 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
-T = TypeVar("T", bound="Error")
+if TYPE_CHECKING:
+    from ..models.error_detail import ErrorDetail
+
+
+T = TypeVar("T", bound="ErrorResponse")
 
 
 @_attrs_define
-class Error:
-    """
-    Attributes:
-        error (str):
+class ErrorResponse:
+    """The body of every failure. A failure that is not the caller's own is a 500 of type internal saying only "something
+    went wrong": quote the response's X-Request-Id to find out more.
+
+        Attributes:
+            error (ErrorDetail):
     """
 
-    error: str
+    error: ErrorDetail
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        error = self.error
+        error = self.error.to_dict()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -35,15 +41,17 @@ class Error:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        d = dict(src_dict)
-        error = d.pop("error")
+        from ..models.error_detail import ErrorDetail
 
-        error = cls(
+        d = dict(src_dict)
+        error = ErrorDetail.from_dict(d.pop("error"))
+
+        error_response = cls(
             error=error,
         )
 
-        error.additional_properties = d
-        return error
+        error_response.additional_properties = d
+        return error_response
 
     @property
     def additional_keys(self) -> list[str]:

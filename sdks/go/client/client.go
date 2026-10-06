@@ -217,10 +217,10 @@ func (a *Agent) UpdateConfig(ctx context.Context, patch acceleration.AgentConfig
 
 // failure turns whichever error body arrived into one error, or reports the status when none
 // did. Every refusal in the spec is the same shape, so this is the whole of it.
-func failure(what, status string, bodies ...*acceleration.Error) error {
+func failure(what, status string, bodies ...*acceleration.ErrorResponse) error {
 	for _, body := range bodies {
 		if body != nil {
-			return fmt.Errorf("client: %s: %s", what, body.Error)
+			return fmt.Errorf("client: %s: %s", what, body.Error.Message)
 		}
 	}
 	return fmt.Errorf("client: %s: %s", what, status)

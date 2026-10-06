@@ -17,8 +17,8 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 )
 
-// noDLC is what the 10DLC paths say on a deployment with nowhere to keep a registration.
-const noDLC = "10DLC registration is not available: no database configured"
+// errNoDLC is what the 10DLC paths say on a deployment with nowhere to keep a registration.
+var errNoDLC = notConfigured("10DLC registration is not available: no database configured")
 
 // opsKeyHeader carries the key Stream's own staff tools review use cases with.
 const opsKeyHeader = "X-Ops-Key"
@@ -48,7 +48,7 @@ func (s *Server) requireOpsKey(api huma.API) func(huma.Context, func(huma.Contex
 		}
 		sent := ctx.Header(opsKeyHeader)
 		if s.opsKey == "" || subtle.ConstantTimeCompare([]byte(sent), []byte(s.opsKey)) != 1 {
-			_ = huma.WriteErr(api, ctx, http.StatusUnauthorized, "this operation is Stream staff's: it needs "+opsKeyHeader)
+			writeOperationError(ctx, unauthenticated("this operation is Stream staff's: it needs "+opsKeyHeader))
 			return
 		}
 		next(ctx)
@@ -59,12 +59,12 @@ func (s *Server) requireOpsKey(api huma.API) func(huma.Context, func(huma.Contex
 func dlcError(err error) error {
 	switch {
 	case errors.Is(err, dlc.ErrInvalid):
-		return huma.Error400BadRequest(err.Error())
+		return invalidRequest(err.Error())
 	case errors.Is(err, dlc.ErrLocked), errors.Is(err, store.ErrUseCaseMoved):
-		return huma.Error409Conflict(err.Error())
+		return conflict(err.Error())
 	case errors.Is(err, store.ErrUnknownUseCase), errors.Is(err, store.ErrNoBusinessProfile),
 		errors.Is(err, store.ErrUnknownOptOut):
-		return huma.Error404NotFound(err.Error())
+		return notFound(err.Error())
 	}
 	return stack.Wrap(err)
 }
@@ -73,10 +73,10 @@ func dlcError(err error) error {
 func (s *Server) dlcCustomer(ctx context.Context) (string, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return "", huma.Error401Unauthorized(missingCustomer().Error)
+		return "", errMissingCustomer
 	}
 	if s.dlc == nil {
-		return "", huma.Error400BadRequest(noDLC)
+		return "", errNoDLC
 	}
 	return customerID, nil
 }
@@ -99,7 +99,7 @@ func (s *Server) saveBusinessProfile(ctx context.Context, request *saveBusinessP
 		return nil, err
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	profile := profileOf(customerID, *request.Body)
 	if err := s.store.SaveBusinessProfile(ctx, &profile); err != nil {
@@ -115,7 +115,7 @@ func (s *Server) listUseCases(ctx context.Context, request *listUseCasesRequest)
 	}
 	after, err := decodeCursor[store.CreatedPosition](&request.Cursor)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	found, err := s.store.UseCases(ctx, customerID, request.Limit, after)
 	if err != nil {
@@ -143,7 +143,7 @@ func (s *Server) createUseCase(ctx context.Context, request *createUseCaseReques
 		return nil, err
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	useCase := store.UseCase{CustomerID: customerID}
 	writeUseCase(&useCase, *request.Body)
@@ -171,7 +171,7 @@ func (s *Server) updateUseCase(ctx context.Context, request *updateUseCaseReques
 		return nil, err
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	useCase, err := s.store.UseCase(ctx, customerID, request.Id)
 	if err != nil {
@@ -217,7 +217,7 @@ func (s *Server) listUseCaseReviews(ctx context.Context, request *listUseCaseRev
 	}
 	after, err := decodeCursor[store.CreatedPosition](&request.Cursor)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	found, err := s.store.ReviewLogs(ctx, customerID, request.Id, request.Limit, after)
 	if err != nil {
@@ -242,7 +242,7 @@ func (s *Server) listOptOuts(ctx context.Context, request *listOptOutsRequest) (
 	}
 	after, err := decodeCursor[store.CreatedPosition](&request.Cursor)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	found, err := s.store.OptOuts(ctx, customerID, request.Limit, after)
 	if err != nil {
@@ -266,7 +266,7 @@ func (s *Server) createOptOut(ctx context.Context, request *createOptOutRequest)
 		return nil, err
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	optOut := store.OptOut{
 		CustomerID: customerID,
@@ -321,10 +321,10 @@ func (s *Server) setSandboxRecipients(ctx context.Context, request *setSandboxRe
 		return nil, err
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	if s.gate == nil {
-		return nil, huma.Error400BadRequest("this deployment has no sandbox")
+		return nil, invalidRequest("this deployment has no sandbox")
 	}
 	recipients := make([]string, 0, len(request.Body.Recipients))
 	for _, recipient := range request.Body.Recipients {
@@ -338,11 +338,11 @@ func (s *Server) setSandboxRecipients(ctx context.Context, request *setSandboxRe
 
 func (s *Server) listUseCasesForReview(ctx context.Context, request *listUseCasesForReviewRequest) (*reviewQueueResponse, error) {
 	if s.dlc == nil {
-		return nil, huma.Error400BadRequest(noDLC)
+		return nil, errNoDLC
 	}
 	after, err := decodeCursor[store.CreatedPosition](&request.Cursor)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	status := dlc.Submitted
 	if request.Status != "" {
@@ -370,7 +370,7 @@ func (s *Server) listUseCasesForReview(ctx context.Context, request *listUseCase
 
 func (s *Server) getUseCaseForReview(ctx context.Context, request *useCaseIDRequest) (*useCaseForReviewResponse, error) {
 	if s.dlc == nil {
-		return nil, huma.Error400BadRequest(noDLC)
+		return nil, errNoDLC
 	}
 	useCase, err := s.store.UseCaseByID(ctx, request.Id)
 	if err != nil {
@@ -385,14 +385,14 @@ func (s *Server) getUseCaseForReview(ctx context.Context, request *useCaseIDRequ
 
 func (s *Server) reviewUseCase(ctx context.Context, request *reviewUseCaseRequest) (*useCaseForReviewResponse, error) {
 	if s.dlc == nil {
-		return nil, huma.Error400BadRequest(noDLC)
+		return nil, errNoDLC
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	body := *request.Body
 	if body.Decision != dlc.Approve && strings.TrimSpace(body.Notes) == "" {
-		return nil, huma.Error400BadRequest("say what is wrong in notes: the app reads them to fix it")
+		return nil, invalidRequest("say what is wrong in notes: the app reads them to fix it")
 	}
 	useCase, err := s.dlc.Review(ctx, request.Id, string(body.Decision), body.Notes, body.Reviewer)
 	if err != nil {
@@ -410,23 +410,23 @@ func (s *Server) reviewUseCase(ctx context.Context, request *reviewUseCaseReques
 // use case to ask the registrar about.
 func (s *Server) receiveDLCReport(w http.ResponseWriter, r *http.Request) {
 	if s.dlc == nil {
-		writeError(w, http.StatusGone, noDLC)
+		writeError(w, errNoDLC)
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxReportBytes+1))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, invalidRequest(err.Error()))
 		return
 	}
 	if len(body) > maxReportBytes {
-		writeError(w, http.StatusRequestEntityTooLarge, "a report is at most 64 KiB")
+		writeError(w, payloadTooLarge("a report is at most 64 KiB"))
 		return
 	}
 	if err := s.dlc.Hook(r.Context(), r.Header, body); errors.Is(err, dlc.ErrRefused) {
-		writeError(w, http.StatusUnauthorized, err.Error())
+		writeError(w, unauthenticated(err.Error()))
 		return
 	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeFailure(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

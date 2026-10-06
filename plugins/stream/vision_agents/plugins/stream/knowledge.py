@@ -7,7 +7,7 @@ from vision_agents.core.llm.remote import KnowledgePage
 from ._backend import Backend
 from ._generated.api.default import add_knowledge_url, get_knowledge_url
 from ._generated.models import (
-    Error,
+    ErrorResponse,
     KnowledgeUrl,
     KnowledgeUrlRequest,
     KnowledgeUrlState,
@@ -102,9 +102,9 @@ class Knowledge:
         return page
 
     @staticmethod
-    def _page(answer: KnowledgeUrl | Error | None) -> KnowledgeUrl:
-        if isinstance(answer, Error):
-            raise RuntimeError(answer.error)
+    def _page(answer: KnowledgeUrl | ErrorResponse | None) -> KnowledgeUrl:
+        if isinstance(answer, ErrorResponse):
+            raise RuntimeError(answer.error.message)
         if answer is None:
             raise RuntimeError("the router did not answer with a page")
         return answer

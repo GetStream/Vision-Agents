@@ -41,7 +41,7 @@ func (s *Server) onOwningNode(next http.Handler) http.Handler {
 		if err := s.forwarder.Forward(ctx, address, w, r); err != nil {
 			s.logger.Error("could not reach the node running a session",
 				"node", address, "path", r.URL.Path, "error", err)
-			writeError(w, http.StatusBadGateway, unreachableNode)
+			writeError(w, unavailable(unreachableNode))
 		}
 	})
 }

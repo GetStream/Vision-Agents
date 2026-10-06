@@ -25,7 +25,7 @@ func (s *Server) registerSessionStop(api huma.API) {
 			"A conversation in writing has nothing to hang up, so it is usually left running " +
 			"rather than stopped. Stopping is for a call, where the agent is holding a line open.",
 		Responses:  map[string]*huma.Response{"204": {Description: "The agent has left"}},
-		Errors:     []int{http.StatusUnauthorized, http.StatusNotFound},
+		Errors:     []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound},
 		Extensions: map[string]any{clientAccessibleExtension: true},
 	}, s.stopSession)
 }
@@ -33,17 +33,17 @@ func (s *Server) registerSessionStop(api huma.API) {
 // stopSession ends one of the caller's running sessions, keeping everything it recorded.
 func (s *Server) stopSession(ctx context.Context, request *stopSessionRequest) (*struct{}, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if _, failure := s.session(ctx, request.ID); failure != nil {
-		return nil, huma.Error404NotFound(failure.message)
+		return nil, failure
 	}
 	stopped, err := s.sessions.Close(request.ID, OwnerFrom(ctx))
 	if err != nil {
 		return nil, err
 	}
 	if !stopped {
-		return nil, huma.Error404NotFound(unknownSession)
+		return nil, errUnknownSession
 	}
 	return nil, nil
 }

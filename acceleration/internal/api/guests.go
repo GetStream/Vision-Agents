@@ -41,21 +41,21 @@ const guestRole = "guest"
 func (s *Server) createGuestUser(ctx context.Context, request *createGuestUserRequest) (*createGuestUserResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	bound, mintable, err := s.streamFor(ctx, customerID)
 	if elsewhere(err) {
-		return nil, huma.Error400BadRequest("this app's Stream app is disconnected, so no guest can be made in it")
+		return nil, invalidRequest("this app's Stream app is disconnected, so no guest can be made in it")
 	}
 	if err != nil {
 		return nil, err
 	}
 	if !mintable {
-		return nil, huma.Error400BadRequest(noStreamKeys)
+		return nil, errNoStreamKeys
 	}
 	// An app that registered its own Stream app decides whether guests are made in it.
 	if !bound.Identity.MintsGuests() {
-		return nil, huma.Error403Forbidden("this app does not admit guests")
+		return nil, forbidden("this app does not admit guests")
 	}
 	if bound, err = s.minting(ctx, bound); err != nil {
 		return nil, err
@@ -75,7 +75,7 @@ func (s *Server) createGuestUser(ctx context.Context, request *createGuestUserRe
 			return nil, err
 		}
 		if !settings.GuestAllowed() {
-			return nil, huma.Error403Forbidden("this app does not admit guests")
+			return nil, forbidden("this app does not admit guests")
 		}
 	}
 
@@ -98,10 +98,10 @@ func (s *Server) createGuestUser(ctx context.Context, request *createGuestUserRe
 			// Not a guest of this customer. It may be nobody at all, which is fine, or it
 			// may be a real user, which is not something this can tell apart -- so the
 			// name is refused rather than guessed at.
-			return nil, huma.Error400BadRequest(
+			return nil, invalidRequest(
 				"that id is not a guest of this app, so a token cannot be minted for it")
 		case held.ClaimedBy != "":
-			return nil, huma.Error400BadRequest(
+			return nil, invalidRequest(
 				"that guest has been claimed, so they have an account to sign in with")
 		}
 	}
@@ -150,24 +150,24 @@ func (s *Server) createGuestUser(ctx context.Context, request *createGuestUserRe
 func (s *Server) claimGuestUser(ctx context.Context, request *claimGuestUserRequest) (*claimGuestUserResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, huma.Error404NotFound("this deployment records no guests, so there is nothing to claim")
+		return nil, notFound("this deployment records no guests, so there is nothing to claim")
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 
 	guestID := strings.TrimSpace(request.Body.GuestId)
 	userID := strings.TrimSpace(request.Body.UserId)
 	if guestID == "" || userID == "" {
-		return nil, huma.Error400BadRequest("a guest id and a user id are required")
+		return nil, invalidRequest("a guest id and a user id are required")
 	}
 
 	guest, err := s.store.Guest(ctx, customerID, guestID)
 	if err != nil {
-		return nil, huma.Error404NotFound("no such guest")
+		return nil, notFound("no such guest")
 	}
 	if guest.ClaimedBy != "" {
 		// A second claim naming the same account is the same claim arriving twice, which is
@@ -175,12 +175,12 @@ func (s *Server) claimGuestUser(ctx context.Context, request *claimGuestUserRequ
 		if guest.ClaimedBy == userID {
 			return &claimGuestUserResponse{Body: ClaimGuestResult{GuestId: guestID, UserId: userID, SessionsMoved: 0}}, nil
 		}
-		return nil, huma.Error409Conflict("that guest was already claimed")
+		return nil, conflict("that guest was already claimed")
 	}
 
 	moved, err := s.store.ClaimGuest(ctx, customerID, guestID, userID)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	// The guest's row has changed under every replica holding it, so the caches are told.

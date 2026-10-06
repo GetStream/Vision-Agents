@@ -22,33 +22,33 @@ import (
 func (s *Server) classify(ctx context.Context, request *classifyRequest) (*classifyResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.streams == nil || s.streams.LCM == nil {
-		return nil, huma.Error404NotFound("this deployment does not route classification")
+		return nil, notFound("this deployment does not route classification")
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	if text, ok := request.Body.State.(string); request.Body.State == nil || ok && strings.TrimSpace(text) == "" {
-		return nil, huma.Error400BadRequest("there is nothing to judge")
+		return nil, invalidRequest("there is nothing to judge")
 	}
 
 	asked, err := lcmRequestOf(request.Body)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	if err := asked.Validate(); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	tags := tagsSent(request.Body.Tags)
 	if err := tags.Validate(); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	held := options.Classifier{Target: value(request.Body.Target)}
 	if _, err := s.streams.LCM.Resolve(ctx, held.Route(), nil); err != nil {
-		return nil, huma.Error404NotFound(err.Error())
+		return nil, notFound(err.Error())
 	}
 
 	session, err := s.streams.LCM.Start(ctx, lcmrouter.Request{
@@ -89,11 +89,11 @@ func (s *Server) classify(ctx context.Context, request *classifyRequest) (*class
 func classifyFailed(err error) error {
 	switch {
 	case errors.Is(err, lcm.ErrRateLimited):
-		return huma.Error429TooManyRequests(err.Error())
+		return rateLimited(err.Error())
 	case errors.Is(err, lcm.ErrUnavailable):
-		return huma.Error503ServiceUnavailable(err.Error())
+		return unavailable(err.Error())
 	}
-	return huma.Error400BadRequest(err.Error())
+	return invalidRequest(err.Error())
 }
 
 // lcmRequestOf builds the questions through lcm's constructors, which are what keep each

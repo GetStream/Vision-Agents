@@ -11,11 +11,11 @@ import (
 type callerKind string
 
 const (
-	unauthenticated callerKind = "unauthenticated"
-	anonymous       callerKind = "anonymous"
-	guest           callerKind = "guest"
-	user            callerKind = "user"
-	server          callerKind = "server"
+	noCredential callerKind = "unauthenticated"
+	anonymous    callerKind = "anonymous"
+	guest        callerKind = "guest"
+	user         callerKind = "user"
+	server       callerKind = "server"
 )
 
 // posture is which sorts of caller an endpoint admits.
@@ -40,7 +40,7 @@ func (s *RouterSuite) assertPosture(admits posture, call func(as *testClient) in
 		switch {
 		case slices.Contains(admits, as.kind):
 			s.True(status >= 200 && status < 300, "%s is admitted, and was answered %d", as.kind, status)
-		case as.kind == unauthenticated:
+		case as.kind == noCredential:
 			s.Equal(http.StatusUnauthorized, status, "%s is refused", as.kind)
 		default:
 			s.Equal(http.StatusForbidden, status, "%s is refused", as.kind)

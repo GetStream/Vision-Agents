@@ -5,7 +5,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...models.list_simulation_runs_state import ListSimulationRunsState
 from ...models.simulation_run import SimulationRun
 from ...types import UNSET, Response, Unset
@@ -43,7 +43,7 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | list[SimulationRun] | None:
+) -> ErrorResponse | list[SimulationRun] | None:
     if response.status_code == 200:
         response_200 = []
         _response_200 = response.json()
@@ -55,22 +55,22 @@ def _parse_response(
         return response_200
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
 
     if response.status_code == 500:
-        response_500 = Error.from_dict(response.json())
+        response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
 
@@ -82,7 +82,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | list[SimulationRun]]:
+) -> Response[ErrorResponse | list[SimulationRun]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -97,7 +97,7 @@ def sync_detailed(
     simulation_id: str | Unset = UNSET,
     state: ListSimulationRunsState | Unset = UNSET,
     limit: int | Unset = UNSET,
-) -> Response[Error | list[SimulationRun]]:
+) -> Response[ErrorResponse | list[SimulationRun]]:
     """What the simulations have come to, newest first
 
      Without a simulation named this is the log of everything that has been run lately, which is the same
@@ -113,7 +113,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[SimulationRun]]
+        Response[ErrorResponse | list[SimulationRun]]
     """
 
     kwargs = _get_kwargs(
@@ -135,7 +135,7 @@ def sync(
     simulation_id: str | Unset = UNSET,
     state: ListSimulationRunsState | Unset = UNSET,
     limit: int | Unset = UNSET,
-) -> Error | list[SimulationRun] | None:
+) -> ErrorResponse | list[SimulationRun] | None:
     """What the simulations have come to, newest first
 
      Without a simulation named this is the log of everything that has been run lately, which is the same
@@ -151,7 +151,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[SimulationRun]
+        ErrorResponse | list[SimulationRun]
     """
 
     return sync_detailed(
@@ -168,7 +168,7 @@ async def asyncio_detailed(
     simulation_id: str | Unset = UNSET,
     state: ListSimulationRunsState | Unset = UNSET,
     limit: int | Unset = UNSET,
-) -> Response[Error | list[SimulationRun]]:
+) -> Response[ErrorResponse | list[SimulationRun]]:
     """What the simulations have come to, newest first
 
      Without a simulation named this is the log of everything that has been run lately, which is the same
@@ -184,7 +184,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[SimulationRun]]
+        Response[ErrorResponse | list[SimulationRun]]
     """
 
     kwargs = _get_kwargs(
@@ -204,7 +204,7 @@ async def asyncio(
     simulation_id: str | Unset = UNSET,
     state: ListSimulationRunsState | Unset = UNSET,
     limit: int | Unset = UNSET,
-) -> Error | list[SimulationRun] | None:
+) -> ErrorResponse | list[SimulationRun] | None:
     """What the simulations have come to, newest first
 
      Without a simulation named this is the log of everything that has been run lately, which is the same
@@ -220,7 +220,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[SimulationRun]
+        ErrorResponse | list[SimulationRun]
     """
 
     return (

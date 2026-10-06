@@ -5,7 +5,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...models.guest_user import GuestUser
 from ...models.guest_user_request import GuestUserRequest
 from ...types import UNSET, Response, Unset
@@ -33,29 +33,29 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | GuestUser | None:
+) -> ErrorResponse | GuestUser | None:
     if response.status_code == 201:
         response_201 = GuestUser.from_dict(response.json())
 
         return response_201
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
 
     if response.status_code == 500:
-        response_500 = Error.from_dict(response.json())
+        response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
 
@@ -67,7 +67,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | GuestUser]:
+) -> Response[ErrorResponse | GuestUser]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -80,7 +80,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: GuestUserRequest | Unset = UNSET,
-) -> Response[Error | GuestUser]:
+) -> Response[ErrorResponse | GuestUser]:
     """Mint a guest so somebody can talk to an agent before signing up
 
      Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect
@@ -99,7 +99,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | GuestUser]
+        Response[ErrorResponse | GuestUser]
     """
 
     kwargs = _get_kwargs(
@@ -117,7 +117,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: GuestUserRequest | Unset = UNSET,
-) -> Error | GuestUser | None:
+) -> ErrorResponse | GuestUser | None:
     """Mint a guest so somebody can talk to an agent before signing up
 
      Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect
@@ -136,7 +136,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | GuestUser
+        ErrorResponse | GuestUser
     """
 
     return sync_detailed(
@@ -149,7 +149,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: GuestUserRequest | Unset = UNSET,
-) -> Response[Error | GuestUser]:
+) -> Response[ErrorResponse | GuestUser]:
     """Mint a guest so somebody can talk to an agent before signing up
 
      Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect
@@ -168,7 +168,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | GuestUser]
+        Response[ErrorResponse | GuestUser]
     """
 
     kwargs = _get_kwargs(
@@ -184,7 +184,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: GuestUserRequest | Unset = UNSET,
-) -> Error | GuestUser | None:
+) -> ErrorResponse | GuestUser | None:
     """Mint a guest so somebody can talk to an agent before signing up
 
      Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect
@@ -203,7 +203,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | GuestUser
+        ErrorResponse | GuestUser
     """
 
     return (

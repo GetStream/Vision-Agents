@@ -10,23 +10,26 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 )
 
-// noKnowledgeURLs is what these paths say on a deployment that cannot honour a
+// errNoKnowledgeURLs is what these paths say on a deployment that cannot honour a
 // subscription: it takes a database to remember one and a reader to fetch the page.
-const noKnowledgeURLs = "knowledge urls are not available: no database or no way to read a page configured"
+var errNoKnowledgeURLs = notConfigured("knowledge urls are not available: no database or no way to read a page configured")
 
-// unknownKnowledgeURL is what a caller is told about a page that is not theirs, which is
+// errUnknownKnowledgeURL is what a caller is told about a page that is not theirs, which is
 // the same thing they are told about one that never existed.
-const unknownKnowledgeURL = "no such knowledge url"
+var errUnknownKnowledgeURL = APIError{
+	Type: ErrorTypeNotFound, Code: codeKnowledgeURLNotFound,
+	Message: "no such knowledge url",
+}
 
 // listKnowledgeUrls returns the pages the calling customer's knowledge bases are filled
 // from, newest first.
 func (s *Server) listKnowledgeUrls(ctx context.Context, request *listKnowledgeUrlsRequest) (*listKnowledgeUrlsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.pages == nil {
-		return nil, huma.Error400BadRequest(noKnowledgeURLs)
+		return nil, errNoKnowledgeURLs
 	}
 
 	namespace := ""
@@ -54,13 +57,13 @@ func (s *Server) listKnowledgeUrls(ctx context.Context, request *listKnowledgeUr
 func (s *Server) addKnowledgeUrl(ctx context.Context, request *addKnowledgeUrlRequest) (*addKnowledgeUrlResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.pages == nil {
-		return nil, huma.Error400BadRequest(noKnowledgeURLs)
+		return nil, errNoKnowledgeURLs
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 
 	wanted := urls.Subscription{Namespace: request.Body.Namespace, URL: request.Body.Url}
@@ -76,7 +79,7 @@ func (s *Server) addKnowledgeUrl(ctx context.Context, request *addKnowledgeUrlRe
 
 	page, err := s.pages.Add(ctx, customerID, wanted)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &addKnowledgeUrlResponse{Body: knowledgeURLOf(page)}, nil
 }
@@ -85,15 +88,15 @@ func (s *Server) addKnowledgeUrl(ctx context.Context, request *addKnowledgeUrlRe
 func (s *Server) getKnowledgeUrl(ctx context.Context, request *getKnowledgeUrlRequest) (*getKnowledgeUrlResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.pages == nil {
-		return nil, huma.Error400BadRequest(noKnowledgeURLs)
+		return nil, errNoKnowledgeURLs
 	}
 
 	page, err := s.pages.Get(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownKnowledgeURL)
+		return nil, errUnknownKnowledgeURL
 	}
 	return &getKnowledgeUrlResponse{Body: knowledgeURLOf(page)}, nil
 }
@@ -102,15 +105,15 @@ func (s *Server) getKnowledgeUrl(ctx context.Context, request *getKnowledgeUrlRe
 func (s *Server) listKnowledgeUrlPassages(ctx context.Context, request *listKnowledgeUrlPassagesRequest) (*listKnowledgeUrlPassagesResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.pages == nil || s.knowledge == nil {
-		return nil, huma.Error400BadRequest(noKnowledgeURLs)
+		return nil, errNoKnowledgeURLs
 	}
 
 	page, err := s.pages.Get(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownKnowledgeURL)
+		return nil, errUnknownKnowledgeURL
 	}
 	passages, err := s.knowledgePassages(ctx, customerID, page.Namespace, page.URL, page.Passages)
 	if err != nil {
@@ -124,14 +127,14 @@ func (s *Server) listKnowledgeUrlPassages(ctx context.Context, request *listKnow
 func (s *Server) deleteKnowledgeUrl(ctx context.Context, request *deleteKnowledgeUrlRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.pages == nil {
-		return nil, huma.Error400BadRequest(noKnowledgeURLs)
+		return nil, errNoKnowledgeURLs
 	}
 
 	if err := s.pages.Remove(ctx, customerID, request.Id); err != nil {
-		return nil, huma.Error404NotFound(unknownKnowledgeURL)
+		return nil, errUnknownKnowledgeURL
 	}
 	return nil, nil
 }
@@ -140,15 +143,15 @@ func (s *Server) deleteKnowledgeUrl(ctx context.Context, request *deleteKnowledg
 func (s *Server) indexKnowledgeUrl(ctx context.Context, request *indexKnowledgeUrlRequest) (*indexKnowledgeUrlResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.pages == nil {
-		return nil, huma.Error400BadRequest(noKnowledgeURLs)
+		return nil, errNoKnowledgeURLs
 	}
 
 	page, err := s.pages.Reindex(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownKnowledgeURL)
+		return nil, errUnknownKnowledgeURL
 	}
 	return &indexKnowledgeUrlResponse{Body: knowledgeURLOf(page)}, nil
 }

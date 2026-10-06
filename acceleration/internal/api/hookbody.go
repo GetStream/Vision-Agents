@@ -44,28 +44,28 @@ func readHook(w http.ResponseWriter, r *http.Request, what string) ([]byte, bool
 	switch strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Encoding"))) {
 	case "", "identity", "gzip":
 	default:
-		http.Error(w, "that "+what+" is in an encoding Stream does not send", http.StatusUnsupportedMediaType)
+		writeError(w, newAPIError(ErrorTypeUnsupportedMediaType, "that "+what+" is in an encoding Stream does not send"))
 		return nil, false
 	}
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, hookBodyLimit))
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
-		http.Error(w, "that "+what+" is too large", http.StatusRequestEntityTooLarge)
+		writeError(w, payloadTooLarge("that "+what+" is too large"))
 		return nil, false
 	}
 	if err != nil {
-		http.Error(w, "could not read that "+what, http.StatusBadRequest)
+		writeError(w, invalidRequest("could not read that "+what))
 		return nil, false
 	}
 	// Deliveries may be compressed, and the signature is over what is inside.
 	payload, err := inflate(body)
 	if errors.Is(err, errTooLarge) {
-		http.Error(w, "that "+what+" is too large", http.StatusRequestEntityTooLarge)
+		writeError(w, payloadTooLarge("that "+what+" is too large"))
 		return nil, false
 	}
 	if err != nil {
-		http.Error(w, "that is not a "+what+" from Stream", http.StatusUnauthorized)
+		writeError(w, unauthenticated("that is not a "+what+" from Stream"))
 		return nil, false
 	}
 	return payload, true

@@ -6,7 +6,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.buy_number_request import BuyNumberRequest
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...models.phone_number import PhoneNumber
 from ...types import Response
 
@@ -32,34 +32,34 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | PhoneNumber | None:
+) -> ErrorResponse | PhoneNumber | None:
     if response.status_code == 201:
         response_201 = PhoneNumber.from_dict(response.json())
 
         return response_201
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
 
     if response.status_code == 404:
-        response_404 = Error.from_dict(response.json())
+        response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
 
     if response.status_code == 500:
-        response_500 = Error.from_dict(response.json())
+        response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
 
@@ -71,7 +71,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | PhoneNumber]:
+) -> Response[ErrorResponse | PhoneNumber]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -84,7 +84,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: BuyNumberRequest,
-) -> Response[Error | PhoneNumber]:
+) -> Response[ErrorResponse | PhoneNumber]:
     """Buy a number, which starts its monthly charge
 
     Args:
@@ -95,7 +95,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | PhoneNumber]
+        Response[ErrorResponse | PhoneNumber]
     """
 
     kwargs = _get_kwargs(
@@ -113,7 +113,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: BuyNumberRequest,
-) -> Error | PhoneNumber | None:
+) -> ErrorResponse | PhoneNumber | None:
     """Buy a number, which starts its monthly charge
 
     Args:
@@ -124,7 +124,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | PhoneNumber
+        ErrorResponse | PhoneNumber
     """
 
     return sync_detailed(
@@ -137,7 +137,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: BuyNumberRequest,
-) -> Response[Error | PhoneNumber]:
+) -> Response[ErrorResponse | PhoneNumber]:
     """Buy a number, which starts its monthly charge
 
     Args:
@@ -148,7 +148,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | PhoneNumber]
+        Response[ErrorResponse | PhoneNumber]
     """
 
     kwargs = _get_kwargs(
@@ -164,7 +164,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: BuyNumberRequest,
-) -> Error | PhoneNumber | None:
+) -> ErrorResponse | PhoneNumber | None:
     """Buy a number, which starts its monthly charge
 
     Args:
@@ -175,7 +175,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | PhoneNumber
+        ErrorResponse | PhoneNumber
     """
 
     return (

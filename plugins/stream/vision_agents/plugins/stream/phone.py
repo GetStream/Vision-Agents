@@ -17,7 +17,7 @@ from ._generated.models import (
     AttachedNumber,
     AttachNumberRequest,
     BuyNumberRequest,
-    Error,
+    ErrorResponse,
     NumberSearchResult,
     PhoneCapability,
     PhoneNumber,
@@ -102,8 +102,8 @@ class Phone:
         placed = await place_phone_call.asyncio(
             client=self.backend.client(), body=request
         )
-        if isinstance(placed, Error):
-            raise RuntimeError(placed.error)
+        if isinstance(placed, ErrorResponse):
+            raise RuntimeError(placed.error.message)
         if placed is None:
             raise RuntimeError("the router did not answer with a placed call")
 
@@ -148,8 +148,8 @@ class Phone:
         placed = await transfer_phone_call.asyncio(
             client=self.backend.client(), body=request
         )
-        if isinstance(placed, Error):
-            raise RuntimeError(placed.error)
+        if isinstance(placed, ErrorResponse):
+            raise RuntimeError(placed.error.message)
         if placed is None:
             raise RuntimeError("the router did not answer with a placed call")
 
@@ -165,8 +165,8 @@ class Phone:
     async def numbers(self) -> list[PhoneNumber]:
         """The numbers this customer holds, which are the ones a call can be placed from."""
         held = await list_phone_numbers.asyncio(client=self.backend.client())
-        if isinstance(held, Error):
-            raise RuntimeError(held.error)
+        if isinstance(held, ErrorResponse):
+            raise RuntimeError(held.error.message)
         if held is None:
             raise RuntimeError("the router did not answer with any numbers")
         return held
@@ -223,8 +223,8 @@ class Phone:
             features=features if features is not None else UNSET,
             limit=limit,
         )
-        if isinstance(result, Error):
-            raise RuntimeError(result.error)
+        if isinstance(result, ErrorResponse):
+            raise RuntimeError(result.error.message)
         if result is None:
             raise RuntimeError("the router did not answer with a search result")
         return result
@@ -256,8 +256,8 @@ class Phone:
         bought = await buy_phone_number.asyncio(
             client=self.backend.client(), body=request
         )
-        if isinstance(bought, Error):
-            raise RuntimeError(bought.error)
+        if isinstance(bought, ErrorResponse):
+            raise RuntimeError(bought.error.message)
         if bought is None:
             raise RuntimeError("the router did not answer with a bought number")
 
@@ -304,8 +304,8 @@ class Phone:
         attached = await attach_phone_number.asyncio(
             e164=e164, client=self.backend.client(), body=body
         )
-        if isinstance(attached, Error):
-            raise RuntimeError(attached.error)
+        if isinstance(attached, ErrorResponse):
+            raise RuntimeError(attached.error.message)
         if attached is None:
             raise RuntimeError("the router did not answer with an attached number")
 
@@ -326,8 +326,8 @@ class Phone:
         released = await release_phone_number.asyncio(
             e164=e164, client=self.backend.client()
         )
-        if isinstance(released, Error):
-            raise RuntimeError(released.error)
+        if isinstance(released, ErrorResponse):
+            raise RuntimeError(released.error.message)
 
         logger.info("released %s", e164)
 

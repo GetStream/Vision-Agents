@@ -22,8 +22,8 @@ import (
 // until something upstream gives up.
 const imageDeadline = 240 * time.Second
 
-// noImages is what the image path says on a deployment that does not generate images.
-const noImages = "this deployment does not generate images"
+// errNoImages is what the image path says on a deployment that does not generate images.
+var errNoImages = notConfigured("this deployment does not generate images")
 
 // generateImage draws pictures from a prompt and returns them.
 //
@@ -36,25 +36,25 @@ const noImages = "this deployment does not generate images"
 func (s *Server) generateImage(ctx context.Context, request *generateImageRequest) (*generateImageResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.streams == nil || s.streams.Image == nil {
-		return nil, huma.Error404NotFound(noImages)
+		return nil, errNoImages
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 
 	drawing, err := imageRequestOf(request.Body)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	if err := drawing.Validate(); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	tags := tagsSent(request.Body.Tags)
 	if err := tags.Validate(); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	sent := value(request.Body.Options)
@@ -69,7 +69,7 @@ func (s *Server) generateImage(ctx context.Context, request *generateImageReques
 	})
 	var failure *imagegen.Error
 	if err != nil && !errors.As(err, &failure) {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &generateImageResponse{Body: imageGenerationOf(generation, err)}, nil
 }

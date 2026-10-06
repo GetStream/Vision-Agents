@@ -187,7 +187,7 @@ func (s *Server) registerSessionQuery(api huma.API) {
 // querySessions lists or searches the caller's sessions.
 func (s *Server) querySessions(ctx context.Context, request *querySessionsRequest) (*querySessionsResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.sessions == nil {
 		return &querySessionsResponse{Body: SessionPage{Items: []Session{}}}, nil
@@ -199,7 +199,7 @@ func (s *Server) querySessions(ctx context.Context, request *querySessionsReques
 	}
 	query, err := sessionQueryOf(ctx, sent)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	var found []session.Found
 	if query.text != "" {

@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -13,17 +12,16 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/danielgtaylor/huma/v2"
 )
 
-const unknownPlugin = "no such plugin"
+var errUnknownPlugin = APIError{Type: ErrorTypeNotFound, Code: codePluginNotFound, Message: "no such plugin"}
 
 // listPlugins returns the built-in catalog, optionally filtered.
 func (s *Server) listPlugins(ctx context.Context, request *listPluginsRequest) (*listPluginsResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 
 	found := plugins.Search(value(request.Q.ptr()))
@@ -40,7 +38,7 @@ func (s *Server) listPlugins(ctx context.Context, request *listPluginsRequest) (
 func (s *Server) servePluginLogo(w http.ResponseWriter, r *http.Request) {
 	raw, ok := plugins.Logo(r.PathValue("plugin_id"))
 	if !ok {
-		writeError(w, http.StatusNotFound, unknownPlugin)
+		writeError(w, errUnknownPlugin)
 		return
 	}
 	w.Header().Set("Content-Type", "image/svg+xml")
@@ -54,14 +52,14 @@ func (s *Server) servePluginLogo(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPluginsRequest) (*listConfigPluginsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConfigs)
+		return nil, errNoConfigs
 	}
 	config, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownConfig)
+		return nil, errUnknownConfig
 	}
 
 	conns, err := s.store.PluginConnections(ctx, customerID, request.Id)
@@ -115,37 +113,41 @@ func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPlugi
 // it has no login.
 func appPlugin(config store.AgentConfig, id string) (plugins.Plugin, error) {
 	if _, ok := plugins.Lookup(id); ok {
-		return session.ConfiguredPlugin(session.EntryFor(id, config.AgentPlugins, config.UserPlugins))
+		plugin, err := session.ConfiguredPlugin(session.EntryFor(id, config.AgentPlugins, config.UserPlugins))
+		if err != nil {
+			return plugins.Plugin{}, invalidRequest(err.Error())
+		}
+		return plugin, nil
 	}
 	for _, server := range config.MCPServers {
 		if server.Name != id || (server.NeedsLogin != nil && !*server.NeedsLogin) {
 			continue
 		}
 		if server.User {
-			return plugins.Plugin{}, stack.Wrap(fmt.Errorf("%s is connected by each end user, in the conversation", id))
+			return plugins.Plugin{}, invalidRequest(id + " is connected by each end user, in the conversation")
 		}
 		return session.ServerPlugin(server), nil
 	}
-	return plugins.Plugin{}, stack.Wrap(errors.New(unknownPlugin))
+	return plugins.Plugin{}, errUnknownPlugin
 }
 
 // authorizePlugin starts a plugin login and returns the URL the browser should open.
 func (s *Server) authorizePlugin(ctx context.Context, request *authorizePluginRequest) (*authorizePluginResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConfigs)
+		return nil, errNoConfigs
 	}
 	config, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownConfig)
+		return nil, errUnknownConfig
 	}
 	plugin, err := appPlugin(config, string(request.PluginId))
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, err
 	}
 
 	instance := ""
@@ -153,12 +155,12 @@ func (s *Server) authorizePlugin(ctx context.Context, request *authorizePluginRe
 		instance = value(request.Body.InstanceUrl)
 	}
 	if _, err := plugin.Endpoint(instance); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	pending, err := s.auth().StartAuthorize(ctx, plugin, instance)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	conn := store.PluginConnection{
@@ -176,7 +178,7 @@ func (s *Server) authorizePlugin(ctx context.Context, request *authorizePluginRe
 		conn.InstanceURL = plugin.URL
 	}
 	if err := s.store.UpsertPluginConnection(ctx, &conn); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	return &authorizePluginResponse{Body: PluginAuthorization{AuthorizeUrl: pending.AuthorizeURL}}, nil
 }
@@ -185,21 +187,21 @@ func (s *Server) authorizePlugin(ctx context.Context, request *authorizePluginRe
 func (s *Server) disconnectPlugin(ctx context.Context, request *disconnectPluginRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConfigs)
+		return nil, errNoConfigs
 	}
 	config, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownConfig)
+		return nil, errUnknownConfig
 	}
 	named := func(server store.MCPServer) bool { return server.Name == string(request.PluginId) }
 	if _, ok := plugins.Lookup(string(request.PluginId)); !ok && !slices.ContainsFunc(config.MCPServers, named) {
-		return nil, huma.Error400BadRequest(unknownPlugin)
+		return nil, errUnknownPlugin
 	}
 	if err := s.store.DeletePluginConnection(ctx, customerID, request.Id, string(request.PluginId)); err != nil {
-		return nil, huma.Error404NotFound(unknownPlugin)
+		return nil, errUnknownPlugin
 	}
 	if err := s.store.RemoveConfigPlugin(ctx, customerID, request.Id, string(request.PluginId)); err != nil {
 		return nil, err
@@ -213,16 +215,16 @@ func (s *Server) disconnectPlugin(ctx context.Context, request *disconnectPlugin
 // secret, so it is the server that subscription was made with or nobody.
 func (s *Server) receivePluginEvent(w http.ResponseWriter, r *http.Request) {
 	if s.pluginEvents == nil {
-		writeError(w, http.StatusGone, "this deployment subscribes to no plugin events")
+		writeError(w, gone("this deployment subscribes to no plugin events"))
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, plugins.MaxEventBytes+1))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, invalidRequest(err.Error()))
 		return
 	}
 	if len(body) > plugins.MaxEventBytes {
-		writeError(w, http.StatusRequestEntityTooLarge, "a delivery is at most 256 KiB")
+		writeError(w, payloadTooLarge("a delivery is at most 256 KiB"))
 		return
 	}
 	reply := s.pluginEvents.Receive(r.Context(), r.PathValue("token"), r.Header, body)
@@ -236,23 +238,23 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 	auth := s.auth()
 	query := r.URL.Query()
 	if query.Get("error") != "" {
-		http.Error(w, query.Get("error"), http.StatusBadRequest)
+		writeError(w, invalidRequest(query.Get("error")))
 		return
 	}
 	state := query.Get("state")
 	code := query.Get("code")
 	if state == "" || code == "" {
-		http.Error(w, "a code and a state are required", http.StatusBadRequest)
+		writeError(w, invalidRequest("a code and a state are required"))
 		return
 	}
 	if s.store == nil {
-		http.Error(w, noConfigs, http.StatusBadRequest)
+		writeError(w, errNoConfigs)
 		return
 	}
 
 	conn, err := s.store.PluginConnectionByState(r.Context(), state)
 	if err != nil {
-		http.Error(w, "no such login", http.StatusNotFound)
+		writeError(w, notFound("no such login"))
 		return
 	}
 
@@ -268,7 +270,7 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 		conn.OAuthState = ""
 		conn.CodeVerifier = ""
 		_ = s.store.SavePluginConnection(r.Context(), &conn)
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeError(w, invalidRequest(err.Error()))
 		return
 	}
 
@@ -279,7 +281,7 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 	conn.OAuthState = ""
 	conn.CodeVerifier = ""
 	if err := s.store.SavePluginConnection(r.Context(), &conn); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeFailure(w, r, err)
 		return
 	}
 	// An end user connected their own account from a conversation: there is no editor to
@@ -298,7 +300,7 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 	// A server the config names by URL is named there already, under mcp_servers.
 	if listed {
 		if err := s.store.AddConfigPlugin(r.Context(), conn.CustomerID, conn.ConfigID, conn.PluginID); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeFailure(w, r, err)
 			return
 		}
 	}

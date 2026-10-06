@@ -146,8 +146,8 @@ func (s *RouterConfigsSuite) TestARouterConfigNobodyHasIsRefusedRatherThanIgnore
 			"source":    map[string]any{"url": "https://example.test/call.mp3"},
 		})
 
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "no such router config")
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, errUnknownRouterConfig.Message)
 }
 
 func (s *RouterConfigsSuite) TestAnotherAppsRouterConfigIsNotFound() {

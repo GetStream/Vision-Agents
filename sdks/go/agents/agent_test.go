@@ -69,7 +69,7 @@ func newBackend(t *testing.T) *backend {
 			reply(w, http.StatusOK, router.configs[index])
 			return
 		}
-		reply(w, http.StatusNotFound, acceleration.Error{Error: "no such config"})
+		reply(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "no such config"}})
 	})
 
 	mux.HandleFunc("GET /v1/agents/skills", func(w http.ResponseWriter, _ *http.Request) {

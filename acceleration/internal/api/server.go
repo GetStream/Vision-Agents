@@ -450,6 +450,12 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 // customer, a telephony vendor and Stream, so those three are not in the spec at all.
 func (s *Server) Handler() http.Handler {
 	mux := chi.NewRouter()
+	mux.NotFound(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, notFound("no such route"))
+	})
+	mux.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, newAPIError(ErrorTypeMethodNotAllowed, r.Method+" is not served on this route"))
+	})
 	mux.HandleFunc("GET /v1/agents/logs", s.listAgentLogs)
 	mux.HandleFunc("GET /v1/agents/logs/stream", s.streamAgentLogs)
 	mux.HandleFunc("GET /v1/agents/logs/{id}", s.getAgentLog)
@@ -682,7 +688,7 @@ func (s *Server) withRequestLog(next http.Handler) http.Handler {
 					"request_id", RequestIDFrom(r.Context()),
 					"panic", fmt.Sprint(recovered), "stack", string(debug.Stack()))
 				if recorder.code == 0 && recorder.written == 0 && !recorder.hijacked {
-					http.Error(recorder, `{"error":"internal error"}`, http.StatusInternalServerError)
+					writeError(recorder, internalError())
 				}
 			}
 			panic(recovered)
@@ -823,9 +829,14 @@ func (s *Server) refuseClientSide(w http.ResponseWriter, r *http.Request) bool {
 	}
 	s.logger.Debug("refused a client-side caller a server-side operation",
 		"method", r.Method, "path", r.URL.Path)
-	writeError(w, http.StatusForbidden, "this operation is server-side only: it needs "+
-		auth.AuthTypeHeader+": "+auth.AuthTypeServer+" and a token carrying server: true")
+	writeError(w, errServerSideOnly)
 	return true
+}
+
+var errServerSideOnly = APIError{
+	Type: ErrorTypePermission, Code: codeServerSideOnly,
+	Message: "this operation is server-side only: it needs " + auth.AuthTypeHeader + ": " +
+		auth.AuthTypeServer + " and a token carrying server: true",
 }
 
 // withCustomer lifts the authenticated principal into the request context so handlers can
@@ -864,8 +875,8 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 		if errors.Is(err, auth.ErrLevelRefused) {
 			s.logger.Debug("refused a level of user this app turns away",
 				"method", r.Method, "path", r.URL.Path, "kind", principal.Kind)
-			writeError(w, http.StatusForbidden, "this app does not accept "+
-				"requests from this level of user")
+			writeError(w, forbidden("this app does not accept "+
+				"requests from this level of user"))
 			return
 		}
 		if err == nil && principal.AppID != "" {
@@ -1107,11 +1118,11 @@ func (s *Server) getHealth(ctx context.Context, _ *struct{}) (*healthResponse, e
 // listProviders returns the providers configured for a modality and their live health.
 func (s *Server) listProviders(ctx context.Context, request *listProvidersRequest) (*listProvidersResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	router, ok := s.routerFor(request.Modality)
 	if !ok {
-		return nil, huma.Error404NotFound(unknownModality(request.Modality).Error)
+		return nil, unknownModality(request.Modality)
 	}
 
 	candidates := router.Providers(ctx)
@@ -1138,11 +1149,11 @@ func (s *Server) listProviders(ctx context.Context, request *listProvidersReques
 // listRoutes returns the shortcuts offered as a choice and what each resolves to now.
 func (s *Server) listRoutes(ctx context.Context, request *listRoutesRequest) (*listRoutesResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	router, ok := s.routerFor(request.Modality)
 	if !ok {
-		return nil, huma.Error404NotFound(unknownModality(request.Modality).Error)
+		return nil, unknownModality(request.Modality)
 	}
 
 	config := router.Config()
@@ -1175,11 +1186,11 @@ func (s *Server) listRoutes(ctx context.Context, request *listRoutesRequest) (*l
 // resolveTarget explains which providers would serve a target, best first.
 func (s *Server) resolveTarget(ctx context.Context, request *resolveTargetRequest) (*resolveTargetResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	router, ok := s.routerFor(request.Modality)
 	if !ok {
-		return nil, huma.Error404NotFound(unknownModality(request.Modality).Error)
+		return nil, unknownModality(request.Modality)
 	}
 
 	var languageHints []string
@@ -1189,7 +1200,7 @@ func (s *Server) resolveTarget(ctx context.Context, request *resolveTargetReques
 
 	candidates, err := router.Resolve(ctx, request.Target, languageHints)
 	if err != nil {
-		return nil, huma.Error404NotFound(err.Error())
+		return nil, notFound(err.Error())
 	}
 
 	resolved := make([]Candidate, 0, len(candidates))
@@ -1207,19 +1218,19 @@ func (s *Server) resolveTarget(ctx context.Context, request *resolveTargetReques
 func (s *Server) getStats(ctx context.Context, request *getStatsRequest) (*getStatsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	// Statistics are not limited to the routed modalities: memory and phone are recorded
 	// the same way and cost the same customer money.
 	if !request.To.After(request.From) {
-		return nil, huma.Error400BadRequest("to must be after from")
+		return nil, invalidRequest("to must be after from")
 	}
 	tags, err := parseTagFilter(request.Tag.ptr())
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest("statistics are not available: no database configured")
+		return nil, invalidRequest("statistics are not available: no database configured")
 	}
 
 	granularity := granularityOf(request.Granularity.ptr())
@@ -1256,20 +1267,20 @@ func (s *Server) getStats(ctx context.Context, request *getStatsRequest) (*getSt
 func (s *Server) getTagStats(ctx context.Context, request *getTagStatsRequest) (*getTagStatsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if !request.To.After(request.From) {
-		return nil, huma.Error400BadRequest("to must be after from")
+		return nil, invalidRequest("to must be after from")
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest("statistics are not available: no database configured")
+		return nil, invalidRequest("statistics are not available: no database configured")
 	}
 
 	granularity := granularityOf(request.Granularity.ptr())
 	buckets, err := s.store.CustomerTagStats(ctx, string(request.Modality), customerID,
 		request.Key, granularity, request.From, request.To)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	stats := make([]TagStatsBucket, 0, len(buckets))
@@ -1299,13 +1310,13 @@ func (s *Server) getTagStats(ctx context.Context, request *getTagStatsRequest) (
 func (s *Server) getTurnStats(ctx context.Context, request *getTurnStatsRequest) (*getTurnStatsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if !request.To.After(request.From) {
-		return nil, huma.Error400BadRequest("to must be after from")
+		return nil, invalidRequest("to must be after from")
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest("statistics are not available: no database configured")
+		return nil, invalidRequest("statistics are not available: no database configured")
 	}
 
 	var agentID string
@@ -1346,17 +1357,17 @@ func (s *Server) getTurnStats(ctx context.Context, request *getTurnStatsRequest)
 func (s *Server) getSpend(ctx context.Context, request *getSpendRequest) (*getSpendResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if !request.To.After(request.From) {
-		return nil, huma.Error400BadRequest("to must be after from")
+		return nil, invalidRequest("to must be after from")
 	}
 	tags, err := parseTagFilter(request.Tag.ptr())
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest("statistics are not available: no database configured")
+		return nil, invalidRequest("statistics are not available: no database configured")
 	}
 
 	groupBy := defaultSpendGroupBy
@@ -1371,7 +1382,7 @@ func (s *Server) getSpend(ctx context.Context, request *getSpendRequest) (*getSp
 	buckets, err := s.store.CustomerSpend(ctx, customerID, groupBy,
 		granularityOf(request.Granularity.ptr()), request.From, request.To, limit, tags)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	spend := make([]SpendBucket, 0, len(buckets))
@@ -1390,17 +1401,17 @@ func (s *Server) getSpend(ctx context.Context, request *getSpendRequest) (*getSp
 func (s *Server) getTagKeys(ctx context.Context, request *getTagKeysRequest) (*getTagKeysResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if !request.To.After(request.From) {
-		return nil, huma.Error400BadRequest("to must be after from")
+		return nil, invalidRequest("to must be after from")
 	}
 	tags, err := parseTagFilter(request.Tag.ptr())
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest("statistics are not available: no database configured")
+		return nil, invalidRequest("statistics are not available: no database configured")
 	}
 
 	found, err := s.store.CustomerTagKeys(ctx, customerID, request.From, request.To, tags)
@@ -1435,13 +1446,13 @@ func (s *Server) getTagKeys(ctx context.Context, request *getTagKeysRequest) (*g
 func (s *Server) getActivity(ctx context.Context, request *getActivityRequest) (*getActivityResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if !request.To.After(request.From) {
-		return nil, huma.Error400BadRequest("to must be after from")
+		return nil, invalidRequest("to must be after from")
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest("statistics are not available: no database configured")
+		return nil, invalidRequest("statistics are not available: no database configured")
 	}
 
 	buckets, err := s.store.CustomerActivity(ctx, customerID,
@@ -1468,16 +1479,16 @@ func (s *Server) getActivity(ctx context.Context, request *getActivityRequest) (
 // runRollup aggregates request rows into a rollup table.
 func (s *Server) runRollup(ctx context.Context, request *runRollupRequest) (*runRollupResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if request.Body == nil {
-		return nil, huma.Error400BadRequest("a request body is required")
+		return nil, invalidRequest("a request body is required")
 	}
 	if !request.Body.To.After(request.Body.From) {
-		return nil, huma.Error400BadRequest("to must be after from")
+		return nil, invalidRequest("to must be after from")
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest("rollups are not available: no database configured")
+		return nil, invalidRequest("rollups are not available: no database configured")
 	}
 
 	granularity := granularityOf(request.Body.Granularity)
@@ -1591,16 +1602,16 @@ func providerPrice(price routing.Price) *ProviderPrice {
 	}
 }
 
-func missingCustomer() Error {
-	return Error{Error: "the " + CustomerHeader + " header is required"}
+var errMissingCustomer = APIError{
+	Type: ErrorTypeAuthentication, Code: codeMissingCustomer,
+	Message: "the " + CustomerHeader + " header is required",
 }
 
-func unknownModality(modality Modality) Error {
-	return Error{Error: "this deployment does not route " + string(modality)}
-}
-
-func badRequest(message string) Error {
-	return Error{Error: message}
+func unknownModality(modality Modality) APIError {
+	return APIError{
+		Type: ErrorTypeNotFound, Code: codeModalityNotRouted,
+		Message: "this deployment does not route " + string(modality),
+	}
 }
 
 // registerServer declares the operations served in server.go.

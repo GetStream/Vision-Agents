@@ -95,6 +95,7 @@ var sharedResponses = map[string]string{
 	"401": "Unauthorized",
 	"403": "Forbidden",
 	"404": "NotFound",
+	"500": "InternalError",
 }
 
 var responseDescriptions = map[string]string{
@@ -104,16 +105,13 @@ var responseDescriptions = map[string]string{
 		"Stream-Auth-Type: server and a token carrying server: true, which means it cannot " +
 		"be reached from an end user's device.",
 	"NotFound": "No such modality, provider or shortcut",
+	"InternalError": "Something went wrong that is not the caller's doing. The body says " +
+		"only that: quote the response's X-Request-Id to find out more.",
 }
 
 // There is one Huma API per process, so its error constructor is set once for all of it.
 func init() {
 	huma.NewError = func(status int, message string, errs ...error) huma.StatusError {
-		// The spec promises a 400 for a request that does not validate, where Huma's own
-		// answer is a 422.
-		if status == http.StatusUnprocessableEntity {
-			status = http.StatusBadRequest
-		}
 		details := make([]string, 0, len(errs))
 		for _, err := range errs {
 			// A detail names the value it refused. The value of a secret is the secret, and
@@ -130,7 +128,14 @@ func init() {
 		if len(details) > 0 {
 			message += ": " + strings.Join(details, "; ")
 		}
-		return &apiError{status: status, Message: message}
+		// The spec promises a 400 for a request that does not validate, where Huma's own
+		// answer is a 422.
+		if status == http.StatusUnprocessableEntity {
+			failure := invalidRequest(message)
+			failure.Code = codeValidationFailed
+			return failure
+		}
+		return statusError(status, message)
 	}
 	huma.NewErrorWithContext = answerFailure
 }
@@ -145,23 +150,6 @@ func scalar(value any) bool {
 		return false
 	}
 	return true
-}
-
-// apiError is how a Huma operation reports a failure, in the {"error": "..."} shape the
-// generated operations and the sockets answer with.
-type apiError struct {
-	status  int
-	headers http.Header
-	Message string `json:"error"`
-}
-
-func (e *apiError) Error() string           { return e.Message }
-func (e *apiError) GetStatus() int          { return e.status }
-func (e *apiError) GetHeaders() http.Header { return e.headers }
-
-// Schema documents the error as the Error schema rather than one of its own.
-func (*apiError) Schema(registry huma.Registry) *huma.Schema {
-	return registry.Schema(reflect.TypeFor[Error](), true, "")
 }
 
 // namedEnum declares a string enum as a schema of its own, where a Huma enum tag would
@@ -224,7 +212,7 @@ func errorResponse(description string) *huma.Response {
 	return &huma.Response{
 		Description: description,
 		Content: map[string]*huma.MediaType{
-			"application/json": {Schema: &huma.Schema{Ref: "#/components/schemas/Error"}},
+			"application/json": {Schema: &huma.Schema{Ref: "#/components/schemas/ErrorResponse"}},
 		},
 	}
 }
@@ -237,7 +225,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 		responses[name] = &huma.Response{
 			Description: description,
 			Content: map[string]*huma.MediaType{
-				"application/json": {Schema: &huma.Schema{Ref: "#/components/schemas/Error"}},
+				"application/json": {Schema: &huma.Schema{Ref: "#/components/schemas/ErrorResponse"}},
 			},
 		}
 	}
@@ -316,7 +304,7 @@ func requireCustomer(api huma.API) func(huma.Context, func(huma.Context)) {
 		// A staff operation is answered for no customer: requireOpsKey let it through.
 		public := ctx.Operation().Security != nil && len(ctx.Operation().Security) == 0 || staffOperation(ctx.Operation())
 		if _, known := CustomerFrom(ctx.Context()); !known && !public {
-			_ = huma.WriteErr(api, ctx, http.StatusUnauthorized, missingCustomer().Error)
+			writeOperationError(ctx, errMissingCustomer)
 			return
 		}
 		next(ctx)
@@ -329,6 +317,10 @@ func shareErrorResponses(_ *huma.OpenAPI, operation *huma.Operation) {
 	if _, ok := operation.Responses["422"]; ok {
 		delete(operation.Responses, "422")
 		operation.Responses["400"] = &huma.Response{}
+	}
+	// Any operation can fail in a way that is not the caller's.
+	if _, ok := operation.Responses["500"]; !ok {
+		operation.Responses["500"] = &huma.Response{}
 	}
 	for code, name := range sharedResponses {
 		// A failure the operation describes in words of its own keeps them.

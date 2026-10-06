@@ -104,7 +104,7 @@ describe("Client", () => {
   it("raises what the router said went wrong, with the status and the operation", async () => {
     router.serve("POST", "/v1/agents/sessions", {
       status: 400,
-      body: { error: "a call id is required unless the session is text" },
+      body: { error: { message: "a call id is required unless the session is text", type: "invalid_request", code: "invalid_request" } },
     });
 
     await assert.rejects(

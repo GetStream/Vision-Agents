@@ -69,11 +69,11 @@ type frame map[string]any
 // returns a connection and a strict handler has to return a response.
 func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 	if _, ok := CustomerFrom(r.Context()); !ok {
-		writeError(w, http.StatusUnauthorized, "the "+CustomerHeader+" header is required")
+		writeError(w, errMissingCustomer)
 		return
 	}
 	if s.sessions == nil {
-		writeError(w, http.StatusNotFound, noSessions)
+		writeError(w, errNoSessions)
 		return
 	}
 	id := r.PathValue("id")
@@ -86,7 +86,7 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 			s.watchRemoteSession(w, r, id, OwnerFrom(r.Context()))
 			return
 		}
-		writeError(w, http.StatusNotFound, unknownSession)
+		writeError(w, errUnknownSession)
 		return
 	}
 
@@ -640,14 +640,6 @@ func errorText(err error) string {
 		return ""
 	}
 	return err.Error()
-}
-
-// writeError reports a failure that happened before the upgrade, in the same shape as the
-// rest of the API so a client has one error format to read.
-func writeError(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(Error{Error: message})
 }
 
 // filesOf is what a settled task handed back, as a frame lists it: always a list, so a

@@ -5,7 +5,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...models.review_queue import ReviewQueue
 from ...models.use_case_status import UseCaseStatus
 from ...types import UNSET, Response, Unset
@@ -43,34 +43,34 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | ReviewQueue | None:
+) -> ErrorResponse | ReviewQueue | None:
     if response.status_code == 200:
         response_200 = ReviewQueue.from_dict(response.json())
 
         return response_200
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 404:
-        response_404 = Error.from_dict(response.json())
+        response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
 
     if response.status_code == 409:
-        response_409 = Error.from_dict(response.json())
+        response_409 = ErrorResponse.from_dict(response.json())
 
         return response_409
 
     if response.status_code == 500:
-        response_500 = Error.from_dict(response.json())
+        response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
 
@@ -82,7 +82,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | ReviewQueue]:
+) -> Response[ErrorResponse | ReviewQueue]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -97,7 +97,7 @@ def sync_detailed(
     status: UseCaseStatus | Unset = UNSET,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
-) -> Response[Error | ReviewQueue]:
+) -> Response[ErrorResponse | ReviewQueue]:
     """List use cases waiting on Stream
 
      Every app's use cases in one status, longest waiting first, with the profile each was submitted on.
@@ -116,7 +116,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | ReviewQueue]
+        Response[ErrorResponse | ReviewQueue]
     """
 
     kwargs = _get_kwargs(
@@ -138,7 +138,7 @@ def sync(
     status: UseCaseStatus | Unset = UNSET,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
-) -> Error | ReviewQueue | None:
+) -> ErrorResponse | ReviewQueue | None:
     """List use cases waiting on Stream
 
      Every app's use cases in one status, longest waiting first, with the profile each was submitted on.
@@ -157,7 +157,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | ReviewQueue
+        ErrorResponse | ReviewQueue
     """
 
     return sync_detailed(
@@ -174,7 +174,7 @@ async def asyncio_detailed(
     status: UseCaseStatus | Unset = UNSET,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
-) -> Response[Error | ReviewQueue]:
+) -> Response[ErrorResponse | ReviewQueue]:
     """List use cases waiting on Stream
 
      Every app's use cases in one status, longest waiting first, with the profile each was submitted on.
@@ -193,7 +193,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | ReviewQueue]
+        Response[ErrorResponse | ReviewQueue]
     """
 
     kwargs = _get_kwargs(
@@ -213,7 +213,7 @@ async def asyncio(
     status: UseCaseStatus | Unset = UNSET,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
-) -> Error | ReviewQueue | None:
+) -> ErrorResponse | ReviewQueue | None:
     """List use cases waiting on Stream
 
      Every app's use cases in one status, longest waiting first, with the profile each was submitted on.
@@ -232,7 +232,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | ReviewQueue
+        ErrorResponse | ReviewQueue
     """
 
     return (

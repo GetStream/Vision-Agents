@@ -6,7 +6,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.agent_config import AgentConfig
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...types import UNSET, Response, Unset
 
 
@@ -32,7 +32,7 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | list[AgentConfig] | None:
+) -> ErrorResponse | list[AgentConfig] | None:
     if response.status_code == 200:
         response_200 = []
         _response_200 = response.json()
@@ -44,22 +44,22 @@ def _parse_response(
         return response_200
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
 
     if response.status_code == 500:
-        response_500 = Error.from_dict(response.json())
+        response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
 
@@ -71,7 +71,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | list[AgentConfig]]:
+) -> Response[ErrorResponse | list[AgentConfig]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -84,7 +84,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     name: str | Unset = UNSET,
-) -> Response[Error | list[AgentConfig]]:
+) -> Response[ErrorResponse | list[AgentConfig]]:
     """The agent configs the calling customer holds
 
      With a name this is how a name becomes a config, which is what lets a backend say "docs" instead of
@@ -103,7 +103,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[AgentConfig]]
+        Response[ErrorResponse | list[AgentConfig]]
     """
 
     kwargs = _get_kwargs(
@@ -121,7 +121,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     name: str | Unset = UNSET,
-) -> Error | list[AgentConfig] | None:
+) -> ErrorResponse | list[AgentConfig] | None:
     """The agent configs the calling customer holds
 
      With a name this is how a name becomes a config, which is what lets a backend say "docs" instead of
@@ -140,7 +140,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[AgentConfig]
+        ErrorResponse | list[AgentConfig]
     """
 
     return sync_detailed(
@@ -153,7 +153,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     name: str | Unset = UNSET,
-) -> Response[Error | list[AgentConfig]]:
+) -> Response[ErrorResponse | list[AgentConfig]]:
     """The agent configs the calling customer holds
 
      With a name this is how a name becomes a config, which is what lets a backend say "docs" instead of
@@ -172,7 +172,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[AgentConfig]]
+        Response[ErrorResponse | list[AgentConfig]]
     """
 
     kwargs = _get_kwargs(
@@ -188,7 +188,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     name: str | Unset = UNSET,
-) -> Error | list[AgentConfig] | None:
+) -> ErrorResponse | list[AgentConfig] | None:
     """The agent configs the calling customer holds
 
      With a name this is how a name becomes a config, which is what lets a backend say "docs" instead of
@@ -207,7 +207,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[AgentConfig]
+        ErrorResponse | list[AgentConfig]
     """
 
     return (

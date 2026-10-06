@@ -90,7 +90,8 @@ func TestAServerErrorIsLoggedWhereItEnteredAndAnsweredWithTheRequestIDAlone(t *t
 	response := postSync(handler, `{"name":"jean"}`)
 
 	require.Equal(t, http.StatusInternalServerError, response.Code)
-	require.JSONEq(t, `{"error":"internal error"}`, response.Body.String())
+	require.JSONEq(t, `{"error":{"message":"something went wrong","type":"internal","code":"internal_error",
+		"doc_url":"https://getstream.io/agents/docs/api/errors/#internal_error"}}`, response.Body.String())
 	require.NotContains(t, response.Body.String(), "10.0.0.7", "the caller is not told what the database said")
 
 	line := logged.String()

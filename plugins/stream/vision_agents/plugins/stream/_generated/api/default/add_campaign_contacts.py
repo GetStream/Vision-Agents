@@ -8,7 +8,7 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.contact import Contact
 from ...models.contacts_request import ContactsRequest
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...types import Response
 
 
@@ -36,7 +36,7 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | list[Contact] | None:
+) -> ErrorResponse | list[Contact] | None:
     if response.status_code == 201:
         response_201 = []
         _response_201 = response.json()
@@ -48,27 +48,27 @@ def _parse_response(
         return response_201
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
 
     if response.status_code == 404:
-        response_404 = Error.from_dict(response.json())
+        response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
 
     if response.status_code == 500:
-        response_500 = Error.from_dict(response.json())
+        response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
 
@@ -80,7 +80,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | list[Contact]]:
+) -> Response[ErrorResponse | list[Contact]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -94,7 +94,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ContactsRequest,
-) -> Response[Error | list[Contact]]:
+) -> Response[ErrorResponse | list[Contact]]:
     """Add people to ring
 
      Contacts are added rather than replaced, so a campaign can be topped up while it is running. Each
@@ -111,7 +111,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[Contact]]
+        Response[ErrorResponse | list[Contact]]
     """
 
     kwargs = _get_kwargs(
@@ -131,7 +131,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: ContactsRequest,
-) -> Error | list[Contact] | None:
+) -> ErrorResponse | list[Contact] | None:
     """Add people to ring
 
      Contacts are added rather than replaced, so a campaign can be topped up while it is running. Each
@@ -148,7 +148,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[Contact]
+        ErrorResponse | list[Contact]
     """
 
     return sync_detailed(
@@ -163,7 +163,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ContactsRequest,
-) -> Response[Error | list[Contact]]:
+) -> Response[ErrorResponse | list[Contact]]:
     """Add people to ring
 
      Contacts are added rather than replaced, so a campaign can be topped up while it is running. Each
@@ -180,7 +180,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[Contact]]
+        Response[ErrorResponse | list[Contact]]
     """
 
     kwargs = _get_kwargs(
@@ -198,7 +198,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: ContactsRequest,
-) -> Error | list[Contact] | None:
+) -> ErrorResponse | list[Contact] | None:
     """Add people to ring
 
      Contacts are added rather than replaced, so a campaign can be topped up while it is running. Each
@@ -215,7 +215,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[Contact]
+        ErrorResponse | list[Contact]
     """
 
     return (

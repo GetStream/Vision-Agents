@@ -17,17 +17,20 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-const noConnections = "connections are not available: no database configured"
+var errNoConnections = notConfigured("connections are not available: no database configured")
 
-// connectorsOff is the answer to a create on a deployment with no scheme registered, which is
+// errConnectorsOff is the answer to a create on a deployment with no scheme registered, which is
 // what cmd/router builds with connectors.enabled off (newConnectorRegistry).
-const connectorsOff = "connections cannot be created: connectors are not enabled on this deployment"
+var errConnectorsOff = notConfigured("connections cannot be created: connectors are not enabled on this deployment")
 
-// noSuchConnection is the one answer for a connection the caller may not have: none was
+// errNoSuchConnection is the one answer for a connection the caller may not have: none was
 // made, it is another app's, another user's, or it was deleted. One answer, so a guessed id
 // learns nothing (architecture doc, PolicyContract: «a guessed connection id gives
 // not-found»).
-const noSuchConnection = "no such connection"
+var errNoSuchConnection = APIError{
+	Type: ErrorTypeNotFound, Code: codeConnectionNotFound,
+	Message: "no such connection",
+}
 
 // Connection is one account at one connector, as a caller is shown it. Its stored
 // credentials are never part of it.
@@ -220,24 +223,24 @@ func (s *Server) registerConnections(api huma.API) {
 func (s *Server) createConnection(ctx context.Context, request *createConnectionRequest) (*connectionResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConnections)
+		return nil, errNoConnections
 	}
 	// Before the body is read, so a deployment that cannot connect anything says so rather
 	// than naming an input or a scheme the caller never chose.
 	if len(s.connectors.Schemes) == 0 {
-		return nil, huma.Error400BadRequest(connectorsOff)
+		return nil, errConnectorsOff
 	}
 	sent := request.Body
 	ownerID, err := ownerOf(ctx, sent.Owner)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	definition, err := s.store.LatestConnectorDefinition(ctx, customerID, sent.ConnectorID)
 	if errors.Is(err, store.ErrNoConnectorDefinition) {
-		return nil, huma.Error400BadRequest(fmt.Sprintf("no such connector: %q", sent.ConnectorID))
+		return nil, invalidRequest(fmt.Sprintf("no such connector: %q", sent.ConnectorID))
 	}
 	if err != nil {
 		return nil, err
@@ -245,7 +248,7 @@ func (s *Server) createConnection(ctx context.Context, request *createConnection
 	scheme := sent.AuthScheme
 	if scheme == "" {
 		if len(definition.Manifest.Schemes) != 1 {
-			return nil, huma.Error400BadRequest(fmt.Sprintf("auth_scheme is required: %s allows %s",
+			return nil, invalidRequest(fmt.Sprintf("auth_scheme is required: %s allows %s",
 				definition.ID, strings.Join(definition.Manifest.Schemes, ", ")))
 		}
 		scheme = definition.Manifest.Schemes[0]
@@ -254,7 +257,7 @@ func (s *Server) createConnection(ctx context.Context, request *createConnection
 	// refuses here is one the connection could never be used with. Its errors name the input.
 	profile, err := definition.Manifest.Resolve(scheme, sent.Inputs, nil)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 
 	connection := store.ConnectorConnection{
@@ -270,7 +273,7 @@ func (s *Server) createConnection(ctx context.Context, request *createConnection
 	err = s.store.CreateConnectorConnection(ctx, s.connectors, &connection)
 	if errors.Is(err, store.ErrUnregisteredScheme) {
 		known := slices.Sorted(maps.Keys(s.connectors.Schemes))
-		return nil, huma.Error400BadRequest(fmt.Sprintf("auth_scheme %q is not one this deployment has (%s)",
+		return nil, invalidRequest(fmt.Sprintf("auth_scheme %q is not one this deployment has (%s)",
 			scheme, strings.Join(known, ", ")))
 	}
 	// Every other refusal a caller can cause is above, so what the store refuses here is a bug.
@@ -284,21 +287,21 @@ func (s *Server) createConnection(ctx context.Context, request *createConnection
 func (s *Server) listConnections(ctx context.Context, request *listConnectionsRequest) (*listConnectionsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConnections)
+		return nil, errNoConnections
 	}
 	ownerID := ""
 	if request.OwnerType == store.OwnerUser {
 		ownerID = actingUser(ctx)
 		if ownerID == "" {
-			return nil, huma.Error400BadRequest("owner_type user lists the connections of the user this backend acts for: name them with " + auth.UserHeader)
+			return nil, invalidRequest("owner_type user lists the connections of the user this backend acts for: name them with " + auth.UserHeader)
 		}
 	}
 	cursor, err := decodeCursor[store.ConnectionPosition](&request.Cursor)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	found, err := s.store.ConnectorConnectionsByOwner(ctx, customerID, store.ConnectionFilter{
 		OwnerType:   string(request.OwnerType),
@@ -348,12 +351,12 @@ func (s *Server) deleteConnection(ctx context.Context, request *deleteConnection
 		err = s.store.DeleteUnboundConnectorConnection(ctx, connection.CustomerID, connection.ID)
 	}
 	if errors.Is(err, store.ErrNoConnectorConnection) {
-		return nil, huma.Error404NotFound(noSuchConnection)
+		return nil, errNoSuchConnection
 	}
 	// 409: the request conflicts with the state of the resource, which the caller can
 	// change and retry (RFC 9110 section 15.5.10).
 	if errors.Is(err, store.ErrConnectorConnectionBound) {
-		return nil, huma.Error409Conflict("an agent config binds this connection as its fixed connection: " +
+		return nil, conflict("an agent config binds this connection as its fixed connection: " +
 			"unbind it first, or delete with force=true")
 	}
 	if err != nil {
@@ -367,14 +370,14 @@ func (s *Server) deleteConnection(ctx context.Context, request *deleteConnection
 func (s *Server) reachableConnection(ctx context.Context, id string) (store.ConnectorConnection, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return store.ConnectorConnection{}, huma.Error401Unauthorized(missingCustomer().Error)
+		return store.ConnectorConnection{}, errMissingCustomer
 	}
 	if s.store == nil {
-		return store.ConnectorConnection{}, huma.Error400BadRequest(noConnections)
+		return store.ConnectorConnection{}, errNoConnections
 	}
 	connection, err := s.store.ConnectorConnection(ctx, customerID, id)
 	if errors.Is(err, store.ErrNoConnectorConnection) || err == nil && !mayReach(ctx, connection) {
-		return store.ConnectorConnection{}, huma.Error404NotFound(noSuchConnection)
+		return store.ConnectorConnection{}, errNoSuchConnection
 	}
 	if err != nil {
 		return store.ConnectorConnection{}, err

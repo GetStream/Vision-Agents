@@ -2,6 +2,35 @@
 
 ## Breaking Changes
 
+### Every failure is an `error` object with a `type`, a `code` and a `doc_url`
+
+A failure was `{"error": "..."}`; it is now an envelope, `ErrorResponse`, holding an
+`ErrorDetail`:
+
+```json
+{"error": {"message": "no such agent config", "type": "not_found",
+  "code": "agent_config_not_found",
+  "doc_url": "https://getstream.io/agents/docs/api/errors/#agent_config_not_found"}}
+```
+
+`type` is an `ErrorType` and decides the status: `invalid_request` 400, `authentication` 401,
+`permission` 403, `not_found` 404, `method_not_allowed` 405, `not_acceptable` 406, `conflict`
+409, `gone` 410, `payload_too_large` 413, `unsupported_media_type` 415, `rate_limited` 429,
+`internal` 500 and `unavailable` 503. `code` is what to branch on: each type has a code of its own
+name, and the failures worth telling apart have their own (`validation_failed`,
+`missing_customer`, `not_configured`, `agent_config_not_found` and the other `*_not_found`). More
+codes may be added. A failure that is not the caller's is a 500 of type `internal` saying only
+"something went wrong"; quote its `X-Request-Id`. Hand-written routes, the webhooks, an unknown
+route and a refused socket handshake answer with the same envelope, where some answered in plain
+text. A session on a node that cannot be reached is a 503 rather than a 502, and a failed data
+export or change read is a 500 rather than a 503 carrying the database's words. A code has one
+status wherever it is answered: a config, router config or plugin that does not exist is a 404
+even when the body names it (it was a 400 in some places), and a feature this deployment does not
+offer is a 400 `not_configured` (it was a 404 for sessions and recorded responses, a 410 on the
+10DLC webhook). Every operation
+declares its `500`. Go, Python (`plugins/stream`) and JavaScript read the new shape; the other
+SDKs follow.
+
 ### `plugins` is `agent_plugins`, and `plugin_options` moved onto each entry
 
 An agent config's `plugins` is now `agent_plugins`, in `agent.yaml` and on `AgentConfig`,

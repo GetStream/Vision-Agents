@@ -17,7 +17,7 @@ from ._generated.api.default import (
     update_router_config,
 )
 from ._generated.models import (
-    Error,
+    ErrorResponse,
     LlmOptions,
     RouterConfig,
     RouterConfigRequest,
@@ -200,10 +200,10 @@ async def store(
     return answer(await create_router_config.asyncio(client=client, body=request))
 
 
-def answer(sent: Union[T, Error, None]) -> T:
+def answer(sent: Union[T, ErrorResponse, None]) -> T:
     """Return what the router sent, raising what it said went wrong instead."""
-    if isinstance(sent, Error):
-        raise RuntimeError(sent.error)
+    if isinstance(sent, ErrorResponse):
+        raise RuntimeError(sent.error.message)
     if sent is None:
         raise RuntimeError("the router did not answer")
     return sent

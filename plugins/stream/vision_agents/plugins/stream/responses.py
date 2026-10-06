@@ -19,7 +19,7 @@ from ._generated.models import (
     AgentResponseItemPage,
     AgentResponsePage,
     CreateResponseRequest,
-    Error,
+    ErrorResponse,
     ImageSource,
     RewindSessionRequest,
 )
@@ -197,8 +197,8 @@ class Responses:
             client=self._backend.client(),
             body=RewindSessionRequest(response_id=response_id),
         )
-        if isinstance(answered, Error):
-            raise RouterError(f"rewinding {self._session_id}: {answered.error}")
+        if isinstance(answered, ErrorResponse):
+            raise RouterError(f"rewinding {self._session_id}: {answered.error.message}")
 
 
 def _unwrapped(answer: Any, what: str) -> Any:
@@ -207,8 +207,8 @@ def _unwrapped(answer: Any, what: str) -> Any:
     Every refusal in the spec is the same shape, so raising is the same three lines
     everywhere and worth having once.
     """
-    if isinstance(answer, Error):
-        raise RouterError(f"{what}: {answer.error}")
+    if isinstance(answer, ErrorResponse):
+        raise RouterError(f"{what}: {answer.error.message}")
     if answer is None:
         raise RouterError(f"{what}: the router answered with nothing")
     return answer
@@ -218,8 +218,8 @@ def _deleted(answer: Response[Any], what: str) -> None:
     """Raise what the router said instead of the 204 a delete answers with."""
     if answer.status_code == HTTPStatus.NO_CONTENT:
         return
-    if isinstance(answer.parsed, Error):
-        raise RouterError(f"{what}: {answer.parsed.error}")
+    if isinstance(answer.parsed, ErrorResponse):
+        raise RouterError(f"{what}: {answer.parsed.error.message}")
     raise RouterError(f"{what}: the router answered {answer.status_code}")
 
 

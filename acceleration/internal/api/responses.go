@@ -13,10 +13,10 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 )
 
-// noStore is what the response paths say where nothing was written down. A turn's items are
+// errNoStore is what the response paths say where nothing was written down. A turn's items are
 // read back from Postgres, so a deployment without one can start a response but has nothing
 // to show afterwards.
-const noStore = "this deployment does not record what sessions said"
+var errNoStore = notConfigured("this deployment does not record what sessions said")
 
 // maxVideos bounds the clips on one response, so that at video.MaxFrames each a turn stays
 // inside the hundred images the strictest vision provider takes in one request.
@@ -32,13 +32,10 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 	// ended can be read and forked, but not talked to.
 	found, failure := s.session(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return nil, huma.Error401Unauthorized(missingCustomer().Error)
-		}
-		return nil, huma.Error404NotFound(failure.message)
+		return nil, failure
 	}
 	if request.Body == nil || request.Body.Text == "" {
-		return nil, huma.Error400BadRequest("there is nothing to answer")
+		return nil, invalidRequest("there is nothing to answer")
 	}
 
 	images := make([]wireImage, 0, len(value(request.Body.Images)))
@@ -47,19 +44,19 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 	}
 	parts, err := imagesFromWire(images)
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	videos := value(request.Body.Videos)
 	if len(videos) > maxVideos {
-		return nil, huma.Error400BadRequest(fmt.Sprintf("at most %d videos go with one response", maxVideos))
+		return nil, invalidRequest(fmt.Sprintf("at most %d videos go with one response", maxVideos))
 	}
 	if len(videos) > 0 && value(request.Body.CommandId) != "" {
-		return nil, huma.Error400BadRequest("a command ID carries text only")
+		return nil, invalidRequest("a command ID carries text only")
 	}
 	for index, sent := range videos {
 		frames, length, err := video.Frames(ctx, sent.Url, value(sent.MaxFrames))
 		if err != nil {
-			return nil, huma.Error400BadRequest(err.Error())
+			return nil, invalidRequest(err.Error())
 		}
 		for _, frame := range frames {
 			frame.Image.Caption = fmt.Sprintf("video %d, %.1fs of %.1fs", index+1, frame.At.Seconds(), length.Seconds())
@@ -70,17 +67,17 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 	var responseID string
 	if id := value(request.Body.CommandId); id != "" {
 		if len(parts) > 0 {
-			return nil, huma.Error400BadRequest("a command ID carries text only")
+			return nil, invalidRequest("a command ID carries text only")
 		}
 		_, responseID, err = found.RespondCommand(ctx, id, request.Body.Text, "")
 		if errors.Is(err, conversation.ErrCommandConflict) {
-			return nil, huma.Error409Conflict(err.Error())
+			return nil, conflict(err.Error())
 		}
 	} else {
 		responseID, err = found.Respond(ctx, request.Body.Text, parts)
 	}
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	if len(videos) > 0 {
 		found.SawVideo()
@@ -103,18 +100,15 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 func (s *Server) listResponses(ctx context.Context, request *listResponsesRequest) (*listResponsesResponse, error) {
 	found, failure := s.storedOrLiveSession(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return nil, huma.Error401Unauthorized(missingCustomer().Error)
-		}
-		return nil, huma.Error404NotFound(failure.message)
+		return nil, failure
 	}
 	if s.store == nil {
-		return nil, huma.Error404NotFound(noStore)
+		return nil, errNoStore
 	}
 
 	after, err := decodeCursor[store.ResponsePosition](request.Cursor.ptr())
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	limit := store.SessionLimit(value(request.Limit.ptr()))
 	rows, err := s.store.SessionResponses(ctx, OwnerFrom(ctx).CustomerID, found.ID(), limit, after)
@@ -142,18 +136,15 @@ func (s *Server) listResponses(ctx context.Context, request *listResponsesReques
 func (s *Server) listResponseItems(ctx context.Context, request *listResponseItemsRequest) (*listResponseItemsResponse, error) {
 	found, failure := s.storedOrLiveSession(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return nil, huma.Error401Unauthorized(missingCustomer().Error)
-		}
-		return nil, huma.Error404NotFound(failure.message)
+		return nil, failure
 	}
 	if s.store == nil {
-		return nil, huma.Error404NotFound(noStore)
+		return nil, errNoStore
 	}
 
 	after, err := decodeCursor[store.ItemPosition](request.Cursor.ptr())
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	limit := store.ItemLimit(value(request.Limit.ptr()))
 	rows, err := s.store.SessionItems(ctx, OwnerFrom(ctx).CustomerID, found.ID(),

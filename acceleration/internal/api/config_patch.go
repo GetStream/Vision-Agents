@@ -104,14 +104,14 @@ func (s *Server) registerConfigPatch(api huma.API) {
 func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfigRequest) (*agentConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, huma.Error401Unauthorized(missingCustomer().Error)
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, huma.Error400BadRequest(noConfigs)
+		return nil, errNoConfigs
 	}
 	config, err := s.configs.AgentConfig(ctx, customerID, request.ID)
 	if err != nil {
-		return nil, huma.Error404NotFound(unknownConfig)
+		return nil, errUnknownConfig
 	}
 	before := config.MCPServers
 
@@ -129,12 +129,12 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		Connectors:     patch.Connectors,
 		Dispatch:       patch.Dispatch,
 	}); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if message, ok, err := s.unboundConnectors(ctx, customerID, patch.Connectors); err != nil {
 		return nil, err
 	} else if !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 
 	config.Name = override(config.Name, patch.Name)
@@ -192,34 +192,34 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		config.VideoMaxFrames = override(config.VideoMaxFrames, patch.Video.MaxFrames)
 	}
 	if message, ok := textThinkingComplaint(&config, patch.ThinkingLlm); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if message, ok := pluginEventsComplaint(config); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if message, ok := pluginEntriesComplaint(config); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	if message, ok := mcpServersComplaint(config); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	servers, message, ok := s.describedMCPServers(ctx, config.MCPServers, before)
 	if !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	config.MCPServers = servers
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 	// The config no longer matches the directory last synced onto it, so the next sync of
 	// that directory writes it again rather than finding nothing changed.
 	config.SyncHash = ""
 	if message, ok := pluginAliasComplaint(config); !ok {
-		return nil, huma.Error400BadRequest(message)
+		return nil, invalidRequest(message)
 	}
 
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, invalidRequest(err.Error())
 	}
 	s.pluginEvents.Changed(customerID, config.ID)
 	return &agentConfigResponse{Body: agentConfigOf(config)}, nil

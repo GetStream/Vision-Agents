@@ -73,7 +73,7 @@ func newRouter(t *testing.T) *router {
 			answer(w, http.StatusOK, backend.configs[i])
 			return
 		}
-		answer(w, http.StatusNotFound, acceleration.Error{Error: "no such agent config"})
+		answer(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "no such agent config"}})
 	})
 
 	mux.HandleFunc("GET /v1/settings/app", func(w http.ResponseWriter, r *http.Request) {
@@ -118,7 +118,7 @@ func newRouter(t *testing.T) *router {
 		asked := backend.bodies[r.Method+" "+r.URL.Path]["llm"]
 		backend.mu.Unlock()
 		if asked == "nobody/nothing" {
-			answer(w, http.StatusBadRequest, acceleration.Error{Error: "nothing routes to nobody/nothing"})
+			answer(w, http.StatusBadRequest, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "nothing routes to nobody/nothing"}})
 			return
 		}
 		answer(w, http.StatusOK, acceleration.Session{
@@ -152,8 +152,8 @@ func newRouter(t *testing.T) *router {
 		backend.record(r)
 		// A persistent conversation is what the real router refuses to rewind.
 		if r.PathValue("id") == "persistent" {
-			answer(w, http.StatusBadRequest, acceleration.Error{
-				Error: "a persistent conversation keeps its transcript in Chat"})
+			answer(w, http.StatusBadRequest, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+				Message: "a persistent conversation keeps its transcript in Chat"}})
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -162,7 +162,7 @@ func newRouter(t *testing.T) *router {
 	mux.HandleFunc("DELETE /v1/agents/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
 		if r.PathValue("id") == "someone-elses" {
-			answer(w, http.StatusNotFound, acceleration.Error{Error: "unknown session"})
+			answer(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "unknown session"}})
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -171,7 +171,7 @@ func newRouter(t *testing.T) *router {
 	mux.HandleFunc("DELETE /v1/agents/sessions/{id}/memories", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
 		if r.PathValue("id") == "someone-elses" {
-			answer(w, http.StatusNotFound, acceleration.Error{Error: "unknown session"})
+			answer(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "unknown session"}})
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -590,7 +590,7 @@ func TestUnwindingReportsWhyItStoppedRatherThanLookingLikeTheEnd(t *testing.T) {
 	// A router that refuses, so the stream closes without having run out. A closed channel
 	// on its own cannot tell the two apart, which is what Err is for.
 	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		answer(w, http.StatusNotFound, acceleration.Error{Error: "no such session"})
+		answer(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "no such session"}})
 	}))
 	t.Cleanup(refusing.Close)
 

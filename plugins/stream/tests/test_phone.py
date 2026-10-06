@@ -39,7 +39,17 @@ class Router:
     async def _place(self, request: web.Request) -> web.Response:
         self.placed = await request.json()
         if self.refuse:
-            return web.json_response(status=400, data={"error": self.refuse})
+            return web.json_response(
+                status=400,
+                data={
+                    "error": {
+                        "message": self.refuse,
+                        "type": "invalid_request",
+                        "code": "invalid_request",
+                        "doc_url": "https://getstream.io/agents/docs/api/errors/#invalid_request",
+                    }
+                },
+            )
         return web.json_response(
             status=202,
             data={
@@ -54,7 +64,17 @@ class Router:
     async def _transfer(self, request: web.Request) -> web.Response:
         self.transferred = await request.json()
         if self.refuse:
-            return web.json_response(status=400, data={"error": self.refuse})
+            return web.json_response(
+                status=400,
+                data={
+                    "error": {
+                        "message": self.refuse,
+                        "type": "invalid_request",
+                        "code": "invalid_request",
+                        "doc_url": "https://getstream.io/agents/docs/api/errors/#invalid_request",
+                    }
+                },
+            )
         return web.json_response(
             status=202,
             data={
@@ -69,7 +89,17 @@ class Router:
     async def _search(self, request: web.Request) -> web.Response:
         self.searched = dict(request.query)
         if self.refuse:
-            return web.json_response(status=400, data={"error": self.refuse})
+            return web.json_response(
+                status=400,
+                data={
+                    "error": {
+                        "message": self.refuse,
+                        "type": "invalid_request",
+                        "code": "invalid_request",
+                        "doc_url": "https://getstream.io/agents/docs/api/errors/#invalid_request",
+                    }
+                },
+            )
         return web.json_response(
             status=200,
             data={
@@ -90,7 +120,17 @@ class Router:
     async def _buy(self, request: web.Request) -> web.Response:
         self.bought = await request.json()
         if self.refuse:
-            return web.json_response(status=400, data={"error": self.refuse})
+            return web.json_response(
+                status=400,
+                data={
+                    "error": {
+                        "message": self.refuse,
+                        "type": "invalid_request",
+                        "code": "invalid_request",
+                        "doc_url": "https://getstream.io/agents/docs/api/errors/#invalid_request",
+                    }
+                },
+            )
         return web.json_response(
             status=201,
             data={
@@ -108,7 +148,17 @@ class Router:
         raw = await request.read()
         self.attached = json.loads(raw) if raw else None
         if self.refuse:
-            return web.json_response(status=400, data={"error": self.refuse})
+            return web.json_response(
+                status=400,
+                data={
+                    "error": {
+                        "message": self.refuse,
+                        "type": "invalid_request",
+                        "code": "invalid_request",
+                        "doc_url": "https://getstream.io/agents/docs/api/errors/#invalid_request",
+                    }
+                },
+            )
         return web.json_response(
             status=200,
             data={
@@ -121,7 +171,17 @@ class Router:
     async def _release(self, request: web.Request) -> web.Response:
         self.released_e164 = request.match_info["e164"]
         if self.refuse:
-            return web.json_response(status=400, data={"error": self.refuse})
+            return web.json_response(
+                status=400,
+                data={
+                    "error": {
+                        "message": self.refuse,
+                        "type": "invalid_request",
+                        "code": "invalid_request",
+                        "doc_url": "https://getstream.io/agents/docs/api/errors/#invalid_request",
+                    }
+                },
+            )
         return web.Response(status=204)
 
 

@@ -95,8 +95,8 @@ func (s *SimulationsSuite) TestASimulationAgainstAnAgentThatIsNotThereIsRefused(
 		SimulationRequest{Name: "orders", ConfigId: s.utils.uuid(),
 			Scenario: "order a pizza", Assertion: "was one ordered?"})
 
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, unknownConfig)
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, errUnknownConfig.Message)
 }
 
 func (s *SimulationsSuite) TestRunningASimulationStartsTheConversationsItAsksFor() {

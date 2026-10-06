@@ -76,7 +76,7 @@ func (s *Server) verifyHook(w http.ResponseWriter, r *http.Request, payload []by
 	}
 	if err != nil {
 		s.logger.Error("could not find the keys to check a "+what+" with", "error", err)
-		http.Error(w, "could not check that "+what, http.StatusServiceUnavailable)
+		writeError(w, unavailable("could not check that "+what))
 		return hookOrigin{}, false
 	}
 	for _, verifier := range verifiers {
@@ -90,7 +90,7 @@ func (s *Server) verifyHook(w http.ResponseWriter, r *http.Request, payload []by
 			apiKey: verifier.APIKey}, true
 	}
 	s.logger.Warn("rejected a "+what+" with a bad signature", "bytes", len(payload), "app", pathApp)
-	http.Error(w, "that is not a "+what+" from Stream", http.StatusUnauthorized)
+	writeError(w, unauthenticated("that is not a "+what+" from Stream"))
 	return hookOrigin{}, false
 }
 
@@ -107,7 +107,7 @@ func (s *Server) verifyDeploymentHook(w http.ResponseWriter, r *http.Request, pa
 	}
 	if !getstream.VerifySignature(payload, signature, s.hookSecret) {
 		s.logger.Warn("rejected a "+what+" with a bad signature", "bytes", len(payload))
-		http.Error(w, "that is not a "+what+" from Stream", http.StatusUnauthorized)
+		writeError(w, unauthenticated("that is not a "+what+" from Stream"))
 		return hookOrigin{}, false
 	}
 	return hookOrigin{app: own, deployment: true}, true
