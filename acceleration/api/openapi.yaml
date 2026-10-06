@@ -8196,11 +8196,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Remove the app's own OAuth client for a connector
     put:
       description: |-
@@ -8247,14 +8243,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/ErrorResponse'
           description: Conflict
         "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Internal Server Error
+          $ref: '#/components/responses/InternalError'
       summary: Set the app's own OAuth client for a connector
   /v1/agents/connectors/oauth/callback:
     get:

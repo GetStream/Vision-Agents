@@ -8180,18 +8180,10 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly deleteConnectorOAuthClient: {
@@ -8217,15 +8209,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly finishConnectorConsent: {

@@ -26673,7 +26673,7 @@ type DeleteConnectorOAuthClientResponse struct {
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *Error
+	JSON500 *InternalError
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -26697,7 +26697,7 @@ func (r DeleteConnectorOAuthClientResponse) GetJSON404() *NotFound {
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r DeleteConnectorOAuthClientResponse) GetJSON500() *Error {
+func (r DeleteConnectorOAuthClientResponse) GetJSON500() *InternalError {
 	return r.JSON500
 }
 
@@ -26746,9 +26746,9 @@ type SetConnectorOAuthClientResponse struct {
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *Error
+	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *Error
+	JSON500 *InternalError
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -26782,12 +26782,12 @@ func (r SetConnectorOAuthClientResponse) GetJSON404() *NotFound {
 }
 
 // GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r SetConnectorOAuthClientResponse) GetJSON409() *Error {
+func (r SetConnectorOAuthClientResponse) GetJSON409() *ErrorResponse {
 	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r SetConnectorOAuthClientResponse) GetJSON500() *Error {
+func (r SetConnectorOAuthClientResponse) GetJSON500() *InternalError {
 	return r.JSON500
 }
 
@@ -41943,7 +41943,7 @@ func ParseDeleteConnectorOAuthClientResponse(rsp *http.Response) (*DeleteConnect
 		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest Error
+		var dest InternalError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -42011,14 +42011,14 @@ func ParseSetConnectorOAuthClientResponse(rsp *http.Response) (*SetConnectorOAut
 		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Error
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest Error
+		var dest InternalError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
