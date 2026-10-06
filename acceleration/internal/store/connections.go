@@ -297,7 +297,7 @@ func (s *Store) DeleteConnectorConnection(ctx context.Context, customerID, id st
 // delete. Under READ COMMITTED a statement sees the rows committed before it began
 // (https://www.postgresql.org/docs/current/transaction-iso.html#XACT-READ-COMMITTED), so a
 // bind that commits after this UPDATE began is not seen; closing that takes the config write
-// too (AI-841).
+// too (AI-889).
 func (s *Store) DeleteUnboundConnectorConnection(ctx context.Context, customerID, id string) error {
 	affected, err := s.softDeleteConnection(ctx, customerID, id, true)
 	if err != nil {

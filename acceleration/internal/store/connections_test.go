@@ -346,8 +346,9 @@ func (s *StoreSuite) TestAnUnforcedDeleteOfAMissingConnectionIsNotFound() {
 // the UPDATE runs with (exec_simple_query in src/backend/tcop/postgres.c: execution does not
 // reuse "a snapshot that has been acquired before locking any of the tables mentioned in the
 // query"). So a delete that checked in a SELECT of its own has checked when it stops here,
-// and one that checks inside the UPDATE has not.
-func (s *StoreSuite) TestABindThatCommitsWhileTheDeleteWaitsStopsIt() {
+// and one that checks inside the UPDATE has not. A wait on the connection's row lock comes
+// after the snapshot, so a bind that commits during it is missed (AI-889).
+func (s *StoreSuite) TestABindThatCommitsBeforeTheDeleteTakesItsSnapshotStopsIt() {
 	connection := s.connection("acme-app", nil)
 	locker := s.router()
 	held, err := locker.DB().BeginTx(s.ctx, nil)

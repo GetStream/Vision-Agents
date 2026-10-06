@@ -340,7 +340,8 @@ func (s *Server) deleteConnection(ctx context.Context, request *deleteConnection
 		return nil, err
 	}
 	// Unforced, the store checks for a binding in the same statement that deletes, so no
-	// bind can land between a check and the delete.
+	// bind can land between a check and the delete. A bind that commits while that statement
+	// runs, or between a config save's check and its write, is still missed (AI-889).
 	if request.Force {
 		err = s.store.DeleteConnectorConnection(ctx, connection.CustomerID, connection.ID)
 	} else {
