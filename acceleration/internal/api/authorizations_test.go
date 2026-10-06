@@ -441,8 +441,8 @@ func (s *AuthorizationsSuite) refresh(id string) error {
 	s.Require().NoError(err)
 	var answered error
 	err = credentials.Update(ctx, core.ConnectionRef{CustomerID: s.customerID(), ConnectionID: id},
-		func(state *core.CredentialState, _ func() error) (bool, error) {
-			_, next, err := s.scheme.Retrieve(ctx, state.Credentials, manifest)
+		func(state *core.CredentialState, checkpoint func() error) (bool, error) {
+			_, next, err := s.scheme.Retrieve(ctx, state.Credentials, manifest, core.RetrieveOptions{Checkpoint: checkpoint})
 			if err != nil {
 				answered = err
 				return false, nil
