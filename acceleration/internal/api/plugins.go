@@ -692,19 +692,19 @@ type disconnectPluginRequest struct {
 
 // Plugin One hosted MCP server from the built-in catalog.
 type Plugin struct {
-	Category         string    `json:"category"`
-	Description      string    `json:"description"`
-	Id               string    `json:"id"`
-	InstanceHint     *string   `json:"instance_hint,omitempty"`
-	InstanceRequired *bool     `json:"instance_required,omitempty"`
-	LogoUrl          string    `json:"logo_url" readOnly:"true" doc:"Where this deployment serves the plugin's logo, as an SVG needing no credential."`
-	Name             string    `json:"name"`
-	Readonly         *bool     `json:"readonly,omitempty" doc:"True when the plugin has a read-only endpoint an agent may pick on its entry."`
-	Toolsets         *[]string `json:"toolsets,omitempty" doc:"The groups of tools an agent may limit the plugin to on its entry. Absent when it cannot be limited."`
-	ScopesSupported  *[]string `json:"scopes_supported,omitempty" doc:"The OAuth scopes an agent may ask for on its entry, as the server advertises them. Absent when the server says nothing, and any scope is then passed through."`
-	ClientRequired   *bool     `json:"client_required,omitempty" doc:"True when the provider registers no client on the fly, so a config needs one of the app's own, set with setPluginClient, before anybody can connect the plugin."`
-	RedirectUri      *string   `json:"redirect_uri,omitempty" readOnly:"true" doc:"The redirect URI that client has to list, which is this deployment's. Only with client_required."`
-	SetupUrl         *string   `json:"setup_url,omitempty" format:"uri" doc:"Where the app creates that client with the provider. Only with client_required."`
+	Category         string             `json:"category"`
+	Description      string             `json:"description"`
+	Id               string             `json:"id"`
+	InstanceHint     *string            `json:"instance_hint,omitempty"`
+	InstanceRequired *bool              `json:"instance_required,omitempty"`
+	LogoUrl          string             `json:"logo_url" readOnly:"true" doc:"Where this deployment serves the plugin's logo, as an SVG needing no credential."`
+	Name             string             `json:"name"`
+	Readonly         *bool              `json:"readonly,omitempty" doc:"True when the plugin has a read-only endpoint an agent may pick on its entry."`
+	Toolsets         *[]string          `json:"toolsets,omitempty" doc:"The groups of tools an agent may limit the plugin to on its entry. Absent when it cannot be limited."`
+	ScopesSupported  *[]string          `json:"scopes_supported,omitempty" doc:"The OAuth scopes an agent may ask for on its entry, as the server advertises them. Absent when the server says nothing, and any scope is then passed through."`
+	ClientRequired   *bool              `json:"client_required,omitempty" doc:"True when the provider registers no client on the fly, so a config needs one of the app's own, set with setPluginClient, before anybody can connect the plugin."`
+	RedirectUri      *string            `json:"redirect_uri,omitempty" readOnly:"true" doc:"The redirect URI that client has to list, which is this deployment's. Only with client_required."`
+	SetupUrl         *string            `json:"setup_url,omitempty" format:"uri" doc:"Where the app creates that client with the provider. Only with client_required."`
 	SetupSteps       *[]PluginSetupStep `json:"setup_steps,omitempty" doc:"What to do there, in order, before pasting the client into setPluginClient. Absent when the catalog has no instructions for the plugin."`
 }
 
