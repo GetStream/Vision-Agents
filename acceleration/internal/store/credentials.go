@@ -186,18 +186,19 @@ func (s *Store) saveAtRevision(ctx context.Context, conn bun.IConn, connection *
 // released would stay with whoever borrows it next.
 func (s *Store) withCredentialLock(ctx context.Context, customerID, id string, fn func(bun.Conn) error) error {
 	key := credentialLockKey(customerID, id)
-	conn, err := s.acquireCredentialLock(ctx, key)
+	conn, err := s.acquireCredentialLock(ctx, credentialLockNamespace, key)
 	if err != nil {
 		return err
 	}
-	defer releaseCredentialLock(conn, key)
+	defer releaseCredentialLock(conn, credentialLockNamespace, key)
 	return fn(conn)
 }
 
 // acquireCredentialLock tries the lock with pg_try_advisory_lock, which "will either obtain the
 // lock immediately and return true, or return false without waiting"
 // (https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS),
-// and pauses between tries until it gets it or ctx is done. Nothing waits in Postgres, so a
+// and pauses between tries until it gets it or ctx is done. namespace is the first key of the
+// two (credentialLockNamespace, providerAppLockNamespace). Nothing waits in Postgres, so a
 // caller that gives up leaves no wait queued on the server, and a waiter holds no connection
 // while it pauses. A blocking pg_advisory_lock could not promise that: the driver bounds
 // every read by its ReadTimeout, 10s unless set (newDefaultConfig in
@@ -206,7 +207,7 @@ func (s *Store) withCredentialLock(ctx context.Context, customerID, id string, f
 // of the connection only at the next interaction with the socket"
 // (https://www.postgresql.org/docs/current/runtime-config-connection.html#GUC-CLIENT-CONNECTION-CHECK-INTERVAL),
 // so the wait would stay queued. The cost is that waiters are not served in order.
-func (s *Store) acquireCredentialLock(ctx context.Context, key int32) (bun.Conn, error) {
+func (s *Store) acquireCredentialLock(ctx context.Context, namespace, key int32) (bun.Conn, error) {
 	pause := credentialRetryFirst
 	for {
 		conn, err := s.db.Conn(ctx)
@@ -214,7 +215,7 @@ func (s *Store) acquireCredentialLock(ctx context.Context, key int32) (bun.Conn,
 			return bun.Conn{}, fmt.Errorf("store: credential lock connection: %w", err)
 		}
 		var locked bool
-		err = conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock(?::integer, ?::integer)", credentialLockNamespace, key).Scan(&locked)
+		err = conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock(?::integer, ?::integer)", namespace, key).Scan(&locked)
 		if err != nil {
 			// The lock may have been granted with the answer lost; closing the connection
 			// ends the session, which releases it.
@@ -244,11 +245,11 @@ func (s *Store) acquireCredentialLock(ctx context.Context, key int32) (bun.Conn,
 // (https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS);
 // that, or an unlock that fails, closes the connection rather than return a session in a
 // state nobody knows.
-func releaseCredentialLock(conn bun.Conn, key int32) {
+func releaseCredentialLock(conn bun.Conn, namespace, key int32) {
 	ctx, cancel := context.WithTimeout(context.Background(), credentialDetachedTimeout)
 	defer cancel()
 	var released bool
-	err := conn.QueryRowContext(ctx, "SELECT pg_advisory_unlock(?::integer, ?::integer)", credentialLockNamespace, key).Scan(&released)
+	err := conn.QueryRowContext(ctx, "SELECT pg_advisory_unlock(?::integer, ?::integer)", namespace, key).Scan(&released)
 	if err != nil || !released {
 		discard(conn)
 		return
