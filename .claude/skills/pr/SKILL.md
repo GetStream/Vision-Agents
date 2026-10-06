@@ -25,10 +25,20 @@ description: Create a draft pull request for the Vision-Agents repo using gh CLI
 
 ## Body
 
-- Explain with pictures, not paragraphs. Near the top, a `## How it works` section shows the idea with mermaid diagrams (GitHub renders them): a `flowchart` for the data flow, a decision `flowchart` for branching logic, a `sequenceDiagram` for concurrency or a protocol. Give small tables for "change → result → test that proves it" and for before/after.
+- Explain with pictures, not paragraphs. Near the top, a `## How it works` section shows the idea with ASCII charts in a fenced code block: a tree for branching logic, boxes and arrows for the data flow, one column per actor for concurrency or a protocol. They take less vertical space than mermaid and read the same in `gh pr view`, a terminal and the browser. Give small tables for "change → result → test that proves it" and for before/after.
 - Keep prose short: one or two sentences per point, and nothing a diagram or table already shows. A reviewer should get the idea in a minute without a wall of text.
 - Cite evidence: `file:line`, test names, commits. Mark anything not checked as unverified.
-- In mermaid, no `;` inside labels or messages (it splits statements). Open the PR after creating it and check that the diagrams render.
+- Draw with `├─ └─ │ ->`, and keep each line within 80 columns, the default terminal width, so the chart does not wrap in `gh pr view`. After creating the PR, read it back with `gh pr view` and check the alignment.
+
+```
+/pr-review <pr> [show|post]          no mode given -> AskUserQuestion
+  └─ review
+       ├─ show -> conversation only, nothing on GitHub
+       └─ post -> one review at headRefOid
+            ├─ findings            -> COMMENT  inline per diff line
+            ├─ none, others' PR    -> APPROVE  "No findings at <sha>."
+            └─ none, your own PR   -> COMMENT  same body
+```
 - `## Why` is motivation + context. `## Changes`, if included, is high-level; never per-bullet justifications, those belong in `## Why`.
 - Link public GitHub issues inline within `## Why` (e.g. "users reported X (#478)"), not as a trailing `Fixes #N`.
 - Do not paste CI, lint, or tool output in the body.
