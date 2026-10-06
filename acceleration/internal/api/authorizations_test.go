@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
@@ -43,28 +44,32 @@ const refusingHook = "test.refuse_callback"
 type AuthorizationsSuite struct {
 	RouterSuite
 	provider *fakeprovider.Server
+	scheme   *oauth2code.Scheme
 }
 
 func TestAuthorizationsSuite(t *testing.T) {
 	runSuite(t, new(AuthorizationsSuite))
 }
 
-// SetupSuite builds oauth2_code against the fake, with the fake's preregistered client as
-// the operator's, and a hook that refuses every callback.
+// SetupSuite builds oauth2_code against the fake with the router's own client lookup
+// (ConnectorClients): the fake's preregistered client is the operator's, in the environment as
+// FAKE_MCP_CLIENT_ID and _SECRET, and an app's own client is the record it put. A hook refuses
+// every callback.
 func (s *AuthorizationsSuite) SetupSuite() {
 	s.provider = fakeprovider.New(s.T(), fakeprovider.CommaScopes)
 	s.provider.AllowRedirect(consentPublicURL + ConnectorCallbackPath)
+	environment := map[string]string{"FAKE_MCP_CLIENT_ID": s.provider.ClientID, "FAKE_MCP_CLIENT_SECRET": s.provider.ClientSecret}
 	scheme, err := oauth2code.New(oauth2code.Config{
 		HTTP: s.provider.Client(),
-		Clients: func(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, source core.ClientRegistrationMethod) (oauth2code.Client, bool, error) {
-			if source != core.ClientOperator {
-				return oauth2code.Client{}, false, nil
-			}
-			return oauth2code.Client{ID: s.provider.ClientID, Secret: s.provider.ClientSecret}, true, nil
+		// Built at each call, since the store and the sealer exist only once the router suite
+		// has started.
+		Clients: func(ctx context.Context, ref core.ConnectionRef, m core.ResolvedManifest, registration core.ClientRegistrationMethod) (oauth2code.Client, bool, error) {
+			return ConnectorClients(s.store, s.sealer, func(name string) string { return environment[name] })(ctx, ref, m, registration)
 		},
 		PublicEndpoint: loopbackOrPublic,
 	})
 	s.Require().NoError(err)
+	s.scheme = scheme
 	s.connectors = core.Registry{
 		Schemes: map[string]core.Scheme{oauth2code.Name: scheme},
 		Hooks: map[string]core.Hook{refusingHook: func(context.Context, *core.HookContext) error {
@@ -368,6 +373,87 @@ func (s *AuthorizationsSuite) TestTheClientMetadataDocumentNamesItsOwnURLAndTheC
 	s.Equal("none", document.TokenEndpointAuthMethod)
 }
 
+func (s *AuthorizationsSuite) TestAConsentForAConnectorTakingTheAppsOwnClientUsesTheOneItPut() {
+	connector := s.connectorRegistering("customer", "")
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(connector), &created))
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/connections/"+created.ID+"/authorizations", nil)
+	s.Equal(http.StatusBadRequest, status, "the operator's client is in the environment, and this connector does not take it")
+	s.Contains(failure, "PUT /v1/agents/connectors/"+connector+"/oauth-client")
+
+	s.putClient(connector, s.provider.ClientSecret)
+	s.connect(created.ID)
+
+	s.Equal(ConnectionStatus(store.ConnectionConnected), s.get(created.ID).Status)
+}
+
+func (s *AuthorizationsSuite) TestARotatedSecretIsWhatTheNextRefreshOfEveryConnectionSends() {
+	// A margin longer than CommaScopes' 12-hour access token, so every Retrieve refreshes.
+	connector := s.connectorRegistering("customer", "refresh:\n  margin: 24h\n")
+	s.putClient(connector, s.provider.ClientSecret)
+	connections := make([]string, 2)
+	for i := range connections {
+		var created Connection
+		s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(connector), &created))
+		s.connect(created.ID)
+		connections[i] = created.ID
+	}
+
+	// A secret the provider does not hold, as after a rotation at the provider the app has
+	// not put yet: one row changes, and the provider refuses what each refresh then sends.
+	s.putClient(connector, "rotated-"+s.utils.uuid())
+	var rows int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM connector_oauth_clients WHERE customer_id = ?", s.customerID()).Scan(&rows))
+	s.Equal(1, rows)
+	for _, id := range connections {
+		var refused *core.OutcomeError
+		s.Require().ErrorAs(s.refresh(id), &refused, "the refresh sent the record's secret, not the one the consent used")
+	}
+
+	s.putClient(connector, s.provider.ClientSecret)
+	for _, id := range connections {
+		s.NoError(s.refresh(id))
+	}
+}
+
+// putClient is the app's backend putting the fake's preregistered client as its own for
+// connector, with secret.
+func (s *AuthorizationsSuite) putClient(connector, secret string) {
+	status, payload := s.serverClient.call(http.MethodPut, "/v1/agents/connectors/"+connector+"/oauth-client",
+		ConnectorOAuthClientRequest{ClientID: s.provider.ClientID, ClientSecret: secret})
+	s.Require().Contains([]int{http.StatusCreated, http.StatusOK}, status, string(payload))
+}
+
+// refresh is the next refresh of a connection as the resolver (T12) runs one: under the
+// connection's lock, through the scheme, saving the stored credentials it gets back. It is
+// what the scheme answered.
+func (s *AuthorizationsSuite) refresh(id string) error {
+	ctx := context.Background()
+	connection, err := s.store.ConnectorConnection(ctx, s.customerID(), id)
+	s.Require().NoError(err)
+	definition, err := s.store.ConnectorDefinition(ctx, s.customerID(), connection.ConnectorID, connection.DefinitionRevision)
+	s.Require().NoError(err)
+	manifest, err := definition.Manifest.Resolve(connection.AuthScheme, connection.Inputs, connection.Metadata)
+	s.Require().NoError(err)
+	credentials, err := pgsealed.New(s.store, s.sealer)
+	s.Require().NoError(err)
+	var answered error
+	err = credentials.Update(ctx, core.ConnectionRef{CustomerID: s.customerID(), ConnectionID: id},
+		func(state *core.CredentialState, checkpoint func() error) (bool, error) {
+			_, next, err := s.scheme.Retrieve(ctx, state.Credentials, manifest, core.RetrieveOptions{Checkpoint: checkpoint})
+			if err != nil {
+				answered = err
+				return false, nil
+			}
+			state.Credentials = next
+			return true, nil
+		})
+	s.Require().NoError(err)
+	return answered
+}
+
 // connection is a pending app-owned connection to a connector of the test's app at the
 // fake provider; extra is more manifest YAML, such as hooks.
 func (s *AuthorizationsSuite) connection(extra string) string {
@@ -378,8 +464,14 @@ func (s *AuthorizationsSuite) connection(extra string) string {
 
 // connector stores a connector of the test's app whose endpoints are the fake provider's,
 // in the shape of core's Slack fixture (testdata/manifests/slack.yaml): comma scopes, and
-// the account as team and user from the token response, which CommaScopes answers.
+// the account as team and user from the token response, which CommaScopes answers. Its
+// client is the operator's.
 func (s *AuthorizationsSuite) connector(extra string) string {
+	return s.connectorRegistering("operator", extra)
+}
+
+// connectorRegistering is connector with client.registration [registration].
+func (s *AuthorizationsSuite) connectorRegistering(registration, extra string) string {
 	id := "custom_fake" + strings.ReplaceAll(s.utils.uuid(), "-", "")
 	manifest, err := core.ParseManifest([]byte(`
 id: ` + id + `
@@ -391,8 +483,9 @@ endpoints:
   mcp: ` + s.provider.URL + fakeprovider.PathMCP + `
 schemes: [oauth2_code]
 client:
-  registration: [operator]
+  registration: [` + registration + `]
   auth_method: client_secret_post
+  env: FAKE
 scopes:
   list: [channels:history, chat:write]
   separator: ","

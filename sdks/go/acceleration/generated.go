@@ -527,6 +527,27 @@ func (e ConnectorClientRegistrationMethod) Valid() bool {
 	}
 }
 
+// Defines values for ConnectorOAuthClientAuthMethod.
+const (
+	ConnectorOAuthClientAuthMethodClientSecretBasic ConnectorOAuthClientAuthMethod = "client_secret_basic"
+	ConnectorOAuthClientAuthMethodClientSecretPost  ConnectorOAuthClientAuthMethod = "client_secret_post"
+	ConnectorOAuthClientAuthMethodNone              ConnectorOAuthClientAuthMethod = "none"
+)
+
+// Valid indicates whether the value is a known member of the ConnectorOAuthClientAuthMethod enum.
+func (e ConnectorOAuthClientAuthMethod) Valid() bool {
+	switch e {
+	case ConnectorOAuthClientAuthMethodClientSecretBasic:
+		return true
+	case ConnectorOAuthClientAuthMethodClientSecretPost:
+		return true
+	case ConnectorOAuthClientAuthMethodNone:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ContactState.
 const (
 	ContactStateCalling ContactState = "calling"
@@ -3182,6 +3203,34 @@ type ConnectorInput struct {
 
 	// Pattern A regular expression the whole value must match.
 	Pattern *string `json:"pattern,omitempty"`
+}
+
+// ConnectorOAuthClient The OAuth client the app registered with a connector's provider itself. The secret is write-only: no response carries it.
+type ConnectorOAuthClient struct {
+	// AuthMethod How the app's own OAuth client authenticates at the token endpoint (RFC 7591 section 2): none for a public client, which has no secret, client_secret_basic or client_secret_post.
+	AuthMethod  *ConnectorOAuthClientAuthMethod `json:"auth_method,omitempty"`
+	ClientId    string                          `json:"client_id"`
+	ConnectorId *string                         `json:"connector_id,omitempty"`
+	CreatedAt   *time.Time                      `json:"created_at,omitempty"`
+
+	// Registration operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+	Registration ConnectorClientRegistrationMethod `json:"registration"`
+
+	// UpdatedAt When the client, its secret or its method last changed.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+// ConnectorOAuthClientAuthMethod How the app's own OAuth client authenticates at the token endpoint (RFC 7591 section 2): none for a public client, which has no secret, client_secret_basic or client_secret_post.
+type ConnectorOAuthClientAuthMethod string
+
+// ConnectorOAuthClientRequest The OAuth client the app registered with the connector's provider. An unknown field is refused rather than ignored.
+type ConnectorOAuthClientRequest struct {
+	// AuthMethod How the app's own OAuth client authenticates at the token endpoint (RFC 7591 section 2): none for a public client, which has no secret, client_secret_basic or client_secret_post.
+	AuthMethod *ConnectorOAuthClientAuthMethod `json:"auth_method,omitempty"`
+	ClientId   string                          `json:"client_id"`
+
+	// ClientSecret Sealed at rest and never returned. Left out for a public client (auth_method none).
+	ClientSecret *string `json:"client_secret,omitempty"`
 }
 
 // ConnectorPage defines model for ConnectorPage.
@@ -6717,6 +6766,9 @@ type CreateConnectionJSONRequestBody = ConnectionRequest
 // CreateConnectorJSONRequestBody defines body for CreateConnector for application/json ContentType.
 type CreateConnectorJSONRequestBody = CustomConnectorRequest
 
+// SetConnectorOAuthClientJSONRequestBody defines body for SetConnectorOAuthClient for application/json ContentType.
+type SetConnectorOAuthClientJSONRequestBody = ConnectorOAuthClientRequest
+
 // CreateGuestUserJSONRequestBody defines body for CreateGuestUser for application/json ContentType.
 type CreateGuestUserJSONRequestBody = GuestUserRequest
 
@@ -7646,6 +7698,37 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/agents/connectors/{id} (the `GetConnector` operationId).
 	GetConnector(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteConnectorOAuthClient Remove the app's own OAuth client for a connector
+	//
+	// Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/agents/connectors/{id}/oauth-client (the `DeleteConnectorOAuthClient` operationId).
+	DeleteConnectorOAuthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetConnectorOAuthClientWithBody Set the app's own OAuth client for a connector
+	//
+	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/agents/connectors/{id}/oauth-client (the `SetConnectorOAuthClient` operationId).
+	SetConnectorOAuthClientWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetConnectorOAuthClient Set the app's own OAuth client for a connector
+	//
+	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/agents/connectors/{id}/oauth-client (the `SetConnectorOAuthClient` operationId).
+	SetConnectorOAuthClient(ctx context.Context, id string, body SetConnectorOAuthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetConversationCommand What a command in this conversation ended as
 	//
@@ -10182,6 +10265,67 @@ func (c *Client) HandOffConnectorLaunch(ctx context.Context, id string, reqEdito
 // Corresponds with GET /v1/agents/connectors/{id} (the `GetConnector` operationId).
 func (c *Client) GetConnector(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetConnectorRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteConnectorOAuthClient Remove the app's own OAuth client for a connector
+//
+// Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/agents/connectors/{id}/oauth-client (the `DeleteConnectorOAuthClient` operationId).
+func (c *Client) DeleteConnectorOAuthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteConnectorOAuthClientRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetConnectorOAuthClientWithBody Set the app's own OAuth client for a connector
+//
+// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/agents/connectors/{id}/oauth-client (the `SetConnectorOAuthClient` operationId).
+func (c *Client) SetConnectorOAuthClientWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetConnectorOAuthClientRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetConnectorOAuthClient Set the app's own OAuth client for a connector
+//
+// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/agents/connectors/{id}/oauth-client (the `SetConnectorOAuthClient` operationId).
+func (c *Client) SetConnectorOAuthClient(ctx context.Context, id string, body SetConnectorOAuthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetConnectorOAuthClientRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -15330,6 +15474,87 @@ func NewGetConnectorRequest(server string, id string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewDeleteConnectorOAuthClientRequest constructs an http.Request for the DeleteConnectorOAuthClient method
+func NewDeleteConnectorOAuthClientRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/%s/oauth-client", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSetConnectorOAuthClientRequest calls the generic SetConnectorOAuthClient builder with application/json body
+func NewSetConnectorOAuthClientRequest(server string, id string, body SetConnectorOAuthClientJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetConnectorOAuthClientRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewSetConnectorOAuthClientRequestWithBody constructs an http.Request for the SetConnectorOAuthClient method, with any body, and a specified content type
+func NewSetConnectorOAuthClientRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/%s/oauth-client", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -21817,6 +22042,39 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/connectors/{id} (the `GetConnector` operationId).
 	GetConnectorWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectorResponse, error)
 
+	// DeleteConnectorOAuthClientWithResponse Remove the app's own OAuth client for a connector
+	//
+	// Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/connectors/{id}/oauth-client (the `DeleteConnectorOAuthClient` operationId).
+	DeleteConnectorOAuthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteConnectorOAuthClientResponse, error)
+
+	// SetConnectorOAuthClientWithBodyWithResponse Set the app's own OAuth client for a connector
+	//
+	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/agents/connectors/{id}/oauth-client (the `SetConnectorOAuthClient` operationId).
+	SetConnectorOAuthClientWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetConnectorOAuthClientResponse, error)
+
+	// SetConnectorOAuthClientWithResponse Set the app's own OAuth client for a connector
+	//
+	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/agents/connectors/{id}/oauth-client (the `SetConnectorOAuthClient` operationId).
+	SetConnectorOAuthClientWithResponse(ctx context.Context, id string, body SetConnectorOAuthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*SetConnectorOAuthClientResponse, error)
+
 	// GetConversationCommandWithResponse What a command in this conversation ended as
 	//
 	// Reads one command's receipt from the conversation's own durable record. It opens nothing and starts nothing, so a client whose stop found no session left to reach reconciles that command here rather than reopening a session to ask about it.
@@ -26397,6 +26655,165 @@ func (r GetConnectorResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetConnectorResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteConnectorOAuthClientResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteConnectorOAuthClientResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteConnectorOAuthClientResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteConnectorOAuthClientResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteConnectorOAuthClientResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteConnectorOAuthClientResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteConnectorOAuthClientResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteConnectorOAuthClientResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteConnectorOAuthClientResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteConnectorOAuthClientResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetConnectorOAuthClientResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorOAuthClient
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *ConnectorOAuthClient
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetConnectorOAuthClientResponse) GetJSON200() *ConnectorOAuthClient {
+	return r.JSON200
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r SetConnectorOAuthClientResponse) GetJSON201() *ConnectorOAuthClient {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SetConnectorOAuthClientResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SetConnectorOAuthClientResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SetConnectorOAuthClientResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SetConnectorOAuthClientResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r SetConnectorOAuthClientResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SetConnectorOAuthClientResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r SetConnectorOAuthClientResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetConnectorOAuthClientResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetConnectorOAuthClientResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetConnectorOAuthClientResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -36391,6 +36808,57 @@ func (c *ClientWithResponses) GetConnectorWithResponse(ctx context.Context, id s
 	return ParseGetConnectorResponse(rsp)
 }
 
+// DeleteConnectorOAuthClientWithResponse Remove the app's own OAuth client for a connector
+//
+// Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/connectors/{id}/oauth-client (the `DeleteConnectorOAuthClient` operationId).
+func (c *ClientWithResponses) DeleteConnectorOAuthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteConnectorOAuthClientResponse, error) {
+	rsp, err := c.DeleteConnectorOAuthClient(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteConnectorOAuthClientResponse(rsp)
+}
+
+// SetConnectorOAuthClientWithBodyWithResponse Set the app's own OAuth client for a connector
+//
+// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/agents/connectors/{id}/oauth-client (the `SetConnectorOAuthClient` operationId).
+func (c *ClientWithResponses) SetConnectorOAuthClientWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetConnectorOAuthClientResponse, error) {
+	rsp, err := c.SetConnectorOAuthClientWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetConnectorOAuthClientResponse(rsp)
+}
+
+// SetConnectorOAuthClientWithResponse Set the app's own OAuth client for a connector
+//
+// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/agents/connectors/{id}/oauth-client (the `SetConnectorOAuthClient` operationId).
+func (c *ClientWithResponses) SetConnectorOAuthClientWithResponse(ctx context.Context, id string, body SetConnectorOAuthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*SetConnectorOAuthClientResponse, error) {
+	rsp, err := c.SetConnectorOAuthClient(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetConnectorOAuthClientResponse(rsp)
+}
+
 // GetConversationCommandWithResponse What a command in this conversation ended as
 //
 // Reads one command's receipt from the conversation's own durable record. It opens nothing and starts nothing, so a client whose stop found no session left to reach reconciles that command here rather than reopening a session to ask about it.
@@ -41416,6 +41884,138 @@ func ParseGetConnectorResponse(rsp *http.Response) (*GetConnectorResponse, error
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteConnectorOAuthClientResponse parses an HTTP response from a DeleteConnectorOAuthClientWithResponse call
+func ParseDeleteConnectorOAuthClientResponse(rsp *http.Response) (*DeleteConnectorOAuthClientResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteConnectorOAuthClientResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetConnectorOAuthClientResponse parses an HTTP response from a SetConnectorOAuthClientWithResponse call
+func ParseSetConnectorOAuthClientResponse(rsp *http.Response) (*SetConnectorOAuthClientResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetConnectorOAuthClientResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorOAuthClient
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest ConnectorOAuthClient
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError

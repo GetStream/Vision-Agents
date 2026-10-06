@@ -299,14 +299,14 @@ const connectorHTTPTimeout = 10 * time.Second
 //
 // ClientMetadataURL is where the API serves the router's client metadata document
 // (api.ConnectorClientMetadataPath under public_url), and empty, which turns CIMD off, when
-// public_url is not https: CIMD section 3 allows only an https client_id URL. Clients is nil, so
-// no operator or customer client is found until client records exist (AI-846); only cimd and
-// dcr can supply a client.
-func newConnectorRegistry(settings config.Config) (core.Registry, error) {
+// public_url is not https: CIMD section 3 allows only an https client_id URL. clients finds a
+// client registered in advance: the app's own from its record, the operator's from the
+// environment (api.ConnectorClients).
+func newConnectorRegistry(settings config.Config, clients oauth2code.ClientLookup) (core.Registry, error) {
 	if !settings.Connectors.Enabled {
 		return core.Registry{}, nil
 	}
-	code, err := oauth2code.New(connectorSchemeConfig(settings))
+	code, err := oauth2code.New(connectorSchemeConfig(settings, clients))
 	if err != nil {
 		return core.Registry{}, err
 	}
@@ -320,9 +320,10 @@ func newConnectorRegistry(settings config.Config) (core.Registry, error) {
 // connectorSchemeConfig is the oauth2code.Config newConnectorRegistry starts the scheme with.
 // A test runs it against a loopback fake by replacing HTTP and PublicEndpoint, which egress
 // refuses loopback for, and keeps the rest.
-func connectorSchemeConfig(settings config.Config) oauth2code.Config {
+func connectorSchemeConfig(settings config.Config, clients oauth2code.ClientLookup) oauth2code.Config {
 	return oauth2code.Config{
 		HTTP:              egress.NewClient(connectorHTTPTimeout, nil),
+		Clients:           clients,
 		ClientMetadataURL: api.ConnectorClientMetadataURL(settings.PublicURL),
 	}
 }
@@ -401,10 +402,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if settings.Connectors.Enabled {
 		connectorSecrets = secrets
 	}
-	connectors, err := newConnectorRegistry(settings)
-	if err != nil {
-		return err
-	}
 
 	// Postgres and Redis are optional so the API can be brought up for inspection before
 	// the data stores exist. /health reports what is missing.
@@ -417,6 +414,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer pgStore.Close()
 	} else {
 		logger.Warn("no database configured, statistics will not be recorded", "setting", "postgres.dsn")
+	}
+	// After the store, which holds the apps' own OAuth clients oauth2_code looks up.
+	connectors, err := newConnectorRegistry(settings, api.ConnectorClients(pgStore, connectorSecrets, os.Getenv))
+	if err != nil {
+		return err
 	}
 	// Nothing asks it for a credential yet: the session's dispatcher will (T21, AI-851).
 	connectorResolver, err := newConnectorResolver(connectors, pgStore, connectorSecrets)

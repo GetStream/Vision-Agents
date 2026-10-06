@@ -749,6 +749,34 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/connectors/{id}/oauth-client": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set the app's own OAuth client for a connector
+         * @description Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly put: operations["setConnectorOAuthClient"];
+        readonly post?: never;
+        /**
+         * Remove the app's own OAuth client for a connector
+         * @description Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteConnectorOAuthClient"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/connectors/oauth/callback": {
         readonly parameters: {
             readonly query?: never;
@@ -3898,6 +3926,34 @@ export type components = {
             readonly name: string;
             /** @description A regular expression the whole value must match. */
             readonly pattern?: string;
+        };
+        /** @description The OAuth client the app registered with a connector's provider itself. The secret is write-only: no response carries it. */
+        readonly ConnectorOAuthClient: {
+            readonly auth_method?: components["schemas"]["ConnectorOAuthClientAuthMethod"];
+            readonly client_id: string;
+            readonly connector_id: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            /** @description customer: the app's own client, which every consent and refresh of the connector's connections then uses. */
+            readonly registration: components["schemas"]["ConnectorClientRegistrationMethod"];
+            /**
+             * Format: date-time
+             * @description When the client, its secret or its method last changed.
+             */
+            readonly updated_at: string;
+        };
+        /**
+         * @description How the app's own OAuth client authenticates at the token endpoint (RFC 7591 section 2): none for a public client, which has no secret, client_secret_basic or client_secret_post.
+         * @enum {string}
+         */
+        readonly ConnectorOAuthClientAuthMethod: "none" | "client_secret_basic" | "client_secret_post";
+        /** @description The OAuth client the app registered with the connector's provider. An unknown field is refused rather than ignored. */
+        readonly ConnectorOAuthClientRequest: {
+            /** @description Overrides the connector's own client.auth_method. Left out, the connector's applies, and failing that the consent picks: none without a secret, else client_secret_basic where the provider accepts it. */
+            readonly auth_method?: components["schemas"]["ConnectorOAuthClientAuthMethod"];
+            readonly client_id: string;
+            /** @description Sealed at rest and never returned. Left out for a public client (auth_method none). */
+            readonly client_secret?: string;
         };
         readonly ConnectorPage: {
             readonly has_more: boolean;
@@ -8072,6 +8128,82 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["Connector"];
                 };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly setConnectorOAuthClient: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector, such as github or custom_crm. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectorOAuthClientRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The client was replaced */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorOAuthClient"];
+                };
+            };
+            /** @description The client was stored */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorOAuthClient"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deleteConnectorOAuthClient: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector, such as github or custom_crm. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The client is removed */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
