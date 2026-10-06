@@ -27,7 +27,7 @@ func TestDisplaySuite(t *testing.T) {
 
 func (s *DisplaySuite) SetupTest() {
 	db, client := newChat(s.T())
-	service := newService(client)
+	service := NewForChat(client)
 	s.T().Cleanup(service.Close)
 	s.db, s.service = db, service
 }

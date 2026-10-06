@@ -107,6 +107,11 @@ type Auth struct {
 	// KEK unseals the stored key secrets. It belongs in the environment rather than in a
 	// file checked in beside the code: it is what makes a leaked backup ciphertext.
 	KEK string `koanf:"kek"`
+	// ProxyDeclaresKind says the proxy in front authenticates every caller and declares
+	// whether it is a backend or an end user. In proxy mode the router then reads only the
+	// app header and takes a caller that declares nothing for an end user. Off, a caller
+	// that declares nothing is a backend, as a proxy that never declares means.
+	ProxyDeclaresKind bool `koanf:"proxy_declares_kind"`
 	// OpsKey is what Stream's own staff tools send as X-Ops-Key to review use cases. Empty
 	// turns those endpoints off. It is never handed to a browser.
 	OpsKey string `koanf:"ops_key"`
@@ -127,11 +132,57 @@ type DataMove struct {
 	Retention time.Duration `koanf:"retention"`
 }
 
-// Stream is the app whose secret signs the call events Stream sends to the inbound hook,
-// and the tokens a browser joins a call with.
+// Stream is the deployment's own Stream app: the one the router acts in for every
+// customer in deployment mode, and for its own customer in app mode.
 type Stream struct {
 	APIKey    string `koanf:"api_key"`
 	APISecret string `koanf:"api_secret"`
+	// UserToken is a fixed token the voice edge has always preferred to minting its own,
+	// for the deployment's app only.
+	UserToken string `koanf:"user_token"`
+	// BaseURL is the Stream API the deployment's app is reached at. Empty is Stream's
+	// default. It is read here once, so every app's client is told where to go rather than
+	// each reading the environment for itself.
+	BaseURL string `koanf:"base_url"`
+	// Tenancy says whose app the router acts in. deployment, the default, is the
+	// deployment's own app for every customer, as it always was. app is each customer's
+	// own, registered with its keys.
+	Tenancy string `koanf:"tenancy"`
+	// Fallback is what app mode does for a customer that registered no app: deployment
+	// writes it into the deployment's own app, as before, and refuse writes it nowhere.
+	// Unset is refuse. Deployment mode never reads it.
+	Fallback string `koanf:"fallback"`
+	// AppID is the deployment's own app's id, which Stream is asked for when it is not
+	// set. A pin naming it is finished with the deployment's own key, in either mode.
+	AppID int64 `koanf:"app_id"`
+	// TrustAPIKeyHeader lets the X-Stream-Api-Key a gateway forwards choose which of the
+	// calling app's registered keys mints its tokens. Off, the primary key always does.
+	// Only a gateway that writes that header itself, rather than passing a caller's on,
+	// may have it on.
+	TrustAPIKeyHeader bool `koanf:"trust_api_key_header"`
+	// DenyRegistration are Stream app ids that may never be registered as a customer's own.
+	DenyRegistration []string `koanf:"deny_registration"`
+}
+
+// What Stream.Tenancy holds.
+const (
+	TenancyDeployment = "deployment"
+	TenancyApp        = "app"
+)
+
+// What Stream.Fallback holds.
+const (
+	FallbackDeployment = "deployment"
+	FallbackRefuse     = "refuse"
+)
+
+// EffectiveFallback is what app mode does for a customer with no app of its own: refuse
+// unless the deployment said otherwise, so leaving it out fails closed.
+func (s Stream) EffectiveFallback() string {
+	if s.Fallback == "" {
+		return FallbackRefuse
+	}
+	return s.Fallback
 }
 
 // Agent is how an agent holds a conversation, where that is the deployment's choice.
@@ -184,11 +235,20 @@ var variables = map[string]string{
 	"data_move.retention": "ROUTER_DATA_MOVE_RETENTION",
 	"stream.api_key":      "STREAM_API_KEY",
 	"stream.api_secret":   "STREAM_API_SECRET",
+	"stream.base_url":     "STREAM_BASE_URL",
+	"stream.user_token":   "STREAM_USER_TOKEN",
+	"stream.tenancy":      "ROUTER_STREAM_TENANCY",
+	"stream.fallback":     "ROUTER_STREAM_FALLBACK",
+	"stream.app_id":       "ROUTER_STREAM_APP_ID",
+
+	"stream.trust_api_key_header": "ROUTER_STREAM_TRUST_API_KEY_HEADER",
+	"stream.deny_registration":    "ROUTER_STREAM_DENY_REGISTRATION",
 
 	"rate_limit.messages_per_day": "ROUTER_RATE_LIMIT_MESSAGES_PER_DAY",
 	"rate_limit.tokens_per_day":   "ROUTER_RATE_LIMIT_TOKENS_PER_DAY",
 
 	"agent.speculative_replies": "ROUTER_SPECULATIVE_REPLIES",
+	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
 
 	"sandbox.enabled":               "ROUTER_SANDBOX_ENABLED",
@@ -198,7 +258,7 @@ var variables = map[string]string{
 }
 
 // lists are the settings written as a comma-separated variable and as a sequence in YAML.
-var lists = map[string]bool{"cors_origins": true, "trusted_proxies": true}
+var lists = map[string]bool{"cors_origins": true, "trusted_proxies": true, "stream.deny_registration": true}
 
 // Defaults are what a deployment gets for saying nothing at all.
 func Defaults() Config {
@@ -309,8 +369,54 @@ func (c Config) validate() error {
 		return fmt.Errorf("config: a daily limit cannot be negative, got %d messages and %d tokens",
 			c.RateLimit.MessagesPerDay, c.RateLimit.TokensPerDay)
 	}
+	switch c.Stream.Tenancy {
+	case "", TenancyDeployment:
+	case TenancyApp:
+		if err := c.validateAppTenancy(); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("config: stream.tenancy is %s or %s, got %q", TenancyDeployment, TenancyApp, c.Stream.Tenancy)
+	}
+	switch c.Stream.Fallback {
+	case "", FallbackDeployment, FallbackRefuse:
+	default:
+		return fmt.Errorf("config: stream.fallback is %s or %s, got %q", FallbackDeployment, FallbackRefuse, c.Stream.Fallback)
+	}
+	if c.Stream.AppID < 0 {
+		return fmt.Errorf("config: stream.app_id is a Stream app's id, got %d", c.Stream.AppID)
+	}
 	if c.DataMove.Retention < 0 {
 		return fmt.Errorf("config: data_move.retention cannot be negative, got %s", c.DataMove.Retention)
+	}
+	return nil
+}
+
+// validateAppTenancy refuses an app mode that could not keep its promises. Registered apps
+// and their keys live in Postgres. A fixed user token is the deployment's own, and the voice
+// edge would prefer it to a token of the app a session is in. And the customer picks whose
+// stored Stream secret mints a caller's tokens, so it has to be one nobody could name for
+// themselves: noauth, and a proxy that does not declare kinds, take it from the caller's own
+// X-Customer-Id.
+func (c Config) validateAppTenancy() error {
+	if c.Postgres.DSN == "" {
+		return fmt.Errorf("config: stream.tenancy=%s keeps every app's keys in Postgres: set postgres.dsn", TenancyApp)
+	}
+	switch strings.TrimSpace(c.Auth.Mode) {
+	case "noauth":
+		return fmt.Errorf("config: stream.tenancy=%s cannot use auth.mode=noauth, where a caller names "+
+			"its own customer and so whose Stream app it acts in: set auth.mode=api_key, or proxy with "+
+			"auth.proxy_declares_kind", TenancyApp)
+	case "proxy":
+		if !c.Auth.ProxyDeclaresKind {
+			return fmt.Errorf("config: stream.tenancy=%s cannot use auth.mode=proxy without "+
+				"auth.proxy_declares_kind, which reads a caller's own X-Customer-Id: set "+
+				"auth.proxy_declares_kind=true, or auth.mode=api_key", TenancyApp)
+		}
+	}
+	if c.Stream.UserToken != "" {
+		return fmt.Errorf("config: stream.tenancy=%s cannot use stream.user_token, which is one "+
+			"app's fixed token: unset it", TenancyApp)
 	}
 	return nil
 }
@@ -340,8 +446,16 @@ func (c Config) export() error {
 		"auth.mode":                     c.Auth.Mode,
 		"auth.kek":                      c.Auth.KEK,
 		"auth.ops_key":                  c.Auth.OpsKey,
+		"auth.proxy_declares_kind":      fmt.Sprint(c.Auth.ProxyDeclaresKind),
 		"stream.api_key":                c.Stream.APIKey,
 		"stream.api_secret":             c.Stream.APISecret,
+		"stream.base_url":               c.Stream.BaseURL,
+		"stream.user_token":             c.Stream.UserToken,
+		"stream.tenancy":                c.Stream.Tenancy,
+		"stream.fallback":               c.Stream.Fallback,
+		"stream.app_id":                 appID(c.Stream.AppID),
+		"stream.trust_api_key_header":   fmt.Sprint(c.Stream.TrustAPIKeyHeader),
+		"stream.deny_registration":      strings.Join(c.Stream.DenyRegistration, ","),
 		"data_move.retention":           c.DataMove.Retention.String(),
 		"rate_limit.messages_per_day":   fmt.Sprint(c.RateLimit.MessagesPerDay),
 		"rate_limit.tokens_per_day":     fmt.Sprint(c.RateLimit.TokensPerDay),
@@ -373,4 +487,12 @@ func splitList(raw string) []string {
 		}
 	}
 	return entries
+}
+
+// appID writes an app id back, or nothing for one nobody set.
+func appID(id int64) string {
+	if id == 0 {
+		return ""
+	}
+	return fmt.Sprint(id)
 }

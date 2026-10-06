@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -61,6 +62,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
@@ -104,6 +106,9 @@ const suiteKEK = "router suite"
 const (
 	suiteStreamKey    = "suite-stream-key"
 	suiteStreamSecret = "suite-stream-secret"
+	// suiteStreamApp is that app's id, which the router knows, so work pinned to any other
+	// app is recognised as somebody else's.
+	suiteStreamApp = 1
 )
 
 // suiteOpsKey is what Stream staff's review paths are reached with.
@@ -123,8 +128,22 @@ type RouterSuite struct {
 	configs *appconfig.Store
 	live    *live.Client
 	sealer  *auth.Sealer
-	server  *httptest.Server
-	app     testApp
+	// manager runs the suite's sessions, for a test about what ends them from inside.
+	manager *session.Manager
+
+	// appMode runs the suite's Stream through app mode's own source, over the suite's
+	// database and keyring, with the deployment's app as the fallback. A suite sets it, and
+	// the two after it, before SetupSuite runs.
+	appMode bool
+	// appRefuses turns app mode's fallback off, so a customer with no app of its own is
+	// written nowhere.
+	appRefuses bool
+	// trustAPIKeyHeader lets X-Stream-Api-Key choose the minting key.
+	trustAPIKeyHeader bool
+	// denied are the app ids the suite refuses registration to.
+	denied []string
+	server *httptest.Server
+	app    testApp
 
 	// streams, modalities and conversations are what the suite's router was built from,
 	// kept so that otherNode can build a second one over the same routing.
@@ -155,6 +174,14 @@ type RouterSuite struct {
 	ears      *quietSTT
 	knowledge *knowledgeBase
 	memories  *keptMemories
+
+	// chat is the Stream Chat the conversations are written to and transcripts read from:
+	// the deployment's own app. apps gives a customer an app of its own instead, and
+	// stream is what the API resolves through.
+	chat   *chattest.Server
+	apps   *suiteApps
+	stream *streamapp.Clients
+
 	// dispatch is the pool the hooks hand an arriving call or message to, for a test to
 	// register a worker in and read back what it was given.
 	dispatch *dispatch.Pool
@@ -259,6 +286,19 @@ func (s *RouterSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.data = testData{suite: s}
 
+	s.chat = chattest.NewServer(s.T())
+	s.apps = &suiteApps{own: map[string]streamapp.Identity{}, readOnly: map[string]bool{}, waiting: map[string]bool{}, nowhere: map[string]bool{}, deployment: streamapp.NewDeployment(streamapp.DeploymentOptions{
+		APIKey: suiteStreamKey, Secret: suiteStreamSecret, BaseURL: s.chat.URL, App: suiteStreamApp,
+	})}
+	s.stream = streamapp.NewClients(s.apps, streamapp.ClientsOptions{})
+	if s.appMode {
+		stored, err := streamapp.NewStored(streamapp.StoredOptions{
+			Store: pgStore, Sealer: s.sealer, Deployment: s.apps.deployment, FallbackToDeployment: !s.appRefuses, Logger: logger,
+		})
+		s.Require().NoError(err)
+		s.stream = streamapp.NewClients(stored, streamapp.ClientsOptions{})
+	}
+	s.store.SetStreamPins(store.StreamPins{Deployment: s.apps.deployment.App, For: s.stream.Pin, Knowable: s.stream.DeploymentAppKnowable})
 	s.configs, err = appconfig.New(appconfig.Options{
 		Store: pgStore, Address: redisAddr, Logger: logger,
 	})
@@ -319,15 +359,17 @@ func (s *RouterSuite) SetupSuite() {
 		Policies:      policies,
 		Connectors:    s.connectors,
 		// Connector consents and credentials seal under the suite's key.
-		ConnectorSecrets: s.sealer,
-		PublicURL:        s.publicURL,
-		DashboardURL:     s.dashboardURL,
-		Quota:            limiter,
-		StreamKey:        suiteStreamKey,
-		StreamSecret:     suiteStreamSecret,
-		DataRetention:    time.Hour,
-		PluginHTTP:       s.mcpTransport(),
-		Logger:           logger,
+		ConnectorSecrets:  s.sealer,
+		PublicURL:         s.publicURL,
+		DashboardURL:      s.dashboardURL,
+		Quota:             limiter,
+		DataRetention:     time.Hour,
+		PluginHTTP:        s.mcpTransport(),
+		Stream:            s.stream,
+		HookSecret:        suiteStreamSecret,
+		TrustAPIKeyHeader: s.trustAPIKeyHeader,
+		DenyRegistration:  s.denied,
+		Logger:            logger,
 	})
 	s.Require().NoError(err)
 	listener.Config.Handler = server.Handler()
@@ -536,7 +578,7 @@ func (s *RouterSuite) sessionManager(
 	directory *node.Directory,
 	logger *slog.Logger,
 ) *session.Manager {
-	conversations := conversation.NewForChat(chattest.Client(s.T()))
+	conversations := conversation.NewForChats(conversation.StreamApps(s.stream))
 	s.T().Cleanup(conversations.Close)
 	s.conversations = conversations
 
@@ -551,16 +593,18 @@ func (s *RouterSuite) sessionManager(
 		TTS:           streams.TTS,
 		Memory:        remembering,
 		Conversations: conversations,
+		Stream:        s.stream,
 		Store:         s.store,
 		Configs:       s.configs,
 		Directory:     directory,
 		Logger:        logger,
-		Edge: func(session.Spec, *slog.Logger) (agent.Edge, error) {
+		Edge: func(context.Context, session.Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
 			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
 		},
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = sessions.Shutdown() })
+	s.manager = sessions
 	return sessions
 }
 
@@ -677,11 +721,12 @@ func (s *RouterSuite) otherNode() *httptest.Server {
 		TTS:           s.streams.TTS,
 		Memory:        &keptMemories{},
 		Conversations: s.conversations,
+		Stream:        s.stream,
 		Store:         s.store,
 		Configs:       s.configs,
 		Directory:     directory,
 		Logger:        logger,
-		Edge: func(session.Spec, *slog.Logger) (agent.Edge, error) {
+		Edge: func(context.Context, session.Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
 			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
 		},
 	})
@@ -689,18 +734,19 @@ func (s *RouterSuite) otherNode() *httptest.Server {
 	s.T().Cleanup(func() { _ = sessions.Shutdown() })
 
 	server, err := NewServer(Options{
-		Routers:      s.modalities,
-		Streams:      s.streams,
-		Sessions:     sessions,
-		Relay:        s.relayBus(logger),
-		Directory:    directory,
-		Store:        s.store,
-		Configs:      s.configs,
-		Live:         s.live,
-		Auth:         s.authenticator(),
-		AuthMode:     auth.APIKey,
-		StreamSecret: suiteStreamSecret,
-		Logger:       logger,
+		Routers:    s.modalities,
+		Streams:    s.streams,
+		Sessions:   sessions,
+		Relay:      s.relayBus(logger),
+		Directory:  directory,
+		Store:      s.store,
+		Configs:    s.configs,
+		Live:       s.live,
+		Auth:       s.authenticator(),
+		AuthMode:   auth.APIKey,
+		Stream:     s.stream,
+		HookSecret: suiteStreamSecret,
+		Logger:     logger,
 	})
 	s.Require().NoError(err)
 	other.Config.Handler = server.Handler()
@@ -850,6 +896,27 @@ func (c *testClient) do(method, path string, body, into any) int {
 }
 
 // call is do without decoding, for a test reading the error it was answered with.
+// raw is a request's whole answer, headers and all, its body already read.
+func (c *testClient) raw(method, path string, body any) *http.Response {
+	require := c.suite.Require()
+	payload := bytes.NewReader(nil)
+	if body != nil {
+		encoded, err := encode(body)
+		require.NoError(err)
+		payload = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequest(method, c.suite.server.URL+path, payload)
+	require.NoError(err)
+	request.Header = c.header.Clone()
+	request.Header.Set("Content-Type", "application/json")
+	response, err := c.suite.server.Client().Do(request)
+	require.NoError(err)
+	defer response.Body.Close()
+	_, err = readAll(response)
+	require.NoError(err)
+	return response
+}
+
 func (c *testClient) call(method, path string, body any) (int, []byte) {
 	require := c.suite.Require()
 	payload := bytes.NewReader(nil)
@@ -992,9 +1059,11 @@ func (u testUtils) callID() string {
 	return "call-" + u.uuid()
 }
 
-// number is an E.164 number nobody else holds.
+// number is an E.164 number nobody else holds. It is random rather than read off the clock,
+// which ticks in microseconds on some machines and so repeats every ten thousand numbers,
+// and nothing a suite holds is ever released.
 func (testUtils) number() string {
-	return fmt.Sprintf("+1512%07d", time.Now().UnixNano()%10_000_000)
+	return fmt.Sprintf("+1512%07d", rand.IntN(10_000_000))
 }
 
 // testData makes what a test runs against. Nothing it makes is cleaned up.
@@ -1129,4 +1198,89 @@ func readAll(response *http.Response) ([]byte, error) {
 	var buffer bytes.Buffer
 	_, err := buffer.ReadFrom(response.Body)
 	return buffer.Bytes(), err
+}
+
+// suiteApps is the Stream apps the suite's customers act in. A customer given none acts in
+// the deployment's app, which is the suite's chattest.
+type suiteApps struct {
+	mu         sync.Mutex
+	own        map[string]streamapp.Identity
+	deployment *streamapp.Deployment
+	// readOnly are customers whose work in the deployment's app may be read and not
+	// added to, as app mode leaves it once the fallback is off.
+	readOnly map[string]bool
+	// waiting are customers whose app cannot be told until the deployment's own is known.
+	waiting map[string]bool
+	// nowhere are customers with no app to act in at all.
+	nowhere map[string]bool
+	// perApp answers as app mode does, where customers act in apps of their own.
+	perApp bool
+}
+
+func (a *suiteApps) PerApp() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.perApp
+}
+
+func (a *suiteApps) For(ctx context.Context, customer string) (streamapp.Identity, error) {
+	a.mu.Lock()
+	identity, ok := a.own[customer]
+	waiting, nowhere := a.waiting[customer], a.nowhere[customer]
+	a.mu.Unlock()
+	switch {
+	case waiting:
+		return streamapp.Identity{}, streamapp.ErrDeploymentAppUnknown
+	case nowhere:
+		return streamapp.Identity{}, streamapp.ErrNoIdentity
+	case ok:
+		return identity, nil
+	}
+	return a.deployment.For(ctx, customer)
+}
+
+func (a *suiteApps) ForApp(ctx context.Context, customer string, app int64) (streamapp.Identity, error) {
+	a.mu.Lock()
+	readOnly := a.readOnly[customer]
+	a.mu.Unlock()
+	if readOnly && (app == 0 || app == a.deployment.App()) {
+		return streamapp.Identity{}, streamapp.ErrReadOnly
+	}
+	return a.ForAppReading(ctx, customer, app)
+}
+
+func (a *suiteApps) ForAppReading(ctx context.Context, customer string, app int64) (streamapp.Identity, error) {
+	a.mu.Lock()
+	identity, ok := a.own[customer]
+	waiting := a.waiting[customer]
+	a.mu.Unlock()
+	switch {
+	case waiting:
+		return streamapp.Identity{}, streamapp.ErrDeploymentAppUnknown
+	case ok && identity.StreamApp == app:
+		return identity, nil
+	}
+	return a.deployment.ForApp(ctx, customer, app)
+}
+
+// set changes how the suite's apps answer for a customer, and forgets what they said.
+func (s *RouterSuite) setApps(customer string, change func(*suiteApps)) {
+	s.apps.mu.Lock()
+	change(s.apps)
+	s.apps.mu.Unlock()
+	s.stream.Invalidate(customer)
+}
+
+// giveApp makes the customer act in an app of its own, a chattest of its own, from now on.
+func (s *RouterSuite) giveApp(customer string, app int64, key string) *chattest.Server {
+	own := chattest.NewServer(s.T())
+	s.apps.mu.Lock()
+	s.apps.own[customer] = streamapp.Identity{
+		CustomerID: customer, StreamApp: app, APIKey: key,
+		Secret: streamapp.NewSecret(key + "-secret"), BaseURL: own.URL,
+		Registered: true, AllowGuests: true,
+	}
+	s.apps.mu.Unlock()
+	s.stream.Invalidate(customer)
+	return own
 }

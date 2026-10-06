@@ -186,11 +186,17 @@ func run(options options, logger *slog.Logger) error {
 	}
 	defer cleanup()
 
+	// This demo runs in whichever Stream app its environment names; nothing below reads
+	// the environment for itself.
+	streamKey, streamSecret := os.Getenv("STREAM_API_KEY"), os.Getenv("STREAM_API_SECRET")
 	edge, err := streamedge.New(streamedge.Options{
-		CallID:   options.callID,
-		CallType: options.callType,
-		User:     streamedge.User{ID: options.userID, Name: "Vision Agent"},
-		Logger:   logger,
+		CallID:    options.callID,
+		CallType:  options.callType,
+		User:      streamedge.User{ID: options.userID, Name: "Vision Agent"},
+		APIKey:    streamKey,
+		APISecret: streamSecret,
+		UserToken: os.Getenv("STREAM_USER_TOKEN"),
+		Logger:    logger,
 	})
 	if err != nil {
 		return err
@@ -258,9 +264,11 @@ func run(options options, logger *slog.Logger) error {
 	// A voice call leaves nothing behind, so what was said is stored in a chat channel
 	// named after the agent. Without Stream credentials the conversation just is not kept.
 	transcript, err := chatlog.New(chatlog.Options{
-		AgentID: options.agent(),
-		Agent:   chatlog.User{ID: options.userID, Name: "Vision Agent"},
-		Logger:  logger,
+		AgentID:   options.agent(),
+		Agent:     chatlog.User{ID: options.userID, Name: "Vision Agent"},
+		APIKey:    streamKey,
+		APISecret: streamSecret,
+		Logger:    logger,
 	})
 	if err != nil {
 		logger.Warn("not storing the transcript", "error", err)
@@ -340,7 +348,9 @@ func buildTelephony(
 	if err != nil {
 		return nil, harness.Tools{}, err
 	}
-	stream, err := phone.NewStream(phone.StreamOptions{})
+	stream, err := phone.NewStream(phone.StreamOptions{
+		APIKey: os.Getenv("STREAM_API_KEY"), APISecret: os.Getenv("STREAM_API_SECRET"),
+	})
 	if err != nil {
 		return nil, harness.Tools{}, err
 	}

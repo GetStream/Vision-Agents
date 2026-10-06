@@ -214,12 +214,9 @@ func (r *Runner) ring(
 	contact store.Contact,
 ) {
 	finished := store.Contact{ID: contact.ID, State: store.Done}
+	spec := session.FromConfig(config)
 
-	placed, err := r.phone.Call(ctx, phone.CallRequest{
-		Owner: routing.Owner{CustomerID: campaign.CustomerID, Tags: campaign.Tags},
-		From:  campaign.FromNumber,
-		To:    contact.ToNumber,
-	})
+	placed, err := r.phone.Call(ctx, placing(campaign, contact, spec.CallType))
 	if err != nil {
 		finished.State = store.Failed
 		finished.Error = err.Error()
@@ -228,8 +225,7 @@ func (r *Runner) ring(
 	}
 	finished.VendorCallID = placed.VendorCallID
 
-	spec := session.FromConfig(config)
-	spec.CallID = "campaign-" + contact.ID
+	meet(&spec, placed)
 	spec.CampaignID = campaign.ID
 	spec.ContactID = contact.ID
 	// The agent placed this call, so it is told how to get past whatever answers before
@@ -254,6 +250,25 @@ func (r *Runner) ring(
 
 	r.hold(ctx, created)
 	r.finish(ctx, finished)
+}
+
+// placing is the call one contact is rung on. The answered leg is routed into the Stream
+// call this names, and the agent has to be in that same call: without naming it, the route
+// sends the person into a fresh call of its own while the agent waits in another.
+func placing(campaign store.Campaign, contact store.Contact, callType string) phone.CallRequest {
+	return phone.CallRequest{
+		Owner:    routing.Owner{CustomerID: campaign.CustomerID, Tags: campaign.Tags},
+		From:     campaign.FromNumber,
+		To:       contact.ToNumber,
+		CallID:   "campaign-" + contact.ID,
+		CallType: callType,
+	}
+}
+
+// meet puts the agent in the call the person was routed into.
+func meet(spec *session.Spec, placed phone.Placed) {
+	spec.CallID = placed.CallID
+	spec.CallType = placed.CallType
 }
 
 // hold waits for the conversation to end, and ends it if nothing else does.

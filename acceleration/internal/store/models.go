@@ -244,14 +244,19 @@ type PhoneNumber struct {
 	Capabilities []string `bun:"capabilities,array"`
 	// MonthlyCostMicros is millionths of a dollar per month, charged whether or not the
 	// number is used.
-	MonthlyCostMicros int64             `bun:"monthly_cost_micros,notnull"`
-	CustomerID        string            `bun:"customer_id,notnull"`
-	Tags              map[string]string `bun:"tags,type:jsonb,nullzero"`
+	MonthlyCostMicros int64  `bun:"monthly_cost_micros,notnull"`
+	CustomerID        string `bun:"customer_id,notnull"`
+	// StreamAppPK is the Stream app this was made in, and the one it is finished in. Zero,
+	// stored as NULL, is the deployment's own app.
+	StreamAppPK int64             `bun:"stream_app_pk,nullzero"`
+	Tags        map[string]string `bun:"tags,type:jsonb,nullzero"`
 	// VendorID is the vendor's own identifier, needed to release or reconfigure it.
 	VendorID string `bun:"vendor_id,nullzero"`
 	// StreamTrunkID is the SIP trunk calls to this number arrive on, empty until it has
 	// been attached to one.
 	StreamTrunkID string `bun:"stream_trunk_id,nullzero"`
+	// StreamRouteID is the routing rule made beside the trunk, in the same app.
+	StreamRouteID string `bun:"stream_route_id,nullzero"`
 	// StreamCallID and StreamCallType are the Stream call the routing rule puts callers
 	// in. They are what an arriving call is recognised by, since a webhook names the call
 	// rather than the number.
@@ -297,12 +302,15 @@ type CallResource struct {
 
 	// TrunkID is the Stream SIP trunk this call leg was given, and the row's identity: a
 	// call may own several, its own plus one per transfer into it.
-	TrunkID    string    `bun:"trunk_id,pk"`
-	RouteID    string    `bun:"route_id,notnull"`
-	CallType   string    `bun:"call_type,notnull"`
-	CallID     string    `bun:"call_id,notnull"`
-	CustomerID string    `bun:"customer_id,notnull"`
-	CreatedAt  time.Time `bun:"created_at,notnull"`
+	TrunkID    string `bun:"trunk_id,pk"`
+	RouteID    string `bun:"route_id,notnull"`
+	CallType   string `bun:"call_type,notnull"`
+	CallID     string `bun:"call_id,notnull"`
+	CustomerID string `bun:"customer_id,notnull"`
+	// StreamAppPK is the Stream app this was made in, and the one it is finished in. Zero,
+	// stored as NULL, is the deployment's own app.
+	StreamAppPK int64     `bun:"stream_app_pk,nullzero"`
+	CreatedAt   time.Time `bun:"created_at,notnull"`
 }
 
 // AgentConfig is a named set of the decisions a session is created with.
@@ -933,6 +941,9 @@ type Call struct {
 	// ID is the session id, which is the handle the caller already holds the call by.
 	ID         string `bun:"id,pk"`
 	CustomerID string `bun:"customer_id,notnull"`
+	// StreamAppPK is the Stream app this was made in, and the one it is finished in. Zero,
+	// stored as NULL, is the deployment's own app.
+	StreamAppPK int64 `bun:"stream_app_pk,nullzero"`
 	// CallID is the Stream call, and AgentID is the transcript channel.
 	CallID  string `bun:"call_id,notnull"`
 	AgentID string `bun:"agent_id,notnull"`
@@ -1416,6 +1427,9 @@ type AgentSession struct {
 	// ID is the session id the caller already holds the session by.
 	ID         string `bun:"id,pk"`
 	CustomerID string `bun:"customer_id,notnull"`
+	// StreamAppPK is the Stream app this was made in, and the one it is finished in. Zero,
+	// stored as NULL, is the deployment's own app.
+	StreamAppPK int64 `bun:"stream_app_pk,nullzero"`
 	// ConfigID names the stored config, and AgentName the name it was found by. The name
 	// is kept as well because it is what a caller filters on, and because renaming a
 	// config must not rewrite what older sessions were opened against.

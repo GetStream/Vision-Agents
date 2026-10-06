@@ -114,17 +114,18 @@ func (r *callRecorder) run() {
 func row(created *Session) store.Call {
 	spec := created.spec
 	call := store.Call{
-		ID:         created.id,
-		CustomerID: spec.CustomerID,
-		CallID:     spec.CallID,
-		AgentID:    spec.AgentID,
-		ConfigID:   spec.ConfigID,
-		CampaignID: spec.CampaignID,
-		ContactID:  spec.ContactID,
-		UserID:     spec.Caller.UserID,
-		Direction:  store.Inbound,
-		StartedAt:  created.created.UTC(),
-		Tags:       spec.Tags,
+		ID:          created.id,
+		CustomerID:  spec.CustomerID,
+		StreamAppPK: spec.StreamApp,
+		CallID:      spec.CallID,
+		AgentID:     spec.AgentID,
+		ConfigID:    spec.ConfigID,
+		CampaignID:  spec.CampaignID,
+		ContactID:   spec.ContactID,
+		UserID:      spec.Caller.UserID,
+		Direction:   store.Inbound,
+		StartedAt:   created.created.UTC(),
+		Tags:        spec.Tags,
 		// The spec here has already had a config folded into it, so these are what the
 		// call actually ran with rather than what either side asked for on its own.
 		STT:          spec.STTTarget,

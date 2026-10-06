@@ -34,7 +34,12 @@ func (c *Conversation) Publish(ctx context.Context, file sandbox.File) (sandbox.
 		return sandbox.Attachment{}, err
 	}
 
-	channel := c.service.client.Chat().Channel("agent", strings.TrimPrefix(c.data.CID, "agent:"))
+	// The file goes where the conversation is kept.
+	client, err := c.chat(ctx)
+	if err != nil {
+		return sandbox.Attachment{}, err
+	}
+	channel := client.Chat().Channel("agent", strings.TrimPrefix(c.data.CID, "agent:"))
 	uploader := &getstream.OnlyUserID{ID: c.data.Agent}
 	var url *string
 	if strings.HasPrefix(file.MIME, "image/") {

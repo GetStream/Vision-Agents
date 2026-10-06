@@ -2,14 +2,17 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -123,7 +126,7 @@ func (s *Server) createCallToken(ctx context.Context, request *createCallTokenRe
 	if s.store == nil {
 		return nil, huma.Error400BadRequest(noCalls)
 	}
-	if s.streamKey == "" || s.streamSecret == "" {
+	if s.stream == nil {
 		return nil, huma.Error400BadRequest(noStreamKeys)
 	}
 
@@ -145,24 +148,32 @@ func (s *Server) createCallToken(ctx context.Context, request *createCallTokenRe
 		userName = userID
 	}
 
-	callType := defaultCallType
+	// The token is for the app the agent joined the call in, which the running session
+	// knows best and the call row remembers after it.
+	callType, pin := defaultCallType, call.StreamAppPK
 	if s.sessions != nil {
 		if found, running := s.sessions.Get(call.ID, OwnerFrom(ctx)); running {
-			callType = found.Spec().CallType
+			callType, pin = found.Spec().CallType, found.Spec().StreamApp
 		}
 	}
-
-	client, err := getstream.NewClient(s.streamKey, s.streamSecret)
+	bound, err := s.streamForApp(ctx, customerID, pin, false)
+	if message, refused := refusal(err, callElsewhere, callReadOnly); refused {
+		return nil, huma.Error400BadRequest(message)
+	}
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
+	if bound, err = s.minting(ctx, bound); err != nil {
+		return nil, err
+	}
+
 	expiresAt := time.Now().UTC().Add(listenerTokenValidity)
-	token, err := client.CreateToken(userID, getstream.WithExpiration(listenerTokenValidity))
+	token, err := bound.Client.CreateToken(userID, getstream.WithExpiration(listenerTokenValidity))
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
 
-	return &createCallTokenResponse{Body: CallToken{ApiKey: s.streamKey,
+	return &createCallTokenResponse{Body: CallToken{ApiKey: bound.Identity.APIKey,
 		Token:     token,
 		UserId:    userID,
 		UserName:  userName,
@@ -181,7 +192,7 @@ func (s *Server) createChatToken(ctx context.Context, request *createChatTokenRe
 	if !ok {
 		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
-	if s.streamKey == "" || s.streamSecret == "" {
+	if s.stream == nil {
 		return nil, huma.Error400BadRequest(noStreamKeys)
 	}
 	if request.Body == nil {
@@ -204,16 +215,22 @@ func (s *Server) createChatToken(ctx context.Context, request *createChatTokenRe
 		userName = userID
 	}
 
-	client, err := getstream.NewClient(s.streamKey, s.streamSecret)
+	bound, err := s.agentStream(ctx, customerID, agentID)
+	if message, refused := refusal(err,
+		"that agent's conversation is kept in a Stream app this customer no longer acts in",
+		"that agent's conversation is kept in the router's shared Stream app, where this app no longer mints tokens"); refused {
+		return nil, huma.Error400BadRequest(message)
+	}
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
-
-	if _, err := client.UpdateUsers(ctx, &getstream.UpdateUsersRequest{
-		Users: map[string]getstream.UserRequest{
-			agentID: {ID: agentID},
-			userID:  {ID: userID, Name: &userName},
-		},
+	if bound, err = s.minting(ctx, bound); err != nil {
+		return nil, err
+	}
+	client := bound.Client
+	if err := conversation.CreateMissingUsers(ctx, client, map[string]getstream.UserRequest{
+		agentID: {ID: agentID},
+		userID:  {ID: userID, Name: &userName},
 	}); err != nil {
 		return nil, stack.Wrap(err)
 	}
@@ -244,7 +261,7 @@ func (s *Server) createChatToken(ctx context.Context, request *createChatTokenRe
 		return nil, stack.Wrap(err)
 	}
 
-	return &createChatTokenResponse{Body: ChatToken{ApiKey: s.streamKey,
+	return &createChatTokenResponse{Body: ChatToken{ApiKey: bound.Identity.APIKey,
 		Token:       token,
 		UserId:      userID,
 		UserName:    userName,
@@ -263,7 +280,7 @@ func (s *Server) getCallTranscript(ctx context.Context, request *getCallTranscri
 	if s.store == nil {
 		return nil, huma.Error400BadRequest(noCalls)
 	}
-	if s.transcripts == nil {
+	if s.stream == nil {
 		return nil, huma.Error400BadRequest(noTranscripts)
 	}
 
@@ -272,7 +289,10 @@ func (s *Server) getCallTranscript(ctx context.Context, request *getCallTranscri
 		return nil, huma.Error404NotFound(unknownCall)
 	}
 
-	said, err := s.transcripts.Transcript(ctx, call.AgentID)
+	said, err := s.transcriptOf(ctx, customerID, call)
+	if errors.Is(err, errNoStream) {
+		return nil, huma.Error400BadRequest(noTranscripts)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -288,6 +308,130 @@ func (s *Server) getCallTranscript(ctx context.Context, request *getCallTranscri
 		})
 	}
 	return &getCallTranscriptResponse{Body: messages}, nil
+}
+
+// streamFor is the Stream app a customer's new work is done in. A deployment with no
+// Stream app, or no app for this customer, is not an error: it is ok false, and the path
+// says what it cannot do.
+func (s *Server) streamFor(ctx context.Context, customerID string) (streamapp.Bound, bool, error) {
+	if s.stream == nil {
+		return streamapp.Bound{}, false, nil
+	}
+	bound, err := s.stream.For(ctx, customerID)
+	if errors.Is(err, streamapp.ErrNoIdentity) {
+		return streamapp.Bound{}, false, nil
+	}
+	if err != nil {
+		return streamapp.Bound{}, false, err
+	}
+	return bound, true, nil
+}
+
+// errNoStream is a deployment with no Stream app, or none for the customer.
+var errNoStream = errors.New("api: no Stream app is configured for this customer")
+
+// streamForApp is the Stream app work already pinned to one is finished in: the app the
+// call or session was made in, wherever its customer acts now. errNoStream says there is no
+// Stream at all; streamapp's errors say the pinned app is not one this customer can act in.
+func (s *Server) streamForApp(ctx context.Context, customerID string, app int64, reading bool) (streamapp.Bound, error) {
+	if s.stream == nil {
+		return streamapp.Bound{}, errNoStream
+	}
+	resolve := s.stream.ForApp
+	if reading {
+		// Read back, work kept in the router's shared app is reached even once the customer
+		// may no longer write there.
+		resolve = s.stream.ForAppReading
+	}
+	bound, err := resolve(ctx, customerID, app)
+	if errors.Is(err, streamapp.ErrNoIdentity) {
+		return streamapp.Bound{}, errNoStream
+	}
+	return bound, err
+}
+
+// elsewhere reports whether a pinned app is one the customer cannot act in from here:
+// moved away from, disconnected, or never theirs.
+func elsewhere(err error) bool {
+	return errors.Is(err, streamapp.ErrStreamAppMoved) || errors.Is(err, streamapp.ErrStreamAppDisconnected)
+}
+
+// refusal is what work pinned to an app answers when nothing is to be minted for it: no
+// Stream app at all, an app the customer left, or one it may only read there.
+func refusal(err error, left, readOnly string) (string, bool) {
+	switch {
+	case errors.Is(err, errNoStream):
+		return noStreamKeys, true
+	case elsewhere(err):
+		return left, true
+	case errors.Is(err, streamapp.ErrReadOnly):
+		return readOnly, true
+	}
+	return "", false
+}
+
+// callElsewhere is what a call made in an app the customer no longer acts in answers.
+const callElsewhere = "that call was made in a Stream app this customer no longer acts in"
+
+// callReadOnly is what a call made in the router's shared app answers once this customer
+// may no longer act there: what was said can be read, and nothing more is minted.
+const callReadOnly = "that call was made in the router's shared Stream app, where this app no longer mints tokens"
+
+// transcriptOf is what was said on a call, read in the app the call was made in. A call
+// made in an app the customer no longer acts in has nothing readable from here.
+func (s *Server) transcriptOf(ctx context.Context, customerID string, call store.Call) ([]chatlog.Spoken, error) {
+	bound, err := s.streamForApp(ctx, customerID, call.StreamAppPK, true)
+	if elsewhere(err) {
+		return []chatlog.Spoken{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return chatlog.NewReaderFromClient(bound.Client).Transcript(ctx, s.transcriptRead(ctx, customerID, call))
+}
+
+// agentStream is the app an agent's channel is in: the one its most recent session was
+// made in, or for an agent nobody has spoken to yet, the customer's own.
+func (s *Server) agentStream(ctx context.Context, customerID, agentID string) (streamapp.Bound, error) {
+	if s.store != nil {
+		latest, err := s.store.QuerySessions(ctx, customerID, store.SessionFilter{AgentID: agentID, Limit: 1})
+		if err != nil {
+			return streamapp.Bound{}, err
+		}
+		if len(latest) == 1 {
+			return s.streamForApp(ctx, customerID, latest[0].StreamAppPK, false)
+		}
+	}
+	bound, ok, err := s.streamFor(ctx, customerID)
+	if err == nil && !ok {
+		return streamapp.Bound{}, errNoStream
+	}
+	return bound, err
+}
+
+// transcriptSlack widens a call's window by the time the router's clock and Stream's may
+// disagree, so the first and last lines are not lost to a timestamp a moment off.
+const transcriptSlack = 2 * time.Second
+
+// transcriptRead is where a call's transcript was written. A call bound to a conversation
+// wrote into that conversation's channel, beside what was typed before and after it, so
+// only the call's own window is read. A call with no session row read its agent's channel
+// before there were session rows, and still does.
+func (s *Server) transcriptRead(ctx context.Context, customerID string, call store.Call) chatlog.Read {
+	channel := call.AgentID
+	if stored, err := s.store.StoredSession(ctx, customerID, call.ID); err == nil {
+		channel = transcriptChannel(stored)
+	}
+	read := chatlog.Read{
+		Channel:  channel,
+		Customer: customerID,
+		Agent:    call.AgentID,
+		From:     call.StartedAt.Add(-transcriptSlack),
+	}
+	if call.EndedAt != nil {
+		read.To = call.EndedAt.Add(transcriptSlack)
+	}
+	return read
 }
 
 // getCallEvents returns what the conversation decided on one call, oldest first.
@@ -353,13 +497,9 @@ func (s *Server) getCallTimeline(ctx context.Context, request *getCallTimelineRe
 
 	// The transcript is worth having but not worth failing over: the timings are the
 	// part of this view that only this service holds.
-	var said []chatlog.Spoken
-	if s.transcripts != nil {
-		said, err = s.transcripts.Transcript(ctx, call.AgentID)
-		if err != nil {
-			s.logger.Error("could not read the transcript for a timeline",
-				"call", call.ID, "error", err)
-		}
+	said, err := s.transcriptOf(ctx, customerID, call)
+	if err != nil && !errors.Is(err, errNoStream) {
+		s.logger.Error("could not read the transcript for a timeline", "call", call.ID, "error", err)
 	}
 
 	return &getCallTimelineResponse{Body: timelineOf(turns, said, models)}, nil

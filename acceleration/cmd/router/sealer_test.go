@@ -12,8 +12,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 )
 
-// ConnectorSealerSuite covers how the router builds the keyring connector credentials are
-// sealed under, starting from the hosted deployment's proxy mode with no key at all.
+// ConnectorSealerSuite covers how the router builds the keyring the secrets it holds are
+// sealed under, connector credentials and Stream app keys, starting from the hosted
+// deployment's proxy mode with no key at all.
 type ConnectorSealerSuite struct {
 	suite.Suite
 	settings config.Config
@@ -41,7 +42,7 @@ func (s *ConnectorSealerSuite) SetupTest() {
 }
 
 func (s *ConnectorSealerSuite) TestProxyStartsWithoutAKEKWhenConnectorsAreOff() {
-	sealer, err := newConnectorSealer(s.settings)
+	sealer, err := newSecretSealer(s.settings)
 	s.Require().NoError(err)
 	s.Nil(sealer)
 
@@ -52,8 +53,9 @@ func (s *ConnectorSealerSuite) TestProxyStartsWithoutAKEKWhenConnectorsAreOff() 
 func (s *ConnectorSealerSuite) TestProxyWithConnectorsOnRefusesToStartWithoutAKeyring() {
 	s.settings.Connectors.Enabled = true
 
-	_, err := newConnectorSealer(s.settings)
+	_, err := newSecretSealer(s.settings)
 	s.ErrorContains(err, "connectors.enabled needs a key encryption keyring")
+	s.NotContains(err.Error(), "stream.tenancy")
 	s.ErrorContains(err, "ROUTER_AUTH_KEK_V1")
 }
 
@@ -61,7 +63,7 @@ func (s *ConnectorSealerSuite) TestProxyWithConnectorsOnBuildsTheSealerFromTheKe
 	s.settings.Connectors.Enabled = true
 	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
 
-	sealer, err := newConnectorSealer(s.settings)
+	sealer, err := newSecretSealer(s.settings)
 	s.Require().NoError(err)
 	s.Equal(1, sealer.CurrentVersion())
 }
@@ -74,7 +76,7 @@ func (s *ConnectorSealerSuite) TestAuthKEKIsVersionOne() {
 	sealed, err := apiSecrets.Seal("vas_live_s3cret")
 	s.Require().NoError(err)
 
-	sealer, err := newConnectorSealer(s.settings)
+	sealer, err := newSecretSealer(s.settings)
 	s.Require().NoError(err)
 	opened, err := sealer.OpenWithAADVersion(sealed, nil, 1)
 	s.Require().NoError(err)
@@ -84,14 +86,14 @@ func (s *ConnectorSealerSuite) TestAuthKEKIsVersionOne() {
 func (s *ConnectorSealerSuite) TestARowSealedUnderVersionOneOpensAfterVersionTwoIsAdded() {
 	s.settings.Connectors.Enabled = true
 	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
-	before, err := newConnectorSealer(s.settings)
+	before, err := newSecretSealer(s.settings)
 	s.Require().NoError(err)
 	sealed, err := before.SealWithAAD("connector secret", []byte("connection"))
 	s.Require().NoError(err)
 
 	s.T().Setenv("ROUTER_AUTH_KEK_V2", "second-key")
 	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "2")
-	after, err := newConnectorSealer(s.settings)
+	after, err := newSecretSealer(s.settings)
 	s.Require().NoError(err)
 	s.Equal(2, after.CurrentVersion())
 	opened, err := after.OpenWithAADVersion(sealed, []byte("connection"), 1)
@@ -104,7 +106,7 @@ func (s *ConnectorSealerSuite) TestAVersionWithoutItsKeyIsRefused() {
 	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
 	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "2")
 
-	_, err := newConnectorSealer(s.settings)
+	_, err := newSecretSealer(s.settings)
 	s.ErrorContains(err, "needs a key for the version ROUTER_AUTH_KEK_VERSION names")
 	s.ErrorContains(err, "versions set: [1]")
 }
@@ -114,7 +116,7 @@ func (s *ConnectorSealerSuite) TestAVersionThatIsNotANumberIsRefused() {
 	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
 	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "two")
 
-	_, err := newConnectorSealer(s.settings)
+	_, err := newSecretSealer(s.settings)
 	s.ErrorContains(err, "ROUTER_AUTH_KEK_VERSION to be a positive integer")
 }
 
@@ -123,7 +125,7 @@ func (s *ConnectorSealerSuite) TestAKeyPastedIntoTheVersionIsNotRepeatedInTheErr
 	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
 	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "pasted-key-encryption-key")
 
-	_, err := newConnectorSealer(s.settings)
+	_, err := newSecretSealer(s.settings)
 	s.Require().Error(err)
 	s.NotContains(err.Error(), "pasted-key-encryption-key")
 }
@@ -133,7 +135,7 @@ func (s *ConnectorSealerSuite) TestAnAllDigitKeyPastedIntoTheVersionIsNotRepeate
 	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
 	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "8473019385746201")
 
-	_, err := newConnectorSealer(s.settings)
+	_, err := newSecretSealer(s.settings)
 	s.Require().Error(err)
 	s.NotContains(err.Error(), "8473019385746201")
 }
@@ -143,13 +145,13 @@ func (s *ConnectorSealerSuite) TestMovingTheVersionBackKeepsNewerKeysLoaded() {
 	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
 	s.T().Setenv("ROUTER_AUTH_KEK_V2", "second-key")
 	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "2")
-	forward, err := newConnectorSealer(s.settings)
+	forward, err := newSecretSealer(s.settings)
 	s.Require().NoError(err)
 	sealed, err := forward.SealWithAAD("connector secret", []byte("connection"))
 	s.Require().NoError(err)
 
 	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "1")
-	back, err := newConnectorSealer(s.settings)
+	back, err := newSecretSealer(s.settings)
 	s.Require().NoError(err)
 	s.Equal(1, back.CurrentVersion())
 	opened, err := back.OpenWithAADVersion(sealed, []byte("connection"), 2)
@@ -162,7 +164,7 @@ func (s *ConnectorSealerSuite) TestOnlyThePlainSpellingOfAVersionIsAKey() {
 	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
 	s.T().Setenv("ROUTER_AUTH_KEK_V01", "another-key")
 
-	sealer, err := newConnectorSealer(s.settings)
+	sealer, err := newSecretSealer(s.settings)
 	s.Require().NoError(err)
 	sealed, err := sealer.SealWithAAD("connector secret", nil)
 	s.Require().NoError(err)
@@ -178,6 +180,45 @@ func (s *ConnectorSealerSuite) TestTwoDifferentVersionOneKeysAreRefused() {
 	s.settings.Auth.KEK = "first-key"
 	s.T().Setenv("ROUTER_AUTH_KEK_V1", "another-key")
 
-	_, err := newConnectorSealer(s.settings)
+	_, err := newSecretSealer(s.settings)
 	s.ErrorContains(err, "both version 1 and differ")
+}
+
+func (s *ConnectorSealerSuite) TestAppTenancyBuildsTheSealerInProxyMode() {
+	// Every Stream app's keys are sealed under the keyring, whatever decides who calls.
+	s.settings.Stream.Tenancy = config.TenancyApp
+	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+
+	sealer, err := newSecretSealer(s.settings)
+
+	s.Require().NoError(err)
+	s.Require().NotNil(sealer)
+	s.Equal(1, sealer.CurrentVersion())
+}
+
+func (s *ConnectorSealerSuite) TestAppTenancyWithoutAKeyringRefusesToStart() {
+	s.settings.Stream.Tenancy = config.TenancyApp
+
+	_, err := newSecretSealer(s.settings)
+
+	s.ErrorContains(err, "stream.tenancy=app needs a key encryption keyring")
+	s.ErrorContains(err, "ROUTER_AUTH_KEK_V1")
+}
+
+func (s *ConnectorSealerSuite) TestARefusalNamesEverySettingThatNeedsTheKeyring() {
+	s.settings.Connectors.Enabled = true
+	s.settings.Stream.Tenancy = config.TenancyApp
+
+	_, err := newSecretSealer(s.settings)
+
+	s.ErrorContains(err, "connectors.enabled and stream.tenancy=app need a key encryption keyring")
+}
+
+func (s *ConnectorSealerSuite) TestProxyStartsWithoutAKeyWhenNothingNeedsOne() {
+	s.settings.Stream.Tenancy = config.TenancyDeployment
+
+	sealer, err := newSecretSealer(s.settings)
+
+	s.Require().NoError(err)
+	s.Nil(sealer)
 }

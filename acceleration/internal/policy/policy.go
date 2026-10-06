@@ -64,6 +64,10 @@ type decision struct {
 	models  []string
 	tags    routing.Tags
 	screen  bool
+	// ownApp is a customer that must act in a Stream app of its own.
+	ownApp bool
+	// unread is a decision made without the policies, which could not be read.
+	unread  error
 	expires time.Time
 }
 
@@ -113,6 +117,21 @@ func (e *Enforcer) Join(appID, organizationID string) {
 	}()
 }
 
+// RequiresOwnStreamApp reports whether a customer must act in a Stream app of its own. It is
+// the one thing here that fails closed: a policy that could not be read is taken to
+// require it, since the other answer writes a customer into an app it may have been kept
+// out of on purpose.
+func (e *Enforcer) RequiresOwnStreamApp(ctx context.Context, customerID string) (bool, error) {
+	if e == nil || customerID == "" {
+		return false, nil
+	}
+	decided := e.decide(ctx, customerID)
+	if decided.unread != nil {
+		return true, decided.unread
+	}
+	return decided.ownApp, nil
+}
+
 // Save replaces a scope's policy and drops the decisions it may have changed.
 func (e *Enforcer) Save(ctx context.Context, scope store.PolicyScope, id string, document store.PolicyDocument) error {
 	if err := e.config.SavePolicy(ctx, scope, id, document); err != nil {
@@ -154,6 +173,7 @@ func (e *Enforcer) decide(ctx context.Context, customerID string) decision {
 	if err != nil {
 		e.logger.Error("could not read a customer's policies, allowing the request",
 			"customer", customerID, "error", err)
+		decided.unread = err
 	}
 	decided.expires = now.Add(decisionTTL)
 	e.mu.Lock()
@@ -172,6 +192,12 @@ func (e *Enforcer) work(ctx context.Context, appID string) (decision, error) {
 	if err != nil {
 		return decision{}, err
 	}
+	// An app seen for the first time is recorded under its organization in the background.
+	// Until that lands, the organization it came in under is the one whose floor applies:
+	// an app's first requests are not the ones to escape it.
+	if pending, ok := e.members.Load(appID); ok && organizationID == "" {
+		organizationID, _ = pending.(string)
+	}
 	var organization store.PolicyDocument
 	if organizationID != "" {
 		if organization, err = e.config.Policy(ctx, store.ScopeOrganization, organizationID); err != nil {
@@ -185,6 +211,8 @@ func (e *Enforcer) work(ctx context.Context, appID string) (decision, error) {
 		// The organization's tags are laid over the app's, as both are over the request's.
 		tags:   routing.Admission{Tags: organization.Tags}.Labelled(app.Tags),
 		screen: enabled(organization.PromptInjection) || enabled(app.PromptInjection),
+		// Either scope requiring it requires it: an app can ask for it and cannot opt out.
+		ownApp: enabled(organization.RequireOwnStreamApp) || enabled(app.RequireOwnStreamApp),
 	}
 	if organization.Budget != nil {
 		if decided.refusal, err = e.over(ctx, store.ScopeOrganization, organizationID, *organization.Budget); err != nil {

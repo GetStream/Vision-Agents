@@ -186,7 +186,7 @@ func saved(t *testing.T, c *Conversation) {
 // conversation rather than refusing the resume for failing to guess it.
 func TestAConversationIsResumedWithoutKnowingWhichAgentOpenedIt(t *testing.T) {
 	_, client := newChat(t)
-	s := newService(client)
+	s := NewForChat(client)
 	defer s.Close()
 
 	c, _, _, err := s.Open(context.Background(), "customer", "session-one", "")
@@ -210,7 +210,7 @@ func TestAConversationIsResumedWithoutKnowingWhichAgentOpenedIt(t *testing.T) {
 
 	// And one that has never seen it, which is every other replica: the owner is read
 	// back off the channel instead of out of memory.
-	cold := newService(client)
+	cold := NewForChat(client)
 	defer cold.Close()
 	resumed, _, _, err := cold.Open(context.Background(), "customer", "", cid)
 	require.NoError(t, err)
@@ -223,7 +223,7 @@ func TestAConversationIsResumedWithoutKnowingWhichAgentOpenedIt(t *testing.T) {
 
 func TestActivityPersistsAndRestores(t *testing.T) {
 	db, client := newChat(t)
-	s := newService(client)
+	s := NewForChat(client)
 	defer s.Close()
 	c, h, tr, err := s.Open(context.Background(), "customer", "support-agent", "")
 	require.NoError(t, err)
@@ -292,7 +292,7 @@ func TestActivityPersistsAndRestores(t *testing.T) {
 
 func TestContextForCallerSeedsCompletedTurnsWithoutOpeningTheConversation(t *testing.T) {
 	_, client := newChat(t)
-	service := newService(client)
+	service := NewForChat(client)
 	t.Cleanup(service.Close)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
@@ -324,7 +324,7 @@ func TestContextForCallerSeedsCompletedTurnsWithoutOpeningTheConversation(t *tes
 // unfinished reply off Stream and settles it there.
 func TestAReplyCutOffByAStopIsInterruptedWhenReopened(t *testing.T) {
 	db, client := newChat(t)
-	s := newService(client)
+	s := NewForChat(client)
 	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
 	require.NoError(t, err)
 	require.NoError(t, c.Begin("question"))
@@ -332,7 +332,7 @@ func TestAReplyCutOffByAStopIsInterruptedWhenReopened(t *testing.T) {
 	id := current(c).ID
 	s.Close() // Simulate process stopping without the session's graceful cancellation.
 
-	restarted := newService(client)
+	restarted := NewForChat(client)
 	defer restarted.Close()
 	resumed, _, _, err := restarted.Open(context.Background(), "customer", "support-agent", c.CID())
 	require.NoError(t, err)
@@ -360,7 +360,7 @@ func TestBoundedOrdinaryHistory(t *testing.T) {
 }
 func TestCancelAndSkillsStopTimers(t *testing.T) {
 	_, client := newChat(t)
-	s := newService(client)
+	s := NewForChat(client)
 	defer s.Close()
 	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
 	require.NoError(t, err)
@@ -380,7 +380,7 @@ func TestCancelAndSkillsStopTimers(t *testing.T) {
 
 func TestLatePreviousTurnDoesNotCancelNextQuestion(t *testing.T) {
 	_, client := newChat(t)
-	s := newService(client)
+	s := NewForChat(client)
 	defer s.Close()
 	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
 	require.NoError(t, err)
@@ -409,7 +409,7 @@ func TestLatePreviousTurnDoesNotCancelNextQuestion(t *testing.T) {
 
 func TestHistoryPaginationAndPendingOverlay(t *testing.T) {
 	db, client := newChat(t)
-	s := newService(client)
+	s := NewForChat(client)
 	defer s.Close()
 	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
 	require.NoError(t, err)
@@ -439,7 +439,7 @@ func TestHistoryPaginationAndPendingOverlay(t *testing.T) {
 
 func TestConcurrentSkillsKeepActivityUntilAllSettle(t *testing.T) {
 	_, client := newChat(t)
-	s := newService(client)
+	s := NewForChat(client)
 	defer s.Close()
 	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
 	require.NoError(t, err)
@@ -464,7 +464,7 @@ func TestConcurrentSkillsKeepActivityUntilAllSettle(t *testing.T) {
 
 func TestConversationKeepsItsMemoryScopeAcrossResumeAndRestart(t *testing.T) {
 	_, client := newChat(t)
-	service := newService(client)
+	service := NewForChat(client)
 	scope := memory.Scope{UserID: "organization-cats"}
 	c, _, _, err := service.Open(t.Context(), "customer", "agent", "", scope)
 	require.NoError(t, err)
@@ -479,7 +479,7 @@ func TestConversationKeepsItsMemoryScopeAcrossResumeAndRestart(t *testing.T) {
 	c.Release()
 	service.Close()
 	// Empty local state: the binding must come from Stream's channel metadata.
-	service = newService(client)
+	service = NewForChat(client)
 	defer service.Close()
 	_, _, _, err = service.Open(t.Context(), "customer", "agent", cid, memory.Scope{UserID: "organization-dogs"})
 	require.ErrorContains(t, err, "another memory scope")
@@ -493,7 +493,7 @@ func TestConversationKeepsItsMemoryScopeAcrossResumeAndRestart(t *testing.T) {
 // cannot decide whose conversation it is.
 func TestACreatedChannelCarriesTheCallersCustomButNotItsOwnership(t *testing.T) {
 	db, client := newChat(t)
-	service := newService(client)
+	service := NewForChat(client)
 	defer service.Close()
 
 	c, _, _, err := service.OpenForCallerWithCustom(t.Context(), "customer", "agent", "", "guest-reader", "",
@@ -516,25 +516,25 @@ func TestACreatedChannelCarriesTheCallersCustomButNotItsOwnership(t *testing.T) 
 
 func TestDescribeNamesTheChannel(t *testing.T) {
 	db, client := newChat(t)
-	service := newService(client)
+	service := NewForChat(client)
 	defer service.Close()
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "guest-reader")
 	require.NoError(t, err)
 	defer c.Release()
 
-	require.NoError(t, service.Describe(t.Context(), c.CID(), "Add push to an Android app", "They asked how to register a device."))
+	require.NoError(t, service.Describe(t.Context(), "customer", c.CID(), "Add push to an Android app", "They asked how to register a device."))
 
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	channel := db.channels[strings.TrimPrefix(c.CID(), "agent:")]
 	require.Equal(t, "Add push to an Android app", channel["name"])
 	require.Equal(t, "They asked how to register a device.", channel["description"])
-	require.Error(t, service.Describe(t.Context(), "messaging:general", "title", ""))
+	require.Error(t, service.Describe(t.Context(), "customer", "messaging:general", "title", ""))
 }
 
 func TestPersonalConversationBindsMembershipMessagesAndHistoryToCaller(t *testing.T) {
 	db, client := newChat(t)
-	service := newService(client)
+	service := NewForChat(client)
 	scope := memory.Scope{UserID: "shared-project-memory"}
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee-one", scope)
 	require.NoError(t, err)
@@ -561,7 +561,7 @@ func TestPersonalConversationBindsMembershipMessagesAndHistoryToCaller(t *testin
 	c.Release()
 	service.Close()
 	// Ownership must survive a restart, which keeps nothing local.
-	service = newService(client)
+	service = NewForChat(client)
 	defer service.Close()
 	for _, caller := range []string{"employee-two", ""} {
 		_, _, _, err = service.OpenForCaller(t.Context(), "customer", "agent", cid, caller, scope)
@@ -579,7 +579,7 @@ func TestPersonalConversationBindsMembershipMessagesAndHistoryToCaller(t *testin
 
 func TestSharedMembersResumeContextWithTheirOwnCommandsAndLoseAccessOnRemoval(t *testing.T) {
 	db, client := newChat(t)
-	s := newService(client)
+	s := NewForChat(client)
 	t.Cleanup(s.Close)
 	alice, _, _, err := s.OpenForCaller(t.Context(), "customer", "agent", "", "alice")
 	require.NoError(t, err)
@@ -633,7 +633,7 @@ func TestSharedMembersResumeContextWithTheirOwnCommandsAndLoseAccessOnRemoval(t 
 	bob.Release()
 	s.Close()
 
-	restarted := newService(client)
+	restarted := NewForChat(client)
 	defer restarted.Close()
 	bob, previous, _, err = restarted.OpenForCaller(t.Context(), "customer", "agent", cid, "bob")
 	require.NoError(t, err)
@@ -685,14 +685,14 @@ func TestMalformedSharedMetadataDoesNotRelaxOwnership(t *testing.T) {
 
 func TestEmptyCallerOwnedChannelInitializesCommandLedgerWithoutRecreatingIt(t *testing.T) {
 	db, client := newChat(t)
-	service := newService(client)
+	service := NewForChat(client)
 	conversation, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
 	cid := conversation.CID()
 	conversation.Release()
 	service.Close()
 
-	service = newService(client)
+	service = NewForChat(client)
 	t.Cleanup(service.Close)
 	conversation, _, _, err = service.OpenForCaller(t.Context(), "customer", "agent", cid, "employee")
 	require.NoError(t, err)
@@ -714,7 +714,7 @@ func TestEmptyCallerOwnedChannelInitializesCommandLedgerWithoutRecreatingIt(t *t
 
 func TestUserMessageIsStoredUnderItsCommandID(t *testing.T) {
 	db, client := newChat(t)
-	s := newService(client)
+	s := NewForChat(client)
 	t.Cleanup(s.Close)
 	c, _, _, err := s.OpenForCaller(t.Context(), "customer", "agent", "", "employee-one")
 	require.NoError(t, err)
@@ -731,7 +731,7 @@ func TestUserMessageIsStoredUnderItsCommandID(t *testing.T) {
 
 func TestCommandAcceptanceIsAtomicAndDuplicateSafeAcrossRestart(t *testing.T) {
 	db, client := newChat(t)
-	service := newService(client)
+	service := NewForChat(client)
 	t.Cleanup(service.Close)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
@@ -773,7 +773,7 @@ func TestCommandAcceptanceIsAtomicAndDuplicateSafeAcrossRestart(t *testing.T) {
 	c.Release()
 	service.Close()
 	// A restart keeps nothing local: the command is known again from Stream alone.
-	recovered := newService(client)
+	recovered := NewForChat(client)
 	t.Cleanup(recovered.Close)
 	c, _, _, err = recovered.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
 	require.NoError(t, err)
@@ -793,13 +793,13 @@ func TestCommandAcceptanceIsAtomicAndDuplicateSafeAcrossRestart(t *testing.T) {
 
 func TestInterruptedCommandNeverReceivesASecondExecutionClaim(t *testing.T) {
 	_, client := newChat(t)
-	service := newService(client)
+	service := NewForChat(client)
 	c, _, _, err := service.Open(t.Context(), "customer", "agent", "")
 	require.NoError(t, err)
 	first, err := c.BeginCommand("interrupted", "question", "")
 	require.NoError(t, err)
 	service.Close() // No terminal model event, as after an interrupted worker.
-	recovered := newService(client)
+	recovered := NewForChat(client)
 	defer recovered.Close()
 	c, _, _, err = recovered.Open(t.Context(), "customer", "agent", c.CID())
 	require.NoError(t, err)
@@ -812,13 +812,13 @@ func TestInterruptedCommandNeverReceivesASecondExecutionClaim(t *testing.T) {
 
 func TestBlankConversationRetainsItsLedgerAcrossRestart(t *testing.T) {
 	_, client := newChat(t)
-	service := newService(client)
+	service := NewForChat(client)
 	c, _, _, err := service.Open(t.Context(), "customer", "agent", "")
 	require.NoError(t, err)
 	service.Close()
 	_, err = c.BeginCommand("after-close", "must not write", "")
 	require.Error(t, err)
-	recovered := newService(client)
+	recovered := NewForChat(client)
 	defer recovered.Close()
 	c, _, _, err = recovered.Open(t.Context(), "customer", "agent", c.CID())
 	require.NoError(t, err)
@@ -829,7 +829,7 @@ func TestBlankConversationRetainsItsLedgerAcrossRestart(t *testing.T) {
 
 func TestCommandLookupDoesNotAcceptOrChangeTheActiveReply(t *testing.T) {
 	_, client := newChat(t)
-	service := newService(client)
+	service := NewForChat(client)
 	t.Cleanup(service.Close)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
@@ -863,7 +863,7 @@ func TestCommandLookupDoesNotAcceptOrChangeTheActiveReply(t *testing.T) {
 
 func TestCancelCommandPreservesOtherCommandsAndDurableReceipts(t *testing.T) {
 	_, client := newChat(t)
-	service := newService(client)
+	service := NewForChat(client)
 	t.Cleanup(service.Close)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
@@ -890,7 +890,7 @@ func TestCancelCommandPreservesOtherCommandsAndDurableReceipts(t *testing.T) {
 
 func TestLateOutputFromAStoppedCommandNeverJoinsTheNextReply(t *testing.T) {
 	_, client := newChat(t)
-	service := newService(client)
+	service := NewForChat(client)
 	t.Cleanup(service.Close)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
@@ -932,7 +932,7 @@ func TestLateOutputFromAStoppedCommandNeverJoinsTheNextReply(t *testing.T) {
 
 func TestACommandIsReconcilableAfterItsConversationClosed(t *testing.T) {
 	_, client := newChat(t)
-	service := newService(client)
+	service := NewForChat(client)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
 	accepted, err := c.BeginCommand("abandoned", "Question", "")
@@ -955,7 +955,7 @@ func TestACommandIsReconcilableAfterItsConversationClosed(t *testing.T) {
 
 	// After a restart Stream is all there is, and it must still answer.
 	service.Close()
-	restarted := newService(client)
+	restarted := NewForChat(client)
 	t.Cleanup(restarted.Close)
 	recovered, err := restarted.CommandForCaller(t.Context(), "customer", "agent", cid, "employee", "abandoned")
 	require.NoError(t, err)
@@ -967,7 +967,7 @@ func TestACommandIsReconcilableAfterItsConversationClosed(t *testing.T) {
 
 func TestConcurrentOldCommandStopsPreserveTheNextReply(t *testing.T) {
 	_, client := newChat(t)
-	service := newService(client)
+	service := NewForChat(client)
 	t.Cleanup(service.Close)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
@@ -1057,7 +1057,7 @@ func partiallySetAttachments(value any) any {
 // text is stored.
 func TestRepliesFollowStreamAIProtocol(t *testing.T) {
 	db, client := newChat(t)
-	s := newService(client)
+	s := NewForChat(client)
 	defer s.Close()
 	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
 	require.NoError(t, err)

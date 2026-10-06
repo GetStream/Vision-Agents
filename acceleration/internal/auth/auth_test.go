@@ -199,6 +199,71 @@ func TestProxy(t *testing.T) {
 	})
 }
 
+func TestProxyThatDeclaresKinds(t *testing.T) {
+	// The hosted gateway authenticates every caller and says which kind it verified. The
+	// router then believes only what that gateway writes.
+	authenticator := NewProxy(ProxyOptions{DeclaresKind: true})
+
+	t.Run("reads only the app header", func(t *testing.T) {
+		header := httptest.NewRequest(http.MethodGet, "/v1/calls", nil)
+		header.Header.Set(CustomerHeader, "examples")
+		_, err := authenticator.Authenticate(context.Background(), header)
+		require.ErrorIs(t, err, ErrUnauthenticated, "the gateway names the app; a customer header is not its")
+
+		query := httptest.NewRequest(http.MethodGet, "/v1/dispatch?customer_id=examples", nil)
+		_, err = authenticator.Authenticate(context.Background(), query)
+		require.ErrorIs(t, err, ErrUnauthenticated)
+	})
+
+	t.Run("takes an undeclared caller for an end user", func(t *testing.T) {
+		// A gateway that forgot to say is a gap, and a gap must not make a browser a
+		// backend.
+		r := httptest.NewRequest(http.MethodGet, "/v1/calls", nil)
+		r.Header.Set(AppHeader, "app-1")
+		r.Header.Set(UserHeader, "guest-visitor")
+
+		principal, err := authenticator.Authenticate(context.Background(), r)
+		require.NoError(t, err)
+		require.Equal(t, KindAuthenticated, principal.Kind)
+		require.False(t, principal.ServerSide)
+
+		nobody := httptest.NewRequest(http.MethodGet, "/v1/calls", nil)
+		nobody.Header.Set(AppHeader, "app-1")
+		principal, err = authenticator.Authenticate(context.Background(), nobody)
+		require.NoError(t, err)
+		require.Equal(t, KindAnonymous, principal.Kind)
+		require.False(t, principal.ServerSide)
+	})
+
+	t.Run("believes a declared backend", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/v1/calls", nil)
+		r.Header.Set(AppHeader, "app-1")
+		r.Header.Set(AuthTypeHeader, AuthTypeServer)
+
+		principal, err := authenticator.Authenticate(context.Background(), r)
+		require.NoError(t, err)
+		require.True(t, principal.ServerSide)
+	})
+
+	t.Run("honours a query user only for a backend", func(t *testing.T) {
+		// An end user's own id is in the header the gateway wrote from their token; a
+		// parameter they wrote themselves would let them be anybody.
+		user := httptest.NewRequest(http.MethodGet, "/v1/llm/stream?user_id=someone-else", nil)
+		user.Header.Set(AppHeader, "app-1")
+		user.Header.Set(AuthTypeHeader, AuthTypeJWT)
+		principal, err := authenticator.Authenticate(context.Background(), user)
+		require.NoError(t, err)
+		require.Empty(t, principal.UserID)
+
+		backend := httptest.NewRequest(http.MethodGet, "/v1/llm/stream?user_id=employee-1", nil)
+		backend.Header.Set(AppHeader, "app-1")
+		backend.Header.Set(AuthTypeHeader, AuthTypeServer)
+		principal, err = authenticator.Authenticate(context.Background(), backend)
+		require.NoError(t, err)
+		require.Equal(t, "employee-1", principal.UserID)
+	})
+}
+
 func TestAPIKey(t *testing.T) {
 	const key, secret = "vak_live_0123456789abcdef00000000", "vas_live_s3cret"
 	app := App{OrganizationID: "org-1", AppID: "app-1", Secret: secret}

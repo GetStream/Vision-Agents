@@ -27,6 +27,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
@@ -174,7 +175,7 @@ func (s *IntegrationSuite) SetupSuite() {
 
 	sessions, err := session.NewManager(session.ManagerOptions{
 		LLM: reasoner, STT: transcriber, TTS: speaker, Logger: logger,
-		Edge: func(session.Spec, *slog.Logger) (agent.Edge, error) {
+		Edge: func(context.Context, session.Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
 			return nil, errors.New("there is no call to join")
 		},
 	})

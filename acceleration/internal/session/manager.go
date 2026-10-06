@@ -34,6 +34,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
@@ -45,7 +46,10 @@ import (
 // The production edge is Stream's WebRTC, whose Opus path is cgo; keeping that in the
 // command that wires it means a session can be tested without a sound library or a Stream
 // account.
-type EdgeFactory func(spec Spec, logger *slog.Logger) (agent.Edge, error)
+//
+// It is handed the Stream app the session is pinned to, which is the app the call has to
+// be joined in: the one the customer's clients created it in.
+type EdgeFactory func(ctx context.Context, spec Spec, stream streamapp.Bound, logger *slog.Logger) (agent.Edge, error)
 
 // Transcript stores what was said, so a call leaves something behind.
 type Transcript interface {
@@ -60,9 +64,9 @@ type Transcript interface {
 	Close()
 }
 
-// TranscriptFactory opens the transcript for a session. A nil factory, or one that
-// declines, means the conversation is simply not kept.
-type TranscriptFactory func(spec Spec, logger *slog.Logger) (Transcript, error)
+// TranscriptFactory opens the transcript for a session, in the Stream app the session is
+// pinned to. A nil factory, or one that declines, means the conversation is simply not kept.
+type TranscriptFactory func(ctx context.Context, spec Spec, stream streamapp.Bound, logger *slog.Logger) (Transcript, error)
 
 // ManagerOptions is everything a session needs that is the same for all of them.
 type ManagerOptions struct {
@@ -94,10 +98,10 @@ type ManagerOptions struct {
 	// SpeculativeReplies has every agent start its reply before the flow controller has
 	// ruled on the words, and hold it until the ruling says to answer.
 	SpeculativeReplies bool
-	// WebhookSecret signs a guardrail's outbound webhook. It is the app secret that
-	// already verifies Stream's inbound hooks, so a customer asking to decide for
-	// themselves has the key to check it with and there is no second secret to store.
-	WebhookSecret string
+	// Stream says which Stream app, and with which credential, each session acts in. It
+	// is optional: without it a session has no app, and anything needing one fails where
+	// it needs it, as it does on a deployment with no Stream credentials.
+	Stream *streamapp.Clients
 	// Conversations is optional, and is the persistent text store a caller already holds.
 	// Without one the manager opens its own over the configured outbox directory.
 	Conversations *persistent.Service
@@ -120,6 +124,10 @@ type ManagerOptions struct {
 
 // Manager owns the sessions this process is running.
 type Manager struct {
+	// hookPins are the apps hooks came from, by the call or channel they named.
+	hookPinsMu sync.Mutex
+	hookPins   map[string]hookPinned
+
 	logs          *logRecorder
 	conversations *persistent.Service
 	options       ManagerOptions
@@ -156,6 +164,7 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 	}
 
 	manager := &Manager{
+		hookPins:      map[string]hookPinned{},
 		options:       options,
 		logger:        options.Logger,
 		sessions:      map[string]*Session{},
@@ -222,6 +231,23 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 	}
 
+	// The Stream app the session acts in is settled once, before anything is done there,
+	// and the whole session keeps it: its call, its transcript and the rows it writes.
+	stream, err := m.stream(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	spec.StreamApp = stream.Identity.StreamApp
+	if err := m.keepable(ctx, spec, stream); err != nil {
+		return nil, err
+	}
+	// In app mode a session with no Stream app at all is pinned to none, rather than left
+	// unpinned, which reads as the deployment's own app and would let that app's hooks and
+	// backfill claim it.
+	if stream.Client == nil && m.options.Stream != nil && m.options.Stream.PerApp() {
+		spec.StreamApp = store.ForeignStreamApp
+	}
+
 	var remembering memory.Store
 	if spec.Memory.UserID != "" {
 		if m.options.Memory == nil {
@@ -251,9 +277,24 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			return nil, stack.Wrap(err)
 		}
 		var truncated bool
-		conv, previous, truncated, err = service.OpenForCallerWithCustom(ctx, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
+		conv, previous, truncated, err = service.OpenInApp(ctx, spec.StreamApp, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
+		if errors.Is(err, streamapp.ErrReadOnly) {
+			return nil, ErrConversationReadOnly
+		}
 		if err != nil {
 			return nil, stack.Wrap(err)
+		}
+		// A conversation is kept where it was first written, and a session resuming it
+		// acts there too, whichever app its customer acts in now.
+		if kept := conv.StreamApp(); kept != spec.StreamApp && m.options.Stream != nil {
+			if stream, err = m.options.Stream.ForApp(ctx, spec.CustomerID, kept); err != nil {
+				conv.Release()
+				if errors.Is(err, streamapp.ErrReadOnly) {
+					return nil, ErrConversationReadOnly
+				}
+				return nil, fmt.Errorf("session: the app conversation %s is kept in: %w", conv.CID(), err)
+			}
+			spec.StreamApp = kept
 		}
 		spec.ConversationID = conv.CID()
 		conv.ShowTools(spec.VisibleTools)
@@ -297,6 +338,13 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		if err != nil {
 			return nil, stack.Wrap(err)
 		}
+		// A call on a conversation writes its words into the conversation's channel, which
+		// is only there in the app the conversation is kept in.
+		if !spec.Text {
+			if err := m.sameApp(ctx, service, spec); err != nil {
+				return nil, err
+			}
+		}
 		var truncated bool
 		previous, truncated, err = service.ContextForCaller(ctx, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID)
 		if err != nil {
@@ -328,7 +376,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	case spec.Edge != nil:
 		edge = spec.Edge
 	default:
-		edge, err = m.options.Edge(spec, m.logger)
+		edge, err = m.options.Edge(ctx, spec, stream, m.logger)
 		if err != nil {
 			return nil, stack.Wrap(err)
 		}
@@ -401,7 +449,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if conv != nil {
 		toolStarted = func(event agent.ToolStarted) { conv.Observe(event) }
 	}
-	screening, err := m.guardrail(ctx, spec)
+	screening, err := m.guardrail(ctx, spec, stream.Identity)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
@@ -484,7 +532,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if m.options.Transcript != nil && conv == nil && !spec.Incognito {
 		// A transcript that cannot be opened is not a reason to refuse the call. What was
 		// said is worth keeping; it is not worth not having the conversation for.
-		transcript, err := m.options.Transcript(spec, m.logger)
+		transcript, err := m.options.Transcript(ctx, spec, stream, m.logger)
 		if err != nil {
 			m.logger.Warn("not storing the transcript", "call", spec.CallID, "error", err)
 		} else if err := transcript.Start(ctx); err != nil {
@@ -706,6 +754,13 @@ func (m *Manager) Get(id string, owner Owner) (*Session, bool) {
 //
 // The newest wins if that ever happens, which is the one a person writing there is watching.
 func (m *Manager) ByAgent(agentID string) (*Session, bool) {
+	return m.ByAgentWhere(agentID, nil)
+}
+
+// ByAgentWhere is ByAgent among the sessions a test admits, by their customer and the Stream
+// app they act in. An agent id is the caller's to choose, so two customers' sessions may
+// share one, each in its own app.
+func (m *Manager) ByAgentWhere(agentID string, admits func(customer string, app int64) bool) (*Session, bool) {
 	if agentID == "" {
 		return nil, false
 	}
@@ -716,6 +771,9 @@ func (m *Manager) ByAgent(agentID string) (*Session, bool) {
 	var newest *Session
 	for _, found := range m.sessions {
 		if found.spec.AgentID != agentID {
+			continue
+		}
+		if admits != nil && !admits(found.spec.CustomerID, found.spec.StreamApp) {
 			continue
 		}
 		if newest == nil || found.created.After(newest.created) {
@@ -963,6 +1021,30 @@ func (m *Manager) Close(id string, owner Owner) (bool, error) {
 	return true, found.Close()
 }
 
+// EndPinned ends every session acting in one of a customer's Stream apps, which is what
+// the router does once it stops acting there: the app disconnected, blocked, or the key it
+// was opened with dropped. Each closes its call, transcript and guardrail with it. It
+// reports how many it ended.
+func (m *Manager) EndPinned(customer string, app int64) int {
+	m.mu.Lock()
+	var pinned []*Session
+	for id, found := range m.sessions {
+		if spec := found.Spec(); spec.CustomerID == customer && spec.StreamApp == app {
+			pinned = append(pinned, found)
+			delete(m.sessions, id)
+		}
+	}
+	m.mu.Unlock()
+
+	for _, found := range pinned {
+		if err := found.Close(); err != nil {
+			m.logger.Warn("a session pinned to a Stream app the router stopped acting in did not close cleanly",
+				"session", found.ID(), "customer_id", customer, "error", err)
+		}
+	}
+	return len(pinned)
+}
+
 // releaseTimeout bounds taking back this node's claim on a session. Short, because a
 // claim that is not taken back expires on its own.
 const releaseTimeout = 2 * time.Second
@@ -1102,7 +1184,7 @@ func (m *Manager) searching(spec Spec) bool {
 // screens nothing. That is the one decision in this feature worth being strict about:
 // every other failure here loses a reply, and this one would answer a question the
 // customer wrote a file to prevent being answered.
-func (m *Manager) guardrail(ctx context.Context, spec Spec) (guardrail.Guardrail, error) {
+func (m *Manager) guardrail(ctx context.Context, spec Spec, stream streamapp.Identity) (guardrail.Guardrail, error) {
 	if strings.TrimSpace(spec.Guardrail) == "" {
 		return nil, nil
 	}
@@ -1130,9 +1212,171 @@ func (m *Manager) guardrail(ctx context.Context, spec Spec) (guardrail.Guardrail
 		},
 		Classifier: m.options.Classifier,
 		LLM:        m.options.LLM,
-		Secret:     m.options.WebhookSecret,
+		Secret:     stream.Secret.Reveal(),
+		APIKey:     ownKey(spec.CustomerID, stream),
 		Logger:     m.logger,
 	})
+}
+
+// stream is the Stream app a new session acts in. A deployment with no Stream app still
+// holds a text conversation, so having none is not an error here: what needs one fails
+// where it needs it.
+func (m *Manager) stream(ctx context.Context, spec Spec) (streamapp.Bound, error) {
+	nowhere := streamapp.Bound{Identity: streamapp.Identity{CustomerID: spec.CustomerID}}
+	if m.options.Stream == nil {
+		return nowhere, nil
+	}
+	// A session a hook started acts in the app the hook came from.
+	if pin, ok := m.hookPin(spec); ok {
+		bound, err := m.options.Stream.ForApp(ctx, spec.CustomerID, pin)
+		if err != nil {
+			return streamapp.Bound{}, fmt.Errorf("session: the app the hook for this session came from: %w", err)
+		}
+		return bound, nil
+	}
+	// A call that already has lines, a number's or a placed call's, is in the app they were
+	// made in, and the agent has to join it there.
+	if m.options.Store != nil && spec.CallID != "" && !spec.Text {
+		pin, found, err := m.options.Store.CallPin(ctx, spec.CustomerID, spec.CallType, spec.CallID)
+		if err != nil {
+			return streamapp.Bound{}, err
+		}
+		if found {
+			bound, err := m.options.Stream.ForApp(ctx, spec.CustomerID, pin)
+			if err != nil {
+				return streamapp.Bound{}, fmt.Errorf("session: the app call %s is in: %w", spec.CallID, err)
+			}
+			return bound, nil
+		}
+	}
+	bound, err := m.options.Stream.For(ctx, spec.CustomerID)
+	if errors.Is(err, streamapp.ErrNoIdentity) {
+		return nowhere, nil
+	}
+	if err != nil {
+		return streamapp.Bound{}, fmt.Errorf("session: which Stream app to act in: %w", err)
+	}
+	return bound, nil
+}
+
+// hookPinFor is how long a hook's app is remembered for the session it starts.
+const hookPinFor = 10 * time.Minute
+
+type hookPinned struct {
+	app int64
+	at  time.Time
+}
+
+// PinHook remembers which app a hook for a customer's call or channel came from, for the
+// session a worker opens to answer it, which acts there.
+func (m *Manager) PinHook(customer, cid string, app int64) {
+	m.hookPinsMu.Lock()
+	defer m.hookPinsMu.Unlock()
+	now := time.Now()
+	for key, pinned := range m.hookPins {
+		if now.Sub(pinned.at) > hookPinFor {
+			delete(m.hookPins, key)
+		}
+	}
+	m.hookPins[customer+"\x00"+cid] = hookPinned{app: app, at: now}
+}
+
+// hookPin is the app a hook for the session's call or channel came from, if one did lately.
+func (m *Manager) hookPin(spec Spec) (int64, bool) {
+	cid := streamapp.AgentChannelType + ":" + spec.AgentID
+	if spec.CallID != "" && !spec.Text {
+		cid = spec.CallType + ":" + spec.CallID
+	}
+	m.hookPinsMu.Lock()
+	defer m.hookPinsMu.Unlock()
+	pinned, ok := m.hookPins[spec.CustomerID+"\x00"+cid]
+	if !ok || time.Since(pinned.at) > hookPinFor {
+		return 0, false
+	}
+	return pinned.app, true
+}
+
+// ErrNoStreamApp is a conversation in writing asked to be kept by an app that has no Stream
+// app to keep it in.
+var ErrNoStreamApp = errors.New("session: this app has no Stream app to keep the conversation in: " +
+	"register this app's Stream keys, or open an incognito session")
+
+// ErrConversationReadOnly is a conversation kept in the router's shared Stream app, which its
+// customer may read and no longer add to.
+var ErrConversationReadOnly = errors.New("session: this conversation is kept in the router's shared " +
+	"Stream app and can only be read there: fork it to carry on")
+
+// ErrConversationElsewhere is a call bound to a conversation kept in another Stream app than
+// the one the call is made in.
+var ErrConversationElsewhere = errors.New("session: this conversation is kept in another Stream app " +
+	"than this call is made in: fork it to carry on")
+
+// keepable refuses a conversation in writing that has nowhere safe to be kept. In app mode
+// an app that registered no Stream app has nowhere at all, which used to mean a
+// conversation quietly not kept; and a registered app whose agent channel type lets a
+// client make, change or join a conversation's channel would keep it where anybody could
+// rewrite whose it is.
+func (m *Manager) keepable(ctx context.Context, spec Spec, stream streamapp.Bound) error {
+	if m.options.Stream == nil || !m.options.Stream.PerApp() || !spec.PersistConversation || !spec.Text {
+		return nil
+	}
+	if stream.Client == nil {
+		return ErrNoStreamApp
+	}
+	if !stream.Identity.Registered {
+		return nil
+	}
+	readiness, err := m.options.Stream.Readiness(ctx, stream)
+	if err != nil {
+		// Stream being out of reach is found out by the conversation itself, which says so.
+		m.logger.Warn("could not check the Stream app a conversation is kept in", "customer_id", spec.CustomerID, "error", err)
+		return nil
+	}
+	switch readiness.ChannelType {
+	case streamapp.TypeMissing:
+		return fmt.Errorf("session: this app's Stream app has no %s channel type to keep the conversation in", streamapp.AgentChannelType)
+	case streamapp.TypeUnsafe:
+		return fmt.Errorf("session: this app's Stream app lets clients make, change or join %s channels, "+
+			"so a conversation kept there could be rewritten by anybody: restrict the channel type's grants", streamapp.AgentChannelType)
+	}
+	return nil
+}
+
+// sameApp refuses a call on a conversation kept in another app than the call is made in:
+// the agent would join the call in one app and look for the conversation's channel in it,
+// where it is not.
+func (m *Manager) sameApp(ctx context.Context, service *persistent.Service, spec Spec) error {
+	if m.options.Stream == nil {
+		return nil
+	}
+	kept, err := service.AppOf(ctx, spec.CustomerID, spec.ConversationID)
+	if err != nil {
+		return err
+	}
+	deployment := m.options.Stream.DeploymentApp()
+	same := func(a, b int64) bool {
+		if a == 0 {
+			a = deployment
+		}
+		if b == 0 {
+			b = deployment
+		}
+		return a == b
+	}
+	if !same(kept, spec.StreamApp) {
+		return ErrConversationElsewhere
+	}
+	return nil
+}
+
+// ownKey is the key a guardrail webhook names when the session acts in its customer's own
+// app, so the customer can tell which of their keys signed it. A session acting in the
+// deployment's shared app names none, and is signed as it always was.
+func ownKey(customer string, stream streamapp.Identity) string {
+	if stream.StreamApp == 0 || streamapp.CustomerOf(stream.StreamApp) != customer {
+		return ""
+	}
+	return stream.APIKey
 }
 
 // line is what the session may do to the call it is on, which is nothing unless it was
@@ -1150,6 +1394,7 @@ func (m *Manager) line(spec Spec) (agent.Telephony, error) {
 		From:         spec.Phone.Number,
 		CallID:       spec.CallID,
 		CallType:     spec.CallType,
+		StreamApp:    spec.StreamApp,
 		Vendor:       spec.Phone.Vendor,
 		VendorCallID: spec.Phone.VendorCallID,
 	}), nil
@@ -1175,11 +1420,16 @@ func (m *Manager) Conversations() (*persistent.Service, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.conversations == nil {
-		var err error
-		m.conversations, err = persistent.New()
-		if err != nil {
-			return nil, err
+		// A conversation is kept in the Stream app its session acts in, so without a way
+		// to say which app that is there is nowhere to keep one.
+		if m.options.Stream == nil {
+			return nil, stack.Wrap(errors.New("Stream Chat credentials are required for persistent conversations"))
 		}
+		service := persistent.NewForChats(persistent.StreamApps(m.options.Stream))
+		if m.options.Store != nil {
+			service.SetPins(m.options.Store.ConversationPin)
+		}
+		m.conversations = service
 	}
 	return m.conversations, nil
 }

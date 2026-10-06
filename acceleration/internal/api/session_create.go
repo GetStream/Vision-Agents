@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -44,6 +45,9 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 	created, err := s.sessions.Create(ctx, spec)
 	if errors.Is(err, session.ErrSessionExists) {
 		return nil, huma.Error409Conflict(err.Error())
+	}
+	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
+		return nil, err
 	}
 	if err != nil {
 		// Everything that can go wrong here is the caller's spec or a provider that would

@@ -17,6 +17,8 @@ type LineOptions struct {
 	CallID string
 	// CallType is the Stream call type. Empty means "default".
 	CallType string
+	// StreamApp is the app the call is in, the session's pin.
+	StreamApp int64
 	// Vendor is who is carrying the leg digits would be pressed on.
 	Vendor string
 	// VendorCallID is that leg. It is set for a call the agent placed and empty for one
@@ -43,11 +45,12 @@ func (s *Service) Line(options LineOptions) *Line {
 // Transfer brings a human onto the call.
 func (l *Line) Transfer(ctx context.Context, to string) error {
 	_, err := l.service.Transfer(ctx, TransferRequest{
-		Owner:    l.options.Owner,
-		From:     l.options.From,
-		To:       to,
-		CallID:   l.options.CallID,
-		CallType: l.options.CallType,
+		Owner:     l.options.Owner,
+		From:      l.options.From,
+		To:        to,
+		CallID:    l.options.CallID,
+		CallType:  l.options.CallType,
+		StreamApp: l.options.StreamApp,
 	})
 	return err
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 // RequestIDHeader names one request on both sides of it: answered on every response, and
@@ -82,6 +83,18 @@ func recordFailure(ctx context.Context, err error, trace string) {
 // recorded where the error entered this code base, or, for an error that never was, the
 // stack it reached Huma on, which names the operation but not where inside it.
 func answerFailure(ctx huma.Context, status int, message string, errs ...error) huma.StatusError {
+	// Work waiting on the deployment's own app is a 503 the caller can retry, not a failure.
+	// Huma takes headers only from an error an operation returned itself, so Retry-After is
+	// set here.
+	if errors.Is(errors.Join(errs...), streamapp.ErrDeploymentAppUnknown) {
+		waiting := streamWaiting().(*apiError)
+		for name, values := range waiting.GetHeaders() {
+			for _, value := range values {
+				ctx.SetHeader(name, value)
+			}
+		}
+		return waiting
+	}
 	if status < http.StatusInternalServerError {
 		if len(errs) > 0 {
 			recordFailure(ctx.Context(), errors.Join(errs...), "")

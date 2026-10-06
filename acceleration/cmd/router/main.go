@@ -20,15 +20,12 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/redis/rueidis"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/agent/streamedge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
@@ -63,6 +60,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
@@ -107,6 +105,7 @@ const usage = `usage: router [--config path] [command]
   serve                 serve the API (the default)
   keys create           mint a credential for an app, printing the secret once
   replicate             copy another deployment's data here and follow its changes
+  stream-apps           look after the Stream apps customers registered in app mode
 `
 
 func main() {
@@ -186,6 +185,8 @@ func dispatchCommand(command string, args []string, settings config.Config, logg
 		return runKeys(args, settings, logger)
 	case "replicate":
 		return runReplicate(args, settings, logger)
+	case "stream-apps":
+		return runStreamApps(args, settings, logger)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
@@ -214,18 +215,32 @@ func logLevel(settings config.Config) slog.Level {
 	return level
 }
 
-// newConnectorSealer builds the keyring connector credentials are sealed under, and nil
-// when connectors are off. It does not depend on auth.mode: a proxy deployment holds
-// connector credentials as much as an api_key one does.
+// newSecretSealer builds the keyring the secrets the router holds for its customers are
+// sealed under, connector credentials and Stream app keys, and nil when nothing that holds
+// one is on. It does not depend on auth.mode: a proxy deployment holds them as much as an
+// api_key one does.
 //
 // The keyring is every ROUTER_AUTH_KEK_V1, _V2 and so on that is set, with
 // ROUTER_AUTH_KEK_VERSION naming the one that seals new rows. That variable picks the
 // writer and is never a ceiling: moving it back to an older key must leave the newer ones
 // loaded, or the rows sealed under them stop opening. auth.kek is version 1, so a
 // deployment that already has it needs nothing more.
-func newConnectorSealer(settings config.Config) (*auth.Sealer, error) {
-	if !settings.Connectors.Enabled {
+func newSecretSealer(settings config.Config) (*auth.Sealer, error) {
+	var holders []string
+	if settings.Connectors.Enabled {
+		holders = append(holders, "connectors.enabled")
+	}
+	if settings.Stream.Tenancy == config.TenancyApp {
+		holders = append(holders, "stream.tenancy="+config.TenancyApp)
+	}
+	if len(holders) == 0 {
 		return nil, nil
+	}
+	// The setting that needs the keyring is what each refusal names, so whoever reads it
+	// knows which change brought it on.
+	needs := strings.Join(holders, " and ") + " need"
+	if len(holders) == 1 {
+		needs = holders[0] + " needs"
 	}
 	current := auth.KEKVersion
 	if configured := os.Getenv(authKEKVersionEnvVar); configured != "" {
@@ -233,8 +248,7 @@ func newConnectorSealer(settings config.Config) (*auth.Sealer, error) {
 		if err != nil || version < 1 {
 			// The value is left out on purpose: a key pasted into the wrong variable would
 			// otherwise reach the logs and Sentry with this error.
-			return nil, fmt.Errorf("connectors.enabled needs %s to be a positive integer",
-				authKEKVersionEnvVar)
+			return nil, fmt.Errorf("%s %s to be a positive integer", needs, authKEKVersionEnvVar)
 		}
 		current = version
 	}
@@ -259,15 +273,15 @@ func newConnectorSealer(settings config.Config) (*auth.Sealer, error) {
 	}
 	if keys[current] == "" {
 		if os.Getenv(authKEKVersionEnvVar) == "" {
-			return nil, fmt.Errorf("connectors.enabled needs a key encryption keyring to seal "+
-				"connector credentials: set %s_V1 (%s is version 1)", authKEKEnvVar, authKEKEnvVar)
+			return nil, fmt.Errorf("%s a key encryption keyring to seal the secrets it holds: "+
+				"set %s_V1 (%s is version 1)", needs, authKEKEnvVar, authKEKEnvVar)
 		}
 		// The version is not named: an all-digit key pasted into ROUTER_AUTH_KEK_VERSION
 		// parses as one, and naming it would send the key to the logs and Sentry. The
 		// versions that are set come from variable names, never from values.
-		return nil, fmt.Errorf("connectors.enabled needs a key for the version %s names: "+
+		return nil, fmt.Errorf("%s a key for the version %s names: "+
 			"set the matching %s_V<n> (versions set: %v)",
-			authKEKVersionEnvVar, authKEKEnvVar, slices.Sorted(maps.Keys(keys)))
+			needs, authKEKVersionEnvVar, authKEKEnvVar, slices.Sorted(maps.Keys(keys)))
 	}
 	return auth.NewSealerWithKeyring(current, keys)
 }
@@ -334,8 +348,8 @@ func newAuthenticator(settings config.Config, configs *appconfig.Store, logger *
 	case auth.Proxy:
 		logger.Warn("authenticating nothing: the caller is whoever the headers in front of "+
 			"this router say, so only a proxy that overwrites them should be able to reach it",
-			"mode", auth.Proxy, "set", "auth.mode")
-		return auth.New(mode, nil)
+			"mode", auth.Proxy, "set", "auth.mode", "proxy_declares_kind", settings.Auth.ProxyDeclaresKind)
+		return auth.NewProxy(auth.ProxyOptions{DeclaresKind: settings.Auth.ProxyDeclaresKind}), nil
 	case auth.Custom:
 		return nil, fmt.Errorf("auth.mode=%s has no authenticator in this binary: a deployment "+
 			"answering for itself embeds the module and passes api.WithAuthenticator", auth.Custom)
@@ -376,11 +390,16 @@ func run(settings config.Config, logger *slog.Logger) error {
 		}
 	}()
 
-	// Checked before anything is opened, so a deployment that turned connectors on without
-	// a keyring is refused at startup rather than on its first connection.
-	connectorSecrets, err := newConnectorSealer(settings)
+	// Checked before anything is opened, so a deployment that turned on something holding
+	// secrets without a keyring is refused at startup rather than on its first secret.
+	secrets, err := newSecretSealer(settings)
 	if err != nil {
 		return err
+	}
+	// Connectors seal under the same keyring, and only when they are on.
+	var connectorSecrets *auth.Sealer
+	if settings.Connectors.Enabled {
+		connectorSecrets = secrets
 	}
 	connectors, err := newConnectorRegistry(settings)
 	if err != nil {
@@ -690,6 +709,24 @@ func run(settings config.Config, logger *slog.Logger) error {
 		streams.Image = imaging
 	}
 
+	// Every Stream action taken for a customer, a call joined, a line made, a transcript
+	// written, a token minted, is taken in the app this resolves for them.
+	streamClients, err := newStreamClients(settings, pgStore, secrets, logger)
+	if err != nil {
+		return err
+	}
+	if err := checkDeploymentApp(ctx, settings, streamClients); err != nil {
+		return err
+	}
+	// An app whose policies require one of its own is never written into the deployment's.
+	if stored, ok := streamClients.Stored(); ok && policies != nil {
+		stored.SetFloor(policies.RequiresOwnStreamApp)
+	}
+	if pgStore != nil {
+		pgStore.SetStreamPins(streamPins(streamClients))
+	}
+	go learnDeploymentApp(ctx, streamClients, logger)
+
 	registrations, dlcGate, err := buildDLC(settings, pgStore, liveClient, logger)
 	if err != nil {
 		return err
@@ -697,7 +734,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if registrations != nil {
 		go registrations.Run(ctx, dlcPollEvery)
 	}
-	telephony, err := buildPhone(settings, pgStore, liveClient, dlcGate, logger)
+	telephony, err := buildPhone(settings, pgStore, liveClient, streamClients, dlcGate, logger)
 	if err != nil {
 		return err
 	}
@@ -725,12 +762,22 @@ func run(settings config.Config, logger *slog.Logger) error {
 
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
-	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, logger)
+	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, streamClients, logger)
 	if err != nil {
 		return err
 	}
 	if sessions != nil {
 		defer sessions.Shutdown()
+	}
+	// In app mode every connected app is checked on, and what the router stops acting in
+	// takes the sessions pinned to it with it.
+	if stored, ok := streamClients.Source().(*streamapp.Stored); ok {
+		ended := func(customer string, app int64) {
+			if sessions != nil {
+				sessions.EndPinned(customer, app)
+			}
+		}
+		go stored.Watch(ctx, streamClients, streamapp.WatchEvery, ended)
 	}
 
 	// A campaign is a phone call, a conversation and a row, so it runs only where all
@@ -791,15 +838,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		if err := simulations.Abandon(ctx); err != nil {
 			logger.Error("could not write off the runs an older router left going", "error", err)
 		}
-	}
-
-	// Reading a transcript back needs the same credentials writing one does. Without
-	// them the calls are still listed; only what was said on them is missing.
-	var transcripts *chatlog.Reader
-	if reader, err := chatlog.NewReader(chatlog.ReaderOptions{}); err != nil {
-		logger.Debug("transcripts will not be readable", "error", err)
-	} else {
-		transcripts = reader
 	}
 
 	// Bringing a voice needs somewhere to keep the recordings, a place to record them and
@@ -863,50 +901,61 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 
 	options := api.Options{
-		Routers:          routers,
-		Voices:           voiceService,
-		VoiceLibrary:     buildLibrary(logger),
-		KnowledgeURLs:    pages,
-		Store:            pgStore,
-		Configs:          configs,
-		Users:            endUsers,
-		Live:             liveClient,
-		Phone:            telephony,
-		Sessions:         sessions,
-		Relay:            sessionRelay,
-		Directory:        directory,
-		Streams:          streams,
-		Transcripts:      transcripts,
-		Campaigns:        campaigns,
-		Simulations:      simulations,
-		PluginEvents:     events,
-		DLC:              registrations,
-		Gate:             dlcGate,
-		OpsKey:           settings.Auth.OpsKey,
-		Dispatch:         workers,
-		Quota:            limiter,
-		Policies:         policies,
-		Connectors:       connectors,
-		ConnectorSecrets: connectorSecrets,
-		TrustedProxies:   trustedProxies,
-		AuthMode:         authMode,
-		DataRetention:    settings.DataMove.Retention,
-		StreamSecret:     settings.Stream.APISecret,
-		StreamKey:        settings.Stream.APIKey,
-		CORSOrigins:      settings.CORSOrigins,
-		PublicURL:        settings.PublicURL,
-		DashboardURL:     settings.DashboardURL,
-		Auth:             authenticator,
-		Logger:           logger,
+		Routers:           routers,
+		Voices:            voiceService,
+		VoiceLibrary:      buildLibrary(logger),
+		KnowledgeURLs:     pages,
+		Store:             pgStore,
+		Configs:           configs,
+		Users:             endUsers,
+		Live:              liveClient,
+		Phone:             telephony,
+		Sessions:          sessions,
+		Relay:             sessionRelay,
+		Directory:         directory,
+		Streams:           streams,
+		Stream:            streamClients,
+		ProxyDeclaresKind: settings.Auth.ProxyDeclaresKind,
+		TrustAPIKeyHeader: settings.Stream.TrustAPIKeyHeader,
+		DenyRegistration:  settings.Stream.DenyRegistration,
+		HookSecret:        settings.Stream.APISecret,
+		Campaigns:         campaigns,
+		Simulations:       simulations,
+		PluginEvents:      events,
+		DLC:               registrations,
+		Gate:              dlcGate,
+		OpsKey:            settings.Auth.OpsKey,
+		Dispatch:          workers,
+		Quota:             limiter,
+		Policies:          policies,
+		Connectors:        connectors,
+		ConnectorSecrets:  connectorSecrets,
+		TrustedProxies:    trustedProxies,
+		AuthMode:          authMode,
+		DataRetention:     settings.DataMove.Retention,
+		CORSOrigins:       settings.CORSOrigins,
+		PublicURL:         settings.PublicURL,
+		DashboardURL:      settings.DashboardURL,
+		Auth:              authenticator,
+		Logger:            logger,
 	}
-	if options.StreamSecret == "" {
-		logger.Warn("no stream.api_secret set, so inbound calls cannot be dispatched: "+
-			"the call events Stream sends cannot be told apart from anyone who found the url",
-			"hook", "POST /v1/phone/hooks/stream")
-	}
-	if options.StreamKey == "" {
-		logger.Warn("no stream.api_key set, so nobody can join a call from a browser",
-			"endpoint", "POST /v1/agents/calls/{id}/token")
+	if streamClients.PerApp() {
+		// Each registered app signs its own hooks and mints its own tokens, so only work in
+		// the deployment's own app goes without.
+		if settings.Stream.APIKey == "" {
+			logger.Info("no stream.api_key or stream.api_secret set, so only registered apps act in Stream: " +
+				"nothing is written into a deployment app, and the old hook paths accept nothing")
+		}
+	} else {
+		if options.HookSecret == "" {
+			logger.Warn("no stream.api_secret set, so inbound calls cannot be dispatched: "+
+				"the call events Stream sends cannot be told apart from anyone who found the url",
+				"hook", "POST /v1/phone/hooks/stream")
+		}
+		if settings.Stream.APIKey == "" {
+			logger.Warn("no stream.api_key set, so nobody can join a call from a browser",
+				"endpoint", "POST /v1/agents/calls/{id}/token")
+		}
 	}
 	// A nil *turbopuffer.Store in an interface is not a nil interface, so the absence has
 	// to stay absent rather than becoming a value that says it is there.
@@ -1078,6 +1127,7 @@ func buildSessions(
 	base *turbopuffer.Store,
 	finding *searchrouter.Router,
 	judging *lcmrouter.Router,
+	stream *streamapp.Clients,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.LLM == nil {
@@ -1112,37 +1162,15 @@ func buildSessions(
 		// Off unless the deployment asks: a reply started before its ruling is paid for
 		// whether or not it is spoken.
 		SpeculativeReplies: settings.Agent.SpeculativeReplies,
-		// The same app secret that verifies Stream's inbound hooks, now signing one going
-		// the other way. A customer who wants to decide for themselves whether a turn may
-		// be answered already holds it, so there is no second secret to hand out.
-		WebhookSecret: settings.Stream.APISecret,
-		Store:         pgStore,
-		Configs:       configs,
-		Live:          liveClient,
-		Directory:     directory,
-		PluginAuth:    &plugins.Auth{PublicURL: settings.PublicURL, DashboardURL: settings.DashboardURL},
-		Logger:        logger,
-		Edge: func(spec session.Spec, logger *slog.Logger) (agent.Edge, error) {
-			return streamedge.New(streamedge.Options{
-				CallID:   spec.CallID,
-				CallType: spec.CallType,
-				User:     streamedge.User{ID: spec.UserID, Name: spec.UserName},
-				Logger:   logger,
-			})
-		},
-		Transcript: func(spec session.Spec, logger *slog.Logger) (session.Transcript, error) {
-			channel := strings.TrimPrefix(spec.ConversationID, "agent:")
-			if channel == spec.ConversationID {
-				channel = ""
-			}
-			return chatlog.New(chatlog.Options{
-				AgentID:      spec.AgentID,
-				Channel:      channel,
-				Agent:        chatlog.User{ID: spec.UserID, Name: spec.UserName},
-				VisibleTools: spec.VisibleTools,
-				Logger:       logger,
-			})
-		},
+		Stream:             stream,
+		Store:              pgStore,
+		Live:               liveClient,
+		Logger:             logger,
+		Edge:               edgeFor(stream),
+		Transcript:         transcriptFor(),
+		Configs:            configs,
+		Directory:          directory,
+		PluginAuth:         &plugins.Auth{PublicURL: settings.PublicURL, DashboardURL: settings.DashboardURL},
 	})
 }
 
@@ -1256,6 +1284,7 @@ func buildPhone(
 	settings config.Config,
 	pgStore *store.Store,
 	liveClient *live.Client,
+	stream *streamapp.Clients,
 	gate *dlc.Gate,
 	logger *slog.Logger,
 ) (*phone.Service, error) {
@@ -1263,12 +1292,8 @@ func buildPhone(
 	if err != nil {
 		return nil, err
 	}
-
-	var stream *phone.Stream
-	if streaming, err := phone.NewStream(phone.StreamOptions{}); err == nil {
-		stream = streaming
-	} else {
-		logger.Warn("no stream credentials, numbers cannot be attached to a call", "error", err)
+	if settings.Stream.APIKey == "" || settings.Stream.APISecret == "" {
+		logger.Warn("no stream credentials, numbers cannot be attached to a call in the deployment's app")
 	}
 
 	var recorder *routing.Recorder
@@ -1279,7 +1304,7 @@ func buildPhone(
 	return phone.NewService(phone.ServiceOptions{
 		Registry:  vendors.Registry(vendorConfig),
 		Store:     pgStore,
-		Stream:    stream,
+		Apps:      phoneApps{clients: stream},
 		Recorder:  recorder,
 		Gate:      gate,
 		PublicURL: settings.PublicURL,

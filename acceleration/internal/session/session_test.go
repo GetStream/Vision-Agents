@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
@@ -313,6 +314,10 @@ type SessionSuite struct {
 	gated *gatedLLM
 	// conversations persists text commands, for a test that submits one.
 	conversations *persistent.Service
+	// apps is the Stream apps sessions act in, when a test names them; edgeApps is the
+	// identity each edge was built with.
+	apps     *streamapp.Clients
+	edgeApps []streamapp.Identity
 }
 
 func TestSessionSuite(t *testing.T) {
@@ -327,6 +332,8 @@ func (s *SessionSuite) SetupTest() {
 	s.thinks = false
 	s.gated = nil
 	s.conversations = nil
+	s.apps = nil
+	s.edgeApps = nil
 }
 
 // thinking is what the LLM router routes. A deployment that routes no high-quality model
@@ -395,7 +402,7 @@ func (s *SessionSuite) manages() {
 
 	var storing TranscriptFactory
 	if s.records != nil {
-		storing = func(Spec, *slog.Logger) (Transcript, error) { return s.records, nil }
+		storing = func(context.Context, Spec, streamapp.Bound, *slog.Logger) (Transcript, error) { return s.records, nil }
 	}
 
 	manager, err := NewManager(ManagerOptions{
@@ -405,8 +412,10 @@ func (s *SessionSuite) manages() {
 		Memory:        remembering,
 		Transcript:    storing,
 		Conversations: s.conversations,
+		Stream:        s.apps,
 		Logger:        logger,
-		Edge: func(Spec, *slog.Logger) (agent.Edge, error) {
+		Edge: func(_ context.Context, _ Spec, stream streamapp.Bound, _ *slog.Logger) (agent.Edge, error) {
+			s.edgeApps = append(s.edgeApps, stream.Identity)
 			edge := newQuietEdge()
 			s.edges = append(s.edges, edge)
 			return edge, nil
