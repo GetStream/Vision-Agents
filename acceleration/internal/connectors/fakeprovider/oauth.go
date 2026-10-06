@@ -379,7 +379,7 @@ func (s *Server) exchange(w http.ResponseWriter, r *http.Request, c *client) {
 		return
 	}
 	code.used = true
-	code.grant = &grant{clientID: c.id, scopes: code.scopes, claims: code.claims}
+	code.grant = &grant{clientID: c.id, scopes: code.scopes, claims: code.claims, account: s.account}
 	body := s.shape(s.issue(code.grant, !s.is(NoRefreshToken)), code.grant)
 	if s.is(CommaScopes) && len(code.userScopes) > 0 {
 		// The user token is a grant of its own, so it refreshes on its own refresh token.
@@ -518,7 +518,7 @@ func (s *Server) slackShape(body map[string]any, g *grant) map[string]any {
 	body["enterprise"] = nil
 	// On the exchange authed_user is oauth.v2.access's; that a refresh repeats it is
 	// unverified, and it is kept so a manifest's capture reads the same on both.
-	body["authed_user"] = map[string]any{"id": s.UserID}
+	body["authed_user"] = map[string]any{"id": g.account}
 	return body
 }
 
