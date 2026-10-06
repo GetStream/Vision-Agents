@@ -601,6 +601,59 @@ func (s *CadenceSuite) TestPrimaryFinalExpeditesOnceButWaitRetryKeepsItsFullGap(
 	s.Equal(interim.Text, s.ready().Text)
 }
 
+func (s *CadenceSuite) TestAFinalThatIsStillGoingIsNotExpedited() {
+	// A comma or a joining word says the caller has more to read out, so the primary
+	// scorer is not asked early and the retry wait stands.
+	caller := stt.Participant{ID: "caller"}
+	for _, text := range []string{"Burger, no bun,", "a burger and", "I would like, um"} {
+		s.useDefaultCadence()
+		timers := s.captureTimers()
+		final := stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: text}
+		s.cadence.Observe(final)
+		s.Require().Len(*timers, 1, "%q", text)
+		s.Equal(defaultCadenceRetry, (*timers)[0].delay, "%q", text)
+
+		s.False(s.cadence.ExpediteFinal(final), "%q is not done", text)
+		s.False((*timers)[0].stopped, "the wait for %q stays", text)
+		s.quiet()
+
+		(*timers)[0].fire()
+		s.Equal(text, s.ready().Text)
+	}
+}
+
+func (s *CadenceSuite) TestAFinalThatAddsACommaToSettledWordsIsNotExpedited() {
+	// The cadence holds the words as first heard, and the final may be the first to say
+	// there is more to come.
+	s.useDefaultCadence()
+	timers := s.captureTimers()
+	caller := stt.Participant{ID: "caller"}
+	s.cadence.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "Name"})
+	final := stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: "Name,"}
+	s.cadence.Observe(final)
+
+	s.False(s.cadence.ExpediteFinal(final))
+	s.Require().Len(*timers, 1)
+	s.False((*timers)[0].stopped)
+	s.quiet()
+}
+
+func (s *CadenceSuite) TestAFinalEndingOnAPeriodIsStillExpedited() {
+	s.useDefaultCadence()
+	timers := s.captureTimers()
+	caller := stt.Participant{ID: "caller"}
+	s.cadence.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "book a table"})
+	final := stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: "Book a table."}
+	s.cadence.Observe(final)
+
+	s.True(s.cadence.ExpediteFinal(final))
+	s.Equal("book a table", s.ready().Text)
+	for _, timer := range *timers {
+		timer.fire()
+	}
+	s.quiet()
+}
+
 func (s *CadenceSuite) TestChangedFinalCanExpediteAndEscapedTimerCannotReleaseIt() {
 	timers := s.captureTimers()
 	caller := stt.Participant{ID: "caller"}

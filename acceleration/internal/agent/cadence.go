@@ -348,6 +348,8 @@ func (c *cadence) currentCandidate(participantID string) (candidate, bool) {
 // ExpediteFinal emits the current transcript immediately when the agent has independently
 // checked that a finalized candidate is eligible for primary EOT scoring. The generation
 // checks preserve the ordinary cadence retry after a low score and reject stale revisions.
+// Words that are still going, as the cadence holds them or as the final writes them, are not
+// expedited, so they keep the longer wait.
 func (c *cadence) ExpediteFinal(transcript stt.Transcript) bool {
 	if !transcript.Final() || transcript.Participant.ID == "" {
 		return false
@@ -357,7 +359,8 @@ func (c *cadence) ExpediteFinal(transcript stt.Transcript) bool {
 	current, ok := c.speakers[transcript.Participant.ID]
 	if !ok || current.text == "" || current.candidateID != "" || current.timer == nil ||
 		current.emittedGeneration == current.generation || c.grace > 0 ||
-		incompleteIdentifier(current.text) || !sameWords(current.text, transcript.Text) {
+		incompleteIdentifier(current.text) || visiblyUnfinished(current.text) ||
+		visiblyUnfinished(transcript.Text) || !sameWords(current.text, transcript.Text) {
 		c.mu.Unlock()
 		return false
 	}
