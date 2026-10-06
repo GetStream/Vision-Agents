@@ -97,6 +97,13 @@ func (s *DuplexSuite) TestASilentCallIsAskedWhetherAnythingElseIsNeeded() {
 		"anything else", "a call nobody is talking on gets an invitation back into it")
 }
 
+func (s *DuplexSuite) TestIdleCheckInCanBeDisabledForAQuietDemo() {
+	listener := newDuplex(DuplexOptions{DisableIdleCheckIn: true})
+
+	s.Empty(listener.Idle(time.Now().Add(-defaultIdleGap-time.Second), true),
+		"a quiet demo should not prompt the caller when nobody has spoken")
+}
+
 func (s *DuplexSuite) TestAShortSilenceIsLeftAlone() {
 	listener := newDuplex(DuplexOptions{})
 

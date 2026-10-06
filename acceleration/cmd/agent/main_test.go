@@ -93,6 +93,50 @@ func TestParseOptionsKeepsZeroConfigEOTDefaults(t *testing.T) {
 	}
 }
 
+func TestParseOptionsRequiresBackchannelOptIn(t *testing.T) {
+	t.Chdir(t.TempDir())
+	keys := []string{demoEOTURLVar, demoEOTModeVar, demoEOTThresholdVar, demoEOTTokenFileVar}
+	clearEnvironmentForTest(t, keys...)
+
+	parsed, _, err := parseOptions([]string{"-call", "demo-call"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.backchannel {
+		t.Fatal("backchannel should be off by default")
+	}
+
+	parsed, _, err = parseOptions([]string{"-call", "demo-call", "-backchannel=true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !parsed.backchannel {
+		t.Fatal("-backchannel=true should opt in to backchannel speech")
+	}
+}
+
+func TestParseOptionsRequiresIdleCheckInOptIn(t *testing.T) {
+	t.Chdir(t.TempDir())
+	keys := []string{demoEOTURLVar, demoEOTModeVar, demoEOTThresholdVar, demoEOTTokenFileVar}
+	clearEnvironmentForTest(t, keys...)
+
+	parsed, _, err := parseOptions([]string{"-call", "demo-call"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.checkIn || !parsed.duplex().DisableIdleCheckIn {
+		t.Fatal("idle check-in should be disabled by default in the standalone CLI")
+	}
+
+	parsed, _, err = parseOptions([]string{"-call", "demo-call", "-check-in=true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !parsed.checkIn || parsed.duplex().DisableIdleCheckIn {
+		t.Fatal("-check-in=true should opt in to idle prompts")
+	}
+}
+
 func TestRunPreflightsEOTBeforeBuildingRouters(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

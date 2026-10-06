@@ -104,7 +104,26 @@ func (s *StreamEdgeSuite) TestTheDemoLinkJoinsTheAgentsCall() {
 	s.Equal("key", parsed.Query().Get("api_key"))
 	s.Equal("true", parsed.Query().Get("skip_lobby"), "the caller should land in the call, not a lobby")
 	s.Equal("demo-caller", parsed.Query().Get("user_name"), "an unnamed caller is named after their id")
+	s.Equal("agent", parsed.Query().Get("type"), "the browser must join the same call type as the agent")
+	s.Equal("agent", parsed.Query().Get("channel_type"), "the conversation is written to the agent chat channel")
 	s.NotEmpty(parsed.Query().Get("token"), "the browser joins as somebody the app trusts")
+}
+
+func (s *StreamEdgeSuite) TestTheDemoLinkPreservesANonDefaultCallType() {
+	s.T().Setenv("STREAM_API_KEY", "key")
+	s.T().Setenv("STREAM_API_SECRET", "secret")
+	s.T().Setenv("EXAMPLE_BASE_URL", "")
+	edge, err := New(Options{CallID: "room", CallType: "livestream", User: User{ID: "agent"}})
+	s.Require().NoError(err)
+
+	link, err := edge.DemoURL(User{ID: "demo-caller"})
+
+	s.Require().NoError(err)
+	parsed, err := url.Parse(link)
+	s.Require().NoError(err)
+	s.Equal("https://getstream.io/video/demos/join/room", parsed.Scheme+"://"+parsed.Host+parsed.EscapedPath())
+	s.Equal("livestream", parsed.Query().Get("type"), "the browser must join the named call type")
+	s.Equal("agent", parsed.Query().Get("channel_type"), "the chat history stays in the agent channel")
 }
 
 func (s *StreamEdgeSuite) TestTheDemoLinkCanPointAtAnotherDeployment() {

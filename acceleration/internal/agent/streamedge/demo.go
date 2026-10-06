@@ -9,6 +9,8 @@ import (
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 )
 
 const demoBaseURLEnvVar = "EXAMPLE_BASE_URL"
@@ -52,10 +54,12 @@ func (e *Edge) DemoURL(user User) (string, error) {
 		base = defaultDemoBaseURL
 	}
 	query := url.Values{
-		"api_key":    {e.options.APIKey},
-		"token":      {token},
-		"skip_lobby": {"true"},
-		"user_name":  {user.Name},
+		"api_key":      {e.options.APIKey},
+		"token":        {token},
+		"skip_lobby":   {"true"},
+		"user_name":    {user.Name},
+		"type":         {e.options.CallType},
+		"channel_type": {chatlog.ChannelType},
 	}
 	return fmt.Sprintf("%s/join/%s?%s",
 		strings.TrimSuffix(base, "/"), url.PathEscape(e.options.CallID), query.Encode()), nil

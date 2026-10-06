@@ -2,6 +2,12 @@
 
 ## Breaking Changes
 
+### The standalone voice agent waits quietly by default
+
+`cmd/agent` no longer adds listening acknowledgements or questions during long silences.
+Use `-backchannel=true` and `-check-in=true` to opt in to those behaviors. The
+embedded agent and router keep their existing idle behavior. (#749)
+
 ### Router voice calls use hosted primary EOT by default
 
 `cmd/router` and `cmd/agent` now use the hosted EU end-of-turn demo automatically when
@@ -1147,6 +1153,10 @@ answers out of a knowledge directory and a page on the docs site, both under one
 directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
 ## Bug Fixes
+
+- Standalone agent demo links now select the actual call type and the `agent` chat
+  channel, allowing Pronto to display conversation messages when transcript storage
+  is configured. (#749)
 
 - `POST /v1/agents/sessions/{id}/responses` takes an optional `command_id`, so a page can ask
   a user's kept conversation over HTTP and still get the turn's id back; it was refused with

@@ -117,8 +117,10 @@ func parseOptions(args []string) (options, bool, error) {
 	flags.BoolVar(&parsed.navigating, "navigating", false,
 		"the agent placed this call, so let recordings finish and answer their menus")
 	flags.IntVar(&parsed.tasks, "tasks", 0, "how much delegated work may run at once")
-	flags.BoolVar(&parsed.backchannel, "backchannel", true,
+	flags.BoolVar(&parsed.backchannel, "backchannel", false,
 		"murmur while the caller is still talking, the way a person on the phone does")
+	flags.BoolVar(&parsed.checkIn, "check-in", false,
+		"ask whether the caller needs anything else after a long silence")
 	flags.Float64Var(&parsed.minConfidence, "min-confidence", 0,
 		"how sure the transcriber must be for the agent to answer rather than check what was meant")
 	flags.BoolVar(&parsed.demo, "demo", true,
@@ -151,6 +153,7 @@ type options struct {
 	toolsFile      string
 	tasks          int
 	backchannel    bool
+	checkIn        bool
 	minConfidence  float64
 	demo           bool
 
@@ -172,8 +175,9 @@ func (o options) prompt() string {
 // duplex is how the agent listens and talks at the same time.
 func (o options) duplex() agent.DuplexOptions {
 	return agent.DuplexOptions{
-		Backchannel:   o.backchannel,
-		MinConfidence: o.minConfidence,
+		Backchannel:        o.backchannel,
+		DisableIdleCheckIn: !o.checkIn,
+		MinConfidence:      o.minConfidence,
 	}
 }
 
