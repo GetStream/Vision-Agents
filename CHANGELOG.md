@@ -2,6 +2,21 @@
 
 ## Breaking Changes
 
+### Every client goes to the hosted router unless told otherwise
+
+A client that is given no URL, and finds no `STREAM_ACCELERATION_URL`, now goes to Stream's
+hosted router at `https://accelerate.gcp.stream-io-api.com` instead of `http://localhost:8080`,
+so an app's code never has to name it. The JavaScript, Python, Ruby, PHP, .NET and Rust SDKs
+also reach that router through the authenticating proxy without being told to, as Go already
+did: `authenticate` is on for it unless passed as false. Kotlin's and Dart's `url` are optional
+now, as Swift's already was. A router running locally is named the way it always could be,
+with `url` or `STREAM_ACCELERATION_URL`, and reached by customer id:
+
+```bash
+STREAM_ACCELERATION_URL=http://localhost:8080
+STREAM_ACCELERATION_CUSTOMER_ID=examples
+```
+
 ### Every failure is an `error` object with a `type`, a `code` and a `doc_url`
 
 A failure was `{"error": "..."}`; it is now an envelope, `ErrorResponse`, holding an

@@ -176,6 +176,20 @@ class TestBackend < Minitest::Test
     assert_equal({ "X-Customer-Id" => "acme", "X-Stream-User-Id" => "ada" }, headers)
   end
 
+  def test_naming_no_router_goes_to_the_hosted_one_through_the_proxy
+    saved = ENV.delete(VA::Backend::URL_ENV)
+    backend = VA::Backend.new(api_key: "key", token: "token-for-ada", user_id: "ada")
+
+    assert_equal VA::Backend::DEFAULT_URL, backend.url
+    assert backend.authenticate?
+  ensure
+    ENV[VA::Backend::URL_ENV] = saved if saved
+  end
+
+  def test_a_router_named_by_url_leaves_the_proxy_off
+    refute VA::Backend.new(url: "http://router", customer_id: "acme").authenticate?
+  end
+
   def test_a_key_without_a_secret_or_token_is_refused
     assert_raises(VA::ConfigurationError) { VA::Backend.new(url: "http://router", api_key: "key", api_secret: "") }
   end

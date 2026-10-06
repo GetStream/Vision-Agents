@@ -1,7 +1,7 @@
 import { ConfigurationError } from "./errors.js";
 
-/** Where the router is when nothing says otherwise. */
-export const DEFAULT_URL = "http://localhost:8080";
+/** Stream's hosted router, which is where a client goes when nothing says otherwise. */
+export const DEFAULT_URL = "https://accelerate.gcp.stream-io-api.com";
 
 /** The environment the same variables are read from as in the Go and Python clients. */
 export const URL_ENV = "STREAM_ACCELERATION_URL";
@@ -46,7 +46,10 @@ export type WebSocketLike = Pick<
 export type WebSocketConstructor = new (url: string) => WebSocketLike;
 
 export interface BackendOptions {
-  /** The router's base URL. Falls back to `STREAM_ACCELERATION_URL`, then localhost. */
+  /**
+   * The router's base URL. Falls back to `STREAM_ACCELERATION_URL`, then Stream's hosted
+   * router, so only a self-hosted or local router needs it.
+   */
   url?: string;
   /**
    * Who the work is billed to, taken at face value.
@@ -94,8 +97,9 @@ export interface BackendOptions {
    * directly needs before it admits a backend, and it is the one thing the proxy refuses
    * outright.
    *
-   * Opt-in rather than inferred from holding a credential, because a Stream key and secret
-   * are in the environment for plenty of reasons that have nothing to do with this router.
+   * On for the hosted router, which is always behind the proxy. Anywhere else it is opt-in
+   * rather than inferred from holding a credential, because a Stream key and secret are in
+   * the environment for plenty of reasons that have nothing to do with this router.
    * Falls back to `STREAM_ACCELERATION_AUTHENTICATE`.
    */
   authenticate?: boolean;
@@ -156,7 +160,8 @@ export class Backend {
     this.declaredSecret = Boolean(options.apiSecret);
     this.token = options.token;
     this.userIdValue = options.userId ?? "";
-    this.authenticate = options.authenticate ?? boolean(env(AUTHENTICATE_ENV));
+    this.authenticate =
+      options.authenticate ?? (boolean(env(AUTHENTICATE_ENV)) || this.url === DEFAULT_URL);
     this.webSocketImpl = options.webSocket ?? globalWebSocket();
 
     // Bound, because a browser only lets fetch be called on the window: kept as a field and

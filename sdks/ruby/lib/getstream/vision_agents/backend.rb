@@ -17,7 +17,8 @@ module GetStream
       API_KEY_ENV = "STREAM_API_KEY"
       API_SECRET_ENV = "STREAM_API_SECRET"
       AUTHENTICATE_ENV = "STREAM_ACCELERATION_AUTHENTICATE"
-      DEFAULT_URL = "http://localhost:8080"
+      # Stream's hosted router, which is where a client goes when nothing says otherwise.
+      DEFAULT_URL = "https://accelerate.gcp.stream-io-api.com"
       CUSTOMER_HEADER = "X-Customer-Id"
 
       # How long a token minted here lasts. Short, because it is minted per request and a
@@ -29,13 +30,15 @@ module GetStream
       # Every argument falls back to the environment, so a process deployed next to a router
       # needs none of them.
       #
-      # @param url [String] the router's base URL, then STREAM_ACCELERATION_URL, then localhost.
+      # @param url [String] the router's base URL, then STREAM_ACCELERATION_URL, then Stream's
+      #   hosted router, so only a self-hosted or local router needs it.
       # @param customer_id [String] who the work is billed to, for a router that trusts the header.
       # @param api_key [String] the public half of a Stream credential.
       # @param api_secret [String] its secret, which is what makes this a backend.
       # @param token [String] a token minted for user_id to hold, in place of the secret.
       # @param user_id [String] the end user this acts for, if any.
-      # @param authenticate [Boolean] whether the router sits behind Stream's proxy.
+      # @param authenticate [Boolean] whether the router sits behind Stream's proxy. On for the
+      #   hosted router; anywhere else STREAM_ACCELERATION_AUTHENTICATE.
       # @param acting_for [String] the end user a server-side credential speaks for. Unlike
       #   user_id it keeps this backend's own credential; see #acting_for.
       def initialize(url: nil, customer_id: nil, api_key: nil, api_secret: nil, token: nil,
@@ -50,7 +53,11 @@ module GetStream
         # A token handed in is the caller's answer to who they are, so an ambient secret does
         # not turn a client built for a user into a backend.
         @api_secret = api_secret || (@token.empty? ? ENV.fetch(API_SECRET_ENV, "") : "")
-        @authenticate = authenticate.nil? ? flag(ENV.fetch(AUTHENTICATE_ENV, nil)) : authenticate
+        @authenticate = if authenticate.nil?
+                          flag(ENV.fetch(AUTHENTICATE_ENV, nil)) || @url == DEFAULT_URL
+                        else
+                          authenticate
+                        end
         @user = user || {}
         @user_id = (user_id || @user["id"] || @user[:id]).to_s
         @acting_for = acting_for.to_s

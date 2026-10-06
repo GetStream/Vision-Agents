@@ -30,6 +30,27 @@ final class ClientTest extends TestCase
         $this->router->stop();
     }
 
+    public function testNamingNoRouterGoesToTheHostedOneThroughTheProxy(): void
+    {
+        $saved = getenv(Backend::URL_ENV);
+        putenv(Backend::URL_ENV);
+        try {
+            $backend = new Backend(apiKey: 'key', token: 'tok', userId: 'ada');
+        } finally {
+            if ($saved !== false) {
+                putenv(Backend::URL_ENV . '=' . $saved);
+            }
+        }
+
+        self::assertSame(Backend::DEFAULT_URL, $backend->url);
+        self::assertTrue($backend->authenticate);
+    }
+
+    public function testARouterNamedByUrlLeavesTheProxyOff(): void
+    {
+        self::assertFalse((new Backend(url: 'http://router', customerId: 'examples'))->authenticate);
+    }
+
     public function testCustomerHeaderAndUser(): void
     {
         $this->router->answer('GET', '/v1/agents/configs', 200, []);

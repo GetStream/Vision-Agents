@@ -28,7 +28,7 @@ import 'wire.dart';
 /// The constructor does no I/O.
 final class VisionAgents {
   VisionAgents({
-    required Uri url,
+    Uri? url,
     String customerId = '',
     String apiKey = '',
     String userId = '',

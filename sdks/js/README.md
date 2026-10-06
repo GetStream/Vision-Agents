@@ -34,16 +34,22 @@ const api = new Client();
 const api = new Client({ apiKey: "vak_live_…", token: () => fetch("/api/token").then((r) => r.text()) });
 ```
 
-`url` falls back to `STREAM_ACCELERATION_URL`, then `http://localhost:8080`. `customerId`,
-`apiKey` and `apiSecret` fall back to `STREAM_ACCELERATION_CUSTOMER_ID`, `STREAM_API_KEY`
-and `STREAM_API_SECRET`.
+`url` falls back to `STREAM_ACCELERATION_URL`, then Stream's hosted router, so it is only
+passed for a self-hosted or local one. `customerId`, `apiKey` and `apiSecret` fall back to
+`STREAM_ACCELERATION_CUSTOMER_ID`, `STREAM_API_KEY` and `STREAM_API_SECRET`.
 
-A hosted deployment is reached through Stream's authenticating proxy, which wants the
-credential spelled its own way. Pass `authenticate: true`, or set
-`STREAM_ACCELERATION_AUTHENTICATE`:
+The hosted router is reached through Stream's authenticating proxy, which wants the
+credential spelled its own way; that is on by default for it. A self-hosted deployment
+behind the same proxy passes `authenticate: true`, or sets `STREAM_ACCELERATION_AUTHENTICATE`:
 
 ```ts
-const api = new Client({ url: "https://accelerate.gcp.stream-io-api.com", authenticate: true });
+const api = new Client({ url: "https://agents.example.com", authenticate: true });
+```
+
+A router running locally with nothing in front of it is reached by customer id:
+
+```ts
+const api = new Client({ url: "http://localhost:8080", customerId: "examples" });
 ```
 
 It is a switch rather than an extra header or two because the two spellings contradict each

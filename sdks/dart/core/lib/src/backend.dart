@@ -18,13 +18,8 @@ typedef TokenProvider = Future<String> Function();
 /// Every request and handshake is sent as a device's: `Stream-Auth-Type: jwt` on requests,
 /// and no auth type at all on a socket, which the router reads the same way.
 final class Backend {
-  Backend({
-    required this.url,
-    this.customerId = '',
-    this.apiKey = '',
-    this.userId = '',
-    this.token,
-  }) {
+  Backend({Uri? url, this.customerId = '', this.apiKey = '', this.userId = '', this.token})
+    : url = url ?? defaultUrl {
     if (customerId.isEmpty && apiKey.isEmpty) {
       throw ArgumentError('a backend needs a customerId, or an apiKey with a token');
     }
@@ -33,7 +28,10 @@ final class Backend {
     }
   }
 
-  /// The router's base URL.
+  /// Stream's hosted router, which is where a client goes when nothing says otherwise.
+  static final Uri defaultUrl = Uri.parse('https://accelerate.gcp.stream-io-api.com');
+
+  /// The router's base URL. Stream's hosted router unless another is named.
   final Uri url;
 
   /// Which tenant's agents these are, for a router that believes the header.

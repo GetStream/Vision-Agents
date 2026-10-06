@@ -18,7 +18,7 @@ at `../core` in this repository.
 ## Using them
 
 ```dart
-final agents = VisionAgents(url: Uri.parse('https://your-router'), customerId: 'acme');
+final agents = VisionAgents(apiKey: 'your_api_key', userId: 'jlahey', token: yourBackend.agentToken);
 
 // In writing. No call is joined, nothing is transcribed or spoken.
 final chat = await agents.agent('support').chat();
@@ -30,6 +30,10 @@ await chat.responses.create('What are your opening hours?');
 final voice = await VoiceSession.start(agents, agent: 'support');
 await voice.join(credentials: yourBackend.callCredentials);
 ```
+
+`VisionAgents(apiKey: ...)` reaches Stream's hosted router; pass `url:` for another. A router
+running locally with nothing in front of it is reached by customer id instead:
+`VisionAgents(url: Uri.parse('http://localhost:8080'), customerId: 'acme')`.
 
 `join` is handed a function rather than minting its own token: minting a call token is
 server-side only, so the app is handed the token to join with, and asks again when it expires.

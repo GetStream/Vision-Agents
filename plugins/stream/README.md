@@ -8,7 +8,14 @@ functions the model asks for.
 uv add vision-agents-plugins-stream
 ```
 
-Two environment variables point at the backend:
+It talks to Stream's hosted router with your app's credential:
+
+```bash
+STREAM_API_KEY=your_api_key
+STREAM_API_SECRET=your_api_secret
+```
+
+To use a router running locally instead, name it and the customer it bills:
 
 ```bash
 STREAM_ACCELERATION_URL=http://localhost:8080

@@ -49,6 +49,14 @@ class VisionAgentsTest {
     }
 
     @Test
+    fun `naming no router reaches the hosted one`() {
+        VisionAgents(apiKey = "key").use { hosted ->
+            assertEquals(Backend.DEFAULT_URL, hosted.backend.url)
+            assertEquals("https://accelerate.gcp.stream-io-api.com", hosted.backend.url)
+        }
+    }
+
+    @Test
     fun `every request says it comes from a device, even to a router with nothing in front of it`() = runTest {
         router.answer = { Reply(200, EMPTY_PAGE) }
 

@@ -82,9 +82,11 @@ let api = Client::new(ClientOptions {
 })?;
 ```
 
-`url` falls back to `STREAM_ACCELERATION_URL`, then `http://localhost:8080`. A hosted
-deployment behind Stream's proxy wants `authenticate: Some(true)`, or
-`STREAM_ACCELERATION_AUTHENTICATE`. Pass the client to an agent with `.client(api)`.
+`url` falls back to `STREAM_ACCELERATION_URL`, then Stream's hosted router, so it is only
+set for a self-hosted or local one. The hosted router is reached through Stream's proxy,
+which is on by default for it; a self-hosted deployment behind the same proxy wants
+`authenticate: Some(true)`, or `STREAM_ACCELERATION_AUTHENTICATE`. Pass the client to an
+agent with `.client(api)`.
 
 Every operation in `acceleration/api/openapi.yaml` is a method on `Client`, typed from the spec:
 

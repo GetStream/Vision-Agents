@@ -75,6 +75,28 @@ public sealed class ClientTests
     }
 
     [Fact]
+    public void NamingNoRouterGoesToTheHostedOneThroughTheProxy()
+    {
+        if (Environment.GetEnvironmentVariable(Backend.UrlEnv) is { Length: > 0 })
+        {
+            return;
+        }
+
+        var backend = new Backend(new VisionAgentsOptions { ApiKey = "key", Token = "tok", UserId = "ada" });
+
+        Assert.Equal(Backend.DefaultUrl, backend.Url);
+        Assert.True(backend.Authenticate);
+    }
+
+    [Fact]
+    public void ARouterNamedByUrlLeavesTheProxyOff()
+    {
+        var backend = new Backend(new VisionAgentsOptions { Url = "http://router", CustomerId = "examples" });
+
+        Assert.False(backend.Authenticate);
+    }
+
+    [Fact]
     public void AKeyWithNothingToProveItIsRefused()
     {
         Assert.Throws<ConfigurationException>(() => new VisionAgentsClient(new VisionAgentsOptions { Url = "http://x", ApiKey = "key" }));

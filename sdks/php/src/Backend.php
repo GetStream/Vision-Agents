@@ -20,7 +20,8 @@ use GetStream\VisionAgents\Exception\ConfigurationException;
  */
 final readonly class Backend
 {
-    public const string DEFAULT_URL = 'http://localhost:8080';
+    /** Stream's hosted router, which is where a client goes when nothing says otherwise. */
+    public const string DEFAULT_URL = 'https://accelerate.gcp.stream-io-api.com';
     public const string URL_ENV = 'STREAM_ACCELERATION_URL';
     public const string CUSTOMER_ENV = 'STREAM_ACCELERATION_CUSTOMER_ID';
     public const string API_KEY_ENV = 'STREAM_API_KEY';
@@ -44,14 +45,16 @@ final readonly class Backend
      * Every argument falls back to the environment, so a process deployed next to a router
      * needs none of them.
      *
-     * @param ?string $url the router's base URL; `STREAM_ACCELERATION_URL`, then localhost
+     * @param ?string $url the router's base URL; `STREAM_ACCELERATION_URL`, then Stream's hosted
+     *     router, so only a self-hosted or local router needs it
      * @param ?string $customerId who the work is billed to, for a router that trusts the header
      * @param ?string $apiKey the public half of a Stream credential; `STREAM_API_KEY`
      * @param ?string $apiSecret the secret that makes this a backend; `STREAM_API_SECRET`
      * @param string $token a token minted for `$userId` to hold, in place of the secret
      * @param string $userId the end user this is acting for, if it is acting for one
      * @param ?bool $authenticate whether the router sits behind Stream's authenticating proxy,
-     *     which wants the credential spelled `api_key` and `stream-auth-type: jwt`
+     *     which wants the credential spelled `api_key` and `stream-auth-type: jwt`. On for the
+     *     hosted router; anywhere else `STREAM_ACCELERATION_AUTHENTICATE`
      * @param string $onBehalfOf the end user a server-side caller speaks for, keeping its own credential
      */
     public function __construct(
@@ -75,7 +78,8 @@ final readonly class Backend
         $this->token = $token;
         $this->userId = $userId;
         $this->onBehalfOf = $onBehalfOf;
-        $this->authenticate = $authenticate ?? self::flag(self::env(self::AUTHENTICATE_ENV));
+        $this->authenticate = $authenticate
+            ?? (self::flag(self::env(self::AUTHENTICATE_ENV)) || $this->url === self::DEFAULT_URL);
 
         if ($this->authenticate && $this->apiKey === '') {
             throw new ConfigurationException('a router behind the proxy is reached with a credential; pass apiKey, or ' . self::API_KEY_ENV);
