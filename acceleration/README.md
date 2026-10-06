@@ -109,9 +109,9 @@ the other commands that read them there.
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `500000`. `0` turns it off |
 | `ROUTER_TRUSTED_PROXIES` | CIDR ranges your own proxies sit in, comma separated, e.g. `10.0.0.0/8`. Decides how much of `X-Forwarded-For` is believed. Unset means none of it is, and the connection's address is used |
 | `ROUTER_DATA_MOVE_RETENTION` | How long recorded changes are kept while a customer moves between deployments, defaults to `168h`. See [Moving a customer](#moving-a-customer) |
-| `ROUTER_EOT_URL` | Production `cmd/router` leaves acoustic endpointing disabled unless configured. The local `cmd/agent` demo defaults to the acoustic service; set an alternate `POST /v1/eot` URL to override it, or set it empty to disable scoring |
-| `ROUTER_EOT_ID_TOKEN_FILE` | Optional identity-token file override. The local demo's default service uses the existing gcloud login when this is unset; production uses runtime ID-token credentials |
-| `ROUTER_EOT_MODE` | Production defaults to `gate`; the local `cmd/agent` demo defaults to `primary`, where EOT resolves eligible quiet-floor turns and the semantic controller handles unavailable scores or ineligible/active-floor candidates. Set `gate` to ask the semantic controller alongside EOT |
+| `ROUTER_EOT_URL` | Unset selects the hosted EU demo scorer automatically in both `cmd/router` and `cmd/agent`. No EOT credentials or Google Cloud login are needed. An explicit empty value disables scoring; a custom `POST /v1/eot` URL overrides the hosted service |
+| `ROUTER_EOT_ID_TOKEN_FILE` | Optional identity-token file for a custom private endpoint. It cannot be used with the hosted demo, which never sends authorization credentials |
+| `ROUTER_EOT_MODE` | The hosted default uses `primary`: EOT resolves eligible quiet-floor turns, with bounded transient retries before semantic fallback. A custom URL defaults to `gate`, unless the mode is explicitly set. `gate` asks the semantic controller alongside EOT |
 | `ROUTER_EOT_THRESHOLD` | Raw p(EOT) threshold; `primary` waits below it and releases the turn at or above it. Defaults to `0.5`, an initial operational setting rather than a calibrated optimum |
 | `ROUTER_LOG_LEVEL`      | `debug`, `info` (default), `warn` or `error`               |
 | `HARNESS_SKILLS`        | Path to a skill set; defaults to the built-in one          |
@@ -606,12 +606,24 @@ go run ./cmd/agent -call my-call
 
 `cmd/agent` loads the nearest `.env` before reading environment-backed flag defaults; values
 already in the process environment take precedence, and command-line flags take precedence
-over both. For the default acoustic end-of-turn service, use an existing local gcloud login
-that already has access to invoke the service. The demo fetches an identity token at startup
-and refreshes it in memory; it does not launch a login flow, grant IAM access, or write the
-token to a file. This local demo default does not change production router settings. Set
-`ROUTER_EOT_MODE=gate` to keep the semantic controller in the decision path, or
+over both. Both `cmd/agent` and `cmd/router` automatically use the hosted EU acoustic
+end-of-turn demo in `primary` mode, at threshold `0.5`. There are no EOT variables to set,
+token files to create, Google Cloud logins or TPU resources to provision. The ordinary
+Stream and STT/LLM/TTS provider credentials are still required for the voice agent.
+
+The scorer receives a trailing window of caller audio as PCM16LE, 16 kHz mono, up to
+16 seconds, over HTTPS. The shared demo has bounded capacity; eligible transient failures
+get up to three attempts within one shared one-second network budget, then use the
+semantic flow controller. It is a demo service without an availability guarantee. A
+transient hosted preflight failure warns and lets the agent start; a permanent error fails
+startup. To use your own private scorer, set its URL and credentials explicitly. Set
+`ROUTER_EOT_MODE=gate` to keep the semantic controller in every eligible decision, or
 `ROUTER_EOT_URL=` to disable acoustic scoring.
+
+The Python `simple_voice_ai` example inherits this behavior from a router built from this
+branch; it needs no EOT settings of its own. An older deployed router must be upgraded to
+this branch before it gains these defaults. `VOICE_LATENCY_DAG=1` enables the example's
+per-turn timing DAG; this is optional observability, not EOT setup.
 
 ```bash
 # Sprint 6 stack: Gemma speaks, Sol handles the hard parts
@@ -670,8 +682,15 @@ speaker.
 ```mermaid
 flowchart LR
   edge["Edge audio 16k mono"] --> stt["STT session per participant"]
-  stt -->|"transcript revisions"| cadence["Cadence"]
-  cadence --> flow["Fast flow controller"]
+  stt -->|"transcript revisions"| cadence["Candidate settling and revision checks"]
+  cadence -->|"eligible quiet turn in primary mode"| eot["Acoustic EOT"]
+  edge -->|"bounded trailing PCM"| eot
+  eot -->|"complete"| conv[Conversation history]
+  eot -->|"low score"| wait["Wait and bounded retry or clarification"]
+  wait -->|"retry unchanged candidate"| cadence
+  wait -->|"patience expired: clarify"| conv
+  cadence -->|"ineligible, active floor, or gate mode"| flow["Fast flow controller"]
+  eot -->|"terminal error or exhausted retry budget"| flow
   flow -->|"respond or clarify"| conv[Conversation history]
   flow -->|"stop, shorten, continue"| floor["Speech floor"]
   conv --> harness["Harness"]
@@ -684,10 +703,13 @@ flowchart LR
 
 Three decisions are worth knowing about:
 
-- **Cadence, not turn detection, decides when to act.** Transcript revisions are debounced
-  per participant, then a separate fast-model session decides whether to wait, ignore
-  background speech, respond, or clarify. A provider final is metadata rather than the
-  response trigger; new words cancel a stale decision.
+- **Primary EOT decides eligible quiet turns.** A finalized transcript with valid caller
+  audio goes straight to the acoustic scorer without the added 350 ms settling timer.
+  A score below `0.5` waits; a score at or above it can release the speculative reply.
+  Stable interim transcripts still settle on the existing timer. Low scores retain the
+  bounded retry and patience policies. Ineligible or active-floor candidates, explicit
+  `gate` mode, and unavailable scores use the semantic flow controller. New words cancel
+  stale decisions in both paths.
 - **The reply is spoken sentence by sentence.** A model emits a few characters at a time,
   and a voice given two words at a time pauses in the wrong places. A streaming voice takes
   a turn's sentences as deltas of one utterance, so one turn stays one billed synthesis; a
@@ -697,8 +719,8 @@ Three decisions are worth knowing about:
   continue. Audio from an abandoned turn is still dropped at publication.
 
 Those three decisions are where a call goes wrong, so `ROUTER_LOG_LEVEL=debug` narrates
-them: every transcript revision, when the words held still, what the flow controller was
-asked and what it answered, and why the agent then spoke, waited, murmured, queued the turn
+them: every transcript revision, when the words held still, the EOT attempt count and
+decision, what the flow controller answered when used, and why the agent spoke, waited, murmured, queued the turn
 or stopped mid-reply. A quiet agent is usually one of `ignore`, `wait` on repeat, or a turn
 queued behind speech that never settled, and each of those says so.
 
@@ -724,7 +746,7 @@ while it runs.
 
 ```mermaid
 flowchart LR
-  stt["Transcript cadence"] --> controller["Flow controller"]
+  stt["Transcript candidate"] --> controller["EOT or semantic turn decision"]
   controller -->|"respond or clarify"| h["Harness"]
   h -->|"reply"| fast["Fast LLM session"]
   fast -->|"deltas"| filter["Directive filter"]

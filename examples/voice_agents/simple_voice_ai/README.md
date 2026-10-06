@@ -23,6 +23,14 @@ carries on.
 
 A running acceleration router: see [acceleration/README.md](../../../acceleration/README.md).
 
+A router built from this branch uses the hosted EU end-of-turn model automatically, in
+`primary` mode at threshold `0.5`. There is no EOT URL, token, Google Cloud login or TPU
+setup for this example. The router sends a bounded trailing caller-audio window to the
+hosted scorer over HTTPS and retries transient failures before semantic fallback. Upgrade
+an older router to this branch to get these defaults. The shared scorer is a demo service
+with bounded capacity; the ordinary Stream and model-provider prerequisites below still
+apply. To opt out, explicitly set `ROUTER_EOT_URL=` on the router.
+
 - `ROUTER_POSTGRES_DSN`, since a stored agent config is a row. Without it the sync is
   refused rather than half-applied.
 - A key for whichever providers the router routes each default to, `GOOGLE_API_KEY`,
@@ -40,6 +48,9 @@ cd examples/voice_agents/simple_voice_ai
 uv sync
 uv run simple_voice_ai.py run
 ```
+
+For per-turn timing DAGs in the console, use
+`VOICE_LATENCY_DAG=1 uv run simple_voice_ai.py run`.
 
 `run` joins one call and opens the demo UI on it, which is what to talk into. `--call-id`
 joins a call by name rather than a new one, `--no-demo` leaves the browser alone, and

@@ -2,6 +2,16 @@
 
 ## Breaking Changes
 
+### Router voice calls use hosted primary EOT by default
+
+`cmd/router` and `cmd/agent` now use the hosted EU end-of-turn demo automatically when
+no EOT URL is specified, with `primary` mode and threshold `0.5`. Eligible voice turns
+send a trailing caller-audio window over HTTPS and use the acoustic score to decide
+completion. No EOT token, Google Cloud login or TPU setup is required. An explicit
+`ROUTER_EOT_URL=` disables this behavior; custom endpoints retain the `gate` default
+unless a mode is explicitly selected. The ordinary Stream and model-provider credentials
+are still needed. (#749)
+
 ### The `lemonslice` and `liveavatar` plugins have been removed
 
 `vision-agents[lemonslice]` and `vision-agents[liveavatar]` are gone, along with
