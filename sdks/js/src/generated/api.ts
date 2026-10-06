@@ -779,7 +779,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Validate a connection
-         * @description Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. Who may validate it is who may read it.
+         * @description Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -4001,6 +4001,8 @@ export type components = {
             };
             /** @description The tool's name at the provider. An agent config grants it by this name. */
             readonly name: string;
+            /** @description The scopes a call of the tool needs, as the connector says. Absent when it says none. */
+            readonly needs_scopes?: readonly string[] | null;
             /** @description The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again. */
             readonly schema_digest: string;
         };
@@ -4023,18 +4025,27 @@ export type components = {
              * @description When the tools were listed. Absent until a validate listed them.
              */
             readonly checked_at?: string;
+            /** @description What a program branches on when the status is not connected: connector_scope_required with needs_scopes. More may be added. */
+            readonly code?: string;
             readonly connection_id: string;
             /** @description Why the status is not connected, for a person to read. */
             readonly error?: string;
+            /** @description With needs_scopes: the scopes the checked tools need that the grant lacks, sorted. */
+            readonly missing_scopes?: readonly string[] | null;
             readonly status: components["schemas"]["ConnectionValidationStatus"];
             /** @description The digest of the tools the connection offers, as GET .../tools shows them. Absent until a validate listed them. */
             readonly tools_digest?: string;
         };
+        /** @description What a validate checks the grant's scopes against. An unknown field is refused rather than ignored. */
+        readonly ConnectionValidationRequest: {
+            /** @description The tools to check the granted scopes against, by name: those an agent config will grant. Left out, every tool the connection offers. */
+            readonly tools?: readonly string[] | null;
+        };
         /**
-         * @description connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps. failed: the provider could not be reached or listed nothing usable; error says why.
+         * @description connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
          * @enum {string}
          */
-        readonly ConnectionValidationStatus: "connected" | "pending" | "needs_reauthorization" | "failed";
+        readonly ConnectionValidationStatus: "connected" | "pending" | "needs_reauthorization" | "needs_scopes" | "failed";
         /** @description A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router. */
         readonly Connector: {
             readonly category?: string;
@@ -8398,7 +8409,11 @@ export interface operations {
             };
             readonly cookie?: never;
         };
-        readonly requestBody?: never;
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectionValidationRequest"];
+            };
+        };
         readonly responses: {
             /** @description What the validate found */
             readonly 200: {

@@ -11,7 +11,8 @@ Discover(ctx, binding)                   within startupTimeout (10 s)
   connect      server/discover (2026-07-28), else initialize (2025-11-25)
   tools/list   every page; a repeated cursor is an error
   ToolSpec     name, description, input schema,
-               SchemaDigest = sha256(name, description, input schema)
+               SchemaDigest = sha256(name, description, input schema),
+               NeedsScopes from the manifest's sources[].tools[]
 
 Open(ctx, binding, grants)               same connect and list
   alias        binding.Name, never holding "__"

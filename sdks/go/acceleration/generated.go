@@ -463,6 +463,7 @@ const (
 	ConnectionValidationStatusConnected            ConnectionValidationStatus = "connected"
 	ConnectionValidationStatusFailed               ConnectionValidationStatus = "failed"
 	ConnectionValidationStatusNeedsReauthorization ConnectionValidationStatus = "needs_reauthorization"
+	ConnectionValidationStatusNeedsScopes          ConnectionValidationStatus = "needs_scopes"
 	ConnectionValidationStatusPending              ConnectionValidationStatus = "pending"
 )
 
@@ -474,6 +475,8 @@ func (e ConnectionValidationStatus) Valid() bool {
 	case ConnectionValidationStatusFailed:
 		return true
 	case ConnectionValidationStatusNeedsReauthorization:
+		return true
+	case ConnectionValidationStatusNeedsScopes:
 		return true
 	case ConnectionValidationStatusPending:
 		return true
@@ -3183,6 +3186,9 @@ type ConnectionTool struct {
 	// Name The tool's name at the provider. An agent config grants it by this name.
 	Name string `json:"name"`
 
+	// NeedsScopes The scopes a call of the tool needs, as the connector says. Absent when it says none.
+	NeedsScopes *[]string `json:"needs_scopes,omitempty"`
+
 	// SchemaDigest The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again.
 	SchemaDigest string `json:"schema_digest"`
 }
@@ -3201,20 +3207,32 @@ type ConnectionTools struct {
 // ConnectionValidation Whether a connection's credential works, found by asking the provider for its tools.
 type ConnectionValidation struct {
 	// CheckedAt When the tools were listed. Absent until a validate listed them.
-	CheckedAt    *time.Time `json:"checked_at,omitempty"`
-	ConnectionId string     `json:"connection_id"`
+	CheckedAt *time.Time `json:"checked_at,omitempty"`
+
+	// Code What a program branches on when the status is not connected: connector_scope_required with needs_scopes. More may be added.
+	Code         *string `json:"code,omitempty"`
+	ConnectionId string  `json:"connection_id"`
 
 	// Error Why the status is not connected, for a person to read.
 	Error *string `json:"error,omitempty"`
 
-	// Status connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps. failed: the provider could not be reached or listed nothing usable; error says why.
+	// MissingScopes With needs_scopes: the scopes the checked tools need that the grant lacks, sorted.
+	MissingScopes *[]string `json:"missing_scopes,omitempty"`
+
+	// Status connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
 	Status ConnectionValidationStatus `json:"status"`
 
 	// ToolsDigest The digest of the tools the connection offers, as GET .../tools shows them. Absent until a validate listed them.
 	ToolsDigest *string `json:"tools_digest,omitempty"`
 }
 
-// ConnectionValidationStatus connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps. failed: the provider could not be reached or listed nothing usable; error says why.
+// ConnectionValidationRequest What a validate checks the grant's scopes against. An unknown field is refused rather than ignored.
+type ConnectionValidationRequest struct {
+	// Tools The tools to check the granted scopes against, by name: those an agent config will grant. Left out, every tool the connection offers.
+	Tools *[]string `json:"tools,omitempty"`
+}
+
+// ConnectionValidationStatus connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
 type ConnectionValidationStatus string
 
 // Connector A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.
@@ -6899,6 +6917,9 @@ type CreateConnectionJSONRequestBody = ConnectionRequest
 // PutConnectionCredentialsJSONRequestBody defines body for PutConnectionCredentials for application/json ContentType.
 type PutConnectionCredentialsJSONRequestBody = ConnectionCredentials
 
+// ValidateConnectionJSONRequestBody defines body for ValidateConnection for application/json ContentType.
+type ValidateConnectionJSONRequestBody = ConnectionValidationRequest
+
 // CreateConnectorJSONRequestBody defines body for CreateConnector for application/json ContentType.
 type CreateConnectorJSONRequestBody = CustomConnectorRequest
 
@@ -7832,14 +7853,27 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/agents/connections/{id}/tools (the `ListConnectionTools` operationId).
 	ListConnectionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ValidateConnection Validate a connection
+	// ValidateConnectionWithBody Validate a connection
 	//
-	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. Who may validate it is who may read it.
+	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
+	// Takes any type of body and a specified content type.
+	//
 	// Corresponds with POST /v1/agents/connections/{id}/validate (the `ValidateConnection` operationId).
-	ValidateConnection(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ValidateConnectionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ValidateConnection Validate a connection
+	//
+	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/connections/{id}/validate (the `ValidateConnection` operationId).
+	ValidateConnection(ctx context.Context, id string, body ValidateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListConnectors List or search connectors
 	//
@@ -10472,15 +10506,38 @@ func (c *Client) ListConnectionTools(ctx context.Context, id string, reqEditors 
 	return c.Client.Do(req)
 }
 
-// ValidateConnection Validate a connection
+// ValidateConnectionWithBody Validate a connection
 //
-// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. Who may validate it is who may read it.
+// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
+// Takes any type of body and a specified content type.
+//
 // Corresponds with POST /v1/agents/connections/{id}/validate (the `ValidateConnection` operationId).
-func (c *Client) ValidateConnection(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewValidateConnectionRequest(c.Server, id)
+func (c *Client) ValidateConnectionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewValidateConnectionRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ValidateConnection Validate a connection
+//
+// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/connections/{id}/validate (the `ValidateConnection` operationId).
+func (c *Client) ValidateConnection(ctx context.Context, id string, body ValidateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewValidateConnectionRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -15708,8 +15765,19 @@ func NewListConnectionToolsRequest(server string, id string) (*http.Request, err
 	return req, nil
 }
 
-// NewValidateConnectionRequest constructs an http.Request for the ValidateConnection method
-func NewValidateConnectionRequest(server string, id string) (*http.Request, error) {
+// NewValidateConnectionRequest calls the generic ValidateConnection builder with application/json body
+func NewValidateConnectionRequest(server string, id string, body ValidateConnectionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewValidateConnectionRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewValidateConnectionRequestWithBody constructs an http.Request for the ValidateConnection method, with any body, and a specified content type
+func NewValidateConnectionRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -15734,10 +15802,12 @@ func NewValidateConnectionRequest(server string, id string) (*http.Request, erro
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -22641,16 +22711,27 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/connections/{id}/tools (the `ListConnectionTools` operationId).
 	ListConnectionToolsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListConnectionToolsResponse, error)
 
-	// ValidateConnectionWithResponse Validate a connection
+	// ValidateConnectionWithBodyWithResponse Validate a connection
 	//
-	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. Who may validate it is who may read it.
+	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/connections/{id}/validate (the `ValidateConnection` operationId).
-	ValidateConnectionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ValidateConnectionResponse, error)
+	ValidateConnectionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ValidateConnectionResponse, error)
+
+	// ValidateConnectionWithResponse Validate a connection
+	//
+	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/connections/{id}/validate (the `ValidateConnection` operationId).
+	ValidateConnectionWithResponse(ctx context.Context, id string, body ValidateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*ValidateConnectionResponse, error)
 
 	// ListConnectorsWithResponse List or search connectors
 	//
@@ -37904,17 +37985,34 @@ func (c *ClientWithResponses) ListConnectionToolsWithResponse(ctx context.Contex
 	return ParseListConnectionToolsResponse(rsp)
 }
 
-// ValidateConnectionWithResponse Validate a connection
+// ValidateConnectionWithBodyWithResponse Validate a connection
 //
-// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. Who may validate it is who may read it.
+// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/connections/{id}/validate (the `ValidateConnection` operationId).
-func (c *ClientWithResponses) ValidateConnectionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ValidateConnectionResponse, error) {
-	rsp, err := c.ValidateConnection(ctx, id, reqEditors...)
+func (c *ClientWithResponses) ValidateConnectionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ValidateConnectionResponse, error) {
+	rsp, err := c.ValidateConnectionWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseValidateConnectionResponse(rsp)
+}
+
+// ValidateConnectionWithResponse Validate a connection
+//
+// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/connections/{id}/validate (the `ValidateConnection` operationId).
+func (c *ClientWithResponses) ValidateConnectionWithResponse(ctx context.Context, id string, body ValidateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*ValidateConnectionResponse, error) {
+	rsp, err := c.ValidateConnection(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

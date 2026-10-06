@@ -252,6 +252,69 @@ func (s *ConnectionToolsSuite) TestATokenTheProviderRefusesMovesTheConnectionToN
 	s.Equal(ConnectionStatus(store.ConnectionNeedsReauthorization), s.get(id).Status)
 }
 
+// TestAGrantLackingAScopeAToolNeedsValidatesAsNeedsScopesAndNamesIt is T31's acceptance: a
+// Slack-shaped connection granted chat:write only, with a tool that needs channels:read.
+func (s *ConnectionToolsSuite) TestAGrantLackingAScopeAToolNeedsValidatesAsNeedsScopesAndNamesIt() {
+	id := s.scoped("chat:write")
+
+	validation := s.validate(id)
+	var tools ConnectionTools
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+id+"/tools", nil, &tools))
+
+	s.Equal(validationNeedsScopes, string(validation.Status))
+	s.Equal(codeScopeRequired, validation.Code)
+	s.Equal([]string{"channels:read"}, validation.MissingScopes)
+	s.Contains(validation.Error, "channels:read")
+	s.Require().Len(tools.Tools, 2, "the tools are listed all the same")
+	s.Equal([]string{"chat:write"}, tools.Tools[0].NeedsScopes)
+	s.Equal([]string{"channels:read"}, tools.Tools[1].NeedsScopes)
+}
+
+func (s *ConnectionToolsSuite) TestAGrantWithEveryScopeItsToolsNeedValidatesAsConnected() {
+	id := s.scoped("chat:write,channels:read")
+
+	validation := s.validate(id)
+
+	s.Equal(validationConnected, string(validation.Status))
+	s.Empty(validation.MissingScopes)
+}
+
+func (s *ConnectionToolsSuite) TestOnlyTheToolsTheBodyNamesAreChecked() {
+	id := s.scoped("chat:write")
+
+	var validation ConnectionValidation
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/connections/"+id+"/validate",
+		map[string]any{"tools": []string{"echo"}}, &validation))
+
+	s.Equal(validationConnected, string(validation.Status))
+}
+
+func (s *ConnectionToolsSuite) TestCheckingAToolTheConnectionDoesNotOfferIsRefused() {
+	id := s.scoped("chat:write")
+
+	status, body := s.serverClient.call(http.MethodPost, "/v1/agents/connections/"+id+"/validate",
+		map[string]any{"tools": []string{"delete_workspace"}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(body), `no tool named \"delete_workspace\"`)
+}
+
+// scoped is an oauth2_code connection whose grant was imported with scope, to a connector
+// whose echo needs chat:write and fail channels:read.
+func (s *ConnectionToolsSuite) scoped(scope string) string {
+	connector := s.connector(oauth2code.Name, `    tools:
+      - name: echo
+        needs_scopes: [chat:write]
+      - name: fail
+        needs_scopes: [channels:read]
+`)
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(connector), &created))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+created.ID+"/credentials",
+		s.importedGrant(s.token, scope), nil))
+	return created.ID
+}
+
 // connection is a pending app-owned connection to a new connector of the suite's app at the
 // fake, authenticating with scheme.
 func (s *ConnectionToolsSuite) connection(scheme string) string {

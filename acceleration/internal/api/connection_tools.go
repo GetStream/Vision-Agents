@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -53,24 +54,51 @@ const (
 	validationConnected            = "connected"
 	validationPending              = "pending"
 	validationNeedsReauthorization = "needs_reauthorization"
+	validationNeedsScopes          = "needs_scopes"
 	validationFailed               = "failed"
 )
+
+// codeScopeRequired is the code of a validate whose grant lacks a scope a tool needs: the
+// connector_scope_required the architecture doc names («Add» item 5, from
+// connector-design.md:389 on codex/connector-support).
+const codeScopeRequired = "connector_scope_required"
 
 func (ConnectionValidationStatus) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "ConnectionValidationStatus",
 		"connected: the credential works and the tools were listed. pending: no credentials yet. "+
 			"needs_reauthorization: the provider no longer takes the credential, so only a reconnect "+
-			"helps. failed: the provider could not be reached or listed nothing usable; error says why.",
-		validationConnected, validationPending, validationNeedsReauthorization, validationFailed)
+			"helps. needs_scopes: the tools were listed, and the grant lacks scopes they need; "+
+			"missing_scopes names them, and a consent that asks for them helps. failed: the provider "+
+			"could not be reached or listed nothing usable; error says why.",
+		validationConnected, validationPending, validationNeedsReauthorization, validationNeedsScopes, validationFailed)
+}
+
+// ConnectionValidationRequest is what a validate may be asked to check beyond the credential.
+type ConnectionValidationRequest struct {
+	Tools []string `json:"tools,omitempty" doc:"The tools to check the granted scopes against, by name: those an agent config will grant. Left out, every tool the connection offers."`
+}
+
+func (*ConnectionValidationRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What a validate checks the grant's scopes against. An unknown field is " +
+		"refused rather than ignored."
+	schema.AdditionalProperties = false
+	return schema
+}
+
+type validateConnectionRequest struct {
+	ID   string `path:"id" doc:"The connection, as returned when it was created."`
+	Body *ConnectionValidationRequest
 }
 
 // ConnectionValidation is what a validate found.
 type ConnectionValidation struct {
-	ConnectionID string                     `json:"connection_id"`
-	Status       ConnectionValidationStatus `json:"status"`
-	Error        string                     `json:"error,omitempty" doc:"Why the status is not connected, for a person to read."`
-	ToolsDigest  string                     `json:"tools_digest,omitempty" doc:"The digest of the tools the connection offers, as GET .../tools shows them. Absent until a validate listed them."`
-	CheckedAt    *time.Time                 `json:"checked_at,omitempty" doc:"When the tools were listed. Absent until a validate listed them."`
+	ConnectionID  string                     `json:"connection_id"`
+	Status        ConnectionValidationStatus `json:"status"`
+	Code          string                     `json:"code,omitempty" doc:"What a program branches on when the status is not connected: connector_scope_required with needs_scopes. More may be added."`
+	MissingScopes []string                   `json:"missing_scopes,omitempty" doc:"With needs_scopes: the scopes the checked tools need that the grant lacks, sorted."`
+	Error         string                     `json:"error,omitempty" doc:"Why the status is not connected, for a person to read."`
+	ToolsDigest   string                     `json:"tools_digest,omitempty" doc:"The digest of the tools the connection offers, as GET .../tools shows them. Absent until a validate listed them."`
+	CheckedAt     *time.Time                 `json:"checked_at,omitempty" doc:"When the tools were listed. Absent until a validate listed them."`
 }
 
 func (*ConnectionValidation) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -88,6 +116,7 @@ type ConnectionTool struct {
 	Description  string         `json:"description"`
 	InputSchema  map[string]any `json:"input_schema" doc:"The JSON Schema of its arguments."`
 	SchemaDigest string         `json:"schema_digest" doc:"The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again."`
+	NeedsScopes  []string       `json:"needs_scopes,omitempty" doc:"The scopes a call of the tool needs, as the connector says. Absent when it says none."`
 }
 
 // ConnectionTools is the tools a connection offered when it was last validated.
@@ -139,8 +168,10 @@ func (s *Server) registerConnectionTools(api huma.API) {
 		Summary:     "Validate a connection",
 		Description: "Gets the connection's credential, renewing it when it must, and asks the " +
 			"provider for its tools, which GET .../tools then shows. A connection that needs a " +
-			"reconnect says so without the provider being asked. Who may validate it is who may " +
-			"read it.\n\n" +
+			"reconnect says so without the provider being asked. The granted scopes are then " +
+			"checked against what the tools need (all of them, or those the body names): a " +
+			"grant that lacks some is needs_scopes with code connector_scope_required and the " +
+			"missing scopes. Who may validate it is who may read it.\n\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
 			"end user's device.",
 		Responses: map[string]*huma.Response{"200": {Description: "What the validate found"}},
@@ -231,8 +262,8 @@ func (s *Server) putConnectionCredentials(ctx context.Context, request *putConne
 }
 
 // validateConnection resolves the connection's credential, lists its tools through each of its
-// sources, and stores the list.
-func (s *Server) validateConnection(ctx context.Context, request *connectionRequest) (*validationResponse, error) {
+// sources, stores the list, and compares the granted scopes with what the tools need.
+func (s *Server) validateConnection(ctx context.Context, request *validateConnectionRequest) (*validationResponse, error) {
 	connection, err := s.reachableConnection(ctx, request.ID)
 	if err != nil {
 		return nil, err
@@ -272,25 +303,66 @@ func (s *Server) validateConnection(ctx context.Context, request *connectionRequ
 		specs = append(specs, listed...)
 	}
 
+	var checked []string
+	if request.Body != nil {
+		checked = request.Body.Tools
+	}
+	missing, err := missingScopes(specs, checked, connection.GrantedScopes)
+	if err != nil {
+		return nil, invalidRequest(err.Error())
+	}
 	tools := make([]store.ConnectorTool, 0, len(specs))
 	for _, spec := range specs {
 		tools = append(tools, store.ConnectorTool{Name: spec.Name, Description: spec.Description,
-			InputSchema: spec.InputSchema, SchemaDigest: spec.SchemaDigest})
+			InputSchema: spec.InputSchema, SchemaDigest: spec.SchemaDigest, NeedsScopes: spec.NeedsScopes})
 	}
 	digest, err := toolsDigest(tools)
 	if err != nil {
 		return nil, err
 	}
-	checked := time.Now().UTC().Truncate(time.Microsecond)
-	err = s.store.SetConnectorConnectionTools(ctx, connection.CustomerID, connection.ID, tools, digest, checked)
+	listedAt := time.Now().UTC().Truncate(time.Microsecond)
+	err = s.store.SetConnectorConnectionTools(ctx, connection.CustomerID, connection.ID, tools, digest, listedAt)
 	if errors.Is(err, store.ErrNoConnectorConnection) {
 		return nil, errNoSuchConnection
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &validationResponse{Body: ConnectionValidation{ConnectionID: connection.ID,
-		Status: validationConnected, ToolsDigest: digest, CheckedAt: &checked}}, nil
+	validation := ConnectionValidation{ConnectionID: connection.ID, Status: validationConnected,
+		ToolsDigest: digest, CheckedAt: &listedAt}
+	if len(missing) > 0 {
+		validation.Status, validation.Code, validation.MissingScopes = validationNeedsScopes, codeScopeRequired, missing
+		validation.Error = "the grant lacks scopes its tools need: " + strings.Join(missing, ", ") +
+			"; start a consent that asks for them"
+	}
+	return &validationResponse{Body: validation}, nil
+}
+
+// missingScopes is the scopes the checked tools need that granted lacks, sorted (architecture
+// doc, «Add» item 11: «granted_scopes against the union of needs_scopes of the granted
+// tools»). No names checks every tool; a name the connection does not offer is an error.
+func missingScopes(specs []core.ToolSpec, names, granted []string) ([]string, error) {
+	needs := map[string][]string{}
+	for _, spec := range specs {
+		needs[spec.Name] = spec.NeedsScopes
+	}
+	if names == nil {
+		names = slices.Collect(maps.Keys(needs))
+	}
+	var missing []string
+	for _, name := range names {
+		scopes, offered := needs[name]
+		if !offered {
+			return nil, fmt.Errorf("tools: the connection offers no tool named %q", name)
+		}
+		for _, scope := range scopes {
+			if !slices.Contains(granted, scope) && !slices.Contains(missing, scope) {
+				missing = append(missing, scope)
+			}
+		}
+	}
+	slices.Sort(missing)
+	return missing, nil
 }
 
 // validationAfter is what a validate reports after the resolver or a source failed: the
@@ -326,7 +398,8 @@ func (s *Server) listConnectionTools(ctx context.Context, request *connectionReq
 	tools := make([]ConnectionTool, 0, len(connection.CachedTools))
 	for _, tool := range connection.CachedTools {
 		tools = append(tools, ConnectionTool{Name: tool.Name, Description: tool.Description,
-			InputSchema: maps.Clone(tool.InputSchema), SchemaDigest: tool.SchemaDigest})
+			InputSchema: maps.Clone(tool.InputSchema), SchemaDigest: tool.SchemaDigest,
+			NeedsScopes: slices.Clone(tool.NeedsScopes)})
 	}
 	return &connectionToolsResponse{Body: ConnectionTools{ConnectionID: connection.ID, Tools: tools,
 		Digest: connection.ToolsDigest, CheckedAt: connection.ToolsCheckedAt}}, nil

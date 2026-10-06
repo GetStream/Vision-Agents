@@ -96,6 +96,10 @@ type ToolSpec struct {
 	Description  string
 	InputSchema  map[string]any
 	SchemaDigest string
+	// NeedsScopes are the scopes a call of the tool needs, from the manifest's ToolRule, so a
+	// grant that lacks one is found when the connection is validated, not when a call fails.
+	// Empty when nothing says. They are not part of SchemaDigest, which is what the model sees.
+	NeedsScopes []string
 }
 
 // Connection is one account at one connector, owned by the app or by one user.

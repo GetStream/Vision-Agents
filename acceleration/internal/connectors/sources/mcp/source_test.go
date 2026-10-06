@@ -82,6 +82,19 @@ func (s *SourceSuite) TestDiscoverReadsEveryPage() {
 	s.Equal(3, s.provider.pages(), "the server answers one tool per page")
 }
 
+func (s *SourceSuite) TestTheScopesAToolNeedsComeFromTheManifest() {
+	specs, err := s.source.Discover(s.ctx, s.binding())
+
+	s.Require().NoError(err)
+	for _, spec := range specs {
+		if spec.Name == contracttest.ToolEcho {
+			s.Equal([]string{"channels:read"}, spec.NeedsScopes)
+		} else {
+			s.Empty(spec.NeedsScopes, spec.Name)
+		}
+	}
+}
+
 func (s *SourceSuite) TestEveryRequestCarriesTheConnectionsCredential() {
 	set := s.open(contracttest.ToolEcho)
 	_, err := set.Call(s.ctx, llm.ToolCall{Name: "crm__echo", Arguments: `{"text":"hi"}`})
@@ -281,12 +294,14 @@ func (s *SourceSuite) open(tools ...string) core.Toolset {
 	return set
 }
 
-// manifest is a connector whose mcp source runs at endpoint.
+// manifest is a connector whose mcp source runs at endpoint, saying echo needs channels:read.
 func manifest(endpoint string) core.ResolvedManifest {
 	return core.ResolvedManifest{
 		ConnectorID: "custom_crm",
 		Endpoints:   map[string]string{"mcp": endpoint},
-		Sources:     []core.SourceRule{{Kind: Kind, Endpoint: "mcp"}},
+		Sources: []core.SourceRule{{Kind: Kind, Endpoint: "mcp", Tools: []core.ToolRule{
+			{Name: contracttest.ToolEcho, NeedsScopes: []string{"channels:read"}},
+		}}},
 	}
 }
 

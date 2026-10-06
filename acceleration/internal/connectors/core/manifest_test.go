@@ -459,14 +459,35 @@ func (s *ManifestSuite) TestAnUnknownCaptureSourceIsRejected() {
 	s.ErrorContains(err, `capture[0].from: "header" is not one of [token_response id_token callback_query]`)
 }
 
-func (s *ManifestSuite) TestTheSourcesReachTheResolvedManifest() {
-	m, err := ParseManifest(minimal("endpoints:\n  mcp: https://mcp.example.com/mcp\nsources:\n  - kind: mcp\n    endpoint: mcp\n"))
+// toolSource is a manifest with two scopes and an mcp source whose tools are extra.
+func toolSource(extra string) []byte {
+	return minimal("endpoints:\n  mcp: https://mcp.example.com/mcp\nscopes:\n  list: [chat:write, channels:read]\n" +
+		"sources:\n  - kind: mcp\n    endpoint: mcp\n    tools:\n" + extra)
+}
+
+func (s *ManifestSuite) TestTheScopesAToolNeedsReachTheResolvedManifest() {
+	m, err := ParseManifest(toolSource("      - name: list_channels\n        needs_scopes: [channels:read]\n"))
 	s.Require().NoError(err)
 
 	resolved, err := m.Resolve("oauth2_code", nil, nil)
 
 	s.Require().NoError(err)
-	s.Equal([]SourceRule{{Kind: "mcp", Endpoint: "mcp"}}, resolved.Sources)
+	s.Equal([]SourceRule{{Kind: "mcp", Endpoint: "mcp", Tools: []ToolRule{{Name: "list_channels", NeedsScopes: []string{"channels:read"}}}}}, resolved.Sources)
+}
+
+func (s *ManifestSuite) TestAToolNeedingAScopeTheManifestNeverAsksForIsRejected() {
+	_, err := ParseManifest(toolSource("      - name: list_channels\n        needs_scopes: [channels:history]\n"))
+	s.ErrorContains(err, `sources[0].tools[0].needs_scopes: "channels:history" is not in scopes.list`)
+}
+
+func (s *ManifestSuite) TestAToolNamedTwiceIsRejected() {
+	_, err := ParseManifest(toolSource("      - name: send\n        needs_scopes: [chat:write]\n      - name: send\n        needs_scopes: [chat:write]\n"))
+	s.ErrorContains(err, `sources[0].tools[1].name: "send" is named twice`)
+}
+
+func (s *ManifestSuite) TestAToolNeedingNoScopeIsRejected() {
+	_, err := ParseManifest(toolSource("      - name: send\n        needs_scopes: []\n"))
+	s.ErrorContains(err, "sources[0].tools[0].needs_scopes: is required")
 }
 
 func (s *ManifestSuite) TestAnUnknownClientAuthMethodIsRejected() {

@@ -142,6 +142,19 @@ type RateLimitRule struct {
 type SourceRule struct {
 	Kind     string `yaml:"kind" json:"kind"`
 	Endpoint string `yaml:"endpoint" json:"endpoint"`
+	// Tools is what the manifest says about some of the source's tools, by the name the
+	// source lists each under. A tool it does not name is offered all the same.
+	Tools []ToolRule `yaml:"tools,omitempty" json:"tools,omitempty"`
+}
+
+// ToolRule is what a manifest says about one tool of a source.
+type ToolRule struct {
+	Name string `yaml:"name" json:"name"`
+	// NeedsScopes are the scopes a call of the tool needs, each one of scopes.list. A
+	// validate compares the connection's granted scopes with what its tools need (architecture
+	// doc on connectors/planning, «Add» item 11, and the stress test's row 12: «a per-tool
+	// needs_scopes on the ToolSpec so the check is possible»).
+	NeedsScopes []string `yaml:"needs_scopes" json:"needs_scopes"`
 }
 
 // CaptureRule reads one public value at connect time into the connection's metadata.
@@ -504,6 +517,25 @@ func (m Manifest) Validate() error {
 		}
 		if _, ok := m.Endpoints[source.Endpoint]; !ok {
 			fail(field+".endpoint", "%q is not a declared endpoint", source.Endpoint)
+		}
+		named := map[string]bool{}
+		for j, tool := range source.Tools {
+			field := fmt.Sprintf("%s.tools[%d]", field, j)
+			if tool.Name == "" {
+				fail(field+".name", "is required")
+			}
+			if named[tool.Name] {
+				fail(field+".name", "%q is named twice", tool.Name)
+			}
+			named[tool.Name] = true
+			if len(tool.NeedsScopes) == 0 {
+				fail(field+".needs_scopes", "is required: a tool that needs no scope is left out")
+			}
+			for _, scope := range tool.NeedsScopes {
+				if !slices.Contains(m.Scopes.List, scope) {
+					fail(field+".needs_scopes", "%q is not in scopes.list", scope)
+				}
+			}
 		}
 	}
 

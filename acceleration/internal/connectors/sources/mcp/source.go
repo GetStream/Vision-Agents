@@ -69,13 +69,14 @@ func (*Source) Kind() string {
 }
 
 // Discover lists every tool the connection's MCP server offers, reading every tools/list page,
-// each with its schema digest.
+// each with its schema digest and the scopes the manifest says it needs.
 func (s *Source) Discover(ctx context.Context, b core.ResolvedBinding) ([]core.ToolSpec, error) {
 	session, listed, err := s.open(ctx, b)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = session.Close() }()
+	rule := sourceRule(b.Manifest)
 	specs := make([]core.ToolSpec, 0, len(listed))
 	for _, tool := range listed {
 		digest, err := ToolSchemaDigest(tool)
@@ -91,6 +92,7 @@ func (s *Source) Discover(ctx context.Context, b core.ResolvedBinding) ([]core.T
 			Description:  tool.Description,
 			InputSchema:  schema,
 			SchemaDigest: digest,
+			NeedsScopes:  needsScopes(rule, tool.Name),
 		})
 	}
 	return specs, nil
@@ -262,6 +264,18 @@ func sourceRule(m core.ResolvedManifest) *core.SourceRule {
 		return nil
 	}
 	return &m.Sources[index]
+}
+
+// needsScopes is what the manifest says the tool needs.
+func needsScopes(rule *core.SourceRule, name string) []string {
+	if rule == nil {
+		return nil
+	}
+	index := slices.IndexFunc(rule.Tools, func(tool core.ToolRule) bool { return tool.Name == name })
+	if index < 0 {
+		return nil
+	}
+	return slices.Clone(rule.Tools[index].NeedsScopes)
 }
 
 // schemaObject is the input schema as a JSON object.

@@ -140,6 +140,10 @@ type ConnectorTool struct {
 	Description  string         `json:"description"`
 	InputSchema  map[string]any `json:"input_schema"`
 	SchemaDigest string         `json:"schema_digest"`
+	// NeedsScopes are the scopes a call of the tool needs, as the manifest says
+	// (core.ToolSpec.NeedsScopes). Absent from rows a validate wrote before it existed, which
+	// read as none.
+	NeedsScopes []string `json:"needs_scopes,omitempty"`
 }
 
 // ConnectionFilter picks one owner's live connections, optionally of one connector, a page
