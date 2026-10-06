@@ -45,10 +45,10 @@ const (
 	// prototype's connectorAuthorizationLifetime and oauth2code's attemptTTL, so no attempt
 	// outlives the code it is waiting for and the scheme's own expiry agrees with the row's.
 	attemptLifetime = 10 * time.Minute
-	// handoffBytes is the size of the handoff token, which is also the browser cookie's
-	// value. 32 random octets, as oauth2code's state: a guess succeeds with probability
-	// 2^-256, below the 2^-128 RFC 6749 section 10.10 requires and the 2^-160 it recommends
-	// for a token an attacker must not guess.
+	// handoffBytes is the size of the handoff token and of the browser cookie's value, two
+	// separate tokens. 32 random octets, as oauth2code's state: a guess succeeds with
+	// probability 2^-256, below the 2^-128 RFC 6749 section 10.10 requires and the 2^-160 it
+	// recommends for a token an attacker must not guess.
 	handoffBytes = 32
 	// nonceBytes is the launch page's CSP nonce: 128 bits, the minimum CSP Level 3 section
 	// 7.1 («Nonce Reuse») says a nonce SHOULD have, fresh for every response.
@@ -99,7 +99,7 @@ type Authorization struct {
 	ID           string            `json:"id" doc:"The attempt."`
 	Kind         AuthorizationKind `json:"kind"`
 	LaunchURL    string            `json:"launch_url" doc:"The router's page to open in a popup from the dashboard. It asks the opener for handoff_token and then sends the browser to the provider."`
-	HandoffToken string            `json:"handoff_token" doc:"Handed to the launch page by postMessage, never put in a URL. It binds the attempt to the browser that opens launch_url."`
+	HandoffToken string            `json:"handoff_token" doc:"Handed to the launch page by postMessage, never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused."`
 	ExpiresAt    time.Time         `json:"expires_at" doc:"When the attempt ends, 10 minutes after it began. A callback after that is refused."`
 }
 
@@ -123,8 +123,11 @@ type attempt struct {
 	ConnectorID        string `json:"connector_id"`
 	DefinitionRevision int    `json:"definition_revision"`
 	Scheme             string `json:"scheme"`
-	// Handoff is the handoff token and the cookie value.
-	Handoff      string `json:"handoff"`
+	// Handoff is the handoff token the backend was answered.
+	Handoff string `json:"handoff"`
+	// Cookie is the browser cookie's value, chosen at the handoff and empty before it. It is
+	// not the handoff token, which the backend and the dashboard's script also hold.
+	Cookie       string `json:"cookie,omitempty"`
 	AuthorizeURL string `json:"authorize_url"`
 	// State is the scheme's BeginOutput.State, handed back to Complete.
 	State json.RawMessage `json:"scheme_state"`
@@ -306,11 +309,18 @@ func (s *Server) serveConnectorLaunch(w http.ResponseWriter, _ *http.Request) {
 }
 
 // handOffConnectorLaunch trades the handoff token for the authorize URL and binds the
-// attempt to this browser with a cookie, which the callback then requires.
+// attempt to this browser with a cookie of a fresh value, which the callback then requires.
+// A token is traded once: the first handoff wins, so a token that leaked is useless after
+// the launch page used it, and if it was used first elsewhere the launch page fails where
+// the person can see it. RFC 9700 section 2.1 asks for «one-time use CSRF tokens carried in
+// the state parameter that are securely bound to the user agent»; this cookie is that
+// binding, so only one user agent may ever hold it.
 //
 // Origin must be the router's own: the launch page's fetch sends it on a POST (Fetch
 // Standard, «append a request Origin header»), so a form or a script on another site that
-// learned a handoff token cannot make the router set the cookie in its own browser.
+// learned a handoff token cannot make the router set the cookie in its own browser. That
+// holds for browsers only: any other client sends whatever Origin it likes, which is why
+// the token is single-use.
 func (s *Server) handOffConnectorLaunch(w http.ResponseWriter, r *http.Request) {
 	if s.store == nil || s.connectorSecrets == nil {
 		writeError(w, http.StatusBadRequest, noAttempt)
@@ -341,7 +351,35 @@ func (s *Server) handOffConnectorLaunch(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusForbidden, "that is not this consent's handoff token")
 		return
 	}
-	http.SetCookie(w, s.attemptCookie(row.ID, sealed.Handoff, row.ExpiresAt))
+	if sealed.Cookie != "" {
+		writeError(w, http.StatusBadRequest, noAttempt)
+		return
+	}
+	sealed.Cookie, err = randomToken(handoffBytes)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not start the consent")
+		return
+	}
+	raw, err := json.Marshal(sealed)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not start the consent")
+		return
+	}
+	resealed, err := s.connectorSecrets.SealWithAAD(string(raw), attemptAAD(row.CustomerID, row.ConnectionID, row.ID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not start the consent")
+		return
+	}
+	err = s.store.HandOffConnectorAuthorizationAttempt(r.Context(), row.ID, row.AttemptSealed, resealed, s.connectorSecrets.CurrentVersion())
+	if errors.Is(err, store.ErrNoAuthorizationAttempt) {
+		writeError(w, http.StatusBadRequest, noAttempt)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not start the consent")
+		return
+	}
+	http.SetCookie(w, s.attemptCookie(row.ID, sealed.Cookie, row.ExpiresAt))
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(struct {
@@ -383,8 +421,9 @@ func (s *Server) finishConnectorConsent(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "could not read the consent")
 		return
 	}
+	// An attempt not handed off yet has no cookie value, and an empty cookie must not match it.
 	cookie, err := r.Cookie(attemptCookiePrefix + row.ID)
-	if err != nil || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(sealed.Handoff)) != 1 {
+	if err != nil || sealed.Cookie == "" || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(sealed.Cookie)) != 1 {
 		writeError(w, http.StatusForbidden, "finish the consent in the browser that started it")
 		return
 	}

@@ -144,6 +144,45 @@ func (s *AuthorizationsSuite) TestTheHandoffBindsTheConsentWithAnHttpOnlySecureL
 	s.True(cookies[0].Secure, "the public URL is https")
 	s.Equal(http.SameSiteLaxMode, cookies[0].SameSite)
 	s.InDelta(attemptLifetime.Seconds(), float64(cookies[0].MaxAge), 60)
+	s.NotEqual(started.HandoffToken, cookies[0].Value, "not the token the backend and the dashboard's script hold")
+}
+
+func (s *AuthorizationsSuite) TestAHandoffTokenIsTradedOnce() {
+	id := s.connection("")
+	started := s.start(id)
+	alice, mallory := s.browser(), s.browser()
+	authorize := alice.handOff(started)
+
+	// Mallory learned the token and is no browser, so she sends the router's own Origin.
+	again := mallory.post(started.LaunchURL, consentPublicURL, map[string]string{"handoff_token": started.HandoffToken})
+
+	s.Equal(http.StatusBadRequest, again.StatusCode)
+	s.Empty(again.Cookies())
+	finished := alice.finish(s.consent(authorize))
+	s.Equal(s.landing(id, consentConnected), finished.Header.Get("Location"), "the browser that handed off first still finishes")
+}
+
+func (s *AuthorizationsSuite) TestACallbackForAConsentNoBrowserHandedOffIsRefusedWithAnEmptyCookie() {
+	id := s.connection("")
+	started := s.start(id)
+	// Only a handoff answers the authorize URL, so the test opens the attempt itself.
+	row, err := s.store.ConnectorAuthorizationAttemptByID(context.Background(), started.ID)
+	s.Require().NoError(err)
+	plain, err := s.sealer.OpenWithAADVersion(row.AttemptSealed, attemptAAD(row.CustomerID, row.ConnectionID, row.ID), row.KEKVersion)
+	s.Require().NoError(err)
+	var sealed attempt
+	s.Require().NoError(json.Unmarshal([]byte(plain), &sealed))
+	callback := s.consent(sealed.AuthorizeURL)
+	request, err := http.NewRequest(http.MethodGet, callback.String(), nil)
+	s.Require().NoError(err)
+	request.Header.Set("Cookie", attemptCookiePrefix+started.ID+"=")
+
+	response, err := s.browser().client.Do(request)
+	s.Require().NoError(err)
+	response.Body.Close()
+
+	s.Equal(http.StatusForbidden, response.StatusCode)
+	s.Equal(ConnectionStatus(store.ConnectionPending), s.get(id).Status)
 }
 
 func (s *AuthorizationsSuite) TestTheCallbackClearsTheCookie() {

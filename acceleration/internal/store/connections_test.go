@@ -608,3 +608,85 @@ func (s *StoreSuite) TestCallbacksRacingWithOneStateConsumeItExactlyOnce() {
 	}
 	s.Equal(1, won)
 }
+
+func (s *StoreSuite) TestAHandoffReplacesTheBlobItWasReadWithOnce() {
+	created := s.attempt(s.connection("acme-app", nil), "the-state")
+
+	s.Require().NoError(s.store.HandOffConnectorAuthorizationAttempt(s.ctx, created.ID, created.AttemptSealed, []byte("handed off"), 2))
+
+	handedOff, err := s.store.ConnectorAuthorizationAttemptByID(s.ctx, created.ID)
+	s.Require().NoError(err)
+	s.Equal([]byte("handed off"), handedOff.AttemptSealed)
+	s.Equal(2, handedOff.KEKVersion)
+	s.Nil(handedOff.ConsumedAt, "the callback still consumes it")
+	err = s.store.HandOffConnectorAuthorizationAttempt(s.ctx, created.ID, created.AttemptSealed, []byte("again"), 2)
+	s.ErrorIs(err, ErrNoAuthorizationAttempt, "the blob it was read with is gone")
+}
+
+func (s *StoreSuite) TestAnExpiredAttemptCannotBeHandedOff() {
+	created := s.attempt(s.connection("acme-app", nil), "the-state")
+	s.expire(created.ID)
+
+	err := s.store.HandOffConnectorAuthorizationAttempt(s.ctx, created.ID, created.AttemptSealed, []byte("handed off"), 1)
+
+	s.ErrorIs(err, ErrNoAuthorizationAttempt)
+}
+
+func (s *StoreSuite) TestAConsumedAttemptCannotBeHandedOff() {
+	created := s.attempt(s.connection("acme-app", nil), "the-state")
+	_, err := s.store.ConsumeConnectorAuthorizationAttempt(s.ctx, "the-state")
+	s.Require().NoError(err)
+
+	err = s.store.HandOffConnectorAuthorizationAttempt(s.ctx, created.ID, created.AttemptSealed, []byte("handed off"), 1)
+
+	s.ErrorIs(err, ErrNoAuthorizationAttempt)
+}
+
+func (s *StoreSuite) TestADeletedConnectionsAttemptCannotBeHandedOff() {
+	connection := s.connection("acme-app", nil)
+	created := s.attempt(connection, "the-state")
+	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, "acme-app", connection.ID))
+
+	err := s.store.HandOffConnectorAuthorizationAttempt(s.ctx, created.ID, created.AttemptSealed, []byte("handed off"), 1)
+
+	s.ErrorIs(err, ErrNoAuthorizationAttempt)
+}
+
+func (s *StoreSuite) TestHandoffsRacingFromOneReadReplaceTheBlobExactlyOnce() {
+	created := s.attempt(s.connection("acme-app", nil), "raced-state")
+
+	// As TestCallbacksRacingWithOneStateConsumeItExactlyOnce: a router and a pool per
+	// handoff, so the updates overlap in Postgres.
+	const handoffs = 16
+	routers := make([]*Store, handoffs)
+	for i := range routers {
+		router, err := Open(s.dsn)
+		s.Require().NoError(err)
+		s.T().Cleanup(func() { router.Close() })
+		s.Require().NoError(router.Ping(s.ctx))
+		routers[i] = router
+	}
+	errs := make([]error, handoffs)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, router := range routers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs[i] = router.HandOffConnectorAuthorizationAttempt(s.ctx, created.ID, created.AttemptSealed, []byte("handed off "+newID()), 1)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	won := 0
+	for _, err := range errs {
+		if err == nil {
+			won++
+			continue
+		}
+		s.True(errors.Is(err, ErrNoAuthorizationAttempt), "a handoff that loses is told the attempt is handed off: %v", err)
+	}
+	s.Equal(1, won)
+}

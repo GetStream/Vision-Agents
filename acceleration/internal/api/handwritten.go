@@ -254,6 +254,7 @@ func documentHandWritten(api huma.API) {
 		Description: "What the launch page posts: `{\"handoff_token\": ...}`, from the router's own origin " +
 			"only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in " +
 			"this browser, and answers `{\"authorization_url\": ...}`, the provider's authorize URL. " +
+			"A handoff token is traded once: a second handoff for the same consent is a 400. " +
 			"Unauthenticated because a browser sends it; the handoff token is the secret.",
 		Security: []map[string][]string{},
 		Parameters: []*huma.Param{
