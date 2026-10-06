@@ -7,12 +7,18 @@
 #   [user]    https://docs.slack.dev/reference/methods/oauth.v2.user.access
 #   [rotate]  https://docs.slack.dev/authentication/using-token-rotation
 #   [revoke]  https://docs.slack.dev/reference/methods/auth.revoke
+# and, opened October 6, 2026:
+#   [verify]      https://docs.slack.dev/authentication/verifying-requests-from-slack
+#   [handshake]   https://docs.slack.dev/reference/events/url_verification
+#   [revoked]     https://docs.slack.dev/reference/events/tokens_revoked
+#   [uninstalled] https://docs.slack.dev/reference/events/app_uninstalled
 # Architecture rows cited are «Stress test: 12 awkward providers», row 5, in
 # acceleration/docs/connectors/architecture.md on connectors/planning.
 id: slack
 # A new revision for any change to what this file says; see AGENTS.md. 2 adds
-# endpoints.resource. 3 renames client.policy to client.registration.
-revision: 3
+# endpoints.resource. 3 renames client.policy to client.registration. 4 adds the channel
+# block that reads tokens_revoked and app_uninstalled.
+revision: 4
 # [proto]:3-5
 name: Slack
 category: Communication
@@ -109,3 +115,48 @@ rate_limit:
 sources:
   - kind: mcp
     endpoint: mcp
+# Slack tells the app about its grants as Events API events to the app's Request URL
+# ([revoked], [uninstalled]), which for the operator's app is
+# POST /v1/agents/connectors/events/slack. Nobody writes to this connector, so the block has
+# signals and no messages.
+channel:
+  verifier:
+    # [verify]: HMAC-SHA256 of v0:{timestamp}:{body} with the app's signing secret, hex,
+    # after v0= in X-Slack-Signature; the timestamp in X-Slack-Request-Timestamp, refused
+    # when it is «more than five minutes from local time». Same values as the core's
+    # testdata/manifests/slack_bot.yaml.
+    kind: hmac_header
+    # The operator's app, as client.registration is: its signing secret is
+    # SLACK_MCP_SIGNING_SECRET, beside the client id and secret (api.ConnectorEventSecrets).
+    secret: operator
+    header: X-Slack-Signature
+    algorithm: sha256
+    encoding: hex
+    prefix: v0=
+    signed: "v0:{timestamp}:{body}"
+    timestamp_header: X-Slack-Request-Timestamp
+    max_age: 5m
+  # [verify] signs the raw JSON body.
+  format: json
+  # [handshake]: {"type": "url_verification", "challenge": "..."}, answered with the
+  # challenge as text/plain.
+  challenge: $.challenge
+  signals:
+    # [revoked]: event.tokens.oauth lists the user ids whose user tokens were revoked («an
+    # array of user IDs, not the actual token strings»), and team_id is on the envelope. This
+    # connector holds user tokens only, so event.tokens.bot is not read.
+    - kind: revoked
+      match:
+        $.event.type: tokens_revoked
+      each: $.event.tokens.oauth[*]
+      identity:
+        team_id: $.team_id
+        user_id: $.event.tokens.oauth[*]
+    # [uninstalled]: the app is gone from the workspace, so every user's grant in it is. It
+    # names the team on the envelope and no user. Whether Slack also sends tokens_revoked
+    # for each user on an uninstall is not on these pages. # unverified
+    - kind: uninstalled
+      match:
+        $.event.type: app_uninstalled
+      identity:
+        team_id: $.team_id
