@@ -935,6 +935,20 @@ func (c *converse) patient(ready candidate) bool {
 	return time.Since(waiting.since) < c.patience
 }
 
+// patienceEnds is when the wait on a participant's unfinished words runs out, after which
+// the same words are answered with a question instead. It reports false when nothing is
+// being waited on for them.
+func (c *converse) patienceEnds(participantID string) (time.Time, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	waiting, known := c.waiting[participantID]
+	if !known {
+		return time.Time{}, false
+	}
+	return waiting.since.Add(c.patience), true
+}
+
 // hold keeps a turn until the agent has stopped talking. Only one is kept: a caller who
 // has said two more things while being talked over is owed an answer to the last of them.
 // forgetQueuedRevisedByLocked drops the turn queued behind a reply when the words being dealt

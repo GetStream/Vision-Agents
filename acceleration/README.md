@@ -712,11 +712,12 @@ Three decisions are worth knowing about:
 
 - **Primary EOT decides eligible quiet turns.** A finalized transcript with valid caller
   audio goes straight to the acoustic scorer without the added 350 ms settling timer.
-  A score below `0.5` waits; a score at or above it can release the speculative reply.
+  A score below `0.5` waits and keeps the reply started for those words for the next check of
+  them; a score at or above it can release that reply.
   Stable interim transcripts still settle on the existing timer. Low scores retain the
   bounded retry and patience policies. Ineligible or active-floor candidates, explicit
   `gate` mode, and unavailable scores use the semantic flow controller. New words cancel
-  stale decisions in both paths.
+  stale decisions, and the reply kept for them, in both paths.
 - **The reply is spoken sentence by sentence.** A model emits a few characters at a time,
   and a voice given two words at a time pauses in the wrong places. A streaming voice takes
   a turn's sentences as deltas of one utterance, so one turn stays one billed synthesis; a

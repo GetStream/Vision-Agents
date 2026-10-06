@@ -325,6 +325,8 @@ func (a *Agent) swapCascade(current, next Settings, prep *prepared) []error {
 	model, conversation, p := a.llm, a.harness, a.pipe
 	a.mu.Unlock()
 	a.cancelEOTPreviews(canceledEOT)
+	// A preview kept for a Wait was written by the model being replaced.
+	a.dropKeptPreviews()
 	clearEOTAudio(staleAudio)
 
 	if prep.llm != nil || prep.controller != nil {

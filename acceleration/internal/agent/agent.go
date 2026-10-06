@@ -256,6 +256,13 @@ type Agent struct {
 	streams        map[string]*llm.Stream
 	previews       map[string]*replyPreview
 	modelCallTimes map[string]float64
+	// kept are the previews held across a Wait, by participant: the reply started for words
+	// the flow controller asked to wait on, which the next check of the same words takes
+	// over instead of asking the model for it again.
+	kept map[string]*keptPreview
+	// previewTurns says which candidate took over the preview started under another one's
+	// id, so model calls reported under the old id count towards the turn that is using them.
+	previewTurns map[string]string
 	// generatingCancel abandons a conversation Create that has not returned a stream yet.
 	// Interrupt used to Close only an existing stream, so a reply waiting on headers kept
 	// the event loop and the floor until Cerebras answered.
@@ -526,6 +533,8 @@ func New(options Options) (*Agent, error) {
 		abandoned:        map[string]struct{}{},
 		streams:          map[string]*llm.Stream{},
 		previews:         map[string]*replyPreview{},
+		kept:             map[string]*keptPreview{},
+		previewTurns:     map[string]string{},
 		modelCallTimes:   map[string]float64{},
 		generatingCancel: map[string]context.CancelFunc{},
 		synthesisCtx:     map[string]context.Context{},
@@ -599,10 +608,19 @@ func (a *Agent) finishTurn(turn Turn) {
 
 func (a *Agent) recordModelCall(timing llm.CallTiming) {
 	if timing.Purpose == "reply" && timing.Success {
-		if !a.turns.modelTiming(timing.TurnID, timing.TTFTMs) {
+		// A preview kept across a Wait was asked for under the earlier candidate's id, and
+		// counts towards the turn that took it over. The call itself is still reported as the
+		// request it was.
+		a.mu.Lock()
+		turnID := timing.TurnID
+		if taken, ok := a.previewTurns[turnID]; ok {
+			turnID = taken
+		}
+		a.mu.Unlock()
+		if !a.turns.modelTiming(turnID, timing.TTFTMs) {
 			a.mu.Lock()
-			if a.previews[timing.TurnID] != nil {
-				a.modelCallTimes[timing.TurnID] = timing.TTFTMs
+			if a.previews[turnID] != nil {
+				a.modelCallTimes[turnID] = timing.TTFTMs
 			}
 			a.mu.Unlock()
 		}
@@ -1202,6 +1220,10 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 			a.lastParticipant = typed.Participant
 			a.mu.Unlock()
 			superseded, saying := a.cadence.Observe(typed)
+			if saying != "" {
+				// Different words are not the ones a preview kept for a Wait was started on.
+				a.dropKeptPreview(typed.Participant.ID)
+			}
 			state := a.floor()
 			var stopped interruption
 			stopNow := false
@@ -1360,22 +1382,26 @@ func (a *Agent) act(actions []Action) {
 }
 
 // rule carries out what the conversation makes of a ruling, then lets go of the reply
-// previewed for its words if nothing took it. An answer adopts the preview, so one still
-// held afterwards belongs to words that were ignored, held back, found stale or otherwise
-// not answered.
+// previewed for its words if nothing took it. An answer adopts the preview, and a Wait
+// keeps it for the next check of the same words, so one still held afterwards belongs to
+// words that were ignored, held back, found stale or otherwise not answered.
 func (a *Agent) rule(ruling harness.Decided) {
 	a.act(a.converse.Ruled(ruling, a.floor()))
-	a.cancelPreview(ruling.CandidateID)
+	a.releasePreview(ruling.CandidateID)
 }
 
 // perform carries out one decision. Every branch here is mechanical: which provider to
 // touch and in what order. Why any of it is happening was settled in converse.
 func (a *Agent) perform(action Action) {
-	if action.Kind == ActSupersede {
+	switch {
+	case action.Kind == ActSupersede:
 		a.cancelPreview(action.TurnID)
 		a.cancelEOTGate(action.TurnID)
-	} else if action.Kind != ActAsk && action.Kind != ActAnswer {
+	case action.Kind == ActWait:
+		a.keepPreview(action.Candidate)
+	case action.Kind != ActAsk && action.Kind != ActAnswer:
 		a.cancelPreview(action.Candidate.ID)
+		a.dropKeptPreview(action.Candidate.Participant.ID)
 	}
 	switch action.Kind {
 	case ActBackchannel:
@@ -1393,6 +1419,7 @@ func (a *Agent) perform(action Action) {
 		a.ask(action.Candidate)
 
 	case ActInterrupt:
+		a.dropKeptPreviews()
 		if stopped, ok := a.stopPlayback(action.Participant, action.TurnID, time.Time{},
 			"semantic", "transcript"); ok {
 			a.finishInterruptedTurn(stopped)
@@ -1441,8 +1468,12 @@ func (a *Agent) ask(ready candidate) {
 	// Speech the voice has finished sending is still on its way out of the edge, so the
 	// agent counts as speaking until it has drained.
 	speaking = speaking || a.speechPending()
-	if a.previewsReplies() && !speaking && !ready.Unfinished && !anotherVoice && !a.options.Text &&
-		(a.options.Guardrail == nil || a.options.Guardrail.Policy().Mode != guardrail.ModeBlocking) {
+	eligible := !speaking && !ready.Unfinished && !anotherVoice && !a.options.Text &&
+		(a.options.Guardrail == nil || a.options.Guardrail.Policy().Mode != guardrail.ModeBlocking)
+	previewing := eligible && a.previewsReplies()
+	// The reply started for these same words before a Wait is taken over rather than asked
+	// for again, so there is never more than one preview for a participant.
+	if !a.takeKeptPreview(ready, previewing) && previewing {
 		a.preview(ready, current, instructions)
 	}
 
@@ -1458,9 +1489,7 @@ func (a *Agent) ask(ready candidate) {
 		AnotherVoice: anotherVoice,
 	}
 	var snapshot eotScoringSnapshot
-	eligibleForEOT := !speaking && !ready.Unfinished && !anotherVoice && !a.options.Text &&
-		(a.options.Guardrail == nil || a.options.Guardrail.Policy().Mode != guardrail.ModeBlocking)
-	if eligibleForEOT && a.options.EOT != nil {
+	if eligible && a.options.EOT != nil {
 		snapshot, _ = a.eotScoringSnapshot(ready.Participant.ID)
 	}
 	a.decideWithEOT(p, current, ready, turn, snapshot)
@@ -1478,6 +1507,9 @@ type replyPreview struct {
 	events    chan llm.Event
 	cancel    context.CancelFunc
 	startedAt time.Time
+	// kept says a Wait is holding the preview for the next check of the same words. It is
+	// read and set under the agent's lock.
+	kept bool
 }
 
 // previewsReplies reports whether a reply is started before the flow controller has ruled on
@@ -1536,11 +1568,159 @@ func (a *Agent) cancelPreview(turnID string) {
 	p := a.previews[turnID]
 	delete(a.previews, turnID)
 	delete(a.modelCallTimes, turnID)
+	if p != nil {
+		a.forgetPreviewLocked(turnID, p)
+	}
 	a.mu.Unlock()
 	if p == nil {
 		return
 	}
 	p.cancel()
+}
+
+// forgetPreviewLocked drops what else is held about a preview that has left the map: its
+// place among the kept ones and the turn it was taken over by. The caller holds the lock.
+func (a *Agent) forgetPreviewLocked(turnID string, p *replyPreview) {
+	if p.kept {
+		for participantID, kept := range a.kept {
+			if kept.key == turnID {
+				kept.expires.Stop()
+				delete(a.kept, participantID)
+			}
+		}
+	}
+	delete(a.previewTurns, p.turn.ID)
+}
+
+// releasePreview lets go of the preview for a candidate nothing adopted, unless a Wait is
+// keeping it for the next check of the same words.
+func (a *Agent) releasePreview(candidateID string) {
+	a.mu.Lock()
+	p := a.previews[candidateID]
+	kept := p != nil && p.kept
+	a.mu.Unlock()
+	if !kept {
+		a.cancelPreview(candidateID)
+	}
+}
+
+// keptPreview is a reply preview held across a Wait.
+type keptPreview struct {
+	// key is the candidate the preview was started for, which it is held under.
+	key string
+	// revision is the words it was started on, which is what the next check has to carry for
+	// the preview to be taken over: candidate ids change when the same words are put again.
+	revision uint64
+	// expires lets go of it when the patience for those words runs out.
+	expires *time.Timer
+}
+
+// keepPreview holds the reply previewed for a candidate the flow controller asked to wait
+// on, so that the next check of the same words takes it over instead of asking the model
+// for the same reply again. It is let go if the words change, or the floor does, and when
+// the patience for them runs out, which is when the same words are answered with a question
+// the preview was not written for.
+func (a *Agent) keepPreview(ready candidate) {
+	a.mu.Lock()
+	p := a.previews[ready.ID]
+	if p == nil {
+		a.mu.Unlock()
+		return
+	}
+	// The words may have moved on since the ruling that asked to wait. Both are read under
+	// the lock a revision takes to let go of a kept preview, so one that lands after the
+	// check still finds this preview to drop.
+	until, waiting := a.converse.patienceEnds(ready.Participant.ID)
+	current, heard := a.cadence.currentCandidate(ready.Participant.ID)
+	if !waiting || !heard || ready.Revision == 0 || current.Revision != ready.Revision ||
+		a.closed || a.switching.Load() {
+		a.mu.Unlock()
+		a.cancelPreview(ready.ID)
+		return
+	}
+	kept := &keptPreview{key: ready.ID, revision: ready.Revision}
+	kept.expires = time.AfterFunc(time.Until(until), func() { a.expireKeptPreview(ready.Participant.ID, kept) })
+	previous := a.kept[ready.Participant.ID]
+	if previous != nil {
+		previous.expires.Stop()
+	}
+	a.kept[ready.Participant.ID] = kept
+	p.kept = true
+	a.mu.Unlock()
+
+	if previous != nil && previous.key != ready.ID {
+		a.cancelPreview(previous.key)
+	}
+}
+
+// takeKeptPreview hands the preview kept for a participant's words to the candidate that
+// puts them again, reporting whether it did. A preview the candidate cannot use, because
+// the words are not the same or the floor is no longer the agent's to take, is let go.
+func (a *Agent) takeKeptPreview(ready candidate, usable bool) bool {
+	a.mu.Lock()
+	kept := a.kept[ready.Participant.ID]
+	if kept == nil {
+		a.mu.Unlock()
+		return false
+	}
+	p := a.previews[kept.key]
+	if !usable || p == nil || ready.Revision == 0 || kept.revision != ready.Revision || a.closed {
+		a.mu.Unlock()
+		a.cancelPreview(kept.key)
+		return false
+	}
+
+	kept.expires.Stop()
+	delete(a.kept, ready.Participant.ID)
+	p.kept = false
+	delete(a.previews, kept.key)
+	a.previews[ready.ID] = p
+	if ttft, ok := a.modelCallTimes[kept.key]; ok {
+		delete(a.modelCallTimes, kept.key)
+		a.modelCallTimes[ready.ID] = ttft
+	}
+	a.previewTurns[p.turn.ID] = ready.ID
+	a.mu.Unlock()
+	return true
+}
+
+// expireKeptPreview lets go of a kept preview once the patience for its words has run out,
+// unless it was taken over or let go of already.
+func (a *Agent) expireKeptPreview(participantID string, kept *keptPreview) {
+	a.mu.Lock()
+	held := a.kept[participantID] == kept
+	a.mu.Unlock()
+	if held {
+		a.cancelPreview(kept.key)
+	}
+}
+
+// dropKeptPreview lets go of the preview kept for a participant's words, which are no longer
+// the words being waited on, or are not going to be answered.
+func (a *Agent) dropKeptPreview(participantID string) {
+	if participantID == "" {
+		return
+	}
+	a.mu.Lock()
+	kept := a.kept[participantID]
+	a.mu.Unlock()
+	if kept != nil {
+		a.cancelPreview(kept.key)
+	}
+}
+
+// dropKeptPreviews lets go of every kept preview, for a floor that has changed under all of
+// them.
+func (a *Agent) dropKeptPreviews() {
+	a.mu.Lock()
+	keys := make([]string, 0, len(a.kept))
+	for _, kept := range a.kept {
+		keys = append(keys, kept.key)
+	}
+	a.mu.Unlock()
+	for _, key := range keys {
+		a.cancelPreview(key)
+	}
 }
 
 // cancelPreviews cancels every reply preview still waiting on a ruling. A preview that is
@@ -1874,10 +2054,19 @@ func (a *Agent) generate(turn harness.Turn, screen string) error {
 	current := a.harness
 	preview := a.previews[turn.ID]
 	delete(a.previews, turn.ID)
+	stale := make([]string, 0, len(a.kept))
+	for _, kept := range a.kept {
+		stale = append(stale, kept.key)
+	}
 	ctx, cancel := context.WithCancel(a.ctx)
 	a.generatingCancel[turn.ID] = cancel
 	a.pumps.Add(1)
 	a.mu.Unlock()
+	// Whatever else was previewed was written for a conversation this reply is about to
+	// change, so it could not be adopted whatever the words say.
+	for _, key := range stale {
+		a.cancelPreview(key)
+	}
 
 	go a.startReply(current, turn, ctx, screen, preview)
 	return nil
@@ -1989,12 +2178,42 @@ func (a *Agent) startReply(
 	a.pump(turn.ID, stream)
 }
 
+// retarget gives an event of a preview the id of the turn that took it over. A preview kept
+// across a Wait was started under the earlier candidate's id, which is not what the reply is
+// known by once another candidate puts the same words.
+func retarget(event llm.Event, from, to string) llm.Event {
+	if from == to {
+		return event
+	}
+	switch typed := event.(type) {
+	case llm.ResponseCreated:
+		typed.ResponseID = to
+		return typed
+	case llm.OutputTextDelta:
+		typed.ResponseID = to
+		return typed
+	case llm.ReasoningTextDelta:
+		typed.ResponseID = to
+		return typed
+	case llm.FunctionCallArgumentsDelta:
+		typed.ResponseID = to
+		return typed
+	case llm.ResponseFailed:
+		typed.ResponseID = to
+		return typed
+	case llm.ResponseCompleted:
+		typed.Response.ID = to
+		return typed
+	}
+	return event
+}
+
 func (a *Agent) pumpPreview(turnID string, preview *replyPreview) {
 	a.mu.Lock()
 	replies := a.replies
 	a.mu.Unlock()
 	for event := range preview.events {
-		replies <- event
+		replies <- retarget(event, preview.turn.ID, turnID)
 	}
 	a.mu.Lock()
 	delete(a.streams, turnID)
@@ -2077,6 +2296,11 @@ func (a *Agent) finishGenerate(turnID string) {
 	a.mu.Lock()
 	cancel := a.generatingCancel[turnID]
 	delete(a.generatingCancel, turnID)
+	for from, to := range a.previewTurns {
+		if to == turnID {
+			delete(a.previewTurns, from)
+		}
+	}
 	a.mu.Unlock()
 	if cancel != nil {
 		cancel()

@@ -41,6 +41,10 @@ type candidate struct {
 	// Unfinished says the words are a provisional revision of an utterance still in
 	// progress, put to the controller to decide the floor rather than settled.
 	Unfinished bool
+	// Revision identifies the transcript words the candidate was settled on, independently of
+	// the ID, which changes each time the same words are put again after a Wait. It is zero
+	// for a candidate that did not come from the cadence.
+	Revision uint64
 }
 
 type cadenceTimer interface {
@@ -60,6 +64,9 @@ type cadence struct {
 	mu         sync.Mutex
 	speakers   map[string]*cadenceSpeaker
 	timerEpoch int64
+	// revision numbers the words each speaker is heard to settle on, across speakers, so no
+	// two revisions share a number.
+	revision uint64
 	// grace is extra settling time owed to the next turn, whoever says it. It lasts until
 	// a turn has been put rather than until the next revision, so every revision of that
 	// turn is given it and not only the first.
@@ -82,6 +89,8 @@ type cadenceSpeaker struct {
 	revisedAt   time.Time
 	// utterance is the run of speech the words being gathered came from.
 	utterance int64
+	// revision is the number of the words as they stand, which only changes when they do.
+	revision uint64
 	// carried is what was still unanswered when the transcriber started this utterance.
 	// Every revision of the utterance replaces only its own words, so it is put back in
 	// front of each one rather than only the first.
@@ -194,6 +203,8 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	current.text = text
 	current.candidateID = ""
 	current.generation++
+	c.revision++
+	current.revision = c.revision
 	current.revisedAt = time.Now()
 	delay := c.gap + c.grace
 	if final {
@@ -298,6 +309,7 @@ func (c *cadence) candidateSnapshot(ready candidate) (candidate, bool) {
 	ready.Confidence = current.confidence
 	ready.STTLatencyMs = current.latencyMs
 	ready.RevisedAt = current.revisedAt
+	ready.Revision = current.revision
 	return ready, true
 }
 
@@ -316,6 +328,7 @@ func (c *cadence) currentCandidate(participantID string) (candidate, bool) {
 		Confidence:   current.confidence,
 		STTLatencyMs: current.latencyMs,
 		RevisedAt:    current.revisedAt,
+		Revision:     current.revision,
 	}, true
 }
 
@@ -425,6 +438,7 @@ func (c *cadence) emit(participantID string, generation, timerEpoch int64) {
 		STTLatencyMs: current.latencyMs,
 		RevisedAt:    current.revisedAt,
 		ReadyAt:      time.Now(),
+		Revision:     current.revision,
 	}
 	c.mu.Unlock()
 

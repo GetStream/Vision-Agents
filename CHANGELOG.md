@@ -706,6 +706,14 @@ is on by default, and `ROUTER_SPECULATIVE_REPLIES=false` asks for the reply only
 ruling is in. A dropped reply is still paid for, and on a pause-heavy call most of them are
 dropped.
 
+### A wait keeps the reply started for the words
+
+A ruling or acoustic score that waited on a caller's words used to throw away the reply
+started beside it, and the next check of the same words started it again. The reply is now
+kept for that check, which takes it over without asking the model a second time. It is let go
+if the words change, the floor changes, the caller leaves, the call ends, a check does not
+answer, or the patience for the words runs out.
+
 ### A turn says when its reply could first be heard
 
 `roundtrip_ms` and `speech_end_to_audio_ms` end when publishing the first chunk of a reply

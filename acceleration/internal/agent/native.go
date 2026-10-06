@@ -116,6 +116,7 @@ func (a *Agent) unbind(participant stt.Participant) {
 	delete(a.audioHistory, participant.ID)
 	a.mu.Unlock()
 	a.cancelEOTPreviews(canceled)
+	a.dropKeptPreview(participant.ID)
 	if ring != nil {
 		ring.clear()
 	}
