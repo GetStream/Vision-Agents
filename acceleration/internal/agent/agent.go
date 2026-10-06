@@ -141,6 +141,10 @@ type Options struct {
 	Duplex         DuplexOptions
 	VideoSource    string
 	VideoMaxFrames int
+	// EOT is an optional raw acoustic endpoint score for settled quiet voice candidates.
+	// It never replaces the flow controller's semantic ruling.
+	EOT          *EOTClient
+	EOTThreshold float64
 
 	// Voice selects the speaker. Its meaning is the text-to-speech provider's.
 	Voice string
@@ -279,6 +283,9 @@ type Agent struct {
 	// listeners holds one transcription session per participant, because a speech-to-text
 	// stream is bound to a single speaker.
 	listeners map[string]*sttrouter.Session
+	// audioHistory retains one bounded PCM window per active participant for optional EOT.
+	audioHistory map[string]*pcm16leRing
+	eotGates     map[string]*eotGate
 	// voices is the diarised label of the first voice heard on each participant's track,
 	// which is taken to be the caller's. A later turn in a different voice is somebody
 	// else at the same microphone: the track says who joined the call, and it is the
@@ -433,6 +440,8 @@ func New(options Options) (*Agent, error) {
 		emitter:          emitter,
 		prompt:           options.Instructions,
 		listeners:        map[string]*sttrouter.Session{},
+		audioHistory:     map[string]*pcm16leRing{},
+		eotGates:         map[string]*eotGate{},
 		voices:           map[string]string{},
 		abandoned:        map[string]struct{}{},
 		streams:          map[string]*llm.Stream{},
@@ -980,6 +989,7 @@ func (a *Agent) consumeEdge() {
 			a.hear(inbound)
 			continue
 		}
+		a.retainEOTAudio(inbound.Participant.ID, inbound.Audio.SampleRate, inbound.Audio.Channels, inbound.Audio.Samples)
 		listener, err := a.listen(inbound.Participant)
 		if err != nil {
 			a.fail(err, "stt")
@@ -1131,9 +1141,16 @@ func (a *Agent) consumeCadence(p *pipeline) {
 		select {
 		case ready := <-a.cadence.Ready():
 			a.mu.Lock()
-			gone := a.closed || a.harness == nil
+			gone, switching := a.closed || a.harness == nil, a.switching.Load()
 			a.mu.Unlock()
 			if gone {
+				continue
+			}
+			if switching {
+				// Model swaps cancel a decision that already left the cadence timer.
+				// Put its words back on the normal retry timer instead of asking the old
+				// controller while the pipeline is being replaced.
+				a.converse.Unasked(ready.ID)
 				continue
 			}
 			a.act([]Action{a.converse.Settled(ready, a.floor())})
@@ -1195,6 +1212,7 @@ func (a *Agent) act(actions []Action) {
 func (a *Agent) perform(action Action) {
 	if action.Kind == ActSupersede {
 		a.cancelPreview(action.TurnID)
+		a.cancelEOTGate(action.TurnID)
 	} else if action.Kind != ActAsk && action.Kind != ActAnswer {
 		a.cancelPreview(action.Candidate.ID)
 	}
@@ -1246,6 +1264,7 @@ func (a *Agent) perform(action Action) {
 func (a *Agent) ask(ready candidate) {
 	a.mu.Lock()
 	current := a.harness
+	p := a.pipe
 	if a.closed || current == nil {
 		a.mu.Unlock()
 		return
@@ -1270,7 +1289,7 @@ func (a *Agent) ask(ready candidate) {
 		a.preview(ready, current, instructions)
 	}
 
-	if err := current.Decide(harness.FlowTurn{
+	turn := harness.FlowTurn{
 		ID:           ready.ID,
 		Instructions: instructions,
 		History:      history,
@@ -1280,11 +1299,14 @@ func (a *Agent) ask(ready candidate) {
 		Reply:        reply,
 		Unfinished:   ready.Unfinished,
 		AnotherVoice: anotherVoice,
-	}); err != nil {
-		a.cancelPreview(ready.ID)
-		a.converse.Unasked(ready.ID)
-		a.fail(err, "flow")
 	}
+	var pcm []byte
+	eligibleForEOT := !speaking && !ready.Unfinished && !anotherVoice && !a.options.Text &&
+		(a.options.Guardrail == nil || a.options.Guardrail.Policy().Mode != guardrail.ModeBlocking)
+	if eligibleForEOT && a.options.EOT != nil {
+		pcm = a.eotAudioSnapshot(ready.Participant.ID)
+	}
+	a.decideWithEOT(p, current, ready, turn, pcm)
 }
 
 type previewResult struct {
@@ -2184,14 +2206,33 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 
 // consumeHarness reports what the harness decided, and speaks whatever the subagent came
 // back with.
-func (a *Agent) consumeHarness(current *harness.Harness, drained chan struct{}) {
+func (a *Agent) consumeHarness(p *pipeline, current *harness.Harness, drained chan struct{}) {
 	defer a.running.Done()
 	defer close(drained)
 
-	for event := range current.Events() {
+	events := current.Events()
+	results := p.eotResults
+	pipelineDone := p.ctx.Done()
+	for events != nil || results != nil {
+		var event harness.Event
+		select {
+		case typedEvent, ok := <-events:
+			if !ok {
+				events = nil
+				continue
+			}
+			event = typedEvent
+		case result := <-results:
+			a.consumeEOTResult(result, current, p)
+			continue
+		case <-pipelineDone:
+			results = nil
+			pipelineDone = nil
+			continue
+		}
 		switch typed := event.(type) {
 		case harness.Decided:
-			a.act(a.converse.Ruled(typed, a.floor()))
+			a.decideFromHarness(p, current, typed)
 
 		case harness.Compacted:
 			a.applyCompaction(typed)

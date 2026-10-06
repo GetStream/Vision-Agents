@@ -70,6 +70,9 @@ type ManagerOptions struct {
 	// conversation with instead of the three above. A deployment without one refuses
 	// such a session rather than falling back to the cascade unasked.
 	STS *stsrouter.Router
+	// EOT is optional and only gates settled quiet-floor cascade candidates.
+	EOT          *agent.EOTClient
+	EOTThreshold float64
 
 	// Edge is required: without it there is no call to join.
 	Edge EdgeFactory
@@ -355,6 +358,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		// Every router the deployment has is handed over, whichever pipeline the session
 		// starts on, so it can be moved onto the other one mid-call.
 		STS:                m.options.STS,
+		EOT:                m.options.EOT,
+		EOTThreshold:       m.options.EOTThreshold,
 		STSTarget:          spec.STSTarget,
 		SubagentTarget:     spec.SubagentTarget,
 		ControllerTarget:   spec.ControllerTarget,

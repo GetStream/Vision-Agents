@@ -63,6 +63,32 @@ func (s *ConfigSuite) TestTheEnvironmentWinsOverTheEmbeddedFile() {
 	s.True(strings.HasPrefix(config.Redis.Addr, "localhost:"), "the file fills in what is unset")
 }
 
+func (s *ConfigSuite) TestAcousticEndpointConfigIsOptionalAndEnvironmentBacked() {
+	defaults, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(defaults.EOT.Endpoint)
+	s.Equal(0.5, defaults.EOT.Threshold)
+
+	s.T().Setenv("ROUTER_EOT_URL", "https://eot.example.run.app")
+	s.T().Setenv("ROUTER_EOT_ID_TOKEN_FILE", "/run/secrets/eot-id-token")
+	s.T().Setenv("ROUTER_EOT_THRESHOLD", "0.72")
+	configured, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal("https://eot.example.run.app", configured.EOT.Endpoint)
+	s.Equal("/run/secrets/eot-id-token", configured.EOT.IDTokenFile)
+	s.Equal(0.72, configured.EOT.Threshold)
+}
+
+func (s *ConfigSuite) TestAcousticThresholdMustBeFiniteAndInRange() {
+	for _, threshold := range []string{"-0.1", "1.1", "NaN", "+Inf"} {
+		s.T().Setenv("ROUTER_EOT_THRESHOLD", threshold)
+		_, _, err := Load("")
+		s.ErrorContains(err, "eot.threshold", threshold)
+		s.T().Setenv("ROUTER_EOT_THRESHOLD", "")
+		s.Require().NoError(os.Unsetenv("ROUTER_EOT_THRESHOLD"))
+	}
+}
+
 func (s *ConfigSuite) TestTheTestingFileWinsOverTheEnvironment() {
 	s.T().Setenv(EnvVar, Testing)
 	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost:55432/model_router")

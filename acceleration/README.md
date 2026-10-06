@@ -109,6 +109,9 @@ the other commands that read them there.
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `500000`. `0` turns it off |
 | `ROUTER_TRUSTED_PROXIES` | CIDR ranges your own proxies sit in, comma separated, e.g. `10.0.0.0/8`. Decides how much of `X-Forwarded-For` is believed. Unset means none of it is, and the connection's address is used |
 | `ROUTER_DATA_MOVE_RETENTION` | How long recorded changes are kept while a customer moves between deployments, defaults to `168h`. See [Moving a customer](#moving-a-customer) |
+| `ROUTER_EOT_URL` | Optional `POST /v1/eot` acoustic endpointing service URL. Unset keeps the existing transcript-only cadence |
+| `ROUTER_EOT_ID_TOKEN_FILE` | Optional path to a Google Cloud Run identity-token file for local development. Production uses the runtime's ID-token credentials |
+| `ROUTER_EOT_THRESHOLD` | Raw p(EOT) threshold for the optional acoustic veto; defaults to `0.5`, an initial operational setting rather than a calibrated optimum |
 | `ROUTER_LOG_LEVEL`      | `debug`, `info` (default), `warn` or `error`               |
 | `HARNESS_SKILLS`        | Path to a skill set; defaults to the built-in one          |
 | `MEM0_API_KEY`          | mem0 credentials. Without it the agent remembers nothing   |

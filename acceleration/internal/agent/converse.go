@@ -420,6 +420,35 @@ func (c *converse) Unasked(candidateID string) {
 	c.cadence.Resolve(candidateID, true)
 }
 
+// ForgetParticipant drops pending judgements and settling state when a participant
+// leaves. Unlike Unasked, departure must not schedule another attempt for stale words.
+func (c *converse) ForgetParticipant(participant stt.Participant) {
+	c.mu.Lock()
+	for id, ready := range c.candidates {
+		if ready.Participant.ID == participant.ID {
+			delete(c.candidates, id)
+			c.forgetOverlapLocked(id)
+		}
+	}
+	if c.queued != nil && c.queued.candidate.Participant.ID == participant.ID {
+		c.queued = nil
+	}
+	delete(c.waiting, participant.ID)
+	delete(c.overlapping, participant.ID)
+	for id, owner := range c.overlaps {
+		if owner == participant.ID {
+			delete(c.overlaps, id)
+		}
+	}
+	for kind, last := range c.reported {
+		if last.participant == participant.ID {
+			delete(c.reported, kind)
+		}
+	}
+	c.mu.Unlock()
+	c.cadence.Forget(participant)
+}
+
 // forgetOverlapLocked drops a provisional ask and returns what has been asked about the
 // participant it concerned, or false when the id is not a provisional ask still in flight.
 // The caller holds the lock.

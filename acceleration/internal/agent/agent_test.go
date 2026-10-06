@@ -3,7 +3,10 @@ package agent
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -527,6 +530,7 @@ type AgentSuite struct {
 	finds *stubSearch
 	// guards screens what the agent may be asked, when a test gives it a policy.
 	guards *stubGuardrail
+	eot    *EOTClient
 	// performing is what a voice that acts stage directions asks to have said about it.
 	// It is set before joining, because the stub voice is built there.
 	performing string
@@ -550,6 +554,7 @@ func (s *AgentSuite) SetupTest() {
 	s.namespace = ""
 	s.finds = nil
 	s.guards = nil
+	s.eot = nil
 	s.subagent = nil
 	s.skills = harness.Skills{}
 	s.line = nil
@@ -737,6 +742,8 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		Search:             finding,
 		SearchTarget:       searchTarget,
 		Guardrail:          s.screening(),
+		EOT:                s.eot,
+		EOTThreshold:       0.5,
 		Logger:             logger,
 	})
 	s.Require().NoError(err)
@@ -1892,6 +1899,327 @@ func (s *AgentSuite) TestWithoutDuplexNothingIsMurmured() {
 	s.eventually(func() bool { return len(s.ears.transcribed()) == 1 }, "audio never arrived")
 	s.Zero(countOf[Backchannel](s.reported()))
 	s.Empty(s.voice.spoken())
+}
+
+func (s *AgentSuite) TestAcousticWaitKeepsCallerTurnPendingUntilTheNextScoreAndFlowRuling() {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/eot" {
+			s.T().Errorf("unexpected EOT request: %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Content-Type"); got != "audio/pcm;rate=16000;channels=1;format=s16le" {
+			s.T().Errorf("unexpected EOT content type %q", got)
+		}
+		requestID := r.Header.Get("X-Request-ID")
+		if requestID == "" {
+			s.T().Error("EOT request did not identify its candidate")
+		}
+		if r.Header.Get("X-EOT-Pauses") != "" || r.Header.Get("X-EOT-Elapsed-Seconds") != "" {
+			s.T().Error("EOT request fabricated pause metadata")
+		}
+		pcm, err := io.ReadAll(r.Body)
+		if err != nil {
+			s.T().Errorf("read EOT audio: %v", err)
+		}
+		if len(pcm) != eotMinSamples*2 {
+			s.T().Errorf("EOT request sent %d bytes, want %d", len(pcm), eotMinSamples*2)
+		}
+		count := requests.Add(1)
+		probability := 0.2
+		if count > 1 {
+			probability = 0.9
+		}
+		if _, err := io.WriteString(w, eotJSON(requestID, len(pcm)/2, probability)); err != nil {
+			s.T().Errorf("write EOT score: %v", err)
+		}
+	}))
+	s.T().Cleanup(server.Close)
+	client, err := NewEOTClient(server.URL, "")
+	s.Require().NoError(err)
+	s.eot = client
+	s.join(false)
+
+	// The low score arrives before the semantic response. It must create an ordinary
+	// Wait and cancel speculative speech; a later high score still needs the semantic
+	// controller's Respond before the caller turn completes.
+	s.flow.mu.Lock()
+	s.flow.delay = 100 * time.Millisecond
+	s.flow.mu.Unlock()
+	participant := stt.Participant{ID: "caller", UserID: "caller", Name: "Caller"}
+	s.speak(participant)
+	s.eventually(func() bool {
+		return len(s.agent.eotAudioSnapshot(participant.ID)) == eotMinSamples*2
+	}, "the participant audio window was not retained")
+	s.says(participant, "could you help me")
+	s.eventually(func() bool { return requests.Load() == 1 }, "the first acoustic request never arrived")
+	s.eventually(func() bool {
+		s.agent.converse.mu.Lock()
+		defer s.agent.converse.mu.Unlock()
+		_, waiting := s.agent.converse.waiting[participant.ID]
+		return waiting
+	}, "a low acoustic score did not leave the caller turn waiting")
+	s.Empty(s.voice.spoken(), "a low acoustic score must cancel the speculative reply")
+	s.Empty(s.agent.History(), "a low acoustic score must not complete the caller turn")
+
+	s.eventually(func() bool { return requests.Load() >= 2 }, "the normal cadence retry did not score again")
+	s.eventually(func() bool { return said(s.voice.spoken()) != "" }, "the semantic Respond was not released after a high score")
+	s.Contains(said(s.voice.spoken()), "Hello there.")
+	s.EqualValues(2, requests.Load(), "each quiet settled candidate gets one scalar request")
+}
+
+func (s *AgentSuite) TestEOTServiceFailureReleasesTheSemanticDecision() {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body)
+		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+	}))
+	s.T().Cleanup(server.Close)
+	client, err := NewEOTClient(server.URL, "")
+	s.Require().NoError(err)
+	s.eot = client
+	s.join(false)
+	s.flow.mu.Lock()
+	s.flow.delay = 100 * time.Millisecond
+	s.flow.mu.Unlock()
+
+	participant := stt.Participant{ID: "caller", UserID: "caller", Name: "Caller"}
+	s.speak(participant)
+	s.eventually(func() bool { return len(s.agent.eotAudioSnapshot(participant.ID)) == eotMinSamples*2 },
+		"the participant audio window was not retained")
+	s.says(participant, "please help me")
+	s.eventually(func() bool { return requests.Load() == 1 }, "the EOT request did not arrive")
+	s.eventually(func() bool { return said(s.voice.spoken()) != "" },
+		"an unavailable EOT service did not release the semantic answer")
+	s.Contains(said(s.voice.spoken()), "Hello there.")
+}
+
+func (s *AgentSuite) TestEOT429AndTimeoutFallBackToTheSemanticFlow() {
+	var requests atomic.Int64
+	timedOut := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := requests.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body)
+		if count == 1 {
+			http.Error(w, "busy", http.StatusTooManyRequests)
+			return
+		}
+		<-r.Context().Done()
+		close(timedOut)
+	}))
+	s.T().Cleanup(server.Close)
+	client, err := NewEOTClient(server.URL, "")
+	s.Require().NoError(err)
+	s.eot = client
+	s.join(false)
+	s.flow.mu.Lock()
+	s.flow.delay = 100 * time.Millisecond
+	s.flow.mu.Unlock()
+
+	participant := stt.Participant{ID: "caller", UserID: "caller", Name: "Caller"}
+	s.speak(participant)
+	s.eventually(func() bool { return len(s.agent.eotAudioSnapshot(participant.ID)) == eotMinSamples*2 },
+		"the participant audio window was not retained")
+	s.says(participant, "please help with a booking")
+	s.eventually(func() bool { return requests.Load() == 1 }, "the 429 request did not arrive")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 },
+		"a 429 did not release the semantic answer")
+
+	s.says(participant, "and make it for four")
+	s.eventually(func() bool { return requests.Load() == 2 }, "the second EOT request did not arrive")
+	select {
+	case <-timedOut:
+	case <-time.After(settleFor):
+		s.FailNow("the bounded EOT request did not time out")
+	}
+	s.eventually(func() bool { return countOf[Responded](s.reported()) >= 2 },
+		"an EOT timeout did not release the semantic answer")
+	s.EqualValues(2, requests.Load(), "429 and timeout must not trigger EOT retries")
+}
+
+func (s *AgentSuite) TestEOTRevisionCancelsTheOldRequestAndScoresTheNewWords() {
+	var requests atomic.Int64
+	firstStarted := make(chan struct{})
+	firstCanceled := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := requests.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body)
+		if count == 1 {
+			close(firstStarted)
+			<-r.Context().Done()
+			close(firstCanceled)
+			return
+		}
+		requestID := r.Header.Get("X-Request-ID")
+		_, _ = io.WriteString(w, eotJSON(requestID, eotMinSamples, 0.9))
+	}))
+	s.T().Cleanup(server.Close)
+	client, err := NewEOTClient(server.URL, "")
+	s.Require().NoError(err)
+	s.eot = client
+	s.join(false)
+	s.flow.mu.Lock()
+	s.flow.delay = 500 * time.Millisecond
+	s.flow.mu.Unlock()
+
+	participant := stt.Participant{ID: "caller", UserID: "caller", Name: "Caller"}
+	s.speak(participant)
+	s.eventually(func() bool { return len(s.agent.eotAudioSnapshot(participant.ID)) == eotMinSamples*2 },
+		"the participant audio window was not retained")
+	s.says(participant, "could you find a table")
+	select {
+	case <-firstStarted:
+	case <-time.After(settleFor):
+		s.FailNow("the first EOT request did not start")
+	}
+	s.mutters(participant, "could you find a table for four")
+	select {
+	case <-firstCanceled:
+	case <-time.After(settleFor):
+		s.FailNow("a transcript revision did not cancel the old EOT request")
+	}
+	s.eventually(func() bool { return requests.Load() >= 2 }, "the revised candidate was not scored")
+	s.eventually(func() bool { return said(s.voice.spoken()) != "" },
+		"the revised candidate's semantic answer was not released")
+	s.Contains(said(s.voice.spoken()), "Hello there.")
+	s.EqualValues(2, requests.Load(), "a revision should replace, not duplicate, the old request")
+}
+
+func (s *AgentSuite) TestParticipantDepartureInvalidatesPendingEOTAndSemanticResults() {
+	var requests atomic.Int64
+	firstStarted := make(chan struct{})
+	firstCanceled := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body)
+		close(firstStarted)
+		<-r.Context().Done()
+		close(firstCanceled)
+	}))
+	s.T().Cleanup(server.Close)
+	client, err := NewEOTClient(server.URL, "")
+	s.Require().NoError(err)
+	s.eot = client
+	s.join(false)
+	s.flow.mu.Lock()
+	s.flow.delay = 100 * time.Millisecond
+	s.flow.mu.Unlock()
+
+	participant := stt.Participant{ID: "caller", UserID: "caller", Name: "Caller"}
+	s.speak(participant)
+	s.eventually(func() bool { return len(s.agent.eotAudioSnapshot(participant.ID)) == eotMinSamples*2 },
+		"the participant audio window was not retained")
+	s.says(participant, "please find a table")
+	select {
+	case <-firstStarted:
+	case <-time.After(settleFor):
+		s.FailNow("the EOT request did not start")
+	}
+	var old *eotGate
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		for _, gate := range s.agent.eotGates {
+			if gate.held != nil {
+				old = gate
+				return true
+			}
+		}
+		return false
+	}, "the semantic result was not held behind the EOT request")
+	s.agent.unbind(participant)
+	select {
+	case <-firstCanceled:
+	case <-time.After(settleFor):
+		s.FailNow("participant departure did not cancel its EOT request")
+	}
+	s.agent.decideFromHarness(s.agent.pipe, s.agent.harness, *old.held)
+	s.Empty(s.voice.spoken(), "a departed participant's stale result produced speech")
+	s.agent.mu.Lock()
+	_, hasRing := s.agent.audioHistory[participant.ID]
+	_, hasGate := s.agent.eotGates[old.candidateID]
+	s.agent.mu.Unlock()
+	s.False(hasRing, "departure retained participant audio")
+	s.False(hasGate, "departure retained the EOT join")
+	s.agent.converse.mu.Lock()
+	_, hasCandidate := s.agent.converse.candidates[old.candidateID]
+	s.agent.converse.mu.Unlock()
+	s.False(hasCandidate, "departure retained the semantic candidate")
+	time.Sleep(800 * time.Millisecond)
+	s.EqualValues(1, requests.Load(), "departure retried cadence for a participant who left")
+}
+
+func (s *AgentSuite) TestInPlaceCascadeSwapInvalidatesHeldAndQueuedEOTResults() {
+	var requests atomic.Int64
+	firstStarted := make(chan struct{})
+	firstCanceled := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := requests.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body)
+		if count == 1 {
+			close(firstStarted)
+			<-r.Context().Done()
+			close(firstCanceled)
+			return
+		}
+		requestID := r.Header.Get("X-Request-ID")
+		_, _ = io.WriteString(w, eotJSON(requestID, eotMinSamples, 0.9))
+	}))
+	s.T().Cleanup(server.Close)
+	client, err := NewEOTClient(server.URL, "")
+	s.Require().NoError(err)
+	s.eot = client
+	s.join(false)
+	s.flow.mu.Lock()
+	s.flow.delay = 100 * time.Millisecond
+	s.flow.mu.Unlock()
+
+	participant := stt.Participant{ID: "caller", UserID: "caller", Name: "Caller"}
+	s.speak(participant)
+	s.eventually(func() bool { return len(s.agent.eotAudioSnapshot(participant.ID)) == eotMinSamples*2 },
+		"the participant audio window was not retained")
+	s.says(participant, "please find a table")
+	select {
+	case <-firstStarted:
+	case <-time.After(settleFor):
+		s.FailNow("the EOT request did not start")
+	}
+	var old *eotGate
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		for _, gate := range s.agent.eotGates {
+			if gate.held != nil {
+				old = gate
+				return true
+			}
+		}
+		return false
+	}, "the semantic result was not held behind the EOT request")
+
+	// Exercise the actual in-place cascade swap while the candidate join is live. The
+	// late event below models a Decided already queued when CancelDecision runs.
+	s.agent.mu.Lock()
+	settings := s.agent.settingsLocked()
+	current, p := s.agent.harness, s.agent.pipe
+	s.agent.switching.Store(true)
+	s.agent.mu.Unlock()
+	s.agent.swapCascade(settings, settings, &prepared{})
+	s.agent.switching.Store(false)
+	select {
+	case <-firstCanceled:
+	case <-time.After(settleFor):
+		s.FailNow("the in-place swap did not cancel its pending EOT request")
+	}
+	s.agent.decideFromHarness(p, current, *old.held)
+	s.Empty(s.voice.spoken(), "a stale queued semantic result crossed the cascade swap")
+	s.speak(participant)
+	s.eventually(func() bool { return len(s.agent.eotAudioSnapshot(participant.ID)) == eotMinSamples*2 },
+		"fresh post-swap audio was not retained")
+	s.eventually(func() bool { return requests.Load() >= 2 }, "the canceled candidate was not retried")
+	s.eventually(func() bool { return said(s.voice.spoken()) != "" },
+		"the retried candidate did not complete under the current pipeline")
+	s.Contains(said(s.voice.spoken()), "Hello there.")
 }
 
 func (s *AgentSuite) TestAReplyWaitingOnHeadersDoesNotBlockTheFloor() {

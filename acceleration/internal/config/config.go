@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -70,6 +71,7 @@ type Config struct {
 	RateLimit       RateLimit `koanf:"rate_limit"`
 	DataMove        DataMove  `koanf:"data_move"`
 	Stream          Stream    `koanf:"stream"`
+	EOT             EOT       `koanf:"eot"`
 }
 
 // Postgres is where everything worth keeping is written. An empty DSN is a router that
@@ -117,6 +119,13 @@ type Stream struct {
 	APISecret string `koanf:"api_secret"`
 }
 
+// EOT is an optional acoustic endpointing gate for settled cascade turns.
+type EOT struct {
+	Endpoint    string  `koanf:"endpoint"`
+	IDTokenFile string  `koanf:"id_token_file"`
+	Threshold   float64 `koanf:"threshold"`
+}
+
 // variables maps each setting to the environment variable that has always carried it.
 // Both directions are read from here: the variable wins over the file on the way in, and
 // the effective value is written back to it on the way out.
@@ -139,6 +148,9 @@ var variables = map[string]string{
 	"data_move.retention": "ROUTER_DATA_MOVE_RETENTION",
 	"stream.api_key":      "STREAM_API_KEY",
 	"stream.api_secret":   "STREAM_API_SECRET",
+	"eot.endpoint":        "ROUTER_EOT_URL",
+	"eot.id_token_file":   "ROUTER_EOT_ID_TOKEN_FILE",
+	"eot.threshold":       "ROUTER_EOT_THRESHOLD",
 
 	"rate_limit.messages_per_day": "ROUTER_RATE_LIMIT_MESSAGES_PER_DAY",
 	"rate_limit.tokens_per_day":   "ROUTER_RATE_LIMIT_TOKENS_PER_DAY",
@@ -158,6 +170,7 @@ func Defaults() Config {
 		// so it should only be reached by somebody making a few enormous requests.
 		RateLimit: RateLimit{MessagesPerDay: 200, TokensPerDay: 500_000},
 		DataMove:  DataMove{Retention: 7 * 24 * time.Hour},
+		EOT:       EOT{Threshold: 0.5},
 	}
 }
 
@@ -258,6 +271,10 @@ func (c Config) validate() error {
 	if c.DataMove.Retention < 0 {
 		return fmt.Errorf("config: data_move.retention cannot be negative, got %s", c.DataMove.Retention)
 	}
+	if math.IsNaN(c.EOT.Threshold) || math.IsInf(c.EOT.Threshold, 0) ||
+		c.EOT.Threshold < 0 || c.EOT.Threshold > 1 {
+		return fmt.Errorf("config: eot.threshold must be between 0 and 1, got %v", c.EOT.Threshold)
+	}
 	return nil
 }
 
@@ -286,6 +303,9 @@ func (c Config) export() error {
 		"auth.kek":                    c.Auth.KEK,
 		"stream.api_key":              c.Stream.APIKey,
 		"stream.api_secret":           c.Stream.APISecret,
+		"eot.endpoint":                c.EOT.Endpoint,
+		"eot.id_token_file":           c.EOT.IDTokenFile,
+		"eot.threshold":               fmt.Sprint(c.EOT.Threshold),
 		"data_move.retention":         c.DataMove.Retention.String(),
 		"rate_limit.messages_per_day": fmt.Sprint(c.RateLimit.MessagesPerDay),
 		"rate_limit.tokens_per_day":   fmt.Sprint(c.RateLimit.TokensPerDay),

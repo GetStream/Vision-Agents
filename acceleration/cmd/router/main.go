@@ -802,16 +802,29 @@ func buildSessions(
 		reading = base
 	}
 
+	var eotClient *agent.EOTClient
+	if endpoint := strings.TrimSpace(settings.EOT.Endpoint); endpoint != "" {
+		client, err := agent.NewEOTClient(endpoint, settings.EOT.IDTokenFile)
+		if err != nil {
+			logger.Warn("acoustic endpoint gate is disabled", "reason", "invalid configuration")
+		} else {
+			eotClient = client
+			logger.Info("acoustic endpoint gate is configured", "threshold", settings.EOT.Threshold)
+		}
+	}
+
 	return session.NewManager(session.ManagerOptions{
-		LLM:        streams.LLM,
-		STT:        streams.STT,
-		TTS:        streams.TTS,
-		STS:        streams.STS,
-		Memory:     remembering,
-		Knowledge:  reading,
-		Search:     finding,
-		Classifier: judging,
-		Phone:      telephony,
+		LLM:          streams.LLM,
+		STT:          streams.STT,
+		TTS:          streams.TTS,
+		STS:          streams.STS,
+		EOT:          eotClient,
+		EOTThreshold: settings.EOT.Threshold,
+		Memory:       remembering,
+		Knowledge:    reading,
+		Search:       finding,
+		Classifier:   judging,
+		Phone:        telephony,
 		// The same app secret that verifies Stream's inbound hooks, now signing one going
 		// the other way. A customer who wants to decide for themselves whether a turn may
 		// be answered already holds it, so there is no second secret to hand out.
