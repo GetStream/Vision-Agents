@@ -7,33 +7,33 @@ description: >-
   and client regeneration, x-client-accessible operations, SDK order,
   migrations). Use when the user gives a PR number (123, #123), a
   github.com/.../pull/123 link, or asks to review, check or look at a pull
-  request. Posts the findings in chat or as inline PR comments, and approves a
+  request. Shows the findings here or posts them as inline PR comments, and approves a
   PR with no findings. Prefer it over code-review for a GitHub PR; not for a
   local diff with no PR.
-argument-hint: "<pr-url-or-number> [chat|inline]"
-arguments: [pr, post]
+argument-hint: "<pr-url-or-number> [show|post]"
+arguments: [pr, mode]
 ---
 
 # PR review
 
 Review the pull request. Do not edit, commit, or push. Post to GitHub only as
-[Post inline](#post-inline) says.
+[Post to the PR](#post-to-the-pr) says.
 
 `$SKILL` below is `"$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.agents/skills/pr-review"`.
 
 ## Where to post
 
-`$post` picks where the findings go:
+`$mode` picks where the findings go:
 
-- `chat`: write the review in this conversation. Post nothing to GitHub.
-- `inline`: write it here, then submit it on the PR as one review with inline comments.
+- `show`: write the review in this conversation. Post nothing to GitHub.
+- `post`: write it here, then submit it on the PR as one review with inline comments.
 
-If `$post` is neither and the user's message does not say, ask with AskUserQuestion before you
-resolve the PR, so the rest of the review runs without a stop. Ask one question, header `Post to`,
+If `$mode` is neither and the user's message does not say, ask with AskUserQuestion before you
+resolve the PR, so the rest of the review runs without a stop. Ask one question, header `Findings`,
 with these options:
 
-- `Chat (Recommended)`: the findings stay in this conversation.
-- `Inline in the PR`: one review on GitHub with a comment on each line. A PR with no findings is
+- `Show here (Recommended)`: the findings stay in this conversation.
+- `Post to the PR`: one review on GitHub with a comment on each line. A PR with no findings is
   approved.
 
 ## Resolve the PR
@@ -176,8 +176,8 @@ for an SDK.
 
 ## Report
 
-Write the review in the terminal in both modes. For `inline`, then do
-[Post inline](#post-inline).
+Write the review in the terminal in both modes. For `post`, then do
+[Post to the PR](#post-to-the-pr).
 
 Give each finding a severity:
 
@@ -223,9 +223,9 @@ rewrite.
 
 Close with a short note of what you checked and found sound, only where a reader would otherwise assume you ignored it.
 
-## Post inline
+## Post to the PR
 
-Only when the mode is `inline`. Submit one review at `headRefOid`. Never leave a pending review.
+Only when the mode is `post`. Submit one review at `headRefOid`. Never leave a pending review.
 
 - A finding on a line in the diff is an inline comment on that line: its severity, the broken
   behavior, and the check that showed it.
