@@ -1737,7 +1737,7 @@ wheels = [
 [[package]]
 name = "getstream"
 version = "6.1.1"
-source = { git = "https://github.com/GetStream/stream-py.git?rev=363b2528f6da747edec48fae843e58bc4d16c6d7#363b2528f6da747edec48fae843e58bc4d16c6d7" }
+source = { git = "https://github.com/GetStream/stream-py.git?rev=20cec510a5e5211a16f17e15d0c6c8cfdcc9b356#20cec510a5e5211a16f17e15d0c6c8cfdcc9b356" }
 dependencies = [
     { name = "dataclasses-json" },
     { name = "httpx" },
@@ -6571,7 +6571,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.1" },
     { name = "colorlog", specifier = ">=6.10.1" },
     { name = "fastapi", specifier = ">=0.135.1" },
-    { name = "getstream", extras = ["telemetry", "webrtc"], git = "https://github.com/GetStream/stream-py.git?rev=363b2528f6da747edec48fae843e58bc4d16c6d7" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], git = "https://github.com/GetStream/stream-py.git?rev=20cec510a5e5211a16f17e15d0c6c8cfdcc9b356" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "mcp", specifier = ">=1.23.3,<2" },
     { name = "mypy", marker = "extra == 'dev'" },
@@ -6940,7 +6940,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "getstream", extras = ["telemetry", "webrtc"], git = "https://github.com/GetStream/stream-py.git?rev=363b2528f6da747edec48fae843e58bc4d16c6d7" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], git = "https://github.com/GetStream/stream-py.git?rev=20cec510a5e5211a16f17e15d0c6c8cfdcc9b356" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
