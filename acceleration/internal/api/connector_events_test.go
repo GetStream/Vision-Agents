@@ -406,12 +406,15 @@ type deliveries struct {
 	messages []core.InboundMessage
 }
 
-func (d *deliveries) Deliver(_ context.Context, messages []core.InboundMessage) error {
+func (d *deliveries) Deliver(_ context.Context, _ store.ConnectorOAuthClient, messages []core.InboundMessage) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.messages = append(d.messages, messages...)
 	return nil
 }
+
+// Reply sends nothing: no thread channel is linked in this suite.
+func (d *deliveries) Reply(context.Context, store.ChannelThread, string) {}
 
 // of is the messages delivered for one provider unit.
 func (d *deliveries) of(unit string) []core.InboundMessage {

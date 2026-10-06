@@ -77,7 +77,7 @@ func (s *ChatlogIntegrationSuite) TestAReplyIsVisibleBeforeItIsFinished() {
 	s.log.Record(agent.ResponseDelta{TurnID: "turn-1", Text: "checking the diary "})
 
 	writing := s.await(said("checking the diary "))
-	s.Equal(true, writing.Custom[generatingField],
+	s.Equal(true, writing.Custom[GeneratingField],
 		"a client showing the reply needs to know more of it is coming")
 
 	s.log.Record(agent.ResponseDelta{TurnID: "turn-1", Text: "now"})
@@ -87,7 +87,7 @@ func (s *ChatlogIntegrationSuite) TestAReplyIsVisibleBeforeItIsFinished() {
 	finished := s.await(func(message getstream.MessageResponse) bool {
 		return message.ID == writing.ID && message.Text == "checking the diary now"
 	})
-	s.Equal(false, finished.Custom[generatingField],
+	s.Equal(false, finished.Custom[GeneratingField],
 		"the pieces were ephemeral, so the whole reply has to be stored")
 }
 
@@ -99,7 +99,7 @@ func (s *ChatlogIntegrationSuite) TestAnInterruptedReplyIsNotStoredAsFullySpoken
 	s.log.Record(agent.Interrupted{TurnID: "turn-2"})
 
 	finished := s.await(func(message getstream.MessageResponse) bool {
-		return message.ID == writing.ID && message.Custom[generatingField] == false
+		return message.ID == writing.ID && message.Custom[GeneratingField] == false
 	})
 	s.Equal(true, finished.Custom[interruptedField])
 	s.NotEqual("let me check the next thirty days in the diary", finished.Text,

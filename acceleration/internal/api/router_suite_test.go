@@ -36,7 +36,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
@@ -204,6 +206,15 @@ type RouterSuite struct {
 	// takes no events and drops messages, as a deployment without them does.
 	eventSecrets EventSecretLookup
 	bridge       ChannelBridge
+	// channelProvider, set by a suite about the channel bridge before it starts the harness,
+	// gives the router the real bridge (internal/channelbridge), whose replies dial the address
+	// it returns at the time, whatever host a manifest's reply names: the test's own fake
+	// provider. Nil leaves bridge as the suite set it.
+	channelProvider func() string
+	// transcripts, set by a suite before it starts the harness, writes a session's
+	// conversation into its agent channel in the suite's Stream Chat through chatlog, as
+	// cmd/router's transcriptFor does. Off, a session keeps no transcript.
+	transcripts bool
 	// resolver is the router's connector resolver over the suite's store and sealer, with
 	// connectors' schemes, set by SetupSuite.
 	resolver *resolver.Resolver
@@ -352,6 +363,9 @@ func (s *RouterSuite) SetupSuite() {
 	transports, err := core.NewTransports(core.TransportsConfig{Resolver: s.resolver, Timeout: suiteConnectorTimeout,
 		NewClient: loopbackClients(s.connectorHTTP)})
 	s.Require().NoError(err)
+	if s.channelProvider != nil {
+		s.bridge = s.channelBridge(logger)
+	}
 
 	server, err := NewServer(Options{
 		Routers:       s.modalities,
@@ -404,6 +418,31 @@ func (s *RouterSuite) SetupSuite() {
 	public.PublicURL = listener.URL
 	s.server = listener
 	s.T().Cleanup(s.server.Close)
+}
+
+// channelBridge is the router's channel bridge over the suite's store, Stream Chat and
+// resolver, whose replies leave through core.Transports, as cmd/router builds it, with a
+// client that dials channelProvider instead of the egress client, which refuses loopback.
+func (s *RouterSuite) channelBridge(logger *slog.Logger) *channelbridge.Bridge {
+	transports, err := core.NewTransports(core.TransportsConfig{
+		Resolver: s.resolver,
+		NewClient: func(timeout time.Duration, wrap func(http.RoundTripper) http.RoundTripper) *http.Client {
+			base := &http.Transport{
+				DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+					return (&net.Dialer{}).DialContext(ctx, network, s.channelProvider())
+				},
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // the test's own fake provider
+			}
+			return &http.Client{Timeout: timeout, Transport: wrap(base)}
+		},
+	})
+	s.Require().NoError(err)
+	bridge, err := channelbridge.New(channelbridge.Options{
+		Store: s.store, Stream: s.stream, Schemes: s.connectors.Schemes, Transports: transports, Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(bridge.Close)
+	return bridge
 }
 
 // pluginEvents subscribes against pluginMCP, whatever host a catalog plugin names, so a
@@ -614,7 +653,18 @@ func (s *RouterSuite) sessionManager(
 	if s.memoryStore != nil {
 		remembering = s.memoryStore
 	}
+	var transcripts session.TranscriptFactory
+	if s.transcripts {
+		transcripts = func(_ context.Context, spec session.Spec, stream streamapp.Bound, logger *slog.Logger) (session.Transcript, error) {
+			return chatlog.New(chatlog.Options{
+				AgentID: spec.AgentID, CustomerID: spec.CustomerID,
+				Agent:  chatlog.User{ID: spec.UserID, Name: spec.UserName},
+				Client: stream.Client, Logger: logger,
+			})
+		}
+	}
 	sessions, err := session.NewManager(session.ManagerOptions{
+		Transcript:    transcripts,
 		LLM:           streams.LLM,
 		STT:           streams.STT,
 		TTS:           streams.TTS,

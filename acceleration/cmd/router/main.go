@@ -25,6 +25,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
@@ -1006,6 +1007,16 @@ func run(settings config.Config, logger *slog.Logger) error {
 		options.ConnectorResolver = connectorResolver
 		options.ConnectorTransports = connectorTransports
 		options.ConnectorEventSecrets = api.ConnectorEventSecrets(os.Getenv)
+		// The events endpoint hands it a provider app's messages; the message hook, the
+		// agent's replies to them.
+		bridge, err := channelbridge.New(channelbridge.Options{
+			Store: pgStore, Stream: streamClients, Schemes: connectors.Schemes, Transports: connectorTransports, Logger: logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer bridge.Close()
+		options.ChannelBridge = bridge
 	}
 	if streamClients.PerApp() {
 		// Each registered app signs its own hooks and mints its own tokens, so only work in

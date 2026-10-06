@@ -332,6 +332,33 @@ func documentHandWritten(api huma.API) {
 		},
 	})
 	document.AddOperation(&huma.Operation{
+		OperationID: "receiveProviderAppEvent",
+		Method:      http.MethodPost,
+		Path:        providerAppEventsPath + "{connector_id}/{provider_app_id}",
+		Summary:     "Receive a provider app's event",
+		Description: "Where a provider delivers the events of one customer's provider app: the Request URL " +
+			"of a customer's Slack app, for one. Unauthenticated because the provider is not a customer: " +
+			"each request is checked by the verifier the connector's manifest names " +
+			"(channel.verifier) against that app's own signing secret, so an event signed for another " +
+			"app is refused and changes nothing. A URL verification is answered with its challenge as " +
+			"text/plain. A signal that a grant ended moves the app's customer's connections of that " +
+			"account to needs_reauthorization, unless they connected after the event. A message goes " +
+			"to the channel bridge, which writes it into the thread channel of its external thread in " +
+			"Stream Chat; a retried delivery is dropped. The body is at most 256 KiB. No SDK wraps it: " +
+			"only a provider calls it.",
+		Security: []map[string][]string{},
+		Parameters: []*huma.Param{
+			{Name: "connector_id", In: "path", Description: "The connector the provider app is of, such as slack_bot.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "provider_app_id", In: "path", Description: "The provider's id for the app, such as a Slack app id.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The event is taken, or a URL verification's challenge, echoed", Content: map[string]*huma.MediaType{"text/plain": {Schema: &huma.Schema{Type: huma.TypeString}}}},
+			"401": {Description: "The request is not signed with the app's signing secret, or its signed timestamp is more than the manifest's max_age from now"},
+			"404": {Description: "No such provider app, or its connector takes no events here"},
+			"413": {Description: "The event is over 256 KiB"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
 		OperationID: "getPluginLogo",
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/plugins/{plugin_id}/logo",

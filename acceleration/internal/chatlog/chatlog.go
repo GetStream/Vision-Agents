@@ -48,9 +48,10 @@ const writeTimeout = 10 * time.Second
 // at a time, and showing each one would be a request per token.
 const streamInterval = 200 * time.Millisecond
 
-// generatingField is the custom field a client reads to know a reply is not finished. The
+// GeneratingField is the custom field a client reads to know a reply is not finished, and the
+// message hook to leave an unfinished reply in a thread channel unsent. The
 // Python agent writes the same field, so a client can watch either.
-const generatingField = "generating"
+const GeneratingField = "generating"
 
 // SourceField says where a message came from, so a message the agent has already dealt with
 // is not mistaken for one addressed to it. Everything this package writes carries it, and a
@@ -459,7 +460,7 @@ func (w *writer) storeArtifacts(queued message) {
 	id := fmt.Sprintf("voice-artifact-%x", sha256.Sum256([]byte(w.log.channel+"\x00"+queued.turnID+"\x00"+queued.receiptID)))
 	_, err := w.log.client.Chat().SendMessage(ctx, ChannelType, w.log.channel, &getstream.SendMessageRequest{
 		Message: getstream.MessageRequest{ID: &id, UserID: &queued.author.ID, Attachments: conversation.ChatAttachments(queued.artifacts),
-			Custom: map[string]any{generatingField: false, SourceField: SourceAgent}},
+			Custom: map[string]any{GeneratingField: false, SourceField: SourceAgent}},
 	})
 	if err != nil {
 		w.log.logger.Error("could not store a saved artifact card", "turn", queued.turnID, "error", err)
@@ -493,7 +494,7 @@ func (w *writer) showOne(writing *reply, source string, key, id string) {
 			&getstream.EphemeralMessageUpdateRequest{
 				UserID: &writing.author.ID,
 				Set: map[string]any{
-					"text": writing.text, generatingField: true, SourceField: source,
+					"text": writing.text, GeneratingField: true, SourceField: source,
 				},
 			})
 	}
@@ -555,7 +556,7 @@ func (w *writer) settle(turnID, text string) {
 		&getstream.UpdateMessagePartialRequest{
 			UserID: &writing.author.ID,
 			Set: map[string]any{
-				"text": text, generatingField: false, interruptedField: false, SourceField: SourceAgent,
+				"text": text, GeneratingField: false, interruptedField: false, SourceField: SourceAgent,
 			},
 		})
 	if err != nil {
@@ -611,7 +612,7 @@ func (w *writer) patch(writing *reply, text string, interrupted bool, source str
 		&getstream.UpdateMessagePartialRequest{
 			UserID: &writing.author.ID,
 			Set: map[string]any{
-				"text": text, generatingField: false, interruptedField: interrupted, SourceField: source,
+				"text": text, GeneratingField: false, interruptedField: interrupted, SourceField: source,
 			},
 		})
 	if err != nil {
@@ -649,7 +650,7 @@ func (w *writer) send(ctx context.Context, author User, text string, generating,
 				Text:   &text,
 				UserID: &author.ID,
 				Custom: map[string]any{
-					generatingField: generating, interruptedField: interrupted, SourceField: source,
+					GeneratingField: generating, interruptedField: interrupted, SourceField: source,
 				},
 			},
 		})
