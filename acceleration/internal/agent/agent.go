@@ -290,8 +290,9 @@ type Agent struct {
 	// stream is bound to a single speaker.
 	listeners map[string]*sttrouter.Session
 	// audioHistory retains one bounded PCM window per active participant for optional EOT.
-	audioHistory map[string]*pcm16leRing
-	eotGates     map[string]*eotGate
+	audioHistory       map[string]*pcm16leRing
+	eotGates           map[string]*eotGate
+	eotSnapshotOrdinal uint64
 	// voices is the diarised label of the first voice heard on each participant's track,
 	// which is taken to be the caller's. A later turn in a different voice is somebody
 	// else at the same microphone: the track says who joined the call, and it is the
@@ -1032,7 +1033,8 @@ func (a *Agent) consumeEdge() {
 			a.hear(inbound)
 			continue
 		}
-		a.retainEOTAudio(inbound.Participant.ID, inbound.Audio.SampleRate, inbound.Audio.Channels, inbound.Audio.Samples)
+		a.retainEOTAudioTimed(inbound.Participant.ID, inbound.Audio.SampleRate, inbound.Audio.Channels,
+			inbound.Audio.Samples, inbound.Timing)
 		listener, err := a.listen(inbound.Participant)
 		if err != nil {
 			a.fail(err, "stt")
@@ -1396,13 +1398,13 @@ func (a *Agent) ask(ready candidate) {
 		Unfinished:   ready.Unfinished,
 		AnotherVoice: anotherVoice,
 	}
-	var pcm []byte
+	var snapshot eotScoringSnapshot
 	eligibleForEOT := !speaking && !ready.Unfinished && !anotherVoice && !a.options.Text &&
 		(a.options.Guardrail == nil || a.options.Guardrail.Policy().Mode != guardrail.ModeBlocking)
 	if eligibleForEOT && a.options.EOT != nil {
-		pcm = a.eotAudioSnapshot(ready.Participant.ID)
+		snapshot, _ = a.eotScoringSnapshot(ready.Participant.ID)
 	}
-	a.decideWithEOT(p, current, ready, turn, pcm)
+	a.decideWithEOT(p, current, ready, turn, snapshot)
 }
 
 type previewResult struct {

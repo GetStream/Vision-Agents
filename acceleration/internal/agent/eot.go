@@ -533,6 +533,64 @@ type pcm16leRing struct {
 	sample []int16
 	next   int
 	full   bool
+
+	generation            uint64
+	lastSourceAt          time.Time
+	lastAppendAt          time.Time
+	lastAppendTimingValid bool
+	timing                AudioTiming
+	lastScoredGeneration  uint64
+	lastScoredTiming      AudioTiming
+	hasScoredSnapshot     bool
+}
+
+type eotTailStats struct {
+	samples      int
+	rms          float64
+	peak         int
+	zeroFraction float64
+}
+
+type eotSnapshotObservation struct {
+	timingValid bool
+	timing      AudioTiming
+	generation  uint64
+	samples     int
+	sourceAt    time.Time
+	appendAt    time.Time
+	capturedAt  time.Time
+	tail100ms   eotTailStats
+	tail500ms   eotTailStats
+	tail1000ms  eotTailStats
+}
+
+type eotSnapshotDiagnostics struct {
+	timingValid                 bool
+	timing                      AudioTiming
+	ordinal                     uint64
+	generation                  uint64
+	generationAdvance           uint64
+	snapshotGenerationUnchanged bool
+	samples                     int
+	sourceAgeValid              bool
+	appendAgeValid              bool
+	sourceAge                   time.Duration
+	appendAge                   time.Duration
+	timestampGapDelta           time.Duration
+	timestampOnlyGapDelta       time.Duration
+	sequenceLossDelta           uint64
+	clockResetsDelta            uint64
+	ambiguousGapsDelta          uint64
+	overlapDelta                time.Duration
+	tail100ms                   eotTailStats
+	tail500ms                   eotTailStats
+	tail1000ms                  eotTailStats
+}
+
+type eotScoringSnapshot struct {
+	pcm         []byte
+	ring        *pcm16leRing
+	observation eotSnapshotObservation
 }
 
 func newPCM16LERing() *pcm16leRing {
@@ -540,6 +598,13 @@ func newPCM16LERing() *pcm16leRing {
 }
 
 func (r *pcm16leRing) append(samples []int16) {
+	r.appendTimed(samples, AudioTiming{})
+}
+
+func (r *pcm16leRing) appendTimed(samples []int16, timing AudioTiming) {
+	if len(samples) == 0 {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, sample := range samples {
@@ -550,9 +615,72 @@ func (r *pcm16leRing) append(samples []int16) {
 			r.full = true
 		}
 	}
+	r.generation++
+	r.lastAppendAt = time.Now()
+	r.lastAppendTimingValid = timing.Valid
+	if timing.Valid {
+		r.timing = timing
+		r.lastSourceAt = timing.ReceivedAt
+	} else {
+		r.timing = AudioTiming{}
+		r.lastSourceAt = time.Time{}
+	}
 }
 
 func (r *pcm16leRing) snapshot() []byte {
+	pcm, _ := r.copySnapshot(false)
+	return pcm
+}
+
+func (r *pcm16leRing) scoringSnapshot() (eotScoringSnapshot, bool) {
+	pcm, observation := r.copySnapshot(true)
+	if len(pcm) == 0 {
+		return eotScoringSnapshot{}, false
+	}
+	return eotScoringSnapshot{pcm: pcm, ring: r, observation: observation}, true
+}
+
+func (s eotScoringSnapshot) claim() eotSnapshotDiagnostics {
+	r := s.ring
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	observed := s.observation
+	diagnostics := eotSnapshotDiagnostics{
+		timingValid:    observed.timingValid,
+		timing:         observed.timing,
+		generation:     observed.generation,
+		samples:        observed.samples,
+		sourceAgeValid: !observed.sourceAt.IsZero(),
+		appendAgeValid: !observed.appendAt.IsZero(),
+		sourceAge:      ageAt(observed.capturedAt, observed.sourceAt),
+		appendAge:      ageAt(observed.capturedAt, observed.appendAt),
+		tail100ms:      observed.tail100ms,
+		tail500ms:      observed.tail500ms,
+		tail1000ms:     observed.tail1000ms,
+	}
+	if observed.generation >= r.lastScoredGeneration {
+		diagnostics.generationAdvance = observed.generation - r.lastScoredGeneration
+		diagnostics.snapshotGenerationUnchanged = r.hasScoredSnapshot && observed.generation == r.lastScoredGeneration
+		if observed.timingValid {
+			previousTiming := r.lastScoredTiming
+			if !previousTiming.Valid || observed.timing.Epoch != previousTiming.Epoch {
+				previousTiming = AudioTiming{}
+			}
+			diagnostics.timestampGapDelta = durationDelta(observed.timing.TimestampGap, previousTiming.TimestampGap)
+			diagnostics.timestampOnlyGapDelta = durationDelta(observed.timing.TimestampOnlyGap, previousTiming.TimestampOnlyGap)
+			diagnostics.sequenceLossDelta = counterDelta(observed.timing.SequenceLoss, previousTiming.SequenceLoss)
+			diagnostics.clockResetsDelta = counterDelta(observed.timing.ClockResets, previousTiming.ClockResets)
+			diagnostics.ambiguousGapsDelta = counterDelta(observed.timing.AmbiguousGaps, previousTiming.AmbiguousGaps)
+			diagnostics.overlapDelta = durationDelta(observed.timing.Overlap, previousTiming.Overlap)
+			r.lastScoredTiming = observed.timing
+		}
+		r.lastScoredGeneration = observed.generation
+		r.hasScoredSnapshot = true
+	}
+	return diagnostics
+}
+
+func (r *pcm16leRing) copySnapshot(withStats bool) ([]byte, eotSnapshotObservation) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	count := r.next
@@ -562,18 +690,95 @@ func (r *pcm16leRing) snapshot() []byte {
 		start = r.next
 	}
 	if count < eotMinSamples {
-		return nil
+		return nil, eotSnapshotObservation{}
 	}
 	pcm := make([]byte, count*2)
+	var tailCounts [3]int
+	var tailSquares [3]uint64
+	var tailPeaks [3]int
+	var tailZeros [3]int
+	tailWindows := [3]int{eotSampleRate / 10, eotSampleRate / 2, eotSampleRate}
 	for i := 0; i < count; i++ {
-		binary.LittleEndian.PutUint16(pcm[i*2:], uint16(r.sample[(start+i)%len(r.sample)]))
+		sample := r.sample[(start+i)%len(r.sample)]
+		binary.LittleEndian.PutUint16(pcm[i*2:], uint16(sample))
+		fromEnd := count - i
+		if !withStats || fromEnd > tailWindows[2] {
+			continue
+		}
+		amplitude := int64(sample)
+		if amplitude < 0 {
+			amplitude = -amplitude
+		}
+		for window := range tailWindows {
+			if fromEnd > tailWindows[window] {
+				continue
+			}
+			tailCounts[window]++
+			tailSquares[window] += uint64(amplitude * amplitude)
+			if sample == 0 {
+				tailZeros[window]++
+			}
+			if int(amplitude) > tailPeaks[window] {
+				tailPeaks[window] = int(amplitude)
+			}
+		}
 	}
-	return pcm
+	if !withStats {
+		return pcm, eotSnapshotObservation{}
+	}
+	observation := eotSnapshotObservation{
+		timingValid: r.lastAppendTimingValid,
+		timing:      r.timing,
+		generation:  r.generation,
+		samples:     count,
+		sourceAt:    r.lastSourceAt,
+		appendAt:    r.lastAppendAt,
+		capturedAt:  time.Now(),
+	}
+	observation.tail100ms = tailStats(tailCounts[0], tailSquares[0], tailPeaks[0], tailZeros[0])
+	observation.tail500ms = tailStats(tailCounts[1], tailSquares[1], tailPeaks[1], tailZeros[1])
+	observation.tail1000ms = tailStats(tailCounts[2], tailSquares[2], tailPeaks[2], tailZeros[2])
+	return pcm, observation
 }
 
 func (r *pcm16leRing) clear() {
 	r.mu.Lock()
 	clear(r.sample)
 	r.next, r.full = 0, false
+	r.generation++
+	r.lastSourceAt = time.Time{}
+	r.lastAppendAt = time.Time{}
+	r.lastAppendTimingValid = false
+	r.timing = AudioTiming{}
 	r.mu.Unlock()
+}
+
+func tailStats(samples int, sumSquares uint64, peak int, zeroSamples int) eotTailStats {
+	stats := eotTailStats{samples: samples, peak: peak}
+	if samples > 0 {
+		stats.rms = math.Sqrt(float64(sumSquares) / float64(samples))
+		stats.zeroFraction = float64(zeroSamples) / float64(samples)
+	}
+	return stats
+}
+
+func ageAt(now, then time.Time) time.Duration {
+	if then.IsZero() || then.After(now) {
+		return 0
+	}
+	return now.Sub(then)
+}
+
+func durationDelta(current, previous time.Duration) time.Duration {
+	if current < previous {
+		return 0
+	}
+	return current - previous
+}
+
+func counterDelta(current, previous uint64) uint64 {
+	if current < previous {
+		return 0
+	}
+	return current - previous
 }
