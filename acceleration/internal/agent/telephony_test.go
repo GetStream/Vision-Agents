@@ -75,21 +75,36 @@ func (s *AgentSuite) onACall() {
 // stubToolRunner stands in for whoever owns the tools this package does not, which in
 // production is a caller on the other end of a socket.
 type stubToolRunner struct {
-	result string
-	err    error
+	result  string
+	err     error
+	entered chan struct{}
+	release <-chan struct{}
 
 	mu   sync.Mutex
 	runs []llm.ToolCall
 }
 
-func (r *stubToolRunner) Run(_ context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
+func (r *stubToolRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.runs = append(r.runs, call)
-	if r.err != nil {
-		return nil, r.err
+	entered, release := r.entered, r.release
+	r.entered, r.release = nil, nil
+	result, err := r.result, r.err
+	r.mu.Unlock()
+	if entered != nil {
+		close(entered)
 	}
-	return llm.TextParts(r.result), nil
+	if release != nil {
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return llm.TextParts(result), nil
 }
 
 func (r *stubToolRunner) asked() []llm.ToolCall {
