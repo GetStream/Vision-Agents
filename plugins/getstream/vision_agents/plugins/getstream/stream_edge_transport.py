@@ -547,7 +547,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
             "token": token,
             "skip_lobby": "true",
             "user_name": name,
-            "video_encoder": "h264",  # Use H.264 instead of VP8 for better compatibility
+            "video_encoder": "vp8",  # The Rust SDK decodes only VP8 and VP9, not H.264
             "bitrate": 12000000,
             "w": 1920,
             "h": 1080,

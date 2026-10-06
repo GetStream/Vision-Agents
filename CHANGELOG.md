@@ -7,6 +7,7 @@
 `vision-agents` and `vision-agents-plugins-getstream` now require `getstream>=6.1.1` built on the Rust Video SDK ([stream-py#303](https://github.com/GetStream/stream-py/pull/303)) instead of the aiortc transport of 4.x. Building it from source needs the Rust toolchain from its `rust-toolchain.toml`, `cmake`, `pkg-config` and `libvpx`. The `StreamEdge` API does not change, but:
 
 - Video tracks from `add_track_subscriber()` read the SDK's decoded frames, and each call returns an independent track.
+- The SDK decodes only VP8 and VP9 video. A participant that publishes only H.264 (for example RTMP or SRT ingress, or an app that forces H.264) gives the agent no video track. The demo link from `open_demo()` now asks the browser for VP8 (was H.264).
 - Published video is sent as VP9 (was H264), at the size of its first frame.
 - `AudioStreamTrack` no longer paces `recv()` by default. Code that sends one on its own aiortc connection must pass `pace=True`; the `openai` and `inworld` Realtime plugins now do.
 
