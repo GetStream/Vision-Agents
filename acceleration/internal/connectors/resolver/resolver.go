@@ -127,7 +127,8 @@ func (r *Resolver) Resolve(ctx context.Context, ref core.ConnectionRef, req core
 		r.drop(ref)
 		return core.AccessCredential{}, err
 	}
-	if connection.Status == store.ConnectionConnected {
+	// A refused credential is never served again from the cache (core.CredentialRequest.Refused).
+	if connection.Status == store.ConnectionConnected && req.Refused == nil {
 		if credential, found := r.cached(ref, connection.Revision, req.Deadline); found {
 			return credential, nil
 		}
@@ -139,7 +140,7 @@ func (r *Resolver) Resolve(ctx context.Context, ref core.ConnectionRef, req core
 	}
 	done := make(chan result, 1)
 	go func() {
-		credential, err := r.retrieve(ctx, ref, connection, req.Deadline)
+		credential, err := r.retrieve(ctx, ref, connection, req)
 		done <- result{credential, err}
 	}()
 	select {
@@ -184,10 +185,13 @@ func (r *Resolver) Invalidate(ctx context.Context, ref core.ConnectionRef, rejec
 	}))
 }
 
-// retrieve gets an access credential that works until validUntil through the connection's
-// scheme under the credential store's lock and commits what it learned. ctx only bounds the
-// wait for the lock and the reads; the scheme runs on a detached context.
-func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connection store.ConnectorConnection, validUntil time.Time) (core.AccessCredential, error) {
+// retrieve gets an access credential that works until req.Deadline through the connection's
+// scheme under the credential store's lock and commits what it learned. When req.Refused is
+// the credential the stored credentials still hold, the scheme is asked to renew it whatever
+// its expiry (core.RetrieveOptions.Refused); once they have moved past it, another router
+// already renewed it. ctx only bounds the wait for the lock and the reads; the scheme runs
+// on a detached context.
+func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connection store.ConnectorConnection, req core.CredentialRequest) (core.AccessCredential, error) {
 	scheme, found := r.schemes[connection.AuthScheme]
 	if !found {
 		return core.AccessCredential{}, stack.Wrap(fmt.Errorf("%w: %q", store.ErrUnregisteredScheme, connection.AuthScheme))
@@ -222,7 +226,8 @@ func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connect
 		detached, cancel := context.WithTimeout(context.WithoutCancel(ctx), retrieveTimeout)
 		defer cancel()
 		got, next, err := scheme.Retrieve(detached, state.Credentials, manifest, core.RetrieveOptions{
-			ValidUntil: validUntil,
+			ValidUntil: req.Deadline,
+			Refused:    req.Refused != nil && req.Refused.Revision == state.Revision,
 			Checkpoint: func() error {
 				state.Status, state.LastError = store.ConnectionNeedsReauthorization, lostRefresh
 				if err := checkpoint(); err != nil {

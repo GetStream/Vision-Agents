@@ -34,12 +34,14 @@ var ErrTokenTypeNotRevocable = errors.New("oauth2code: the provider does not rev
 var errNoAccessToken = errors.New("oauth2code: the credential has no access token")
 
 // Retrieve returns the access token in stored, renewed first when it is inside the
-// margin of its expiry or expires at or before opts.ValidUntil (RFC 6749 section 6). The
+// margin of its expiry, expires at or before opts.ValidUntil, or the provider refused it
+// (opts.Refused) (RFC 6749 section 6). The
 // StoredCredentials that come back are stored itself when nothing was renewed, and new ones when a refresh succeeded; a failed refresh
 // returns no StoredCredentials, stored is never written to, and the error is a *core.OutcomeError the resolver acts on. When the
 // refresh failed inside the margin, before the access token expired, that still valid token
 // comes back with the error, so a provider's bad minute is not a failed call: the resolver
-// can use it and still act on the outcome. Once the token has expired there is none.
+// can use it and still act on the outcome. Once the token has expired, or the provider refused
+// it (opts.Refused), there is none.
 //
 // When a refresh's answer is Uncertain (lost, or a 5xx that may have rotated the token) and
 // the manifest gives the provider a refresh.grace, the same refresh token is sent once more
@@ -58,11 +60,12 @@ func (s *Scheme) Retrieve(ctx context.Context, stored core.StoredCredentials, m 
 		due = opts.ValidUntil
 	}
 	// A token with no known expiry is never renewed early: there is no margin to be inside.
-	if current.ExpiresAt.IsZero() || due.Before(current.ExpiresAt) {
+	// One the provider refused is renewed whatever its expiry says (opts.Refused).
+	if !opts.Refused && (current.ExpiresAt.IsZero() || due.Before(current.ExpiresAt)) {
 		return credential(current), stored, nil
 	}
 	if current.RefreshToken == "" {
-		if now.Before(current.ExpiresAt) {
+		if current.ExpiresAt.IsZero() || now.Before(current.ExpiresAt) {
 			// Still valid, and nothing to renew it with.
 			return credential(current), stored, nil
 		}
@@ -73,7 +76,8 @@ func (s *Scheme) Retrieve(ctx context.Context, stored core.StoredCredentials, m 
 	}
 	next, err := s.refresh(ctx, m, current, opts.Checkpoint)
 	if err != nil {
-		if s.cfg.Now().Before(current.ExpiresAt) {
+		// A token the provider refused is not handed back, however long it has left.
+		if !opts.Refused && s.cfg.Now().Before(current.ExpiresAt) {
 			return credential(current), core.StoredCredentials{}, err
 		}
 		return core.AccessCredential{}, core.StoredCredentials{}, err

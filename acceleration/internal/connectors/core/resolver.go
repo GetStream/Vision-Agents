@@ -32,6 +32,13 @@ type CredentialRequest struct {
 	// resolver asks the scheme for that (RetrieveOptions.ValidUntil). Getting it runs on a
 	// detached context, so a call that gives up does not leave a refresh half done.
 	Deadline time.Time
+	// Refused is the access credential the provider just refused on this call, as Resolve
+	// returned it, or nil. The resolver then hands out none from its cache and, while the
+	// stored credentials are still at Refused.Revision, asks the scheme to renew whatever
+	// the expiry says (RetrieveOptions.Refused). A renewal the provider refuses moves the
+	// connection as any failed renewal does; a scheme that cannot renew hands back the same
+	// credential, and the caller then calls Invalidate.
+	Refused *AccessCredential
 }
 
 // CredentialStore is the locked, revisioned storage behind the resolver.

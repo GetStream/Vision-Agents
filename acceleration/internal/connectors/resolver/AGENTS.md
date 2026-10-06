@@ -1,6 +1,6 @@
 # internal/connectors/resolver
 
-The `core.Resolver` the router uses: the one door to a connection's access credential. `Resolve` reads the connection, hands out a cached credential while the row still allows it, and otherwise gets one through the connection's scheme under the credential store's lock, with the checkpoint before any refresh. It moves the connection's status by what the scheme answered. `Invalidate` is the caller's way to say a provider refused the credential. It replaces the prototype's `connectors.ResolveCredentials` (`internal/connectors/runtime.go:26-153` on `codex/connector-support` at `cf62af0d`), which refreshed on the tool call's context. `cmd/router/resolver.go` builds it over `pgsealed`. Request wrapping (T13) and rate limiting (T28) are not here.
+The `core.Resolver` the router uses: the one door to a connection's access credential. `Resolve` reads the connection, hands out a cached credential while the row still allows it, and otherwise gets one through the connection's scheme under the credential store's lock, with the checkpoint before any refresh. It moves the connection's status by what the scheme answered. `Invalidate` is the caller's way to say a provider refused the credential. It replaces the prototype's `connectors.ResolveCredentials` (`internal/connectors/runtime.go:26-153` on `codex/connector-support` at `cf62af0d`), which refreshed on the tool call's context. `cmd/router/resolver.go` builds it over `pgsealed`. Request wrapping is `core.Transports` (T13, `core/AGENTS.md`, «Transport»), which `TransportSuite` here runs over this resolver; rate limiting (T28) is not here.
 
 ## Flow
 
@@ -9,12 +9,14 @@ Resolve(ref, req)
   row         store.ConnectorConnection, every call, no lock      deleted -> store.ErrNoConnectorConnection
   fast path   connected, cache[ref].revision == row.revision,     -> cached credential
               younger than maxAge, ExpiresAt after req.Deadline
+              never when req.Refused is set
   slow path   on a goroutine; the caller's ctx ending returns ctx's error at once
     load      definition at the row's definition_revision (outside the lock)
     lock      CredentialStore.Update(ctx, ...)                    ctx bounds only the wait
     status    not connected -> ErrNotConnected
     Retrieve  scheme.Retrieve(detached, ..., opts)                context.WithoutCancel + retrieveTimeout
       ValidUntil  req.Deadline: the scheme renews a credential that expires before it
+      Refused     req.Refused is still the stored revision: renew whatever the expiry
       Checkpoint  called by the scheme right before a refresh:
                   commit needs_reauthorization + lostRefresh, lock still held
     outcome   nil              -> connected, last_error "", expiry, new credentials (revision + 1)

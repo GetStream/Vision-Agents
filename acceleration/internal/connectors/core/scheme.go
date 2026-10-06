@@ -90,6 +90,12 @@ type RetrieveOptions struct {
 	// fails, so a crash or a lost answer is never followed by the same request again. Nil
 	// has nothing to commit.
 	Checkpoint func() error
+	// Refused says the provider refused the access credential stored holds now
+	// (CredentialRequest.Refused): its expiry no longer says it works. A scheme that can
+	// renew renews it, whatever that expiry, as it renews one that is due; one that cannot
+	// returns it as it would otherwise. A provider's clock ahead of the router's, or a token
+	// it ended early, is how a credential that has not expired gets refused.
+	Refused bool
 }
 
 // AccountInfo is what Complete learned that is public: it is stored on the connection,

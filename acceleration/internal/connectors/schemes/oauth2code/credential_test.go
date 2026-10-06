@@ -249,6 +249,48 @@ func (s *OAuth2CodeSuite) TestAnExpiredTokenWithNoRefreshTokenIsInvalidGrant() {
 	s.Equal(0, srv.Refreshes())
 }
 
+// TestARefusedAccessTokenIsRefreshedWhateverItsExpiry: the provider refused a token an hour
+// from expiry (core.RetrieveOptions.Refused), so it is refreshed although it is not due.
+func (s *OAuth2CodeSuite) TestARefusedAccessTokenIsRefreshedWhateverItsExpiry() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.preregistered(srv)
+	scheme, stored := s.connected(srv, resolved, nil)
+
+	_, renewed, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{Refused: true})
+
+	s.Require().NoError(err)
+	s.Equal(1, srv.Refreshes())
+	s.True(s.accessToken(stored) != s.accessToken(renewed), "a new access token")
+}
+
+// TestARefusedAccessTokenWithNoRefreshTokenComesBackAsStored: nothing renews it, so the
+// caller sees the same credential and tells the resolver the grant is gone.
+func (s *OAuth2CodeSuite) TestARefusedAccessTokenWithNoRefreshTokenComesBackAsStored() {
+	srv := fakeprovider.New(s.T(), fakeprovider.NoRefreshToken)
+	resolved := s.preregistered(srv)
+	scheme, stored := s.connected(srv, resolved, nil)
+
+	_, returned, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{Refused: true})
+
+	s.Require().NoError(err)
+	s.Equal(0, srv.Refreshes())
+	s.True(bytes.Equal(stored.Payload, returned.Payload))
+}
+
+// TestAFailedRefreshOfARefusedTokenHandsBackNoToken: the refused token is not handed back
+// beside the error, however long it has left, since the provider already refused it.
+func (s *OAuth2CodeSuite) TestAFailedRefreshOfARefusedTokenHandsBackNoToken() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.preregistered(srv)
+	scheme, stored := s.connected(srv, resolved, nil)
+	srv.Use(fakeprovider.Unavailable)
+
+	credential, _, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{Refused: true})
+
+	s.Equal(core.OutcomeTransient, s.outcome(err).Kind)
+	s.Empty(credential.Scheme, "no access credential beside the error")
+}
+
 // TestEachRefusedRefreshIsTheOutcomeItsAnswerMeans is the table of what the token endpoint
 // can answer a refresh with and what AccessCredential makes of it. The caller's stored
 // credentials never change and none come back.
