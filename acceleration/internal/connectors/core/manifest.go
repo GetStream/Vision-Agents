@@ -565,13 +565,8 @@ func (m Manifest) Resolve(scheme string, inputs, metadata map[string]string) (Re
 	for point, name := range m.Hooks {
 		hooks[point] = string(name)
 	}
-	var channel *ChannelRule
-	if m.Channel != nil {
-		copied := *m.Channel
-		channel = &copied
-	}
 	return ResolvedManifest{
-		Channel:         channel,
+		Channel:         m.Channel,
 		vars:            maps.Clone(m.Vars),
 		ConnectorID:     m.ID,
 		Revision:        m.Revision,
