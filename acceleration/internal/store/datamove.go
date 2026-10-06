@@ -44,7 +44,9 @@ type dataTable struct {
 // this schema's own bookkeeping. Organization-scope policies are absent too, since one
 // organization's decisions cover apps the caller may not have. So are
 // connector_authorization_attempts: one lives minutes, is sealed under this deployment's
-// key and finishes at this deployment's callback, so a copy could only expire.
+// key and finishes at this deployment's callback, so a copy could only expire. And
+// connector_oauth_clients: a client's secret is sealed under this deployment's key, and a
+// client without it cannot authenticate, so the app puts it again where it moved to.
 var dataTables = []dataTable{
 	{name: "agent_configs", customer: "customer_id"},
 	{name: "skills", customer: "customer_id"},
