@@ -17,8 +17,8 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 )
 
-// noDLC is what the 10DLC paths say on a deployment with nowhere to keep a registration.
-var noDLC = notConfigured("10DLC registration is not available: no database configured")
+// errNoDLC is what the 10DLC paths say on a deployment with nowhere to keep a registration.
+var errNoDLC = notConfigured("10DLC registration is not available: no database configured")
 
 // opsKeyHeader carries the key Stream's own staff tools review use cases with.
 const opsKeyHeader = "X-Ops-Key"
@@ -73,10 +73,10 @@ func dlcError(err error) error {
 func (s *Server) dlcCustomer(ctx context.Context) (string, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return "", missingCustomer
+		return "", errMissingCustomer
 	}
 	if s.dlc == nil {
-		return "", noDLC
+		return "", errNoDLC
 	}
 	return customerID, nil
 }
@@ -338,7 +338,7 @@ func (s *Server) setSandboxRecipients(ctx context.Context, request *setSandboxRe
 
 func (s *Server) listUseCasesForReview(ctx context.Context, request *listUseCasesForReviewRequest) (*reviewQueueResponse, error) {
 	if s.dlc == nil {
-		return nil, noDLC
+		return nil, errNoDLC
 	}
 	after, err := decodeCursor[store.CreatedPosition](&request.Cursor)
 	if err != nil {
@@ -370,7 +370,7 @@ func (s *Server) listUseCasesForReview(ctx context.Context, request *listUseCase
 
 func (s *Server) getUseCaseForReview(ctx context.Context, request *useCaseIDRequest) (*useCaseForReviewResponse, error) {
 	if s.dlc == nil {
-		return nil, noDLC
+		return nil, errNoDLC
 	}
 	useCase, err := s.store.UseCaseByID(ctx, request.Id)
 	if err != nil {
@@ -385,7 +385,7 @@ func (s *Server) getUseCaseForReview(ctx context.Context, request *useCaseIDRequ
 
 func (s *Server) reviewUseCase(ctx context.Context, request *reviewUseCaseRequest) (*useCaseForReviewResponse, error) {
 	if s.dlc == nil {
-		return nil, noDLC
+		return nil, errNoDLC
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -410,7 +410,7 @@ func (s *Server) reviewUseCase(ctx context.Context, request *reviewUseCaseReques
 // use case to ask the registrar about.
 func (s *Server) receiveDLCReport(w http.ResponseWriter, r *http.Request) {
 	if s.dlc == nil {
-		writeError(w, noDLC)
+		writeError(w, errNoDLC)
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxReportBytes+1))

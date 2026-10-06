@@ -11,11 +11,11 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 )
 
-// noCampaigns is what the campaign paths say on a deployment that cannot run one. A
+// errNoCampaigns is what the campaign paths say on a deployment that cannot run one. A
 // campaign is a phone call, a conversation and a row, so it needs all three.
 var (
-	noCampaigns     = notConfigured("campaigns are not available: this deployment has no database, telephony or sessions")
-	unknownCampaign = APIError{
+	errNoCampaigns     = notConfigured("campaigns are not available: this deployment has no database, telephony or sessions")
+	errUnknownCampaign = APIError{
 		Type: ErrorTypeNotFound, Code: codeCampaignNotFound,
 		Message: "no such campaign",
 	}
@@ -25,10 +25,10 @@ var (
 func (s *Server) listCampaigns(ctx context.Context, _ *listCampaignsRequest) (*listCampaignsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noCampaigns
+		return nil, errNoCampaigns
 	}
 
 	stored, err := s.store.CustomerCampaigns(ctx, customerID)
@@ -47,10 +47,10 @@ func (s *Server) listCampaigns(ctx context.Context, _ *listCampaignsRequest) (*l
 func (s *Server) createCampaign(ctx context.Context, request *createCampaignRequest) (*createCampaignResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noCampaigns
+		return nil, errNoCampaigns
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -68,7 +68,7 @@ func (s *Server) createCampaign(ctx context.Context, request *createCampaignRequ
 	// A campaign that names a config nobody has would fail one call at a time, at
 	// whatever hour it was started.
 	if _, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
-		return nil, unknownConfig
+		return nil, errUnknownConfig
 	}
 
 	campaign := store.Campaign{
@@ -94,15 +94,15 @@ func (s *Server) createCampaign(ctx context.Context, request *createCampaignRequ
 func (s *Server) getCampaign(ctx context.Context, request *getCampaignRequest) (*getCampaignResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noCampaigns
+		return nil, errNoCampaigns
 	}
 
 	campaign, err := s.store.Campaign(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownCampaign
+		return nil, errUnknownCampaign
 	}
 	return &getCampaignResponse{Body: campaignOf(campaign)}, nil
 }
@@ -111,15 +111,15 @@ func (s *Server) getCampaign(ctx context.Context, request *getCampaignRequest) (
 func (s *Server) listCampaignContacts(ctx context.Context, request *listCampaignContactsRequest) (*listCampaignContactsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noCampaigns
+		return nil, errNoCampaigns
 	}
 
 	campaign, err := s.store.Campaign(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownCampaign
+		return nil, errUnknownCampaign
 	}
 
 	stored, err := s.store.CampaignContacts(ctx, campaign.ID)
@@ -133,10 +133,10 @@ func (s *Server) listCampaignContacts(ctx context.Context, request *listCampaign
 func (s *Server) addCampaignContacts(ctx context.Context, request *addCampaignContactsRequest) (*addCampaignContactsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noCampaigns
+		return nil, errNoCampaigns
 	}
 	if request.Body == nil || len(request.Body.Contacts) == 0 {
 		return nil, invalidRequest("there is nobody to add")
@@ -144,7 +144,7 @@ func (s *Server) addCampaignContacts(ctx context.Context, request *addCampaignCo
 
 	campaign, err := s.store.Campaign(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownCampaign
+		return nil, errUnknownCampaign
 	}
 
 	contacts := make([]store.Contact, 0, len(request.Body.Contacts))
@@ -170,14 +170,14 @@ func (s *Server) addCampaignContacts(ctx context.Context, request *addCampaignCo
 func (s *Server) startCampaign(ctx context.Context, request *startCampaignRequest) (*startCampaignResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil || s.campaigns == nil {
-		return nil, noCampaigns
+		return nil, errNoCampaigns
 	}
 
 	if _, err := s.store.Campaign(ctx, customerID, request.Id); err != nil {
-		return nil, unknownCampaign
+		return nil, errUnknownCampaign
 	}
 	if err := s.campaigns.Start(ctx, customerID, request.Id); err != nil {
 		return nil, invalidRequest(err.Error())
@@ -194,14 +194,14 @@ func (s *Server) startCampaign(ctx context.Context, request *startCampaignReques
 func (s *Server) pauseCampaign(ctx context.Context, request *pauseCampaignRequest) (*pauseCampaignResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil || s.campaigns == nil {
-		return nil, noCampaigns
+		return nil, errNoCampaigns
 	}
 
 	if _, err := s.store.Campaign(ctx, customerID, request.Id); err != nil {
-		return nil, unknownCampaign
+		return nil, errUnknownCampaign
 	}
 	if err := s.campaigns.Pause(ctx, customerID, request.Id); err != nil {
 		return nil, invalidRequest(err.Error())

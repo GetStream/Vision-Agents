@@ -12,14 +12,14 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 )
 
-// noVoices is what the voice paths say on a deployment that cannot hold a recording.
-var noVoices = notConfigured("voices of your own are not available: this deployment has no object storage configured")
+// errNoVoices is what the voice paths say on a deployment that cannot hold a recording.
+var errNoVoices = notConfigured("voices of your own are not available: this deployment has no object storage configured")
 
-// noLibrary is what the library path says where no provider publishes a catalogue here.
-var noLibrary = notConfigured("no speech provider configured here publishes a voice library, so a voice is whatever id the provider knows it by")
+// errNoLibrary is what the library path says where no provider publishes a catalogue here.
+var errNoLibrary = notConfigured("no speech provider configured here publishes a voice library, so a voice is whatever id the provider knows it by")
 
-// unknownVoice is what a caller is told about a voice that is not theirs, or not there.
-var unknownVoice = APIError{
+// errUnknownVoice is what a caller is told about a voice that is not theirs, or not there.
+var errUnknownVoice = APIError{
 	Type: ErrorTypeNotFound, Code: codeVoiceNotFound,
 	Message: "there is no such voice",
 }
@@ -31,10 +31,10 @@ const previewLine = "Hi there! This is how I will sound when I answer your calls
 func (s *Server) listVoices(ctx context.Context, _ *listVoicesRequest) (*listVoicesResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.voices == nil {
-		return nil, noVoices
+		return nil, errNoVoices
 	}
 
 	stored, err := s.store.CustomerVoices(ctx, customerID)
@@ -57,10 +57,10 @@ func (s *Server) listVoices(ctx context.Context, _ *listVoicesRequest) (*listVoi
 func (s *Server) createVoice(ctx context.Context, request *createVoiceRequest) (*createVoiceResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.voices == nil {
-		return nil, noVoices
+		return nil, errNoVoices
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -85,15 +85,15 @@ func (s *Server) createVoice(ctx context.Context, request *createVoiceRequest) (
 func (s *Server) getVoice(ctx context.Context, request *getVoiceRequest) (*getVoiceResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.voices == nil {
-		return nil, noVoices
+		return nil, errNoVoices
 	}
 
 	voice, err := s.configs.Voice(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownVoice
+		return nil, errUnknownVoice
 	}
 
 	described, err := s.describeVoice(ctx, voice)
@@ -107,10 +107,10 @@ func (s *Server) getVoice(ctx context.Context, request *getVoiceRequest) (*getVo
 func (s *Server) updateVoice(ctx context.Context, request *updateVoiceRequest) (*updateVoiceResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.voices == nil {
-		return nil, noVoices
+		return nil, errNoVoices
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -127,7 +127,7 @@ func (s *Server) updateVoice(ctx context.Context, request *updateVoiceRequest) (
 	}
 	if err := s.configs.UpdateVoice(ctx, &voice); err != nil {
 		if errors.Is(err, store.ErrNoVoice) {
-			return nil, unknownVoice
+			return nil, errUnknownVoice
 		}
 		return nil, invalidRequest(err.Error())
 	}
@@ -143,15 +143,15 @@ func (s *Server) updateVoice(ctx context.Context, request *updateVoiceRequest) (
 func (s *Server) deleteVoice(ctx context.Context, request *deleteVoiceRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.voices == nil {
-		return nil, noVoices
+		return nil, errNoVoices
 	}
 
 	if err := s.voices.Delete(ctx, customerID, request.Id); err != nil {
 		if errors.Is(err, store.ErrNoVoice) {
-			return nil, unknownVoice
+			return nil, errUnknownVoice
 		}
 		return nil, invalidRequest(err.Error())
 	}
@@ -162,10 +162,10 @@ func (s *Server) deleteVoice(ctx context.Context, request *deleteVoiceRequest) (
 func (s *Server) addVoiceSample(ctx context.Context, request *addVoiceSampleRequest) (*addVoiceSampleResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.voices == nil {
-		return nil, noVoices
+		return nil, errNoVoices
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -179,7 +179,7 @@ func (s *Server) addVoiceSample(ctx context.Context, request *addVoiceSampleRequ
 	}
 	if err := s.voices.AddSample(ctx, customerID, request.Id, sample); err != nil {
 		if errors.Is(err, store.ErrNoVoice) {
-			return nil, unknownVoice
+			return nil, errUnknownVoice
 		}
 		return nil, invalidRequest(err.Error())
 	}
@@ -199,10 +199,10 @@ func (s *Server) addVoiceSample(ctx context.Context, request *addVoiceSampleRequ
 func (s *Server) prepareVoice(ctx context.Context, request *prepareVoiceRequest) (*prepareVoiceResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.voices == nil {
-		return nil, noVoices
+		return nil, errNoVoices
 	}
 
 	var providers []string
@@ -212,7 +212,7 @@ func (s *Server) prepareVoice(ctx context.Context, request *prepareVoiceRequest)
 
 	if err := s.voices.Prepare(ctx, customerID, request.Id, providers); err != nil {
 		if errors.Is(err, store.ErrNoVoice) {
-			return nil, unknownVoice
+			return nil, errUnknownVoice
 		}
 		return nil, invalidRequest(err.Error())
 	}
@@ -231,10 +231,10 @@ func (s *Server) prepareVoice(ctx context.Context, request *prepareVoiceRequest)
 // listVoiceProviders reports which providers a voice can be prepared with.
 func (s *Server) listVoiceProviders(ctx context.Context, _ *listVoiceProvidersRequest) (*listVoiceProvidersResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.voices == nil {
-		return nil, noVoices
+		return nil, errNoVoices
 	}
 	return &listVoiceProvidersResponse{Body: VoiceProviders{Providers: s.voices.Providers()}}, nil
 }
@@ -242,10 +242,10 @@ func (s *Server) listVoiceProviders(ctx context.Context, _ *listVoiceProvidersRe
 // listLibraryVoices returns the voices the speech providers themselves offer.
 func (s *Server) listLibraryVoices(ctx context.Context, request *listLibraryVoicesRequest) (*listLibraryVoicesResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.library == nil {
-		return nil, noLibrary
+		return nil, errNoLibrary
 	}
 
 	provider := text(request.Provider.ptr())
@@ -293,10 +293,10 @@ func (s *Server) listLibraryVoices(ctx context.Context, request *listLibraryVoic
 // previewLibraryVoice hands back the sample a provider published for one of its voices.
 func (s *Server) previewLibraryVoice(ctx context.Context, request *previewLibraryVoiceRequest) (*previewLibraryVoiceResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.library == nil {
-		return nil, noLibrary
+		return nil, errNoLibrary
 	}
 
 	spoken, err := s.library.Preview(ctx, request.Provider, request.Voice)
@@ -312,16 +312,16 @@ func (s *Server) previewLibraryVoice(ctx context.Context, request *previewLibrar
 func (s *Server) previewVoice(ctx context.Context, request *previewVoiceRequest) (*previewVoiceResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.voices == nil {
-		return nil, noVoices
+		return nil, errNoVoices
 	}
 	if request.Body == nil || strings.TrimSpace(request.Body.Provider) == "" {
 		return nil, invalidRequest("name the provider to hear the voice through")
 	}
 	if _, err := s.configs.Voice(ctx, customerID, request.Id); err != nil {
-		return nil, unknownVoice
+		return nil, errUnknownVoice
 	}
 
 	provider := request.Body.Provider

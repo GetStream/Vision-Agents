@@ -11,7 +11,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
-var noMemory = notConfigured("memory is not available: no memory provider configured")
+var errNoMemory = notConfigured("memory is not available: no memory provider configured")
 
 type truncateMemoriesRequest struct {
 	UserID string `path:"user_id" minLength:"1" doc:"The memory user id sessions were opened with, memory.user_id on a session."`
@@ -58,10 +58,10 @@ func (s *Server) registerMemories(api huma.API) {
 func (s *Server) truncateMemories(ctx context.Context, request *truncateMemoriesRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.sessions == nil {
-		return nil, noMemory
+		return nil, errNoMemory
 	}
 	if err := s.sessions.TruncateMemories(ctx, customerID, request.UserID); err != nil {
 		return nil, memoryFailure(err)
@@ -73,7 +73,7 @@ func (s *Server) truncateMemories(ctx context.Context, request *truncateMemories
 func (s *Server) deleteSessionMemories(ctx context.Context, request *deleteSessionMemoriesRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if _, failure := s.storedOrLiveSession(ctx, request.ID); failure != nil {
 		return nil, failure
@@ -87,7 +87,7 @@ func (s *Server) deleteSessionMemories(ctx context.Context, request *deleteSessi
 // memoryFailure is a 400 for a deployment with no memory, and the error itself otherwise.
 func memoryFailure(err error) error {
 	if errors.Is(err, session.ErrNoMemory) {
-		return noMemory
+		return errNoMemory
 	}
 	return stack.Wrap(err)
 }

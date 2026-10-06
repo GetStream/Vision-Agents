@@ -86,7 +86,7 @@ func (s *ForwardedSessionSuite) TestASessionNoNodeIsRunningIsAnsweredHere() {
 		http.MethodGet, "/v1/agents/sessions/"+s.utils.uuid(), nil)
 
 	s.Equal(http.StatusNotFound, status)
-	s.Equal(unknownSession.Message, message)
+	s.Equal(errUnknownSession.Message, message)
 }
 
 // Who may touch a session is decided by the node running it, so this is the test that the

@@ -33,7 +33,7 @@ func (s *Server) registerSessionStop(api huma.API) {
 // stopSession ends one of the caller's running sessions, keeping everything it recorded.
 func (s *Server) stopSession(ctx context.Context, request *stopSessionRequest) (*struct{}, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if _, failure := s.session(ctx, request.ID); failure != nil {
 		return nil, failure
@@ -43,7 +43,7 @@ func (s *Server) stopSession(ctx context.Context, request *stopSessionRequest) (
 		return nil, err
 	}
 	if !stopped {
-		return nil, unknownSession
+		return nil, errUnknownSession
 	}
 	return nil, nil
 }

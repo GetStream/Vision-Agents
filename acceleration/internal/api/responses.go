@@ -13,10 +13,10 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 )
 
-// noStore is what the response paths say where nothing was written down. A turn's items are
+// errNoStore is what the response paths say where nothing was written down. A turn's items are
 // read back from Postgres, so a deployment without one can start a response but has nothing
 // to show afterwards.
-var noStore = notConfigured("this deployment does not record what sessions said")
+var errNoStore = notConfigured("this deployment does not record what sessions said")
 
 // maxVideos bounds the clips on one response, so that at video.MaxFrames each a turn stays
 // inside the hundred images the strictest vision provider takes in one request.
@@ -103,7 +103,7 @@ func (s *Server) listResponses(ctx context.Context, request *listResponsesReques
 		return nil, failure
 	}
 	if s.store == nil {
-		return nil, noStore
+		return nil, errNoStore
 	}
 
 	after, err := decodeCursor[store.ResponsePosition](request.Cursor.ptr())
@@ -139,7 +139,7 @@ func (s *Server) listResponseItems(ctx context.Context, request *listResponseIte
 		return nil, failure
 	}
 	if s.store == nil {
-		return nil, noStore
+		return nil, errNoStore
 	}
 
 	after, err := decodeCursor[store.ItemPosition](request.Cursor.ptr())

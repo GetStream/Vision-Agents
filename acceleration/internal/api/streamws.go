@@ -29,9 +29,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 )
 
-// noStreams is what the modality socket says on a deployment that inspects routing without
+// errNoStreams is what the modality socket says on a deployment that inspects routing without
 // serving it.
-var noStreams = notConfigured("this deployment does not stream")
+var errNoStreams = notConfigured("this deployment does not stream")
 
 // startWait bounds how long a socket waits to be told what it is for. A caller that
 // upgraded and then said nothing is holding a connection and a goroutine for no reason.
@@ -138,12 +138,12 @@ func (s start) options(config store.RouterConfig) (options.STT, options.TTS, opt
 func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 	customerID, ok := CustomerFrom(r.Context())
 	if !ok {
-		writeError(w, missingCustomer)
+		writeError(w, errMissingCustomer)
 		return
 	}
 	modality := routing.Modality(r.PathValue("modality"))
 	if s.streams == nil {
-		writeError(w, noStreams)
+		writeError(w, errNoStreams)
 		return
 	}
 	if !s.serves(modality) {

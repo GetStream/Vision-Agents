@@ -14,12 +14,12 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 )
 
-// noRouterConfigs is what the router config paths say on a deployment without a database.
-var noRouterConfigs = notConfigured("router configs are not available: no database configured")
+// errNoRouterConfigs is what the router config paths say on a deployment without a database.
+var errNoRouterConfigs = notConfigured("router configs are not available: no database configured")
 
-// unknownRouterConfig is what a caller is told about a config that is not theirs, which is
+// errUnknownRouterConfig is what a caller is told about a config that is not theirs, which is
 // the same thing they are told about one that never existed.
-var unknownRouterConfig = APIError{
+var errUnknownRouterConfig = APIError{
 	Type: ErrorTypeNotFound, Code: codeRouterConfigNotFound,
 	Message: "no such router config",
 }
@@ -28,10 +28,10 @@ var unknownRouterConfig = APIError{
 func (s *Server) listRouterConfigs(ctx context.Context, _ *listRouterConfigsRequest) (*listRouterConfigsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noRouterConfigs
+		return nil, errNoRouterConfigs
 	}
 
 	stored, err := s.store.CustomerRouterConfigs(ctx, customerID)
@@ -50,10 +50,10 @@ func (s *Server) listRouterConfigs(ctx context.Context, _ *listRouterConfigsRequ
 func (s *Server) createRouterConfig(ctx context.Context, request *createRouterConfigRequest) (*createRouterConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noRouterConfigs
+		return nil, errNoRouterConfigs
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -73,15 +73,15 @@ func (s *Server) createRouterConfig(ctx context.Context, request *createRouterCo
 func (s *Server) getRouterConfig(ctx context.Context, request *getRouterConfigRequest) (*getRouterConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noRouterConfigs
+		return nil, errNoRouterConfigs
 	}
 
 	config, err := s.configs.RouterConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownRouterConfig
+		return nil, errUnknownRouterConfig
 	}
 	return &getRouterConfigResponse{Body: routerConfigOf(config)}, nil
 }
@@ -90,10 +90,10 @@ func (s *Server) getRouterConfig(ctx context.Context, request *getRouterConfigRe
 func (s *Server) updateRouterConfig(ctx context.Context, request *updateRouterConfigRequest) (*updateRouterConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noRouterConfigs
+		return nil, errNoRouterConfigs
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -104,7 +104,7 @@ func (s *Server) updateRouterConfig(ctx context.Context, request *updateRouterCo
 
 	existing, err := s.configs.RouterConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownRouterConfig
+		return nil, errUnknownRouterConfig
 	}
 
 	config := storedRouterConfig(*request.Body, customerID)
@@ -120,14 +120,14 @@ func (s *Server) updateRouterConfig(ctx context.Context, request *updateRouterCo
 func (s *Server) deleteRouterConfig(ctx context.Context, request *deleteRouterConfigRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noRouterConfigs
+		return nil, errNoRouterConfigs
 	}
 
 	if err := s.configs.DeleteRouterConfig(ctx, customerID, request.Id); err != nil {
-		return nil, unknownRouterConfig
+		return nil, errUnknownRouterConfig
 	}
 	return nil, nil
 }
@@ -345,7 +345,7 @@ func (s *Server) routerOptions(ctx context.Context, customerID, configID string)
 		return store.RouterConfig{}, nil
 	}
 	if s.store == nil {
-		return store.RouterConfig{}, noRouterConfigs
+		return store.RouterConfig{}, errNoRouterConfigs
 	}
 
 	if config, err := s.configs.RouterConfig(ctx, customerID, configID); err == nil {
@@ -356,7 +356,7 @@ func (s *Server) routerOptions(ctx context.Context, customerID, configID string)
 		return store.RouterConfig{}, err
 	}
 	if !found {
-		return store.RouterConfig{}, unknownRouterConfig
+		return store.RouterConfig{}, errUnknownRouterConfig
 	}
 	return config, nil
 }

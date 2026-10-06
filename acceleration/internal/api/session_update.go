@@ -78,7 +78,7 @@ func (s *Server) registerSessionUpdate(api huma.API) {
 func (s *Server) updateSession(ctx context.Context, request *updateSessionRequest) (*sessionResponse, error) {
 	found, failure := s.storedOrLiveSession(ctx, request.ID)
 	if failure == nil && found.Live != nil && !canReadSession(ctx, found.Live.Spec()) {
-		failure = unknownSession
+		failure = errUnknownSession
 	}
 	if failure != nil {
 		return nil, failure

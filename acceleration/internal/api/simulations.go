@@ -15,13 +15,13 @@ import (
 // down only needs a database; having the conversations needs an agent to talk to and a
 // model to play the caller and judge them.
 var (
-	noSimulations        = notConfigured("simulations are not available: this deployment has no database")
-	cannotRunSimulations = notConfigured("simulations cannot be run here: this deployment has no sessions or model routing")
-	unknownSimulation    = APIError{
+	errNoSimulations        = notConfigured("simulations are not available: this deployment has no database")
+	errCannotRunSimulations = notConfigured("simulations cannot be run here: this deployment has no sessions or model routing")
+	errUnknownSimulation    = APIError{
 		Type: ErrorTypeNotFound, Code: codeSimulationNotFound,
 		Message: "no such simulation",
 	}
-	unknownSimulationRun = APIError{
+	errUnknownSimulationRun = APIError{
 		Type: ErrorTypeNotFound, Code: codeSimulationRunNotFound,
 		Message: "no such simulation run",
 	}
@@ -31,10 +31,10 @@ var (
 func (s *Server) listSimulations(ctx context.Context, _ *listSimulationsRequest) (*listSimulationsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noSimulations
+		return nil, errNoSimulations
 	}
 
 	stored, err := s.store.CustomerSimulations(ctx, customerID)
@@ -53,10 +53,10 @@ func (s *Server) listSimulations(ctx context.Context, _ *listSimulationsRequest)
 func (s *Server) createSimulation(ctx context.Context, request *createSimulationRequest) (*createSimulationResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noSimulations
+		return nil, errNoSimulations
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -76,15 +76,15 @@ func (s *Server) createSimulation(ctx context.Context, request *createSimulation
 func (s *Server) getSimulation(ctx context.Context, request *getSimulationRequest) (*getSimulationResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noSimulations
+		return nil, errNoSimulations
 	}
 
 	simulation, err := s.store.Simulation(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownSimulation
+		return nil, errUnknownSimulation
 	}
 	return &getSimulationResponse{Body: simulationOf(simulation)}, nil
 }
@@ -94,10 +94,10 @@ func (s *Server) getSimulation(ctx context.Context, request *getSimulationReques
 func (s *Server) updateSimulation(ctx context.Context, request *updateSimulationRequest) (*updateSimulationResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noSimulations
+		return nil, errNoSimulations
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -105,7 +105,7 @@ func (s *Server) updateSimulation(ctx context.Context, request *updateSimulation
 
 	existing, err := s.store.Simulation(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownSimulation
+		return nil, errUnknownSimulation
 	}
 
 	simulation := storedSimulation(*request.Body, customerID)
@@ -125,14 +125,14 @@ func (s *Server) updateSimulation(ctx context.Context, request *updateSimulation
 func (s *Server) deleteSimulation(ctx context.Context, request *deleteSimulationRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noSimulations
+		return nil, errNoSimulations
 	}
 
 	if err := s.store.DeleteSimulation(ctx, customerID, request.Id); err != nil {
-		return nil, unknownSimulation
+		return nil, errUnknownSimulation
 	}
 	return nil, nil
 }
@@ -142,17 +142,17 @@ func (s *Server) deleteSimulation(ctx context.Context, request *deleteSimulation
 func (s *Server) runSimulation(ctx context.Context, request *runSimulationRequest) (*runSimulationResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noSimulations
+		return nil, errNoSimulations
 	}
 	if s.simulations == nil {
-		return nil, cannotRunSimulations
+		return nil, errCannotRunSimulations
 	}
 
 	if _, err := s.store.Simulation(ctx, customerID, request.Id); err != nil {
-		return nil, unknownSimulation
+		return nil, errUnknownSimulation
 	}
 	run, err := s.simulations.Start(ctx, customerID, request.Id)
 	if err != nil {
@@ -165,10 +165,10 @@ func (s *Server) runSimulation(ctx context.Context, request *runSimulationReques
 func (s *Server) listSimulationRuns(ctx context.Context, request *listSimulationRunsRequest) (*listSimulationRunsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noSimulations
+		return nil, errNoSimulations
 	}
 
 	filter := store.SimulationRunFilter{
@@ -198,15 +198,15 @@ func (s *Server) listSimulationRuns(ctx context.Context, request *listSimulation
 func (s *Server) getSimulationRun(ctx context.Context, request *getSimulationRunRequest) (*getSimulationRunResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noSimulations
+		return nil, errNoSimulations
 	}
 
 	run, err := s.store.SimulationRun(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownSimulationRun
+		return nil, errUnknownSimulationRun
 	}
 	cases, err := s.store.SimulationCases(ctx, run.ID)
 	if err != nil {
@@ -219,18 +219,18 @@ func (s *Server) getSimulationRun(ctx context.Context, request *getSimulationRun
 func (s *Server) cancelSimulationRun(ctx context.Context, request *cancelSimulationRunRequest) (*cancelSimulationRunResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noSimulations
+		return nil, errNoSimulations
 	}
 	if s.simulations == nil {
-		return nil, cannotRunSimulations
+		return nil, errCannotRunSimulations
 	}
 
 	run, err := s.simulations.Cancel(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownSimulationRun
+		return nil, errUnknownSimulationRun
 	}
 	return &cancelSimulationRunResponse{Body: simulationRunOf(run, nil)}, nil
 }
@@ -285,7 +285,7 @@ func simulationComplaint(
 		return invalidRequest(err.Error())
 	}
 	if _, err := server.store.AgentConfig(ctx, customerID, simulation.ConfigID); err != nil {
-		return unknownConfig
+		return errUnknownConfig
 	}
 	return nil
 }

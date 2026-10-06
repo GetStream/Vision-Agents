@@ -18,12 +18,12 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 )
 
-// noChannels is what the channel paths say on a deployment that cannot hold the credentials.
+// errNoChannels is what the channel paths say on a deployment that cannot hold the credentials.
 // Sealing them needs a key encryption key, and without one there is nowhere safe to put a
 // WhatsApp token, so the line is refused rather than stored in the clear.
-var noChannels = notConfigured("channels are not available: no key encryption key configured")
+var errNoChannels = notConfigured("channels are not available: no key encryption key configured")
 
-var unknownAccount = APIError{
+var errUnknownAccount = APIError{
 	Type: ErrorTypeNotFound, Code: codeChannelAccountNotFound,
 	Message: "no such channel account",
 }
@@ -33,13 +33,13 @@ var unknownAccount = APIError{
 func (s *Server) connectChannel(ctx context.Context, request *connectChannelRequest) (*channelAccountResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noConfigs
+		return nil, errNoConfigs
 	}
 	if s.secrets == nil {
-		return nil, noChannels
+		return nil, errNoChannels
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -151,10 +151,10 @@ func writeChannelAnswer(w http.ResponseWriter, answer channels.Answer) {
 func (s *Server) linkChannelNumber(ctx context.Context, request *linkChannelRequest) (*channelLinkResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.channels == nil {
-		return nil, noChannels
+		return nil, errNoChannels
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -162,7 +162,7 @@ func (s *Server) linkChannelNumber(ctx context.Context, request *linkChannelRequ
 
 	config, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId)
 	if err != nil {
-		return nil, unknownConfig
+		return nil, errUnknownConfig
 	}
 	if config.Channels.Identity != store.ChannelIdentityLink {
 		return nil, invalidRequest(config.Name + " identifies a sender by their number, " +
@@ -181,10 +181,10 @@ func (s *Server) linkChannelNumber(ctx context.Context, request *linkChannelRequ
 func (s *Server) listChannelAccounts(ctx context.Context, _ *struct{}) (*listChannelAccountsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noConfigs
+		return nil, errNoConfigs
 	}
 
 	found, err := s.store.ChannelAccounts(ctx, customerID)
@@ -202,10 +202,10 @@ func (s *Server) listChannelAccounts(ctx context.Context, _ *struct{}) (*listCha
 func (s *Server) disconnectChannel(ctx context.Context, request *disconnectChannelRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noConfigs
+		return nil, errNoConfigs
 	}
 
 	found, err := s.store.ChannelAccounts(ctx, customerID)
@@ -217,11 +217,11 @@ func (s *Server) disconnectChannel(ctx context.Context, request *disconnectChann
 			continue
 		}
 		if err := s.store.DeleteChannelAccount(ctx, customerID, account.Kind, account.E164); err != nil {
-			return nil, unknownAccount
+			return nil, errUnknownAccount
 		}
 		return nil, nil
 	}
-	return nil, unknownAccount
+	return nil, errUnknownAccount
 }
 
 // ownsNumber reports whether a number is one this app bought here.

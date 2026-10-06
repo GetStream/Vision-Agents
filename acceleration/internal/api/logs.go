@@ -34,7 +34,7 @@ func readLogCursor(value string) (int64, error) {
 func (s *Server) logFilter(w http.ResponseWriter, r *http.Request) (store.LogFilter, bool) {
 	customer, ok := CustomerFrom(r.Context())
 	if !ok {
-		writeError(w, missingCustomer)
+		writeError(w, errMissingCustomer)
 		return store.LogFilter{}, false
 	}
 	if s.refuseClientSide(w, r) {

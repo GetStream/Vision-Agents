@@ -19,7 +19,7 @@ import (
 func (s *Server) search(ctx context.Context, request *searchRequest) (*searchResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.streams == nil || s.streams.Search == nil {
 		return nil, notFound("this deployment does not route search")

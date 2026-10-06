@@ -38,7 +38,7 @@ func (s *CampaignsSuite) TestACampaignNamingAConfigNobodyHasIsRefused() {
 		map[string]any{"name": "may", "config_id": "nope", "from_number": s.utils.number()})
 
 	s.Equal(http.StatusNotFound, status)
-	s.Contains(failure, unknownConfig.Message)
+	s.Contains(failure, errUnknownConfig.Message)
 }
 
 func (s *CampaignsSuite) TestContactsAreRungInTheOrderTheyWereAdded() {

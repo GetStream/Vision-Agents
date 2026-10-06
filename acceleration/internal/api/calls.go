@@ -14,14 +14,14 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 )
 
-// noCalls and noTranscripts are what the call paths say on a deployment that cannot
+// errNoCalls and errNoTranscripts are what the call paths say on a deployment that cannot
 // answer them: a call is only remembered if there is somewhere to remember it, and what
 // was said lives in Stream Chat rather than here.
 var (
-	noCalls       = notConfigured("calls are not available: no database configured")
-	noTranscripts = notConfigured("transcripts are not available: no chat credentials configured")
-	unknownCall   = APIError{Type: ErrorTypeNotFound, Code: codeCallNotFound, Message: "no such call"}
-	noStreamKeys  = notConfigured("joining is not available: no stream credentials configured")
+	errNoCalls       = notConfigured("calls are not available: no database configured")
+	errNoTranscripts = notConfigured("transcripts are not available: no chat credentials configured")
+	errUnknownCall   = APIError{Type: ErrorTypeNotFound, Code: codeCallNotFound, Message: "no such call"}
+	errNoStreamKeys  = notConfigured("joining is not available: no stream credentials configured")
 )
 
 // listenerTokenValidity is how long a browser's token lasts. A call outliving it is a call
@@ -36,10 +36,10 @@ const defaultCallType = "agent"
 func (s *Server) listCalls(ctx context.Context, request *listCallsRequest) (*listCallsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noCalls
+		return nil, errNoCalls
 	}
 
 	filter := store.CallFilter{
@@ -71,15 +71,15 @@ func (s *Server) listCalls(ctx context.Context, request *listCallsRequest) (*lis
 func (s *Server) getCall(ctx context.Context, request *getCallRequest) (*getCallResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noCalls
+		return nil, errNoCalls
 	}
 
 	call, err := s.store.Call(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownCall
+		return nil, errUnknownCall
 	}
 	rendered := callOf(call)
 	s.attachUsed(ctx, customerID, call, &rendered)
@@ -118,18 +118,18 @@ func (s *Server) attachUsage(ctx context.Context, customerID string, call store.
 func (s *Server) createCallToken(ctx context.Context, request *createCallTokenRequest) (*createCallTokenResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noCalls
+		return nil, errNoCalls
 	}
 	if s.streamKey == "" || s.streamSecret == "" {
-		return nil, noStreamKeys
+		return nil, errNoStreamKeys
 	}
 
 	call, err := s.store.Call(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownCall
+		return nil, errUnknownCall
 	}
 
 	var wanted CallTokenRequest
@@ -179,10 +179,10 @@ func (s *Server) createCallToken(ctx context.Context, request *createCallTokenRe
 func (s *Server) createChatToken(ctx context.Context, request *createChatTokenRequest) (*createChatTokenResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.streamKey == "" || s.streamSecret == "" {
-		return nil, noStreamKeys
+		return nil, errNoStreamKeys
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -258,18 +258,18 @@ func (s *Server) createChatToken(ctx context.Context, request *createChatTokenRe
 func (s *Server) getCallTranscript(ctx context.Context, request *getCallTranscriptRequest) (*getCallTranscriptResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noCalls
+		return nil, errNoCalls
 	}
 	if s.transcripts == nil {
-		return nil, noTranscripts
+		return nil, errNoTranscripts
 	}
 
 	call, err := s.store.Call(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownCall
+		return nil, errUnknownCall
 	}
 
 	said, err := s.transcripts.Transcript(ctx, call.AgentID)
@@ -294,15 +294,15 @@ func (s *Server) getCallTranscript(ctx context.Context, request *getCallTranscri
 func (s *Server) getCallEvents(ctx context.Context, request *getCallEventsRequest) (*getCallEventsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noCalls
+		return nil, errNoCalls
 	}
 
 	call, err := s.store.Call(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownCall
+		return nil, errUnknownCall
 	}
 
 	stored, err := s.store.CallEvents(
@@ -331,15 +331,15 @@ func (s *Server) getCallEvents(ctx context.Context, request *getCallEventsReques
 func (s *Server) getCallTimeline(ctx context.Context, request *getCallTimelineRequest) (*getCallTimelineResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noCalls
+		return nil, errNoCalls
 	}
 
 	call, err := s.store.Call(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownCall
+		return nil, errUnknownCall
 	}
 
 	turns, err := s.store.CallTurns(ctx, customerID, call.AgentID, call.StartedAt, call.EndedAt)

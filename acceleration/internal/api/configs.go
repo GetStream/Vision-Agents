@@ -21,9 +21,9 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 )
 
-// noConfigs is what the config and skill paths say on a deployment without a database.
+// errNoConfigs is what the config and skill paths say on a deployment without a database.
 // They are stored rather than computed, so there is nothing to serve without one.
-var noConfigs = notConfigured("agent configs are not available: no database configured")
+var errNoConfigs = notConfigured("agent configs are not available: no database configured")
 
 // mcpBrandingTimeout is how long saving a config waits for its MCP servers to describe
 // themselves.
@@ -33,10 +33,10 @@ const mcpBrandingTimeout = 5 * time.Second
 func (s *Server) listAgentConfigs(ctx context.Context, request *listAgentConfigsRequest) (*listAgentConfigsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noConfigs
+		return nil, errNoConfigs
 	}
 
 	// A name is resolved through the index rather than by reading every config and filtering
@@ -69,10 +69,10 @@ func (s *Server) listAgentConfigs(ctx context.Context, request *listAgentConfigs
 func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConfigRequest) (*createAgentConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noConfigs
+		return nil, errNoConfigs
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -121,15 +121,15 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 func (s *Server) getAgentConfig(ctx context.Context, request *getAgentConfigRequest) (*getAgentConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noConfigs
+		return nil, errNoConfigs
 	}
 
 	config, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownConfig
+		return nil, errUnknownConfig
 	}
 	return &getAgentConfigResponse{Body: agentConfigOf(config)}, nil
 }
@@ -138,10 +138,10 @@ func (s *Server) getAgentConfig(ctx context.Context, request *getAgentConfigRequ
 func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConfigRequest) (*updateAgentConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noConfigs
+		return nil, errNoConfigs
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -152,7 +152,7 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 
 	existing, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownConfig
+		return nil, errUnknownConfig
 	}
 	if message, ok, err := s.unboundConnectors(ctx, customerID, request.Body.Connectors); err != nil {
 		return nil, err
@@ -203,14 +203,14 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 func (s *Server) deleteAgentConfig(ctx context.Context, request *deleteAgentConfigRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noConfigs
+		return nil, errNoConfigs
 	}
 
 	if err := s.configs.DeleteAgentConfig(ctx, customerID, request.Id); err != nil {
-		return nil, unknownConfig
+		return nil, errUnknownConfig
 	}
 	return nil, nil
 }
@@ -220,10 +220,10 @@ func (s *Server) deleteAgentConfig(ctx context.Context, request *deleteAgentConf
 func (s *Server) listSkills(ctx context.Context, request *listSkillsRequest) (*listSkillsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noConfigs
+		return nil, errNoConfigs
 	}
 
 	stored, err := s.store.CustomerSkills(ctx, customerID, value(request.ConfigId.ptr()))
@@ -242,10 +242,10 @@ func (s *Server) listSkills(ctx context.Context, request *listSkillsRequest) (*l
 func (s *Server) createSkill(ctx context.Context, request *createSkillRequest) (*createSkillResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noConfigs
+		return nil, errNoConfigs
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -254,7 +254,7 @@ func (s *Server) createSkill(ctx context.Context, request *createSkillRequest) (
 		return nil, invalidRequest(message)
 	}
 	if _, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
-		return nil, unknownConfig
+		return nil, errUnknownConfig
 	}
 
 	skill := storedSkill(*request.Body, customerID)
@@ -268,15 +268,15 @@ func (s *Server) createSkill(ctx context.Context, request *createSkillRequest) (
 func (s *Server) getSkill(ctx context.Context, request *getSkillRequest) (*getSkillResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noConfigs
+		return nil, errNoConfigs
 	}
 
 	skill, err := s.store.Skill(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownSkill
+		return nil, errUnknownSkill
 	}
 	return &getSkillResponse{Body: skillOf(skill)}, nil
 }
@@ -285,10 +285,10 @@ func (s *Server) getSkill(ctx context.Context, request *getSkillRequest) (*getSk
 func (s *Server) updateSkill(ctx context.Context, request *updateSkillRequest) (*updateSkillResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noConfigs
+		return nil, errNoConfigs
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -297,12 +297,12 @@ func (s *Server) updateSkill(ctx context.Context, request *updateSkillRequest) (
 		return nil, invalidRequest(message)
 	}
 	if _, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
-		return nil, unknownConfig
+		return nil, errUnknownConfig
 	}
 
 	existing, err := s.store.Skill(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownSkill
+		return nil, errUnknownSkill
 	}
 
 	skill := storedSkill(*request.Body, customerID)
@@ -318,26 +318,26 @@ func (s *Server) updateSkill(ctx context.Context, request *updateSkillRequest) (
 func (s *Server) deleteSkill(ctx context.Context, request *deleteSkillRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noConfigs
+		return nil, errNoConfigs
 	}
 
 	if err := s.configs.DeleteSkill(ctx, customerID, request.Id); err != nil {
-		return nil, unknownSkill
+		return nil, errUnknownSkill
 	}
 	return nil, nil
 }
 
-// unknownConfig and unknownSkill are what a caller is told about a resource that is not
+// errUnknownConfig and errUnknownSkill are what a caller is told about a resource that is not
 // theirs, which is the same thing they are told about one that never existed.
 var (
-	unknownConfig = APIError{
+	errUnknownConfig = APIError{
 		Type: ErrorTypeNotFound, Code: codeAgentConfigNotFound,
 		Message: "no such agent config",
 	}
-	unknownSkill = APIError{Type: ErrorTypeNotFound, Code: codeSkillNotFound, Message: "no such skill"}
+	errUnknownSkill = APIError{Type: ErrorTypeNotFound, Code: codeSkillNotFound, Message: "no such skill"}
 )
 
 // configComplaint reports what is wrong with an agent config, if anything. Keyterms are

@@ -16,12 +16,12 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 )
 
-var unknownPlugin = APIError{Type: ErrorTypeNotFound, Code: codePluginNotFound, Message: "no such plugin"}
+var errUnknownPlugin = APIError{Type: ErrorTypeNotFound, Code: codePluginNotFound, Message: "no such plugin"}
 
 // listPlugins returns the built-in catalog, optionally filtered.
 func (s *Server) listPlugins(ctx context.Context, request *listPluginsRequest) (*listPluginsResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 
 	found := plugins.Search(value(request.Q.ptr()))
@@ -38,7 +38,7 @@ func (s *Server) listPlugins(ctx context.Context, request *listPluginsRequest) (
 func (s *Server) servePluginLogo(w http.ResponseWriter, r *http.Request) {
 	raw, ok := plugins.Logo(r.PathValue("plugin_id"))
 	if !ok {
-		writeError(w, unknownPlugin)
+		writeError(w, errUnknownPlugin)
 		return
 	}
 	w.Header().Set("Content-Type", "image/svg+xml")
@@ -52,14 +52,14 @@ func (s *Server) servePluginLogo(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPluginsRequest) (*listConfigPluginsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noConfigs
+		return nil, errNoConfigs
 	}
 	config, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownConfig
+		return nil, errUnknownConfig
 	}
 
 	conns, err := s.store.PluginConnections(ctx, customerID, request.Id)
@@ -128,22 +128,22 @@ func appPlugin(config store.AgentConfig, id string) (plugins.Plugin, error) {
 		}
 		return session.ServerPlugin(server), nil
 	}
-	return plugins.Plugin{}, unknownPlugin
+	return plugins.Plugin{}, errUnknownPlugin
 }
 
 // authorizePlugin starts a plugin login and returns the URL the browser should open.
 func (s *Server) authorizePlugin(ctx context.Context, request *authorizePluginRequest) (*authorizePluginResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 
 	if s.store == nil {
-		return nil, noConfigs
+		return nil, errNoConfigs
 	}
 	config, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownConfig
+		return nil, errUnknownConfig
 	}
 	plugin, err := appPlugin(config, string(request.PluginId))
 	if err != nil {
@@ -187,21 +187,21 @@ func (s *Server) authorizePlugin(ctx context.Context, request *authorizePluginRe
 func (s *Server) disconnectPlugin(ctx context.Context, request *disconnectPluginRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noConfigs
+		return nil, errNoConfigs
 	}
 	config, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, unknownConfig
+		return nil, errUnknownConfig
 	}
 	named := func(server store.MCPServer) bool { return server.Name == string(request.PluginId) }
 	if _, ok := plugins.Lookup(string(request.PluginId)); !ok && !slices.ContainsFunc(config.MCPServers, named) {
-		return nil, unknownPlugin
+		return nil, errUnknownPlugin
 	}
 	if err := s.store.DeletePluginConnection(ctx, customerID, request.Id, string(request.PluginId)); err != nil {
-		return nil, unknownPlugin
+		return nil, errUnknownPlugin
 	}
 	if err := s.store.RemoveConfigPlugin(ctx, customerID, request.Id, string(request.PluginId)); err != nil {
 		return nil, err
@@ -248,7 +248,7 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.store == nil {
-		writeError(w, noConfigs)
+		writeError(w, errNoConfigs)
 		return
 	}
 

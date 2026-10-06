@@ -186,7 +186,7 @@ func (s *Server) listDataChanges(w http.ResponseWriter, r *http.Request) {
 func (s *Server) dataMover(w http.ResponseWriter, r *http.Request) (string, bool) {
 	customerID, known := CustomerFrom(r.Context())
 	if !known {
-		writeError(w, missingCustomer)
+		writeError(w, errMissingCustomer)
 		return "", false
 	}
 	if s.refuseClientSide(w, r) {

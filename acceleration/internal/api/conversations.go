@@ -11,10 +11,10 @@ import (
 func (s *Server) getConversationMessages(ctx context.Context, req *getConversationMessagesRequest) (*getConversationMessagesResponse, error) {
 	owner, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.sessions == nil {
-		return nil, noSessions
+		return nil, errNoSessions
 	}
 	service, err := s.sessions.Conversations()
 	if err != nil {
@@ -34,18 +34,18 @@ func (s *Server) getConversationMessages(ctx context.Context, req *getConversati
 func (s *Server) getConversationCommand(ctx context.Context, req *getConversationCommandRequest) (*getConversationCommandResponse, error) {
 	owner, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.sessions == nil {
-		return nil, noSessions
+		return nil, errNoSessions
 	}
 	service, err := s.sessions.Conversations()
 	if err != nil {
-		return nil, unknownCommand
+		return nil, errUnknownCommand
 	}
 	receipt, err := service.CommandForCaller(ctx, owner, req.AgentId, req.Cid, CallerFrom(ctx).UserID, req.CommandId)
 	if err != nil {
-		return nil, unknownCommand
+		return nil, errUnknownCommand
 	}
 	return &getConversationCommandResponse{Body: receiptOf(receipt)}, nil
 }

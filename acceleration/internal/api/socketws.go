@@ -44,11 +44,11 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		writeError(w, missingCustomer)
+		writeError(w, errMissingCustomer)
 		return
 	}
 	if s.sessions == nil {
-		writeError(w, noSessions)
+		writeError(w, errNoSessions)
 		return
 	}
 

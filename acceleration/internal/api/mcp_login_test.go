@@ -191,7 +191,7 @@ func (s *MCPLoginSuite) TestAServerThatNeedsNoLoginCannotBeLoggedInto() {
 		"/v1/agents/configs/"+created.Id+"/plugins/plain/authorize", nil)
 
 	s.Equal(http.StatusNotFound, status)
-	s.Contains(failure, unknownPlugin.Message)
+	s.Contains(failure, errUnknownPlugin.Message)
 }
 
 // create saves a config naming servers.

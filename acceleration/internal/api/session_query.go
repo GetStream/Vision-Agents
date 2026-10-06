@@ -187,7 +187,7 @@ func (s *Server) registerSessionQuery(api huma.API) {
 // querySessions lists or searches the caller's sessions.
 func (s *Server) querySessions(ctx context.Context, request *querySessionsRequest) (*querySessionsResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.sessions == nil {
 		return &querySessionsResponse{Body: SessionPage{Items: []Session{}}}, nil

@@ -16,10 +16,10 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 )
 
-// noSessions is what every session path says on a deployment that only inspects routing.
+// errNoSessions is what every session path says on a deployment that only inspects routing.
 // It is a 404 rather than a 501 because the resource genuinely is not there: this router
 // runs no conversations, so it holds no sessions to find.
-var noSessions = notConfigured("this deployment does not run sessions")
+var errNoSessions = notConfigured("this deployment does not run sessions")
 
 // configFor resolves whichever way the caller addressed the agent.
 //
@@ -35,13 +35,13 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 	case id != "" && named != "":
 		return nil, invalidRequest("name an agent by config_id or by agent, not both")
 	case s.store == nil:
-		return nil, noConfigs
+		return nil, errNoConfigs
 	}
 
 	if id != "" {
 		found, err := s.configs.AgentConfig(ctx, customerID, id)
 		if err != nil {
-			return nil, unknownConfig
+			return nil, errUnknownConfig
 		}
 		return &found, nil
 	}
@@ -63,10 +63,10 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (*forkSessionResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.sessions == nil {
-		return nil, noSessions
+		return nil, errNoSessions
 	}
 
 	parent, failure := s.storedOrLiveSession(ctx, request.Id)
@@ -195,7 +195,7 @@ func (s *Server) rewindSession(ctx context.Context, request *rewindSessionReques
 		return nil, invalidRequest("name the response to carry on from")
 	}
 	if s.store == nil {
-		return nil, noStore
+		return nil, errNoStore
 	}
 
 	err := found.Rewind(ctx, s.store, request.Body.ResponseId)
@@ -219,7 +219,7 @@ func (s *Server) getSessionCommand(ctx context.Context, request *getSessionComma
 
 	receipt, err := found.Command(request.CommandId)
 	if err != nil {
-		return nil, unknownCommand
+		return nil, errUnknownCommand
 	}
 	return &getSessionCommandResponse{Body: receiptOf(receipt)}, nil
 }
@@ -233,7 +233,7 @@ func (s *Server) interruptSessionCommand(ctx context.Context, request *interrupt
 
 	receipt, err := found.InterruptCommand(request.CommandId)
 	if errors.Is(err, conversation.ErrCommandNotFound) {
-		return nil, unknownCommand
+		return nil, errUnknownCommand
 	}
 	if err != nil {
 		// The stop was taken but its durable outcome is not known, so the caller is told
@@ -298,25 +298,25 @@ func (s *Server) setSessionSettings(ctx context.Context, request *setSessionSett
 	return &setSessionSettingsResponse{Body: sessionOf(found)}, nil
 }
 
-// unknownSession is what a caller is told about a session that is not theirs, which is the
+// errUnknownSession is what a caller is told about a session that is not theirs, which is the
 // same thing they are told about one that never existed.
-var unknownSession = APIError{Type: ErrorTypeNotFound, Code: codeSessionNotFound, Message: "no such session"}
+var errUnknownSession = APIError{Type: ErrorTypeNotFound, Code: codeSessionNotFound, Message: "no such session"}
 
-// unknownCommand is what a caller is told about a command this conversation never
+// errUnknownCommand is what a caller is told about a command this conversation never
 // accepted, which is the same thing they are told about one they may not touch.
-var unknownCommand = APIError{Type: ErrorTypeNotFound, Code: codeCommandNotFound, Message: "no such command"}
+var errUnknownCommand = APIError{Type: ErrorTypeNotFound, Code: codeCommandNotFound, Message: "no such command"}
 
 // session finds a session belonging to the calling customer.
 func (s *Server) session(ctx context.Context, id string) (*session.Session, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.sessions == nil {
-		return nil, noSessions
+		return nil, errNoSessions
 	}
 	found, ok := s.sessions.Get(id, OwnerFrom(ctx))
 	if !ok || !canReadSession(ctx, found.Spec()) {
-		return nil, unknownSession
+		return nil, errUnknownSession
 	}
 	return found, nil
 }
@@ -331,10 +331,10 @@ func (s *Server) session(ctx context.Context, id string) (*session.Session, erro
 // found: a different answer for each would make this a way to discover whose an id is.
 func (s *Server) storedOrLiveSession(ctx context.Context, id string) (session.Found, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return session.Found{}, missingCustomer
+		return session.Found{}, errMissingCustomer
 	}
 	if s.sessions == nil {
-		return session.Found{}, noSessions
+		return session.Found{}, errNoSessions
 	}
 
 	owner := OwnerFrom(ctx)
@@ -342,19 +342,19 @@ func (s *Server) storedOrLiveSession(ctx context.Context, id string) (session.Fo
 		return session.Found{Live: live}, nil
 	}
 	if s.store == nil {
-		return session.Found{}, unknownSession
+		return session.Found{}, errUnknownSession
 	}
 
 	row, err := s.store.StoredSession(ctx, owner.CustomerID, id)
 	if err != nil {
-		return session.Found{}, unknownSession
+		return session.Found{}, errUnknownSession
 	}
 	// The row carries who opened it, which is what the live path checks through the
 	// manager. Skipping it here would let one of a customer's users read another's.
 	if !owner.Reaches(session.Owner{
 		CustomerID: row.CustomerID, UserID: row.UserID, Kind: auth.Kind(row.CallerKind),
 	}) {
-		return session.Found{}, unknownSession
+		return session.Found{}, errUnknownSession
 	}
 	return session.Found{Stored: &row}, nil
 }
@@ -795,7 +795,7 @@ func (s *Server) recordedHistory(ctx context.Context, parent session.Found, requ
 	case responseID == "" && (!carry || recall != nil):
 		return nil, nil
 	case s.store == nil && responseID != "":
-		return nil, noStore
+		return nil, errNoStore
 	case s.store == nil:
 		return nil, nil
 	}

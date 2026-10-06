@@ -279,7 +279,7 @@ func requireCustomer(api huma.API) func(huma.Context, func(huma.Context)) {
 		// A staff operation is answered for no customer: requireOpsKey let it through.
 		public := ctx.Operation().Security != nil && len(ctx.Operation().Security) == 0 || staffOperation(ctx.Operation())
 		if _, known := CustomerFrom(ctx.Context()); !known && !public {
-			writeOperationError(ctx, missingCustomer)
+			writeOperationError(ctx, errMissingCustomer)
 			return
 		}
 		next(ctx)

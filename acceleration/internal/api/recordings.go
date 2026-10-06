@@ -19,13 +19,13 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 )
 
-// noRecordings is what the recording paths say on a deployment that does not run them.
+// errNoRecordings is what the recording paths say on a deployment that does not run them.
 // They are jobs, so they need somewhere to keep one as well as something to route it to.
-var noRecordings = notConfigured("this deployment does not run recordings")
+var errNoRecordings = notConfigured("this deployment does not run recordings")
 
-// noRecordingStore is what they say without a database. A job whose result nobody could
+// errNoRecordingStore is what they say without a database. A job whose result nobody could
 // come back for is worse than a refusal.
-var noRecordingStore = notConfigured("recordings are not available: no database configured")
+var errNoRecordingStore = notConfigured("recordings are not available: no database configured")
 
 // recordingDeadline bounds one job. Transcription runs far faster than real time, but a
 // feature-length recording is still minutes of work, and a job that hangs is a row that
@@ -39,13 +39,13 @@ const callbackTimeout = 30 * time.Second
 func (s *Server) transcribeRecording(ctx context.Context, request *transcribeRecordingRequest) (*transcribeRecordingResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.streams == nil || s.streams.Transcriptions == nil {
-		return nil, noRecordings
+		return nil, errNoRecordings
 	}
 	if s.store == nil && (request.Body == nil || !truthy(request.Body.Inline)) {
-		return nil, noRecordingStore
+		return nil, errNoRecordingStore
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -134,10 +134,10 @@ func (s *Server) transcribeRecording(ctx context.Context, request *transcribeRec
 func (s *Server) getTranscription(ctx context.Context, request *getTranscriptionRequest) (*getTranscriptionResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noRecordingStore
+		return nil, errNoRecordingStore
 	}
 
 	job, err := s.store.Recording(ctx, customerID, request.Id)
@@ -151,13 +151,13 @@ func (s *Server) getTranscription(ctx context.Context, request *getTranscription
 func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest) (*recordSpeechResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.streams == nil || s.streams.Speech == nil {
-		return nil, noRecordings
+		return nil, errNoRecordings
 	}
 	if s.store == nil && (request.Body == nil || !truthy(request.Body.Inline)) {
-		return nil, noRecordingStore
+		return nil, errNoRecordingStore
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -216,10 +216,10 @@ func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest)
 func (s *Server) getSpeech(ctx context.Context, request *getSpeechRequest) (*getSpeechResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return nil, noRecordingStore
+		return nil, errNoRecordingStore
 	}
 
 	job, err := s.store.Recording(ctx, customerID, request.Id)

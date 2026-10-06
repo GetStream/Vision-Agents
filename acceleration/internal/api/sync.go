@@ -144,7 +144,7 @@ func (s *Server) registerSync(api huma.API) {
 func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syncAgentResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer
+		return nil, errMissingCustomer
 	}
 
 	body := request.Body
@@ -158,7 +158,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	}
 
 	if s.store == nil {
-		return nil, noConfigs
+		return nil, errNoConfigs
 	}
 	if message, ok := syncComplaint(body); !ok {
 		return nil, invalidRequest(message)
@@ -211,7 +211,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	namespace := ""
 	if len(documents) > 0 {
 		if s.knowledge == nil {
-			return nil, noKnowledge
+			return nil, errNoKnowledge
 		}
 		namespace = name
 		if _, _, err := s.fillKnowledge(ctx, customerID, namespace, documents, nil); err != nil {
@@ -220,7 +220,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	}
 	if body.KnowledgeUrls != nil && len(*body.KnowledgeUrls) > 0 {
 		if s.pages == nil {
-			return nil, noKnowledgeURLs
+			return nil, errNoKnowledgeURLs
 		}
 		namespace = name
 		for _, page := range *body.KnowledgeUrls {

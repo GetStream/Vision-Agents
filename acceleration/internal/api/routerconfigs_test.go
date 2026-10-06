@@ -147,7 +147,7 @@ func (s *RouterConfigsSuite) TestARouterConfigNobodyHasIsRefusedRatherThanIgnore
 		})
 
 	s.Equal(http.StatusNotFound, status)
-	s.Contains(failure, unknownRouterConfig.Message)
+	s.Contains(failure, errUnknownRouterConfig.Message)
 }
 
 func (s *RouterConfigsSuite) TestAnotherAppsRouterConfigIsNotFound() {
