@@ -343,10 +343,13 @@ func (t dataTable) identity() string {
 	// one, rather than connected with nothing to connect with. Key version 0 and no
 	// expiry are what a connection without credentials holds (20261002193000_connector_connections.sql),
 	// so the source credentials' key version and expiry do not come along either, on an import or
-	// on every change applied after it.
+	// on every change applied after it. Nor does its provider unit: a row in an import is
+	// whatever the importer wrote, and a unit stored from it would route another customer's
+	// events to this one. The reconnect it needs proves the unit again
+	// (SetConnectorConnectionProviderUnit).
 	if t.name == "connector_connections" {
 		return "jsonb_build_object('customer_id', ?::text, 'status', '" + ConnectionNeedsReauthorization + "'," +
-			" 'credentials_kek_version', 0, 'expires_at', NULL)"
+			" 'credentials_kek_version', 0, 'expires_at', NULL, 'provider_unit_id', NULL)"
 	}
 	return fmt.Sprintf("jsonb_build_object('%s', ?::text)", t.customer)
 }

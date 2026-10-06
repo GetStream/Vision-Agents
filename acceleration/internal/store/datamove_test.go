@@ -592,6 +592,27 @@ func (s *DataMoveSuite) TestAMovedConnectorConnectionArrivesNeedingReauthorizati
 	s.assertArrivedWithoutCredentials(id, "moved")
 }
 
+func (s *DataMoveSuite) TestAMovedConnectorConnectionLeavesItsProviderUnitBehind() {
+	s.capture("acme")
+	id := s.seedConnectorConnection(s.source, "acme")
+	_, err := s.source.DB().ExecContext(s.ctx, "UPDATE connector_connections SET provider_unit_id = 'unit-1' WHERE id = ?", id)
+	s.Require().NoError(err)
+
+	s.move("acme", "moved")
+	var imported sql.NullString
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+		"SELECT provider_unit_id FROM connector_connections WHERE id = ?", id).Scan(&imported))
+	s.False(imported.Valid, "an import proves no unit is the importer's")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", 0, 100)
+	s.Require().NoError(err)
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "moved", changes))
+	var applied sql.NullString
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+		"SELECT provider_unit_id FROM connector_connections WHERE id = ?", id).Scan(&applied))
+	s.False(applied.Valid, "nor does a change applied after it")
+}
+
 func (s *DataMoveSuite) TestACustomConnectorDefinitionMovesAndABuiltInDoesNot() {
 	s.seedConnectorConnection(s.source, "acme")
 	_, err := s.source.DB().ExecContext(s.ctx,
