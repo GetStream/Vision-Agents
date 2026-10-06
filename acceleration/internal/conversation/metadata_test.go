@@ -469,8 +469,12 @@ func (s *DisplaySuite) TestAFinishedLoginMarksTheReplyThatAskedForIt() {
 	_, err = c.BeginCommand("command-b", "And tomorrow?", "")
 	s.Require().NoError(err)
 
-	s.service.Connected("someone-elses-state")
-	s.service.Connected("s1")
+	_, _, ok = s.service.Connected("someone-elses-state")
+	s.False(ok)
+	held, pluginID, ok := s.service.Connected("s1")
+	s.Require().True(ok)
+	s.Same(c, held)
+	s.Equal("google_calendar", pluginID)
 	saved(s.T(), c)
 
 	s.Contains(s.raw(asked.AssistantMessageID), `"status":"connected"`)
@@ -485,6 +489,30 @@ func (s *DisplaySuite) TestAFinishedLoginMarksTheReplyThatAskedForIt() {
 	}
 	s.Require().Len(reply.Authorizations, 1)
 	s.Equal(plugins.AuthorizationConnected, reply.Authorizations[0].Status)
+}
+
+func (s *DisplaySuite) TestAFollowUpShowsOnlyTheReply() {
+	c := s.open("on_call")
+	_, err := c.BeginCommand("command-a", "Tell Nash a joke on Slack", "")
+	s.Require().NoError(err)
+	c.Observe(agent.Responded{})
+	saved(s.T(), c)
+
+	followed, err := c.BeginFollowUp("Slack is connected now. Carry on.")
+	s.Require().NoError(err)
+	_, err = c.BeginFollowUp("Slack is connected now. Carry on.")
+	s.Error(err, "one reply runs at a time")
+	c.Observe(agent.Responded{})
+	saved(s.T(), c)
+
+	s.Equal("assistant", s.stored(followed.AssistantMessageID).Role)
+	s.Equal("command-a", s.stored(followed.AssistantMessageID).QuestionID)
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.Len(s.db.messages, 3, "the question, the reply that asked for a login and the one carrying on")
+	for _, m := range s.db.messages {
+		s.NotContains(m["text"], "Carry on")
+	}
 }
 
 func (s *DisplaySuite) open(agentID string) *Conversation {

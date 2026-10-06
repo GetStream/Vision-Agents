@@ -1,12 +1,18 @@
 package conversation
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/url"
+	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
+	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // A reply that needed a plugin the end user has not connected carries the request as a
@@ -35,10 +41,12 @@ func (m Message) MarshalJSON() ([]byte, error) {
 }
 
 // Connected marks the login whose OAuth state the provider just handed back as finished, on
-// whichever conversation held here asked for it, so its button can say it is done.
-func (s *Service) Connected(state string) {
+// whichever conversation held here asked for it, so its button can say it is done. It
+// returns that conversation and the id of the plugin logged into, for its session to carry
+// on with what the login was asked for.
+func (s *Service) Connected(state string) (*Conversation, string, bool) {
 	if state == "" {
-		return
+		return nil, "", false
 	}
 	s.mu.Lock()
 	held := make([]*Conversation, 0, len(s.all))
@@ -47,31 +55,65 @@ func (s *Service) Connected(state string) {
 	}
 	s.mu.Unlock()
 	for _, c := range held {
-		if c.connected(state) {
-			return
+		if pluginID, ok := c.connected(state); ok {
+			return c, pluginID, true
 		}
 	}
+	return nil, "", false
 }
 
 // connected marks the login on the reply that asked for it, and writes that reply again.
-func (c *Conversation) connected(state string) bool {
+func (c *Conversation) connected(state string) (string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if m := c.data.Current; m != nil && markConnected(m, state) {
-		m.Sequence++
-		c.save()
-		c.publish(*m)
-		return true
+	if m := c.data.Current; m != nil {
+		if pluginID, ok := markConnected(m, state); ok {
+			m.Sequence++
+			c.save()
+			c.publish(*m)
+			return pluginID, true
+		}
 	}
 	for i := range c.asked {
-		if markConnected(&c.asked[i], state) {
+		if pluginID, ok := markConnected(&c.asked[i], state); ok {
 			c.asked[i].Sequence++
 			// Written by the outbox, which shows it once Chat has it.
 			c.enqueue(c.asked[i], false)
-			return true
+			return pluginID, true
 		}
 	}
-	return false
+	return "", false
+}
+
+// BeginFollowUp records a reply nobody wrote a message for, such as the one that carries on
+// once the login a reply asked for is made. text is what the model is told instead, which
+// the conversation never shows.
+func (c *Conversation) BeginFollowUp(text string) (CommandReceipt, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.active {
+		return CommandReceipt{}, stack.Wrap(errors.New("conversation is not open"))
+	}
+	if c.data.Current != nil && c.data.Current.FinishedAt == nil {
+		return CommandReceipt{}, stack.Wrap(errors.New("a response is already running"))
+	}
+	id := uuid.NewString()
+	now := time.Now().UTC()
+	question := ""
+	if c.data.Current != nil {
+		question = c.data.Current.QuestionID
+	}
+	a := Message{ID: uuid.NewString(), CommandID: id, Role: "assistant", TextLayout: 1, QuestionID: question, State: "thinking", StartedAt: now, StateStartedAt: now, Tools: []Tool{}}
+	receipt := CommandReceipt{CommandID: id, AssistantMessageID: a.ID, State: a.State}
+	if c.data.Commands == nil {
+		c.data.Commands = map[string]commandRecord{}
+	}
+	c.data.Commands[id] = commandRecord{CommandReceipt: receipt, Digest: fmt.Sprintf("%x", sha256.Sum256([]byte(text))), Initiator: c.data.Owner}
+	c.data.Current = &a
+	c.reasoning = liveReasoning{}
+	c.data.Pending = append(c.data.Pending, operation{Message: a, Create: true})
+	c.publish(a)
+	return receipt, nil
 }
 
 // rememberAsked keeps a finished reply that asked for a login, to mark it once the login is
@@ -89,8 +131,9 @@ func (c *Conversation) rememberAsked(m Message) {
 
 const maxAsked = 10
 
-// markConnected marks the authorization opened with this OAuth state as connected.
-func markConnected(m *Message, state string) bool {
+// markConnected marks the authorization opened with this OAuth state as connected and
+// returns the plugin it is for.
+func markConnected(m *Message, state string) (string, bool) {
 	for i := range m.Authorizations {
 		found := &m.Authorizations[i]
 		parsed, err := url.Parse(found.AuthorizeURL)
@@ -98,9 +141,9 @@ func markConnected(m *Message, state string) bool {
 			continue
 		}
 		found.Status = plugins.AuthorizationConnected
-		return true
+		return found.PluginID, true
 	}
-	return false
+	return "", false
 }
 
 func mergeAuthorizations(existing []plugins.Authorization, found plugins.Authorization) []plugins.Authorization {

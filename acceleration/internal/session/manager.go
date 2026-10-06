@@ -1429,6 +1429,39 @@ func (m *Manager) Conversations() (*persistent.Service, error) {
 	return m.conversations, nil
 }
 
+// LoginFinished marks the end user's login with this OAuth state as connected on the
+// conversation that asked for it, and has the session holding that conversation carry on
+// with what the login was asked for, so nobody has to ask again.
+func (m *Manager) LoginFinished(state string) {
+	conversations, err := m.Conversations()
+	if err != nil {
+		return
+	}
+	conv, pluginID, ok := conversations.Connected(state)
+	if !ok {
+		return
+	}
+	name := pluginID
+	if plugin, listed := plugins.Lookup(pluginID); listed {
+		name = plugin.Name
+	}
+	m.mu.Lock()
+	var held *Session
+	for _, s := range m.sessions {
+		if s.persisted == conv {
+			held = s
+		}
+	}
+	m.mu.Unlock()
+	if held == nil {
+		return
+	}
+	text := name + " is connected now. Carry on with what I asked for before you needed it."
+	if err := held.FollowUp(context.Background(), text); err != nil {
+		m.logger.Warn("could not carry on after a plugin login", "plugin", pluginID, "error", err)
+	}
+}
+
 // publisher is where files the subagent's code hands back are shown: the conversation's
 // channel when the session is kept in one, and nowhere when it is not.
 func publisher(conv *persistent.Conversation) sandbox.Publisher {

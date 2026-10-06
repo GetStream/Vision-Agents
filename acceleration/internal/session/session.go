@@ -448,6 +448,30 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string)
 	return receipt, s.openTurn(turnID, text), nil
 }
 
+// FollowUp answers text the way RespondCommand does with no message of the end user's
+// shown for it: the model is told text, and the conversation shows only the reply.
+func (s *Session) FollowUp(ctx context.Context, text string) error {
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
+	if s.persisted == nil {
+		return stack.Wrap(errors.New("a follow-up needs a persistent text conversation"))
+	}
+	receipt, err := s.persisted.BeginFollowUp(text)
+	if err != nil {
+		return stack.Wrap(err)
+	}
+	turnID, err := s.voiceAgent.RespondTo(ctx, text, nil)
+	if err != nil {
+		s.persisted.Cancel()
+		return stack.Wrap(err)
+	}
+	s.persisted.BindTurn(receipt.CommandID, turnID)
+	if turnID != "" {
+		s.openTurn(turnID, text)
+	}
+	return nil
+}
+
 // AwaitCommand accepts a durable submission the way RespondCommand does without answering
 // it. It is for an agent that leaves text to dispatch: the end user's message is recorded
 // and shown as being answered, and the model answers once the server calls RespondCommand

@@ -429,9 +429,7 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 	plugin, listed := plugins.Lookup(conn.PluginID)
 	if conn.UserID != "" {
 		if s.sessions != nil {
-			if conversations, err := s.sessions.Conversations(); err == nil {
-				conversations.Connected(state)
-			}
+			s.sessions.LoginFinished(state)
 		}
 		name := conn.PluginID
 		if listed {
