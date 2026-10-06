@@ -37,6 +37,25 @@ user_plugins:   # each person connects their own, the first time the agent needs
     tools: [get_*]  # offer only these tools, names or path.Match patterns
 ```
 
+## Where it lives
+
+Slack under `user_plugins` as the example:
+
+- **Set-up page:** Volt's Tools tab (`sections/agent-tools.tsx`) lists the plugins; each
+  opens `agents/agents/<config>/tools/apps/<plugin_id>` (`routes/.../tools/apps/$pluginId.tsx`,
+  drawn by `sections/agent-app-setup.tsx`): the catalog's `setup_steps`, the redirect URI and
+  the client id and secret form, which calls `PUT .../plugins/{plugin_id}/client`.
+- **Agent level:** `agent_configs.agent_plugins` and `.user_plugins` (JSONB lists of
+  `PluginEntry`) say which plugins the agent has and who logs in. `agent_plugin_clients`, one
+  row per `(customer_id, config_id, plugin_id)`, holds the agent's OAuth client: `client_id`
+  and `secret_sealed` under the KEK (`kek_version`). Without a row the deployment's
+  `<ID>_MCP_CLIENT_ID`/`_SECRET` env is used. The app's own login (`agent_plugins`) is an
+  `agent_plugin_connections` row with `user_id = ''`.
+- **User level:** `agent_plugin_connections` with `user_id` set, unique on
+  `(config_id, plugin_id, user_id)`: `status` (`pending`, `connected`, `failed`), the tokens,
+  and while pending the `oauth_state`, `code_verifier`, `client_id` and `token_endpoint` the
+  callback finishes with. The button itself lives in the Chat message, not the database.
+
 The API's `PluginEntry` is a `oneOf` of a string and a `PluginWithOptions`, answering as a
 bare id when it has no options; the store keeps every entry as a `store.PluginEntry` object.
 An entry goes through `session.ConfiguredPlugin`, which every path that opens a server or
@@ -121,7 +140,9 @@ the sandbox with a skill telling the subagent how to drive it, as the example do
   the `mcp_servers` with `user: true`. Nothing the app logs into, nor a server with no
   login, can put a card in the conversation, whatever its tool is called. See "The authorization attachment" below.
 - The callback stores the login under `(customer, config, user, plugin)` and shows a
-  "connected, go back to the conversation" page. The next call opens the MCP session.
+  "connected, go back to the conversation" page. `Manager.LoginFinished` marks the card
+  `connected` and has the session carry on (`Session.FollowUp`): a reply with no user
+  message, the model told the plugin is connected. That reply's call opens the MCP session.
 - A server refusing the token (`ErrUnauthorized`) drops the login and asks again.
 - Only a verified end user is offered user plugins: `api_key` mode with a token naming the
   user, or `proxy` mode. A `noauth` router and an anonymous caller get none, because a login
