@@ -68,6 +68,15 @@ func TestAConnectionWithAnUnregisteredAuthSchemeIsRefused(t *testing.T) {
 	require.ErrorContains(t, err, `"oauth2_code"`)
 }
 
+func TestAConnectionIsNotCreatedWithAProviderUnit(t *testing.T) {
+	connection := appConnection()
+	connection.ProviderUnitID = "106540352242922"
+
+	err := (&Store{}).CreateConnectorConnection(context.Background(), testSchemes, connection)
+
+	require.ErrorContains(t, err, "a provider unit is set on a connection after consent")
+}
+
 func TestAConnectionWithAnUnregisteredTLSSchemeIsRefused(t *testing.T) {
 	connection := appConnection()
 	connection.TLSScheme = "mtls"
