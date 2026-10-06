@@ -908,3 +908,76 @@ func hmacHex(secret, message string) string {
 	mac.Write([]byte(message))
 	return hex.EncodeToString(mac.Sum(nil))
 }
+
+func (s *FakeProviderSuite) TestAConfigRefreshTokenRotatesOnce() {
+	srv := fakeprovider.New(s.T())
+	refresh := srv.NewConfigToken()
+
+	first := s.slack(srv, "tooling.tokens.rotate", "", url.Values{"refresh_token": {refresh}})
+	second := s.slack(srv, "tooling.tokens.rotate", "", url.Values{"refresh_token": {refresh}})
+
+	s.Equal(true, first["ok"])
+	s.Equal(first["iat"].(float64)+fakeprovider.ConfigTokenTTL.Seconds(), first["exp"])
+	s.Equal("invalid_refresh_token", second["error"])
+	s.Equal(1, srv.ConfigTokenRotations())
+}
+
+func (s *FakeProviderSuite) TestASlackAppIsMadeOnlyWithAConfigTokenThatHasNotExpired() {
+	srv := fakeprovider.New(s.T())
+	token := s.configToken(srv)
+	manifest := url.Values{"manifest": {`{"display_information":{"name":"Acme"},"settings":{}}`}}
+
+	created := s.slack(srv, "apps.manifest.create", token, manifest)
+	srv.Advance(fakeprovider.ConfigTokenTTL)
+	expired := s.slack(srv, "apps.manifest.create", token, manifest)
+
+	s.Equal(true, created["ok"])
+	s.Equal(created["app_id"], srv.SlackApps()[0].AppID)
+	s.Equal("token_expired", expired["error"])
+	s.Len(srv.SlackApps(), 1)
+}
+
+func (s *FakeProviderSuite) TestADeletedSlackAppIsNotFound() {
+	srv := fakeprovider.New(s.T())
+	token := s.configToken(srv)
+	manifest := `{"display_information":{"name":"Acme"},"settings":{}}`
+	app := s.slack(srv, "apps.manifest.create", token, url.Values{"manifest": {manifest}})["app_id"].(string)
+
+	s.Equal(true, s.slack(srv, "apps.manifest.delete", token, url.Values{"app_id": {app}})["ok"])
+	s.Equal("app_not_found", s.slack(srv, "apps.manifest.delete", token, url.Values{"app_id": {app}})["error"])
+	s.Equal("app_not_found", s.slack(srv, "apps.manifest.update", token, url.Values{"app_id": {app}, "manifest": {manifest}})["error"])
+}
+
+func (s *FakeProviderSuite) TestASlowConfigRotationAnswersOnlyAfterItsDelay() {
+	srv := fakeprovider.New(s.T(), fakeprovider.SlowConfigRotation)
+	started := time.Now()
+
+	s.configToken(srv)
+
+	s.GreaterOrEqual(time.Since(started), 200*time.Millisecond)
+}
+
+// configToken is a configuration token rotated from one the fake's admin generated.
+func (s *FakeProviderSuite) configToken(srv *fakeprovider.Server) string {
+	token, ok := s.slack(srv, "tooling.tokens.rotate", "", url.Values{"refresh_token": {srv.NewConfigToken()}})["token"].(string)
+	s.Require().True(ok)
+	return token
+}
+
+// slack posts form to one of the fake Slack's methods, with token as a bearer token when one
+// is given, and returns the JSON it answered.
+func (s *FakeProviderSuite) slack(srv *fakeprovider.Server, method, token string, form url.Values) map[string]any {
+	request, err := http.NewRequest(http.MethodPost, srv.URL+fakeprovider.PathSlackAPI+method, strings.NewReader(form.Encode()))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	response, err := srv.Client().Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	var answered map[string]any
+	s.Require().NoError(json.NewDecoder(response.Body).Decode(&answered))
+	return answered
+}

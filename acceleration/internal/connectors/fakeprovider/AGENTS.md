@@ -18,6 +18,7 @@ That is the whole setup. The server closes when the test ends (`t.Cleanup`). It 
 - `srv.Use(...)` to switch personalities mid-test, `srv.Advance(d)` to move the server's clock past expiry or grace, `srv.Hits(path)`, `srv.Refreshes()` and `srv.ClientCredentialsGrants()` to count what reached it, `srv.RefreshScope()` for the `scope` the last refresh carried and whether it carried one.
 - `TeamID`, `UserID`, `RealmID`, `Shop`, `IdentityURL`: the synthetic identities the vendor-shaped personalities report.
 - `srv.SwitchAccount()`: every later consent is by another user of the same workspace (its id is returned; `UserID` keeps the first). Grants already made keep their user. For an account-switch test (T17).
+- A fake Slack app manifest API at `srv.URL + PathSlackAPI` (`slack.go`, T54): `tooling.tokens.rotate`, `apps.manifest.create`, `.update` and `.delete`, each answering `{"ok": ...}` as Slack's method pages show. `srv.NewConfigToken()` is a workspace admin generating an app configuration token: it returns the refresh token, which rotates once (a second use is `invalid_refresh_token`; Slack's pages do not say, so the fake takes the strict reading) into a token that lives `ConfigTokenTTL` (12 h, Slack's «expire 12 hours after it has been generated»). The manifest methods take that token as a bearer token and answer `not_authed`, `invalid_auth`, `token_expired` and `app_not_found` as their pages name them. `srv.SlackApps()` and `srv.ConfigTokenRotations()` say what reached it.
 
 **Egress.** The server listens on loopback, which `egress.NewClient` refuses by design. Do not point an egress client at it and do not add a way around that: tests here use `srv.Client()`, and tests of the egress policy keep using egress's own seams (`internal/egress/AGENTS.md`).
 
@@ -51,6 +52,8 @@ With no personality the server is strict: PKCE with `S256` only (RFC 7636 §4.4.
 | `ClientCredentials` | The token endpoint takes `grant_type=client_credentials` from a client authenticated with its secret (a public one gets `unauthorized_client`) and answers an access token alone, a grant of its own that a revocation of that token ends; without it the grant gets `unsupported_grant_type` | RFC 6749 §4.4, §4.4.2, §4.4.3, §5.2 | T24 |
 | `NoExpiresIn` | Every token response leaves `expires_in` out; tokens still end after `AccessTTL` | RFC 6749 §5.1 (`expires_in` RECOMMENDED); SalesforceMobileSDK-Android `OAuth2.java:1325-1336` at `863835e9` reads none | T24 |
 | `IdentityURL` | Every token response carries `id`, the identity URL `IdentityURL` (`https://login.salesforce.com/id/00D…/005…`), which `providers/salesforce.yaml` captures as the account id | SalesforceMobileSDK-Android `OAuth2.java:1332` at `863835e9`; `core/testdata/recorded/salesforce.token.json`. That a client credentials response carries it is unverified | T24 |
+
+| `SlowConfigRotation` | `tooling.tokens.rotate` answers only after 200 ms, so two rotations of one configuration token without a lock between them overlap at the server | not a vendor behaviour: a slow network | T54 rotation under a lock |
 
 At most one of the token-endpoint personalities (`tokenEndpoint` in `fakeprovider.go`) can be on; `New` and `Use` fail the test otherwise. The rest combine. The two lost-response personalities change how a refresh is delivered, not what it does, so they sit outside that set.
 
