@@ -228,7 +228,7 @@ func (s *SchemeContract) TestStoredCredentialsItCannotReadAreRefusedWithoutQuoti
 	}
 }
 
-func (s *SchemeContract) TestAValueThatCannotBeUsedIsRefusedWithoutQuotingIt() {
+func (s *SchemeContract) TestAnErrorAboutAnUnusableValueDoesNotQuoteIt() {
 	stored := s.connect()
 	// A supplied value with CR LF after it cannot be a header value (RFC 9110 section 5.5),
 	// so a scheme that puts it in one refuses it. Whether it refuses or not, an error does

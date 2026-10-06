@@ -10,7 +10,7 @@ The suites every adapter of one kind runs, so what the core relies on is proved 
 | `TestConcurrentResolvesCommitAtMostOneNewRevision` | Eight resolves at once through a locked in-memory `core.CredentialStore`: no new revision for a credential that is not due, exactly one for one that is, and one renewal at the provider |
 | `TestConcurrentRetrievesOfACredentialThatIsNotDueAllHandItOutAsStored` | Retrieve without a lock is safe to call at once (run with `-race`) and changes nothing |
 | `TestStoredCredentialsItCannotReadAreRefusedWithoutQuotingThem` | Another scheme's, a newer version's or a cut-off payload: Retrieve and Revoke refuse it |
-| `TestAValueThatCannotBeUsedIsRefusedWithoutQuotingIt` | Each supplied value with CR LF after it; for an interactive scheme, a callback made of the secrets |
+| `TestAnErrorAboutAnUnusableValueDoesNotQuoteIt` | Each supplied value with CR LF after it: whether `Complete` refuses it or not, no error quotes it. For an interactive scheme, a callback made of the secrets is refused |
 | `TestWrapAppliesOnlyACredentialThisSchemeIssued` | A credential under another scheme's name puts no secret on the wire |
 | `TestClassifyMakes…` (six) | One answer or more per outcome, from a real local server: 200 OK; 401 `invalid_token` InvalidGrant; 403 `insufficient_scope` ScopeRequired with its scopes; 429 RateLimited with `Retry-After`; 503 and a refused dial Transient; 500 and a connection closed after the request Uncertain |
 | `TestRevokeSaysWhatItDid` | nil means the provider refuses the credential afterwards; an error (`Subject.RevokeErr`) means it still takes it, and is not an `*core.OutcomeError` |
