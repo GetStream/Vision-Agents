@@ -260,15 +260,35 @@ func (open) Authenticate(_ context.Context, r *http.Request) (Principal, error) 
 	return Principal{AppID: app, Kind: KindServer, ServerSide: true}, nil
 }
 
-// proxied reads the principal a proxy named.
-type proxied struct{}
+// ProxyOptions says how much the proxy in front of the router vouches for.
+type ProxyOptions struct {
+	// DeclaresKind says the proxy authenticates every caller and writes the kind it
+	// verified. The router then believes only what such a proxy writes: the app header,
+	// not the customer fallbacks a local deployment uses; a user_id parameter only from a
+	// server caller; and the declared kind, with a caller that declares none taken for an
+	// end user rather than a backend, so a proxy that forgets to say is refused rather than
+	// trusted.
+	DeclaresKind bool
+}
 
-func (proxied) Authenticate(_ context.Context, r *http.Request) (Principal, error) {
+// NewProxy builds the Proxy authenticator with the options the deployment gave it. New
+// builds the same thing with none.
+func NewProxy(options ProxyOptions) Authenticator { return proxied{declares: options.DeclaresKind} }
+
+// proxied reads the principal a proxy named.
+type proxied struct {
+	declares bool
+}
+
+func (p proxied) Authenticate(_ context.Context, r *http.Request) (Principal, error) {
 	app := strings.TrimSpace(r.Header.Get(AppHeader))
-	if app == "" {
+	// A local deployment with no gateway names the tenant directly. A proxy that declares
+	// kinds overwrites the app header, so a customer named any other way is one it did not
+	// vouch for.
+	if app == "" && !p.declares {
 		app = strings.TrimSpace(r.Header.Get(CustomerHeader))
 	}
-	if app == "" {
+	if app == "" && !p.declares {
 		app = strings.TrimSpace(r.URL.Query().Get(CustomerParam))
 	}
 	if app == "" {
@@ -276,21 +296,36 @@ func (proxied) Authenticate(_ context.Context, r *http.Request) (Principal, erro
 	}
 	// The auth type is believed for the same reason the app id is: the proxy has already
 	// verified the credential and overwrites this header rather than forwarding the
-	// caller's own. Saying nothing means server-side, because a proxy that has classified
-	// a caller says so, and one that says nothing is a deployment whose callers are all
-	// backends.
+	// caller's own. Saying nothing means server-side to a proxy that does not declare
+	// kinds, because its callers are all backends. To one that does, saying nothing is a
+	// gap, and a gap is filled with the weaker of the two.
 	declared := authTypeOf(r)
+	named := strings.TrimSpace(r.Header.Get(UserHeader))
 	kind := KindServer
+	if p.declares {
+		kind = KindAuthenticated
+		if named == "" {
+			kind = KindAnonymous
+		}
+	}
 	switch {
 	case strings.EqualFold(declared, AuthTypeAnonymous):
 		kind = KindAnonymous
 	case strings.EqualFold(declared, AuthTypeJWT):
 		kind = KindAuthenticated
+	case strings.EqualFold(declared, AuthTypeServer):
+		kind = KindServer
+	}
+	// A socket cannot set a header, so a user may come in the query string. Behind a proxy
+	// that declares kinds, only a backend may name somebody that way: an end user's own id
+	// is in the header the proxy wrote from their token.
+	if named == "" && (!p.declares || kind == KindServer) {
+		named = strings.TrimSpace(r.URL.Query().Get(UserParam))
 	}
 	return Principal{
 		OrganizationID: strings.TrimSpace(r.Header.Get(OrganizationHeader)),
 		AppID:          app,
-		UserID:         user(r),
+		UserID:         named,
 		Kind:           kind,
 		ServerSide:     kind == KindServer,
 	}, nil

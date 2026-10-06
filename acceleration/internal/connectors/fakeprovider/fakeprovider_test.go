@@ -492,6 +492,21 @@ func (s *FakeProviderSuite) TestCommaScopesAnswersInSlackShapeThatTheSlackManife
 	s.Equal(srv.UserID, account.Metadata["user_id"])
 }
 
+func (s *FakeProviderSuite) TestSwitchAccountMakesTheNextConsentAnotherUsersAndKeepsTheFirstGrantsUser() {
+	srv := fakeprovider.New(s.T(), fakeprovider.CommaScopes)
+	first := s.connect(srv, url.Values{"scope": {"chat:write"}})
+
+	other := srv.SwitchAccount()
+	second := s.connect(srv, url.Values{"scope": {"chat:write"}})
+
+	s.NotEqual(srv.UserID, other)
+	s.Equal(other, second["authed_user"].(map[string]any)["id"])
+	s.Equal(srv.TeamID, second["team"].(map[string]any)["id"], "another user of the same workspace")
+	status, refreshed := s.refresh(srv, first["refresh_token"].(string))
+	s.Require().Equal(http.StatusOK, status)
+	s.Equal(srv.UserID, refreshed["authed_user"].(map[string]any)["id"], "the first grant is still the first user's")
+}
+
 func (s *FakeProviderSuite) TestCommaScopesAnswersARefreshInTheSameSlackShape() {
 	srv := fakeprovider.New(s.T(), fakeprovider.CommaScopes)
 	first := s.connect(srv, url.Values{"scope": {"channels:history,chat:write"}, "user_scope": {"search:read"}})

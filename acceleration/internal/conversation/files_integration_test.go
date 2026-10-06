@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -30,8 +31,9 @@ func TestARenderReachesStreamChatAndSurvivesAReload(t *testing.T) {
 		t.Skip("STREAM_API_KEY and STREAM_API_SECRET not set")
 	}
 	ctx := context.Background()
-	service, err := New()
+	client, err := getstream.NewClient(os.Getenv("STREAM_API_KEY"), os.Getenv("STREAM_API_SECRET"))
 	require.NoError(t, err)
+	service := NewForChat(client)
 	defer service.Close()
 	artist := fmt.Sprintf("files-test-%d", time.Now().UnixNano())
 	c, _, _, err := service.Open(ctx, "examples", artist, "")
@@ -57,8 +59,7 @@ func TestARenderReachesStreamChatAndSurvivesAReload(t *testing.T) {
 	c.Observe(agent.Responded{})
 	require.Eventually(t, func() bool { return current(c).Saved }, 30*time.Second, 100*time.Millisecond)
 
-	cold, err := New()
-	require.NoError(t, err)
+	cold := NewForChat(client)
 	defer cold.Close()
 	page, err := cold.History(ctx, "examples", artist, c.CID(), "")
 	require.NoError(t, err)

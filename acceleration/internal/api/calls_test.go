@@ -8,8 +8,11 @@ import (
 	"testing"
 	"time"
 
+	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -205,6 +208,68 @@ func (s *CallsSuite) TestNobodyIsListedACallWithoutCredentials() {
 
 	s.Equal(http.StatusUnauthorized,
 		s.unauthenticatedClient.do(http.MethodGet, "/v1/agents/calls", nil, nil))
+}
+
+func (s *CallsSuite) TestTheTranscriptOfAConversationBoundCallIsReadFromTheConversation() {
+	// A voice call bound to a conversation writes into the conversation's channel, not
+	// the agent's own, so reading the agent's channel would find nothing it said.
+	call := s.started(store.Call{})
+	conversation := "support-" + s.utils.uuid()
+	s.Require().NoError(s.store.SaveSession(context.Background(), &store.AgentSession{
+		ID: call.ID, CustomerID: s.customerID(), AgentID: call.AgentID,
+		ConversationID: "agent:" + conversation, CallID: call.CallID,
+	}))
+	s.inChannel(conversation, s.customerID(), call.StartedAt.Add(time.Minute), "said in the conversation")
+	s.inChannel(call.AgentID, s.customerID(), call.StartedAt.Add(time.Minute), "not where this call wrote")
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+
+	s.Require().Len(read, 1)
+	s.Equal("said in the conversation", read[0].Text)
+}
+
+func (s *CallsSuite) TestACallWithoutASessionRowReadsItsAgentChannel() {
+	// Calls from before session rows were kept have only their agent to go by.
+	call := s.started(store.Call{})
+	s.inChannel(call.AgentID, s.customerID(), call.StartedAt.Add(time.Minute), "said on the call")
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+
+	s.Require().Len(read, 1)
+	s.Equal("said on the call", read[0].Text)
+}
+
+func (s *CallsSuite) TestReadingACallsTranscriptCreatesNoChannel() {
+	call := s.started(store.Call{})
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+
+	s.Empty(read)
+	_, exists := s.chat.Channel(call.AgentID)
+	s.False(exists, "a call nobody wrote down leaves nothing behind in the app")
+}
+
+// inChannel writes one line into an agent channel, created and stamped for a customer the
+// way the router creates the channels it writes to.
+func (s *CallsSuite) inChannel(channel, customer string, at time.Time, text string) {
+	ctx := context.Background()
+	creator := "vision-agent"
+	_, err := s.chat.Client.Chat().GetOrCreateChannel(ctx, chatlog.ChannelType, channel,
+		&getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{
+			CreatedByID: &creator, Custom: map[string]any{conversation.CustomerField: customer},
+		}})
+	s.Require().NoError(err)
+	s.chat.At(at)
+	speaker := "alice"
+	_, err = s.chat.Client.Chat().SendMessage(ctx, chatlog.ChannelType, channel,
+		&getstream.SendMessageRequest{Message: getstream.MessageRequest{Text: &text, UserID: &speaker}})
+	s.Require().NoError(err)
 }
 
 // started records a call the suite's app is on, filling in whatever the test did not name.

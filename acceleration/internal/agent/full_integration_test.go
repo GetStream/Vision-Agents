@@ -92,9 +92,11 @@ func (s *FullAgentIntegrationSuite) SetupSuite() {
 
 func (s *FullAgentIntegrationSuite) edge(userID string) *streamedge.Edge {
 	edge, err := streamedge.New(streamedge.Options{
-		CallID: s.callID,
-		User:   streamedge.User{ID: userID, Name: userID},
-		Logger: slog.New(slog.DiscardHandler),
+		CallID:    s.callID,
+		User:      streamedge.User{ID: userID, Name: userID},
+		APIKey:    os.Getenv("STREAM_API_KEY"),
+		APISecret: os.Getenv("STREAM_API_SECRET"),
+		Logger:    slog.New(slog.DiscardHandler),
 	})
 	s.Require().NoError(err)
 	s.Require().NoError(edge.Join(s.ctx))
@@ -106,9 +108,11 @@ func (s *FullAgentIntegrationSuite) TestStreamParakeetFishGemmaAndSolHoldAConver
 	caller := s.edge("sprint6-caller")
 
 	agentEdge, err := streamedge.New(streamedge.Options{
-		CallID: s.callID,
-		User:   streamedge.User{ID: "sprint6-agent", Name: "Sprint 6 Agent"},
-		Logger: slog.New(slog.DiscardHandler),
+		CallID:    s.callID,
+		User:      streamedge.User{ID: "sprint6-agent", Name: "Sprint 6 Agent"},
+		APIKey:    os.Getenv("STREAM_API_KEY"),
+		APISecret: os.Getenv("STREAM_API_SECRET"),
+		Logger:    slog.New(slog.DiscardHandler),
 	})
 	s.Require().NoError(err)
 

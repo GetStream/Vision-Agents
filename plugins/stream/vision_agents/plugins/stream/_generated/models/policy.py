@@ -38,6 +38,10 @@ class Policy:
                 - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing
                 to time to first token. The end of the response is held until the verdict, and a response whose input reads as
                 an injection fails with prompt_injection before its tool calls can be acted on.
+            require_own_stream_app (bool | Unset): Keep the app out of the router's own Stream app: in app mode it is never
+                written there for want of a registered Stream app of its own, and what it wrote there before can only be read.
+                True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the
+                router's operator and read here; sending it back unchanged is fine, and changing it is refused.
             tags (PolicyTags | Unset): Labels recorded on every row of usage, over whatever the request labelled it with, so
                 spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags. Example:
                 {'application': 'support'}.
@@ -47,6 +51,7 @@ class Policy:
     budget: Budget | Unset = UNSET
     data_policy: DataPolicy | Unset = UNSET
     prompt_injection: bool | Unset = UNSET
+    require_own_stream_app: bool | Unset = UNSET
     tags: PolicyTags | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -65,6 +70,8 @@ class Policy:
 
         prompt_injection = self.prompt_injection
 
+        require_own_stream_app = self.require_own_stream_app
+
         tags: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
@@ -80,6 +87,8 @@ class Policy:
             field_dict["data_policy"] = data_policy
         if prompt_injection is not UNSET:
             field_dict["prompt_injection"] = prompt_injection
+        if require_own_stream_app is not UNSET:
+            field_dict["require_own_stream_app"] = require_own_stream_app
         if tags is not UNSET:
             field_dict["tags"] = tags
 
@@ -110,6 +119,8 @@ class Policy:
 
         prompt_injection = d.pop("prompt_injection", UNSET)
 
+        require_own_stream_app = d.pop("require_own_stream_app", UNSET)
+
         _tags = d.pop("tags", UNSET)
         tags: PolicyTags | Unset
         if isinstance(_tags, Unset):
@@ -122,6 +133,7 @@ class Policy:
             budget=budget,
             data_policy=data_policy,
             prompt_injection=prompt_injection,
+            require_own_stream_app=require_own_stream_app,
             tags=tags,
         )
 

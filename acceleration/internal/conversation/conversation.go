@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -131,6 +131,9 @@ type ledger struct {
 	// VisibleTools are the agent config's visible_tools, kept so a write retried after a
 	// restart shows end users what the agent shows them.
 	VisibleTools []string `json:",omitempty"`
+	// StreamApp is the app the conversation is kept in, its pin: zero for the deployment's
+	// own. Every write and read for it is made there.
+	StreamApp int64 `json:",omitempty"`
 	// Logins are the servers the session reaches that log in, the only ones whose tool
 	// results may ask for a login.
 	Logins []string `json:",omitempty"`
@@ -148,8 +151,17 @@ type operation struct {
 type Service struct {
 	closed bool
 	mu     sync.Mutex
-	client *getstream.Stream
-	all    map[string]*Conversation
+	chats  Chats
+	pins   Pins
+	all    map[known]*Conversation
+	logger *slog.Logger
+}
+
+// known is how the service finds a conversation it holds: by its customer and its channel
+// id. A channel id is unique only within one Stream app, so two customers in apps of their
+// own can each hold a conversation under the same id, and neither may shut the other out.
+type known struct {
+	customer, cid string
 }
 type Conversation struct {
 	mu       sync.Mutex
@@ -176,8 +188,11 @@ type Conversation struct {
 	// liveFailures how many have failed in a row.
 	liveRetry    time.Time
 	liveFailures int
-	stopped      chan struct{}
-	done         chan struct{}
+	// parkedUntil is when a conversation whose app is out of reach tries again, and zero
+	// while it is not parked.
+	parkedUntil time.Time
+	stopped     chan struct{}
+	done        chan struct{}
 }
 
 // indication is the Stream AI indicator a reply last showed: which message, in which state.
@@ -197,28 +212,24 @@ func SessionCommandChannel(channelType, id string) bool {
 const TriggerField = "support_trigger"
 const SessionCommandTrigger = "session_commands"
 
-func New() (*Service, error) {
-	client, err := getstream.NewClient(os.Getenv("STREAM_API_KEY"), os.Getenv("STREAM_API_SECRET"))
-	if err != nil {
-		return nil, stack.Wrap(err)
-	}
-	if os.Getenv("STREAM_API_KEY") == "" || os.Getenv("STREAM_API_SECRET") == "" {
-		return nil, stack.Wrap(errors.New("Stream Chat credentials are required for persistent conversations"))
-	}
-	return newService(client), nil
+// CustomerField names the customer a channel the router created belongs to.
+const CustomerField = "support_customer_id"
+
+// NewForChats keeps conversations in the Stream app each one's customer acts in.
+func NewForChats(chats Chats) *Service {
+	return newService(chats)
 }
 
-// NewForChat is New for a caller that already holds a Chat client rather than
-// reading one out of the environment.
+// NewForChat keeps every conversation with one Chat client the caller already holds.
 func NewForChat(client *getstream.Stream) *Service {
-	return newService(client)
+	return newService(oneChat{client: client})
 }
-func newService(client *getstream.Stream) *Service {
-	return &Service{client: client, all: map[string]*Conversation{}}
+func newService(chats Chats) *Service {
+	return &Service{chats: chats, all: map[known]*Conversation{}, logger: slog.Default()}
 }
 func (s *Service) make(d ledger) *Conversation {
 	c := &Conversation{service: s, data: d, turns: map[string]string{}, created: map[string]bool{}, stopped: make(chan struct{}), done: make(chan struct{})}
-	s.all[d.CID] = c
+	s.all[known{d.Customer, d.CID}] = c
 	go c.run()
 	return c
 }
@@ -265,6 +276,17 @@ func (s *Service) OpenForCallerWithVoice(ctx context.Context, customer, agentID,
 // the caller said about the conversation is on the transcript as well as on the session.
 // A channel that already exists keeps what it has: it was stamped when it was made.
 func (s *Service) OpenForCallerWithCustom(ctx context.Context, customer, agentID, cid, caller, voiceAgent string, custom map[string]any, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
+	_, own, err := s.chats.For(ctx, customer)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	return s.OpenInApp(ctx, own, customer, agentID, cid, caller, voiceAgent, custom, scopes...)
+}
+
+// OpenInApp opens a conversation for a session pinned to app. A new conversation is kept
+// in that app. One that already exists is kept wherever it was written, which the
+// conversation says: a session resuming it acts there too.
+func (s *Service) OpenInApp(ctx context.Context, app int64, customer, agentID, cid, caller, voiceAgent string, custom map[string]any, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
 	if voiceAgent != "" && !validAuthorID.MatchString(voiceAgent) {
 		return nil, nil, false, stack.Wrap(errors.New("invalid voice transcript author"))
 	}
@@ -287,7 +309,7 @@ func (s *Service) OpenForCallerWithCustom(ctx context.Context, customer, agentID
 	if cid != "agent:"+id || !validID.MatchString(id) {
 		return nil, nil, false, stack.Wrap(errors.New("invalid conversation channel"))
 	}
-	if c := s.all[cid]; c != nil {
+	if c := s.all[known{customer, cid}]; c != nil {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		if c.data.Customer != customer || (agentID != "" && c.data.Agent != agentID) || c.data.Owner == "" && caller != "" {
@@ -297,7 +319,11 @@ func (s *Service) OpenForCallerWithCustom(ctx context.Context, customer, agentID
 		if c.active {
 			return nil, nil, false, stack.Wrap(errors.New("conversation is already open"))
 		}
-		page, err := s.history(ctx, customer, agentID, cid, "", caller, c.data.Pending, voiceAgent)
+		client, err := s.chats.ForApp(ctx, customer, c.data.StreamApp)
+		if err != nil {
+			return nil, nil, false, stack.Wrap(err)
+		}
+		page, err := s.historyIn(ctx, client, customer, agentID, cid, "", caller, c.data.Pending, voiceAgent)
 		if err != nil {
 			return nil, nil, false, stack.Wrap(err)
 		}
@@ -313,23 +339,37 @@ func (s *Service) OpenForCallerWithCustom(ctx context.Context, customer, agentID
 		h, tr := history(page)
 		return c, h, tr, nil
 	}
+	pin := app
+	if !fresh {
+		kept, found, err := lookupPin(ctx, s.pins, customer, cid)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if found {
+			pin = kept
+		}
+	}
+	client, err := s.chats.ForApp(ctx, customer, pin)
+	if err != nil {
+		return nil, nil, false, err
+	}
 	if fresh {
 		userID := caller
 		if userID == "" {
 			userID = "support-operator"
 		}
-		_, err := s.client.UpdateUsers(ctx, &getstream.UpdateUsersRequest{Users: map[string]getstream.UserRequest{agentID: {ID: agentID}, userID: {ID: userID}}})
+		err := CreateMissingUsers(ctx, client, map[string]getstream.UserRequest{agentID: {ID: agentID}, userID: {ID: userID}})
 		if err != nil {
 			return nil, nil, false, stack.Wrap(err)
 		}
 		stamped := channelCustom(custom)
-		maps.Copy(stamped, map[string]any{"support_customer_id": customer, "support_agent_id": agentID, "support_memory_scope": scope, "support_owner_id": caller, TriggerField: SessionCommandTrigger})
-		_, err = s.client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &agentID, Members: []getstream.ChannelMemberRequest{{UserID: agentID}, {UserID: userID}}, Custom: stamped}})
+		maps.Copy(stamped, map[string]any{CustomerField: customer, "support_agent_id": agentID, "support_memory_scope": scope, "support_owner_id": caller, TriggerField: SessionCommandTrigger})
+		_, err = client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &agentID, Members: []getstream.ChannelMemberRequest{{UserID: agentID}, {UserID: userID}}, Custom: stamped}})
 		if err != nil {
 			return nil, nil, false, stack.Wrap(err)
 		}
 	}
-	page, err := s.history(ctx, customer, agentID, cid, "", caller, nil, voiceAgent)
+	page, err := s.historyIn(ctx, client, customer, agentID, cid, "", caller, nil, voiceAgent)
 	if err != nil {
 		return nil, nil, false, stack.Wrap(err)
 	}
@@ -339,7 +379,7 @@ func (s *Service) OpenForCallerWithCustom(ctx context.Context, customer, agentID
 	if agentID == "" {
 		agentID = page.agent
 	}
-	c := s.make(ledger{CID: cid, Customer: customer, Agent: agentID, Owner: caller, Commands: commandsIn(page.Messages)})
+	c := s.make(ledger{CID: cid, Customer: customer, Agent: agentID, Owner: caller, Commands: commandsIn(page.Messages), StreamApp: pin})
 	c.shared = page.shared
 	c.active = true
 	// Nobody here holds the conversation, so a reply Stream still shows as running was
@@ -369,13 +409,13 @@ func (s *Service) Recall(ctx context.Context, customer, agentID, cid string) ([]
 }
 
 func (s *Service) HistoryForCaller(ctx context.Context, customer, agentID, cid, before, caller string) (Page, error) {
-	return s.history(ctx, customer, agentID, cid, before, caller, s.pending(cid))
+	return s.history(ctx, customer, agentID, cid, before, caller, s.pending(customer, cid))
 }
 
 // pending is what a held conversation has accepted but not yet written to Stream.
-func (s *Service) pending(cid string) []operation {
+func (s *Service) pending(customer, cid string) []operation {
 	s.mu.Lock()
-	c := s.all[cid]
+	c := s.all[known{customer, cid}]
 	s.mu.Unlock()
 	if c == nil {
 		return nil
@@ -396,7 +436,7 @@ func (s *Service) ContextForCaller(ctx context.Context, customer, agentID, cid, 
 	if len(voiceAgent) > 1 || (len(voiceAgent) == 1 && voiceAgent[0] != "" && !validAuthorID.MatchString(voiceAgent[0])) {
 		return nil, false, stack.Wrap(errors.New("invalid voice transcript author"))
 	}
-	page, err := s.history(ctx, customer, agentID, cid, "", caller, s.pending(cid), voiceAgent...)
+	page, err := s.history(ctx, customer, agentID, cid, "", caller, s.pending(customer, cid), voiceAgent...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -431,7 +471,7 @@ func channelCustom(custom map[string]any) map[string]any {
 
 // Describe names the conversation's channel, which is what a list of conversations reads.
 // An empty field is left as it was rather than cleared.
-func (s *Service) Describe(ctx context.Context, cid, title, description string) error {
+func (s *Service) Describe(ctx context.Context, customer, cid, title, description string) error {
 	id := strings.TrimPrefix(cid, "agent:")
 	if cid != "agent:"+id || !validID.MatchString(id) {
 		return stack.Wrap(errors.New("invalid conversation channel"))
@@ -446,7 +486,13 @@ func (s *Service) Describe(ctx context.Context, cid, title, description string) 
 	if len(set) == 0 {
 		return nil
 	}
-	_, err := s.client.Chat().UpdateChannelPartial(ctx, "agent", id, &getstream.UpdateChannelPartialRequest{Set: set, Unset: []string{}})
+	// The name goes where the conversation is kept, which for one written before its
+	// customer had an app of its own is the deployment's.
+	client, _, err := s.clientFor(ctx, customer, cid)
+	if err != nil {
+		return stack.Wrap(err)
+	}
+	_, err = client.Chat().UpdateChannelPartial(ctx, "agent", id, &getstream.UpdateChannelPartialRequest{Set: set, Unset: []string{}})
 	return stack.Wrap(err)
 }
 
@@ -454,7 +500,7 @@ func (s *Service) Describe(ctx context.Context, cid, title, description string) 
 // requires the caller's current membership, checked against the query response.
 // A channel with no owner is a backend-owned demo, which no end user may claim.
 func ownedBy(custom map[string]any, customer, agentID, caller string) error {
-	if custom["support_customer_id"] != customer || (agentID != "" && custom["support_agent_id"] != agentID) {
+	if custom[CustomerField] != customer || (agentID != "" && custom["support_agent_id"] != agentID) {
 		return stack.Wrap(errors.New("conversation belongs to another customer or agent"))
 	}
 	rawOwner, bound := custom["support_owner_id"]
@@ -489,7 +535,7 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 		return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
 	}
 	s.mu.Lock()
-	closed, open := s.closed, s.all[cid]
+	closed, open := s.closed, s.all[known{customer, cid}]
 	s.mu.Unlock()
 	if closed {
 		return CommandReceipt{}, stack.Wrap(errors.New("conversation service is closed"))
@@ -497,10 +543,14 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 
 	lookup, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
+	client, _, err := s.readerFor(lookup, customer, cid)
+	if err != nil {
+		return CommandReceipt{}, stack.Wrap(err)
+	}
 	limit, state := 100, true
 	// Query without Data, so asking about a command can neither create a channel nor
 	// overwrite the ownership recorded on one.
-	r, err := s.client.Chat().GetOrCreateChannel(lookup, "agent", id, &getstream.GetOrCreateChannelRequest{
+	r, err := client.Chat().GetOrCreateChannel(lookup, "agent", id, &getstream.GetOrCreateChannelRequest{
 		State: &state, Messages: &getstream.MessagePaginationParams{Limit: &limit}})
 	if err != nil {
 		return CommandReceipt{}, stack.Wrap(err)
@@ -524,8 +574,15 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 		}
 	}
 
+	// A channel id is only unique within one app, and the conversation open under it may be
+	// another customer's.
 	if open != nil {
-		return open.receipt(commandID, caller)
+		open.mu.Lock()
+		owner := open.data.Customer
+		open.mu.Unlock()
+		if owner == customer {
+			return open.receipt(commandID, caller)
+		}
 	}
 	var stored []Message
 	for _, m := range r.Data.Messages {
@@ -572,7 +629,16 @@ func commandsIn(messages []Message) map[string]commandRecord {
 	return commands
 }
 
+// history reads a conversation back in the app it is kept in.
 func (s *Service) history(ctx context.Context, customer, agentID, cid, before, caller string, pending []operation, voiceAgent ...string) (Page, error) {
+	client, _, err := s.readerFor(ctx, customer, cid)
+	if err != nil {
+		return Page{}, stack.Wrap(err)
+	}
+	return s.historyIn(ctx, client, customer, agentID, cid, before, caller, pending, voiceAgent...)
+}
+
+func (s *Service) historyIn(ctx context.Context, client *getstream.Stream, customer, agentID, cid, before, caller string, pending []operation, voiceAgent ...string) (Page, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	id := strings.TrimPrefix(cid, "agent:")
@@ -586,7 +652,7 @@ func (s *Service) history(ctx context.Context, customer, agentID, cid, before, c
 		params.IDLt = &before
 	}
 	// Query without Data: a resume must never create or overwrite a channel's ownership.
-	r, err := s.client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{State: &state, Messages: params})
+	r, err := client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{State: &state, Messages: params})
 	if err != nil {
 		return Page{}, stack.Wrap(err)
 	}
@@ -1301,6 +1367,13 @@ func (c *Conversation) publish(m Message) {
 		c.emit(Updated{CID: c.data.CID, Message: m})
 	}
 }
+
+// StreamApp is the app the conversation is kept in, which a session holding it acts in.
+func (c *Conversation) StreamApp() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.data.StreamApp
+}
 func (c *Conversation) enqueue(m Message, create bool) {
 	m.Tools = append([]Tool{}, m.Tools...)
 	m.Parts = append([]Part{}, m.Parts...)
@@ -1330,7 +1403,24 @@ func (c *Conversation) userAuthor() string {
 	return "support-operator"
 }
 
+// chat is the client this conversation is written with: the app it is kept in, resolved on
+// every write so a rotated credential is used from the next one.
+func (c *Conversation) chat(ctx context.Context) (*getstream.Stream, error) {
+	c.mu.Lock()
+	customer, app := c.data.Customer, c.data.StreamApp
+	c.mu.Unlock()
+	return c.service.chats.ForApp(ctx, customer, app)
+}
+
 func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool, visible []string) error {
+	client, err := c.chat(ctx)
+	if err != nil {
+		return err
+	}
+	return c.sendWith(ctx, client, op, ephemeral, visible)
+}
+
+func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, op operation, ephemeral bool, visible []string) error {
 	m := op.Message
 	user := c.data.Agent
 	if m.Role == "user" {
@@ -1367,11 +1457,11 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool, v
 		if m.Role == "assistant" {
 			custom["ai_generated"] = true
 		}
-		_, err := c.service.client.Chat().SendMessage(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendMessageRequest{Message: getstream.MessageRequest{
+		_, err := client.Chat().SendMessage(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendMessageRequest{Message: getstream.MessageRequest{
 			ID: &m.ID, UserID: &user, Text: &m.Text, Custom: custom,
 		}})
 		if err != nil && ctx.Err() == nil {
-			existing, readErr := c.service.client.Chat().GetMessage(ctx, m.ID, &getstream.GetMessageRequest{})
+			existing, readErr := client.Chat().GetMessage(ctx, m.ID, &getstream.GetMessageRequest{})
 			if readErr == nil {
 				stored, decodeErr := messageFromWire(existing.Data.Message.ID, existing.Data.Message.Text, existing.Data.Message.Custom)
 				if decodeErr == nil && stored.ID == m.ID && stored.Role == m.Role && stored.StartedAt.Equal(m.StartedAt) {
@@ -1385,10 +1475,10 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool, v
 		if op.reasoning != nil {
 			fields["reasoning"] = op.reasoning
 		}
-		_, err := c.service.client.Chat().EphemeralMessageUpdate(ctx, m.ID, &getstream.EphemeralMessageUpdateRequest{UserID: &user, Set: fields})
+		_, err := client.Chat().EphemeralMessageUpdate(ctx, m.ID, &getstream.EphemeralMessageUpdateRequest{UserID: &user, Set: fields})
 		return err
 	}
-	_, err = c.service.client.Chat().UpdateMessagePartial(ctx, m.ID, &getstream.UpdateMessagePartialRequest{UserID: &user, Set: fields})
+	_, err = client.Chat().UpdateMessagePartial(ctx, m.ID, &getstream.UpdateMessagePartialRequest{UserID: &user, Set: fields})
 	return err
 }
 func sameSnapshot(a, b Message) bool {
@@ -1414,7 +1504,22 @@ func (c *Conversation) flush() bool {
 		err := c.send(ctx, op, false, visible)
 		cancel()
 		c.mu.Lock()
+		// A parked conversation tells only its session, which a recovered one has none of, so
+		// parking and unparking are logged: once each, rather than on every retry.
+		if parked(err) && c.parkedUntil.IsZero() {
+			c.service.logger.Warn("parked a conversation whose Stream app cannot be written",
+				"customer", c.data.Customer, "cid", c.data.CID, "stream_app", c.data.StreamApp, "reason", err)
+		} else if !parked(err) && !c.parkedUntil.IsZero() {
+			c.service.logger.Info("unparked a conversation whose Stream app can be written again",
+				"customer", c.data.Customer, "cid", c.data.CID, "stream_app", c.data.StreamApp)
+			c.parkedUntil = time.Time{}
+		}
 		if err != nil {
+			// An app out of reach keeps every write held and waits, rather than having
+			// them delivered anywhere else.
+			if parked(err) {
+				c.parkedUntil = time.Now().Add(parkedRetry)
+			}
 			if c.data.Current != nil {
 				c.data.Current.Error = "Stream Chat write failed; retry queued"
 				c.publish(*c.data.Current)
@@ -1459,6 +1564,11 @@ func (c *Conversation) run() {
 			}
 			if !c.flush() {
 				retry = time.Now().Add(2 * time.Second)
+				c.mu.Lock()
+				if c.parkedUntil.After(retry) {
+					retry = c.parkedUntil
+				}
+				c.mu.Unlock()
 				continue
 			}
 			c.mu.Lock()
@@ -1589,7 +1699,11 @@ func (c *Conversation) sendIndicator(messageID, state string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, _ = c.service.client.Chat().SendEvent(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendEventRequest{Event: event})
+	client, err := c.chat(ctx)
+	if err != nil {
+		return
+	}
+	_, _ = client.Chat().SendEvent(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendEventRequest{Event: event})
 }
 
 // aiState maps a live reply to Stream's AI indicator states: generating once the answer

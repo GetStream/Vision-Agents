@@ -1,0 +1,53 @@
+# iMessage through the customer's own Linq account, the shape T36 (subtasks.md on
+# connectors/planning) builds: a channel only, no tools. Linq's pages, opened October 6, 2026:
+#   [webhooks] https://docs.linqapp.com/guides/webhooks/index.md
+#   [events]   https://docs.linqapp.com/channel/imessage/guides/webhooks/events/index.md
+#   [send]     https://docs.linqapp.com/channel/imessage/guides/messaging/sending-messages/index.md
+# T36 cites Linq's webhook as HMAC-SHA256 over {timestamp}.{rawBody} in X-Webhook-Signature.
+# [webhooks] now marks those X-Webhook-* headers deprecated and recommends the Standard
+# Webhooks ones, so this fixture uses those.
+id: linq
+revision: 1
+name: Linq
+# [send]: «-H "Authorization: Bearer $LINQ_API_KEY"».
+schemes: [bearer]
+channel:
+  verifier:
+    # [webhooks]: webhook-id, webhook-timestamp, webhook-signature (v1,{base64}), signed
+    # content {webhook-id}.{webhook-timestamp}.{body}, a whsec_ secret: the Standard Webhooks
+    # specification.
+    kind: standard_webhooks
+    # «your subscription's signing secret» ([webhooks]): the customer's, with its provider
+    # app (T38).
+    secret: provider_app
+    # [webhooks]: «Reject if the timestamp is more than 5 minutes old».
+    max_age: 5m
+  format: json
+  messages:
+    # [events]: message.sent is a message from the customer's own line, with the same shape,
+    # so only message.received is a person's.
+    match:
+      $.event_type: message.received
+    # The receiving line, data.chat.owner_handle (is_me: true), of the 2026-02-03 payload in
+    # [events]. The subscription pins that version with ?version=2026-02-03 ([webhooks],
+    # «Webhook versioning»).
+    provider_unit_id: $.data.chat.owner_handle.handle
+    thread_key:
+      # [events]: data.chat.id. One chat is one external thread (channels doc, «Other
+      # channels», the iMessage row: number ↔ number).
+      - name: chat_id
+        path: $.data.chat.id
+    author_id: $.data.sender_handle.handle
+    provider_message_id: $.data.id
+    # [send], «Message parts»: text is a part; consecutive text parts are not allowed, so the
+    # text of a message with media first sits in a later part. Reading only the first part is
+    # a limit of a path without filters. # unverified: how often a person's first part is media
+    text: $.data.parts[0].value
+  reply:
+    # [send]: POST https://api.linqapp.com/api/partner/v3/chats/{chatId}/messages.
+    url: https://api.linqapp.com/api/partner/v3/chats/{thread.chat_id}/messages
+    body:
+      message:
+        parts:
+          - type: text
+            value: "{text}"

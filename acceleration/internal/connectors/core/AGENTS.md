@@ -17,7 +17,7 @@ One word, one meaning, in code, docs and API alike. A name follows the Go auth l
 | stored credentials | The long-lived secrets one scheme keeps for a connection, sealed as one blob | `StoredCredentials` (`scheme.go`), column `credentials_sealed` | `cloud.google.com/go/auth` `Credentials` (holds the JSON and its `TokenProvider`), Nango's connection `credentials` |
 | access credential | The short-lived credential one request carries | `AccessCredential`, from `Scheme.Retrieve(ctx, stored, m)` (`scheme.go`) | The value: `aws-sdk-go-v2` `aws.Credentials` (with `SessionToken` and `Expires`), Azure `azcore.AccessToken`. The method: `aws.CredentialsProvider.Retrieve(ctx)`, a verb because a stateless `Scheme` may refresh over the network |
 | credential request | What one call asks of a credential: audience, scopes, deadline | `CredentialRequest` (`resolver.go`), passed to `Resolver.Resolve` | Says what it is |
-| credential state | The part of a connection that changes under the lock: stored credentials, revision, status, expiry | `CredentialState` (`resolver.go`) | Not "grant", which names `ToolGrant` and the OAuth grant |
+| credential state | The part of a connection that changes under the lock: stored credentials, revision, status, expiry, and the account id, metadata and scopes the consent found | `CredentialState` (`resolver.go`) | Not "grant", which names `ToolGrant` and the OAuth grant |
 | credential store | The locked, revisioned storage behind the resolver | `CredentialStore.Update` (`resolver.go`), `credentialstores/pgsealed` | Not "backend", which the API docs use for the customer's server |
 | account info | What a consent learned that is public: account id, metadata, scopes | `AccountInfo` (`scheme.go`), from `Scheme.Complete` and `ResolvedManifest.Apply` | Says what it is |
 | binding | What one agent config may use from one connector: which connection, and the exact tool grants | `Binding` with `Selection` `fixed` or `session`, `ToolGrant` (`source.go`), agent config `connectors[]` | `Selection` matches the API schema `AgentConnectorSelection`: it says how the connection is chosen, not what kind it is |
@@ -40,6 +40,51 @@ One word, one meaning, in code, docs and API alike. A name follows the Go auth l
 - **No YAML anchors or aliases.** `ParseManifest` refuses them, so a manifest a customer uploads cannot expand one node into many.
 - **Manifest enums are closed and say where their values come from.** A new `from`, `auth_method`, `per`, `alg`, separator or hook point is a change to `manifest.go` with its source beside it, and fixtures in `testdata/manifests/` follow the same rule per field. Scheme and source names are not enums here: they are registry names, checked by whoever holds the `Registry`.
 
+## Manifest
+
+A manifest has `sources`, a `channel` block, or both: Linear has only `sources`, Telegram and Linq only `channel`, Slack and WhatsApp both. `sources` is what tools run against; `channel` is how the connector is an inbound channel. An inbound channel is never a kind of tool. The channel block lives in `channel.go`; `Manifest.Validate` checks it with the rest.
+
+| Term | What it is | In code |
+| --- | --- | --- |
+| channel block | How a provider's inbound request is verified, where it keeps each message, and how a reply goes back | `ChannelRule`, manifest `channel` |
+| verifier kind | The registered verifier that checks the request, and the parameters it reads | `VerifierRule.Kind`, the key in `Registry.Verifiers` |
+| secret source | Whose secret the verifier checks with: the operator's provider app (one for every customer), or the customer's own | `SecretSource`: `operator`, `provider_app` |
+| routing key | The path of the provider unit: what picks the connection when one URL serves many customers | `messages.provider_unit_id` → `InboundMessage.ProviderUnitID` |
+| thread key part | One named value the thread key is built from, which a reply names as `{thread.<name>}` | `messages.thread_key[]`, `ChannelMessage.ThreadParts` |
+| reply window | How long after the person's last message free text may be sent, and the body sent after it | `reply.window`, `reply.after_window` |
+
+`messages` fields are named for the `InboundMessage` field they fill: `provider_unit_id`, `thread_key`, `author_id`, `provider_message_id`, `text`. One concept, one name, in YAML and in `signal.go`.
+
+- **Paths are lookup, one syntax for JSON and form.** A path is member names, each optionally followed by `[*]` (every element) or `[n]` (one element). Every path is also an RFC 9535 JSONPath, with no filters, slices or descendants. JSON: `$.entry[*].changes[*].value.messages[*].from` (WhatsApp). Form: `$.MessageSid` (Twilio posts `application/x-www-form-urlencoded`); a form is one flat object of its fields, so its paths are one member, and a field given twice is an error.
+- **A batch is one message per `each` element.** `messages.each` is the path of every message, ending in `[*]`. A `[*]` in another path stands for the same element as the `[*]` at the same place in `each`, so `$.entry[*].changes[*].value.metadata.phone_number_id` is the number of the change that holds that message. `Validate` refuses a `[*]` that is not where `each` has one. Without `each`, the body is one message.
+- **What is not a person's message is not read.** A message without its author, id, thread key parts or declared provider unit is skipped, as is one that differs from `match` (exact strings, such as Linq's `event_type` or Slack's `event.type`) or has a `skip_if_present` path (such as Slack's `bot_id`). This is how the bot's own messages stay out. Retried deliveries are the bridge's to drop, by `ProviderMessageID` (T57).
+- **A thread key part may fall back.** `fallback` is read when `path` is absent: a Slack message that starts a thread has no `thread_ts`, and its own `ts` is the thread's. That is the only alternative a path has.
+- **The thread key is built, never parsed.** `Read` joins the parts with `:`, after percent-encoding `%` and `:` in each, so two threads never share a key. The bridge keeps `ThreadParts` with the thread link; a reader that holds only an `InboundMessage` gets them back with `Read` on its `Raw`, by `ProviderMessageID`.
+- **Reply templates follow the endpoint rules.** `reply.url` is an https template like an endpoint's, and may also name `{provider_unit_id}` (only when the block reads one) and `{thread.<name>}`, outside the host; such a value goes in as unreserved characters that are not a dot segment, as an input does. `{text}` is never in the URL. `reply.body` and `reply.after_window` are JSON whose strings may name `{text}`, those values, an input, a vars entry or `{metadata.<capture>}`; `encoding/json` escapes them. A name a template does not declare is refused with its field. No secret is ever in a template: a scheme adds the credential, last.
+- **`Read` needs no connection.** It is a method of `ChannelRule`, so a webhook that one provider app shares among customers is read before its provider unit picks the connection (T39). `Reply` is a method of `ResolvedManifest`, since it fills inputs and captured values.
+- **Closed enums, with their sources beside them in `channel.go`:** verifier kinds `hmac_header`, `secret_header`, `standard_webhooks`; secret sources `operator`, `provider_app`; formats `json`, `form`; HMAC algorithm `sha256`, encoding `hex`; signed-template names `{body}`, `{timestamp}`. Each kind takes only its own parameters: `hmac_header` a header, algorithm, encoding, optional prefix, a `signed` template with `{body}` once, and `timestamp_header` with `max_age` when it signs a timestamp; `secret_header` a header only; `standard_webhooks` `max_age` only, the rest is the specification's. An `operator` secret needs `client.env`.
+
+Fixtures: `testdata/manifests/slack_bot.yaml`, `linq.yaml`, `telegram.yaml`, `whatsapp.yaml`, each citing the provider page beside every value, with synthetic events in `testdata/recorded/`. Fixtures are data: the guard test reads only non-test Go files outside `testdata`.
+
+## Verifier
+
+`Verifier.Verify(r, body, m)` (`signal.go`) checks one inbound provider request and returns a `VerifiedEvent`. The events endpoint (T26) acts on it; the channel bridge (AI-866) reads its messages.
+
+| Term | What it is | In code | Reader |
+| --- | --- | --- | --- |
+| verified event | Everything one verified request says | `VerifiedEvent` | the events endpoint |
+| signal | What happened to the grants of one account: revoked, uninstalled, rotated | `VerifiedEvent.Signals`, `Signal` | `Resolver.Invalidate` |
+| inbound message | One message a person sent on an external thread | `VerifiedEvent.Messages`, `InboundMessage` | the channel bridge |
+| provider unit | The customer's own unit at the provider that received a message: a workspace, a team, a bot, a business phone number | `InboundMessage.ProviderUnitID` | the bridge maps it to a connection |
+| thread key | The id of one external thread within one provider unit, built by the verifier, never parsed | `InboundMessage.ThreadKey` | the bridge maps it to a thread channel |
+| provider message id | The provider's id for one message: WhatsApp `messages[].id`, Slack `event.ts`, Twilio `MessageSid` | `InboundMessage.ProviderMessageID` | the bridge finds the message's entry in `Raw` by it and drops retried deliveries by it |
+| challenge | The value a handshake request asks the endpoint to send back | `VerifiedEvent.Challenge` | the endpoint answers 200 `text/plain` with it |
+
+- **An error means nothing happens.** A request that fails verification returns an error and the endpoint acts on no part of it. A verified request the verifier has no mapping for returns a zero `VerifiedEvent`, not an error, and so does a verified body the verifier cannot parse.
+- **Slices, not single values.** One revocation event can name several tokens, and one delivery can batch several messages, so `Signals` and `Messages` are slices. A handshake sets only `Challenge`.
+- **The raw body is bytes.** `body` is read once, before anything parses it, because a signature covers those exact bytes. `InboundMessage.Raw` is that body unchanged, shared by every message of a batch, and `[]byte`, not `json.RawMessage`, because some providers post a form. `ProviderMessageID` tells the messages of a batch apart.
+- **Ids stay the provider's.** A `Signal` names an account and an `InboundMessage` names a provider unit, an author and a message, all as the provider sends them. Mapping them and the thread key to a connection, a thread channel or a Stream Chat user is the reader's job, not the verifier's.
+
 ## Tests
 
-From `acceleration/`: `go test ./internal/connectors/...`. `testdata/manifests/` holds the 12 stress-test manifests and `testdata/recorded/` their synthetic token responses and callbacks; never put a real token there. Testify suites, no mocks (`.claude/skills/go-testing/SKILL.md`). The guard tests parse this package's source with `go/parser`, so a provider name fails before anything uses it.
+From `acceleration/`: `go test ./internal/connectors/...`. `testdata/manifests/` holds the 12 stress-test manifests and the 4 channel ones, and `testdata/recorded/` their synthetic token responses, callbacks and inbound events; never put a real token there. Testify suites, no mocks (`.claude/skills/go-testing/SKILL.md`). The guard tests parse this package's source with `go/parser`, so a provider name fails before anything uses it.

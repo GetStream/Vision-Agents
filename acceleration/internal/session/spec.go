@@ -68,6 +68,10 @@ type Spec struct {
 	// CustomerID owns the session and is what its usage is billed to. It comes from the
 	// trusted header rather than the body, so it is filled in by the API.
 	CustomerID string
+	// StreamApp is the Stream app the session acts in, its pin: zero for the deployment's
+	// own. The manager resolves it once, before anything is done in Stream, and the whole
+	// session, its call, its transcript and its records, keeps it.
+	StreamApp int64
 	// Caller is the end user who asked for the session, which is not the same thing as
 	// UserID above: that is who the agent joins the call as, this is who wanted it. It
 	// comes from the credential rather than the body, so the API fills it in, and it is

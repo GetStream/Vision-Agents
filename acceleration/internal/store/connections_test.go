@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/uptrace/bun"
 )
 
 // connection creates a connection to the acme built-in, app-owned unless change says
@@ -307,6 +309,220 @@ func (s *StoreSuite) TestADeletedConnectionCannotBeDeletedAgain() {
 	s.ErrorIs(s.store.DeleteConnectorConnection(s.ctx, "acme-app", connection.ID), ErrNoConnectorConnection)
 }
 
+func (s *StoreSuite) TestAnUnforcedDeleteRefusesABoundConnectionAndLeavesItLive() {
+	connection := s.connection("acme-app", nil)
+	s.bind("acme-app", fixedBinding(connection.ID))
+
+	s.ErrorIs(s.store.DeleteUnboundConnectorConnection(s.ctx, "acme-app", connection.ID), ErrConnectorConnectionBound)
+	found, err := s.store.ConnectorConnection(s.ctx, "acme-app", connection.ID)
+	s.Require().NoError(err, "a refused delete leaves the connection live")
+	s.Equal(ConnectionPending, found.Status)
+}
+
+func (s *StoreSuite) TestAnUnforcedDeleteDeletesAnUnboundConnection() {
+	connection := s.connection("acme-app", nil)
+	other := s.connection("acme-app", nil)
+	s.bind("acme-app", fixedBinding(other.ID))
+
+	s.Require().NoError(s.store.DeleteUnboundConnectorConnection(s.ctx, "acme-app", connection.ID))
+	_, err := s.store.ConnectorConnection(s.ctx, "acme-app", connection.ID)
+	s.ErrorIs(err, ErrNoConnectorConnection)
+}
+
+func (s *StoreSuite) TestAnUnforcedDeleteOfAMissingConnectionIsNotFound() {
+	deleted := s.connection("acme-app", nil)
+	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, "acme-app", deleted.ID))
+	others := s.connection("other-app", nil)
+	s.bind("other-app", fixedBinding(others.ID))
+
+	s.ErrorIs(s.store.DeleteUnboundConnectorConnection(s.ctx, "acme-app", newID()), ErrNoConnectorConnection)
+	s.ErrorIs(s.store.DeleteUnboundConnectorConnection(s.ctx, "acme-app", deleted.ID), ErrNoConnectorConnection)
+	s.ErrorIs(s.store.DeleteUnboundConnectorConnection(s.ctx, "acme-app", others.ID), ErrNoConnectorConnection,
+		"another customer's connection is not found, bound or not")
+}
+
+// The race a check before the delete had: a bind that commits after the check and before the
+// UPDATE. LOCK TABLE in SHARE mode holds every UPDATE of the table at its ROW EXCLUSIVE lock
+// and lets a plain SELECT through (https://www.postgresql.org/docs/current/explicit-locking.html,
+// table 13.2). Postgres takes that lock while it parses the UPDATE and only then the snapshot
+// the UPDATE runs with (exec_simple_query in src/backend/tcop/postgres.c: execution does not
+// reuse "a snapshot that has been acquired before locking any of the tables mentioned in the
+// query"). So a delete that checked in a SELECT of its own has checked when it stops here,
+// and one that checks inside the UPDATE has not. A wait on the connection's row lock is the
+// next test's.
+func (s *StoreSuite) TestABindThatCommitsBeforeTheDeleteTakesItsSnapshotStopsIt() {
+	connection := s.connection("acme-app", nil)
+	locker := s.router()
+	held, err := locker.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer held.Rollback() //nolint:errcheck // after the commit below there is nothing to roll back
+	_, err = held.ExecContext(s.ctx, "LOCK TABLE connector_connections IN SHARE MODE")
+	s.Require().NoError(err)
+
+	deleter := s.router()
+	deleted := make(chan error, 1)
+	go func() { deleted <- deleter.DeleteUnboundConnectorConnection(s.ctx, "acme-app", connection.ID) }()
+	// The two seconds and the ten milliseconds are assertTheWaitEnded's (credentials_test.go).
+	s.Require().Eventually(func() bool { return s.waitingForTable("connector_connections") == 1 },
+		2*time.Second, 10*time.Millisecond, "the delete waits for the table lock")
+	s.bind("acme-app", fixedBinding(connection.ID))
+	s.Require().NoError(held.Commit())
+
+	s.ErrorIs(<-deleted, ErrConnectorConnectionBound)
+	_, err = s.store.ConnectorConnection(s.ctx, "acme-app", connection.ID)
+	s.NoError(err, "the bound connection stays live")
+}
+
+// waitingForTable counts the callers in this database queued for a lock on the table
+// (https://www.postgresql.org/docs/current/view-pg-locks.html).
+func (s *StoreSuite) waitingForTable(table string) int {
+	var count int
+	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx, `
+SELECT count(*) FROM pg_locks
+WHERE locktype = 'relation' AND relation = ?::regclass AND NOT granted
+  AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`, table).Scan(&count))
+	return count
+}
+
+// waitingForALock counts the backends of this database waiting for a heavyweight lock, a
+// table's or a row's (wait_event_type Lock,
+// https://www.postgresql.org/docs/current/monitoring-stats.html#WAIT-EVENT-TABLE).
+func (s *StoreSuite) waitingForALock() int {
+	var count int
+	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx, `
+SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&count))
+	return count
+}
+
+// begin opens a transaction on a router of its own, rolled back when the test ends unless it
+// was committed.
+func (s *StoreSuite) begin() bun.Tx {
+	held, err := s.router().DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = held.Rollback() })
+	return held
+}
+
+// E2a in #746. Another transaction holds the connection's row lock, so the delete waits at
+// its own lock. A bind that does not lock (s.bind writes the column directly) commits during
+// the wait. The delete's UPDATE starts after the wait, with a snapshot that holds the bind.
+func (s *StoreSuite) TestABindThatCommitsWhileTheDeleteWaitsForTheRowStopsIt() {
+	connection := s.connection("acme-app", nil)
+	held := s.begin()
+	_, err := held.ExecContext(s.ctx, "SELECT id FROM connector_connections WHERE id = ? FOR UPDATE", connection.ID)
+	s.Require().NoError(err)
+
+	deleter := s.router()
+	deleted := make(chan error, 1)
+	go func() { deleted <- deleter.DeleteUnboundConnectorConnection(s.ctx, "acme-app", connection.ID) }()
+	// The two seconds and the ten milliseconds are assertTheWaitEnded's (credentials_test.go).
+	s.Require().Eventually(func() bool { return s.waitingForALock() == 1 },
+		2*time.Second, 10*time.Millisecond, "the delete waits for the row")
+	s.bind("acme-app", fixedBinding(connection.ID))
+	s.Require().NoError(held.Commit())
+
+	s.ErrorIs(<-deleted, ErrConnectorConnectionBound)
+	_, err = s.store.ConnectorConnection(s.ctx, "acme-app", connection.ID)
+	s.NoError(err, "the bound connection stays live")
+}
+
+// E3a in #746. The config save has locked the connection and is held at its INSERT by a
+// SHARE lock on agent_configs, which blocks an INSERT and lets the delete's read of the
+// table through (https://www.postgresql.org/docs/current/explicit-locking.html, table
+// 13.2). The delete waits for the save, then sees its binding.
+func (s *StoreSuite) TestADeleteWaitsForABindInProgressAndIsRefused() {
+	connection := s.connection("acme-app", nil)
+	held := s.begin()
+	_, err := held.ExecContext(s.ctx, "LOCK TABLE agent_configs IN SHARE MODE")
+	s.Require().NoError(err)
+
+	saver := s.router()
+	saved := make(chan error, 1)
+	go func() {
+		saved <- saver.CreateAgentConfig(s.ctx, &AgentConfig{CustomerID: "acme-app", Name: "bound",
+			Connectors: []ConnectorBinding{fixed(connection.ID)}})
+	}()
+	s.Require().Eventually(func() bool { return s.waitingForTable("agent_configs") == 1 },
+		2*time.Second, 10*time.Millisecond, "the save waits at its INSERT")
+	deleter := s.router()
+	deleted := make(chan error, 1)
+	go func() { deleted <- deleter.DeleteUnboundConnectorConnection(s.ctx, "acme-app", connection.ID) }()
+	s.Eventually(func() bool { return s.waitingForALock() == 2 },
+		2*time.Second, 10*time.Millisecond, "the delete waits for the save's lock on the connection")
+	s.Require().NoError(held.Commit())
+
+	s.Require().NoError(<-saved)
+	s.ErrorIs(<-deleted, ErrConnectorConnectionBound)
+	_, err = s.store.ConnectorConnection(s.ctx, "acme-app", connection.ID)
+	s.NoError(err, "the bound connection stays live")
+}
+
+// E3b in #746. The delete has locked the connection and is held at its UPDATE by a SHARE
+// lock on connector_connections, which a SELECT FOR UPDATE's ROW SHARE lock passes (table
+// 13.2). The config save waits for the delete, then finds no live connection to bind.
+func (s *StoreSuite) TestABindWaitsForADeleteInProgressAndIsRefused() {
+	connection := s.connection("acme-app", nil)
+	held := s.begin()
+	_, err := held.ExecContext(s.ctx, "LOCK TABLE connector_connections IN SHARE MODE")
+	s.Require().NoError(err)
+
+	deleter := s.router()
+	deleted := make(chan error, 1)
+	go func() { deleted <- deleter.DeleteUnboundConnectorConnection(s.ctx, "acme-app", connection.ID) }()
+	s.Require().Eventually(func() bool { return s.waitingForTable("connector_connections") == 1 },
+		2*time.Second, 10*time.Millisecond, "the delete waits at its UPDATE")
+	saver := s.router()
+	saved := make(chan error, 1)
+	go func() {
+		saved <- saver.CreateAgentConfig(s.ctx, &AgentConfig{CustomerID: "acme-app", Name: "bound",
+			Connectors: []ConnectorBinding{fixed(connection.ID)}})
+	}()
+	s.Eventually(func() bool { return s.waitingForALock() == 2 },
+		2*time.Second, 10*time.Millisecond, "the save waits for the delete's lock on the connection")
+	s.Require().NoError(held.Commit())
+
+	s.NoError(<-deleted)
+	s.ErrorIs(<-saved, ErrNoConnectorConnection)
+	configs, err := s.store.CustomerAgentConfigs(s.ctx, "acme-app")
+	s.Require().NoError(err)
+	s.Empty(configs, "no binding to the deleted connection is stored")
+}
+
+// The bind's lock is FOR KEY SHARE, which a plain UPDATE's FOR NO KEY UPDATE does not wait
+// for (https://www.postgresql.org/docs/current/explicit-locking.html, table 13.3). FOR SHARE
+// would hold a credential save until the config save commits.
+func (s *StoreSuite) TestABindInProgressDoesNotHoldUpACredentialSave() {
+	connection := s.connection("acme-app", nil)
+	held := s.begin()
+	_, err := held.ExecContext(s.ctx, "LOCK TABLE agent_configs IN SHARE MODE")
+	s.Require().NoError(err)
+
+	saver := s.router()
+	saved := make(chan error, 1)
+	go func() {
+		saved <- saver.CreateAgentConfig(s.ctx, &AgentConfig{CustomerID: "acme-app", Name: "bound",
+			Connectors: []ConnectorBinding{fixed(connection.ID)}})
+	}()
+	s.Require().Eventually(func() bool { return s.waitingForTable("agent_configs") == 1 },
+		2*time.Second, 10*time.Millisecond, "the save waits at its INSERT, holding the connection")
+	credentials := make(chan error, 1)
+	go func() {
+		connection.Revision = 2
+		connection.CredentialsSealed = []byte("sealed for revision 2")
+		connection.CredentialsKEKVersion = 1
+		credentials <- s.store.SaveConnectorConnectionAtRevision(s.ctx, &connection, 1)
+	}()
+	select {
+	case err := <-credentials:
+		s.NoError(err)
+	case <-time.After(2 * time.Second):
+		s.Fail("the credential save waits for the config save")
+	}
+	s.Require().NoError(held.Commit())
+
+	s.NoError(<-saved)
+}
+
 func (s *StoreSuite) TestDeletingAConnectionDropsItsCredentials() {
 	connection := s.connection("acme-app", nil)
 	// The revisioned save that writes credentials is T8's; this is the state it leaves.
@@ -530,6 +746,88 @@ func (s *StoreSuite) TestCallbacksRacingWithOneStateConsumeItExactlyOnce() {
 			continue
 		}
 		s.True(errors.Is(err, ErrNoAuthorizationAttempt), "a callback that loses is told the state is used: %v", err)
+	}
+	s.Equal(1, won)
+}
+
+func (s *StoreSuite) TestAHandoffReplacesTheBlobItWasReadWithOnce() {
+	created := s.attempt(s.connection("acme-app", nil), "the-state")
+
+	s.Require().NoError(s.store.HandOffConnectorAuthorizationAttempt(s.ctx, created.ID, created.AttemptSealed, []byte("handed off"), 2))
+
+	handedOff, err := s.store.ConnectorAuthorizationAttemptByID(s.ctx, created.ID)
+	s.Require().NoError(err)
+	s.Equal([]byte("handed off"), handedOff.AttemptSealed)
+	s.Equal(2, handedOff.KEKVersion)
+	s.Nil(handedOff.ConsumedAt, "the callback still consumes it")
+	err = s.store.HandOffConnectorAuthorizationAttempt(s.ctx, created.ID, created.AttemptSealed, []byte("again"), 2)
+	s.ErrorIs(err, ErrNoAuthorizationAttempt, "the blob it was read with is gone")
+}
+
+func (s *StoreSuite) TestAnExpiredAttemptCannotBeHandedOff() {
+	created := s.attempt(s.connection("acme-app", nil), "the-state")
+	s.expire(created.ID)
+
+	err := s.store.HandOffConnectorAuthorizationAttempt(s.ctx, created.ID, created.AttemptSealed, []byte("handed off"), 1)
+
+	s.ErrorIs(err, ErrNoAuthorizationAttempt)
+}
+
+func (s *StoreSuite) TestAConsumedAttemptCannotBeHandedOff() {
+	created := s.attempt(s.connection("acme-app", nil), "the-state")
+	_, err := s.store.ConsumeConnectorAuthorizationAttempt(s.ctx, "the-state")
+	s.Require().NoError(err)
+
+	err = s.store.HandOffConnectorAuthorizationAttempt(s.ctx, created.ID, created.AttemptSealed, []byte("handed off"), 1)
+
+	s.ErrorIs(err, ErrNoAuthorizationAttempt)
+}
+
+func (s *StoreSuite) TestADeletedConnectionsAttemptCannotBeHandedOff() {
+	connection := s.connection("acme-app", nil)
+	created := s.attempt(connection, "the-state")
+	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, "acme-app", connection.ID))
+
+	err := s.store.HandOffConnectorAuthorizationAttempt(s.ctx, created.ID, created.AttemptSealed, []byte("handed off"), 1)
+
+	s.ErrorIs(err, ErrNoAuthorizationAttempt)
+}
+
+func (s *StoreSuite) TestHandoffsRacingFromOneReadReplaceTheBlobExactlyOnce() {
+	created := s.attempt(s.connection("acme-app", nil), "raced-state")
+
+	// As TestCallbacksRacingWithOneStateConsumeItExactlyOnce: a router and a pool per
+	// handoff, so the updates overlap in Postgres.
+	const handoffs = 16
+	routers := make([]*Store, handoffs)
+	for i := range routers {
+		router, err := Open(s.dsn)
+		s.Require().NoError(err)
+		s.T().Cleanup(func() { router.Close() })
+		s.Require().NoError(router.Ping(s.ctx))
+		routers[i] = router
+	}
+	errs := make([]error, handoffs)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, router := range routers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs[i] = router.HandOffConnectorAuthorizationAttempt(s.ctx, created.ID, created.AttemptSealed, []byte("handed off "+newID()), 1)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	won := 0
+	for _, err := range errs {
+		if err == nil {
+			won++
+			continue
+		}
+		s.True(errors.Is(err, ErrNoAuthorizationAttempt), "a handoff that loses is told the attempt is handed off: %v", err)
 	}
 	s.Equal(1, won)
 }

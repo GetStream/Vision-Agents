@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,16 +31,12 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
-const (
-	apiKeyEnvVar    = "STREAM_API_KEY"
-	apiSecretEnvVar = "STREAM_API_SECRET"
-)
-
 // ChannelType is the Stream Chat channel type transcripts are written to.
-const ChannelType = "agent"
+const ChannelType = streamapp.AgentChannelType
 
 // queueSize bounds how far the writer may fall behind before messages are dropped.
 const queueSize = 256
@@ -100,8 +95,7 @@ const (
 	artifact
 )
 
-// Options configures a Log. The credentials fall back to the environment, the same way
-// the Stream edge reads them.
+// Options configures a Log. Its credentials are given, never read from the environment.
 type Options struct {
 	// AgentID is required. It is the default channel name for demo calls that have no
 	// conversation.
@@ -115,11 +109,17 @@ type Options struct {
 	// VisibleTools are the agent config's visible_tools. A shown tool's stored artifacts
 	// get a card of their own; empty shows search and web_search.
 	VisibleTools []string
+	// CustomerID is stamped on a channel this log creates, so reading it back can tell
+	// whose it is. A bound conversation's channel already carries the stamp.
+	CustomerID string
 
-	// APIKey defaults to STREAM_API_KEY.
-	APIKey string
-	// APISecret defaults to STREAM_API_SECRET. These are server-side writes, so a secret
-	// is required rather than a user token.
+	// Client writes with a client the caller already holds for the app, which is how the
+	// router writes in the Stream app a session is pinned to. With it set, nothing is read
+	// from the environment and the key and secret below are not used.
+	Client *getstream.Stream
+	// APIKey and APISecret build a client when none is given. These are server-side
+	// writes, so a secret is required rather than a user token.
+	APIKey    string
 	APISecret string
 
 	Logger *slog.Logger
@@ -137,6 +137,7 @@ type Log struct {
 	agentID  string
 	channel  string
 	existing bool
+	customer string
 	agent    User
 	visible  []string
 	logger   *slog.Logger
@@ -173,22 +174,18 @@ func New(options Options) (*Log, error) {
 	if options.Agent.ID == "" {
 		return nil, stack.Wrap(errors.New("chatlog: an agent user id is required"))
 	}
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APISecret == "" {
-		options.APISecret = os.Getenv(apiSecretEnvVar)
-	}
-	if options.APIKey == "" || options.APISecret == "" {
-		return nil, stack.Wrap(errors.New("chatlog: " + apiKeyEnvVar + " and " + apiSecretEnvVar + " are required"))
-	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
 	}
-
-	client, err := getstream.NewClient(options.APIKey, options.APISecret)
-	if err != nil {
-		return nil, stack.Wrap(err)
+	client := options.Client
+	if client == nil {
+		if options.APIKey == "" || options.APISecret == "" {
+			return nil, stack.Wrap(errors.New("chatlog: a client, or an api key and secret, are required"))
+		}
+		var err error
+		if client, err = getstream.NewClient(options.APIKey, options.APISecret); err != nil {
+			return nil, stack.Wrap(err)
+		}
 	}
 
 	channel := options.Channel
@@ -201,6 +198,7 @@ func New(options Options) (*Log, error) {
 		agentID:  options.AgentID,
 		channel:  channel,
 		existing: options.Channel != "",
+		customer: options.CustomerID,
 		agent:    options.Agent,
 		visible:  options.VisibleTools,
 		logger:   options.Logger.With("agent", options.AgentID, "channel", channel),
@@ -224,6 +222,9 @@ func (l *Log) Start(ctx context.Context) error {
 		request.State = &state
 	} else {
 		request.Data = &getstream.ChannelInput{CreatedByID: &l.agent.ID}
+		if l.customer != "" {
+			request.Data.Custom = map[string]any{conversation.CustomerField: l.customer}
+		}
 	}
 	_, err := l.client.Chat().GetOrCreateChannel(ctx, ChannelType, l.channel, request)
 	if err != nil {
@@ -663,10 +664,7 @@ func (l *Log) upsert(ctx context.Context, user User) error {
 	if user.Name != "" {
 		request.Name = &user.Name
 	}
-	_, err := l.client.UpdateUsers(ctx, &getstream.UpdateUsersRequest{
-		Users: map[string]getstream.UserRequest{user.ID: request},
-	})
-	return stack.Wrap(err)
+	return conversation.CreateMissingUsers(ctx, l.client, map[string]getstream.UserRequest{user.ID: request})
 }
 
 // participantUser is who a participant is in chat. Their user id is what identifies them

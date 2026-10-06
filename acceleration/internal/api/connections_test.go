@@ -484,8 +484,8 @@ sources:
 }
 
 // bindFixed makes an agent config of the suite's app bind the connection as its fixed one,
-// in the shape store.ConnectorConnectionReferenced matches. No endpoint writes bindings yet
-// (AI-842), so the column is written directly.
+// in the shape store.ConnectorConnectionReferenced matches. The column is written directly,
+// so these tests do not depend on what the config endpoints accept.
 func (s *ConnectionsSuite) bindFixed(connectionID string) {
 	config := s.data.createAgentConfig()
 	_, err := s.store.DB().ExecContext(context.Background(),

@@ -32,7 +32,7 @@ func TestLiveSuite(t *testing.T) { suite.Run(t, new(LiveSuite)) }
 // SetupTest begins a reply and waits for Stream to have it, so live updates can go out.
 func (s *LiveSuite) SetupTest() {
 	db, client := newChat(s.T())
-	service := newService(client)
+	service := NewForChat(client)
 	c, _, _, err := service.Open(context.Background(), "customer", "support-agent", "")
 	s.Require().NoError(err)
 	s.Require().NoError(c.Begin("question"))

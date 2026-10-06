@@ -55,6 +55,10 @@ const (
 // those is an ordinary 404.
 var ErrNoConnectorConnection = errors.New("store: no such connector connection")
 
+// ErrConnectorConnectionBound says an unforced delete left a live connection alone because
+// an agent config of the customer's binds it as its fixed connection.
+var ErrConnectorConnectionBound = errors.New("store: an agent config binds this connector connection")
+
 // ErrUnregisteredScheme says a connection names a scheme no adapter is registered for.
 var ErrUnregisteredScheme = errors.New("store: no such scheme is registered")
 
@@ -273,30 +277,12 @@ func (s *Store) ConnectorConnectionsByOwner(ctx context.Context, customerID stri
 }
 
 // DeleteConnectorConnection soft deletes a live connection and drops its credentials at once,
-// so nothing can use it from here on. Whether a config still binds it is the caller's to ask
-// first (ConnectorConnectionReferenced).
+// so nothing can use it from here on, whether or not a config still binds it. It is the
+// forced delete; DeleteUnboundConnectorConnection is the one that refuses a bound connection.
 func (s *Store) DeleteConnectorConnection(ctx context.Context, customerID, id string) error {
-	if customerID == "" || id == "" {
-		return stack.Wrap(errors.New("store: a customer and a connection id are required"))
-	}
-	now := time.Now().UTC()
-	result, err := s.db.NewUpdate().Model((*ConnectorConnection)(nil)).
-		Set("status = ?", ConnectionDisconnected).
-		Set("credentials_sealed = ?", []byte{}).
-		Set("credentials_kek_version = 0").
-		Set("expires_at = NULL").
-		Set("deleted_at = ?", now).
-		Set("updated_at = ?", now).
-		Where("customer_id = ?", customerID).
-		Where("id = ?", id).
-		Where("deleted_at IS NULL").
-		Exec(ctx)
+	affected, err := softDeleteConnection(ctx, s.db, customerID, id, false)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("store: delete connector connection: %w", err))
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return stack.Wrap(fmt.Errorf("store: delete connector connection: %w", err))
+		return err
 	}
 	if affected == 0 {
 		return stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorConnection, id))
@@ -304,26 +290,104 @@ func (s *Store) DeleteConnectorConnection(ctx context.Context, customerID, id st
 	return nil
 }
 
-// ConnectorConnectionReferenced reports whether a live agent config of the customer's binds
-// the live connection as its fixed connection, so deleting it would break that agent.
+// DeleteUnboundConnectorConnection soft deletes a live connection as DeleteConnectorConnection
+// does, unless a live agent config of the customer's binds it as its fixed connection.
+//
+// It locks the connection FOR UPDATE first, and checks for a binding in the UPDATE after.
+// A config write locks each connection it binds before it writes the binding
+// (lockBoundConnections), so a bind in progress holds the delete at the lock until it
+// commits. Under READ COMMITTED each statement sees the rows committed before it began
+// (https://www.postgresql.org/docs/current/transaction-iso.html#XACT-READ-COMMITTED), so the
+// UPDATE, begun after the wait, sees a binding that committed during it. Checked in the
+// locking statement itself, it would not: a statement that waits for a row lock re-checks
+// only that row.
+func (s *Store) DeleteUnboundConnectorConnection(ctx context.Context, customerID, id string) error {
+	if customerID == "" || id == "" {
+		return stack.Wrap(errors.New("store: a customer and a connection id are required"))
+	}
+	return stack.Wrap(s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var locked string
+		err := tx.NewSelect().Model((*ConnectorConnection)(nil)).Column("cc.id").
+			Where("cc.customer_id = ?", customerID).
+			Where("cc.id = ?", id).
+			Where("cc.deleted_at IS NULL").
+			For("UPDATE").
+			Scan(ctx, &locked)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: %s", ErrNoConnectorConnection, id)
+		}
+		if err != nil {
+			return fmt.Errorf("store: lock connector connection: %w", err)
+		}
+		affected, err := softDeleteConnection(ctx, tx, customerID, id, true)
+		if err != nil {
+			return err
+		}
+		// The row is live and locked by this transaction, so only a binding stops the UPDATE.
+		if affected == 0 {
+			return fmt.Errorf("%w: %s", ErrConnectorConnectionBound, id)
+		}
+		return nil
+	}))
+}
+
+// boundByConfig is true for a connection cc that a live agent config of the same customer
+// binds as its fixed connection. ConnectorConnectionReferenced and
+// DeleteUnboundConnectorConnection both use it, so what one reports bound the other refuses.
 //
 // A binding is matched by containment on the shape the prototype stored
 // ({"connection": {"type": "fixed", "connection_id": ...}}, ConnectorBinding in
 // internal/store/models.go on codex/connector-support at cf62af0d), which T20 keeps. A
 // customer has few configs and agent_configs_customer_idx finds them, so the column has no
 // index of its own.
+const boundByConfig = `EXISTS (
+    SELECT 1 FROM agent_configs AS ac
+    WHERE ac.customer_id = cc.customer_id
+      AND ac.deleted_at IS NULL
+      AND ac.connectors @> jsonb_build_array(jsonb_build_object(
+          'connection', jsonb_build_object('type', 'fixed', 'connection_id', cc.id))))`
+
+// softDeleteConnection marks a live connection deleted and drops its credentials in one
+// statement, and when unbound is set only if no config binds it. It returns the rows it
+// changed: one, or none.
+func softDeleteConnection(ctx context.Context, db bun.IDB, customerID, id string, unbound bool) (int64, error) {
+	if customerID == "" || id == "" {
+		return 0, stack.Wrap(errors.New("store: a customer and a connection id are required"))
+	}
+	now := time.Now().UTC()
+	query := db.NewUpdate().Model((*ConnectorConnection)(nil)).
+		Set("status = ?", ConnectionDisconnected).
+		Set("credentials_sealed = ?", []byte{}).
+		Set("credentials_kek_version = 0").
+		Set("expires_at = NULL").
+		Set("deleted_at = ?", now).
+		Set("updated_at = ?", now).
+		Where("cc.customer_id = ?", customerID).
+		Where("cc.id = ?", id).
+		Where("cc.deleted_at IS NULL")
+	if unbound {
+		query = query.Where("NOT " + boundByConfig)
+	}
+	result, err := query.Exec(ctx)
+	if err != nil {
+		return 0, stack.Wrap(fmt.Errorf("store: delete connector connection: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, stack.Wrap(fmt.Errorf("store: delete connector connection: %w", err))
+	}
+	return affected, nil
+}
+
+// ConnectorConnectionReferenced reports whether a live agent config of the customer's binds
+// the live connection as its fixed connection, so deleting it would break that agent.
 func (s *Store) ConnectorConnectionReferenced(ctx context.Context, customerID, id string) (bool, error) {
 	if customerID == "" || id == "" {
 		return false, stack.Wrap(errors.New("store: a customer and a connection id are required"))
 	}
 	var referenced bool
 	err := s.db.QueryRowContext(ctx, `
-SELECT EXISTS (
-    SELECT 1 FROM agent_configs AS ac
-    WHERE ac.customer_id = cc.customer_id
-      AND ac.deleted_at IS NULL
-      AND ac.connectors @> jsonb_build_array(jsonb_build_object(
-          'connection', jsonb_build_object('type', 'fixed', 'connection_id', cc.id))))
+SELECT `+boundByConfig+`
 FROM connector_connections AS cc
 WHERE cc.customer_id = ? AND cc.id = ? AND cc.deleted_at IS NULL`, customerID, id).Scan(&referenced)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -417,6 +481,38 @@ RETURNING caa.*`, AuthorizationStateHash(state)).Scan(ctx, &attempt)
 		return ConnectorAuthorizationAttempt{}, fmt.Errorf("store: consume authorization attempt: %w", err)
 	}
 	return attempt, nil
+}
+
+// HandOffConnectorAuthorizationAttempt replaces an open attempt's sealed blob with sealed,
+// only while the row still holds previous, the blob the caller read. A seal has a fresh
+// random nonce (auth.Sealer.SealWithAAD), so no two seals are equal: of any number of
+// handoffs racing from the same read exactly one replaces it, as of racing callbacks one
+// consumes it.
+func (s *Store) HandOffConnectorAuthorizationAttempt(ctx context.Context, id string, previous, sealed []byte, kekVersion int) error {
+	if id == "" || len(previous) == 0 || len(sealed) == 0 || kekVersion < 1 {
+		return errors.New("store: a handoff needs an attempt id, the blob it read and a new one under a key version of 1 or more")
+	}
+	result, err := s.db.NewRaw(`
+UPDATE connector_authorization_attempts AS caa
+SET attempt_sealed = ?, kek_version = ?
+WHERE caa.id = ?
+  AND caa.attempt_sealed = ?
+  AND caa.consumed_at IS NULL
+  AND caa.expires_at > now()
+  AND EXISTS (SELECT 1 FROM connector_connections AS cc
+              WHERE cc.id = caa.connection_id AND cc.customer_id = caa.customer_id AND cc.deleted_at IS NULL)`,
+		sealed, kekVersion, id, previous).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: hand off authorization attempt: %w", err)
+	}
+	replaced, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: hand off authorization attempt: %w", err)
+	}
+	if replaced == 0 {
+		return ErrNoAuthorizationAttempt
+	}
+	return nil
 }
 
 // AuthorizationStateHash is how an OAuth state is stored and looked up: hashed, so the

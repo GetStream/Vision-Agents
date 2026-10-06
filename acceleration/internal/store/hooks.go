@@ -1,0 +1,145 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/uptrace/bun"
+)
+
+// AppScope is the Stream app a hook came from, as the rows it may act on are found by.
+type AppScope struct {
+	// App is the app's id. Zero matches only unpinned rows.
+	App int64
+	// Unpinned also matches rows with no pin, which were written into the deployment's
+	// own app. Only a hook from the deployment's own app sets it.
+	Unpinned bool
+}
+
+// where narrows a query, of any kind, to the rows in the scope's app.
+func (a AppScope) where(query bun.QueryBuilder) bun.QueryBuilder {
+	return query.WhereGroup(" AND ", func(q bun.QueryBuilder) bun.QueryBuilder {
+		if a.App != 0 {
+			q = q.WhereOr("stream_app_pk = ?", a.App)
+		}
+		if a.Unpinned {
+			q = q.WhereOr("stream_app_pk IS NULL")
+		}
+		if a.App == 0 && !a.Unpinned {
+			q = q.Where("false")
+		}
+		return q
+	})
+}
+
+// ErrAmbiguousHook is a hook that matches rows of more than one customer in its app, which
+// is acted on for nobody rather than for whichever came first.
+var ErrAmbiguousHook = errors.New("store: more than one customer holds what that hook names")
+
+// StreamAppByPK is the app registered for a Stream app id, with its keys.
+func (s *Store) StreamAppByPK(ctx context.Context, app int64) (StreamApp, error) {
+	var found StreamApp
+	err := s.db.NewSelect().Model(&found).Column("customer_id").Where("stream_app_pk = ?", app).Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return StreamApp{}, ErrNoStreamApp
+	}
+	if err != nil {
+		return StreamApp{}, fmt.Errorf("store: find stream app: %w", err)
+	}
+	return s.StreamApp(ctx, found.CustomerID)
+}
+
+// NumberByCallInApp finds the number whose lines reach a call, among the numbers attached
+// in one app. A routing rule names the call its callers are put in, which is what an
+// arriving call is recognised by; a number attached before its call was stored is found by
+// the name the call is given after it. A call's id is only unique within its app, so each
+// lookup is made there.
+func (s *Store) NumberByCallInApp(ctx context.Context, scope AppScope, callType, callID string) (PhoneNumber, error) {
+	if callID == "" {
+		return PhoneNumber{}, errors.New("store: a call id is required")
+	}
+	if callType == "" {
+		callType = "agent"
+	}
+	var held []PhoneNumber
+	if err := s.db.NewSelect().Model(&held).
+		Where("stream_call_id = ?", callID).Where("stream_call_type = ?", callType).
+		Where("released_at IS NULL").ApplyQueryBuilder(scope.where).Limit(20).Scan(ctx); err != nil {
+		return PhoneNumber{}, fmt.Errorf("store: number by call: %w", err)
+	}
+	if len(held) == 0 {
+		e164, named := strings.CutPrefix(callID, "phone-")
+		if !named {
+			return PhoneNumber{}, fmt.Errorf("store: no number reaches call %s:%s", callType, callID)
+		}
+		if err := s.db.NewSelect().Model(&held).
+			Where("e164 = ?", e164).Where("stream_trunk_id IS NOT NULL").
+			Where("released_at IS NULL").ApplyQueryBuilder(scope.where).Limit(20).Scan(ctx); err != nil {
+			return PhoneNumber{}, fmt.Errorf("store: number by call: %w", err)
+		}
+	}
+	switch customers(held, func(n PhoneNumber) string { return n.CustomerID }) {
+	case 0:
+		return PhoneNumber{}, fmt.Errorf("store: no number reaches call %s:%s", callType, callID)
+	case 1:
+		return held[0], nil
+	}
+	return PhoneNumber{}, ErrAmbiguousHook
+}
+
+// CallByAgentInApp is the newest call an agent ran, among the calls made in one app.
+func (s *Store) CallByAgentInApp(ctx context.Context, scope AppScope, agentID string) (Call, error) {
+	if agentID == "" {
+		return Call{}, errors.New("store: an agent id is required")
+	}
+	var calls []Call
+	err := s.db.NewSelect().Model(&calls).Where("agent_id = ?", agentID).
+		ApplyQueryBuilder(scope.where).Order("started_at DESC").Limit(20).Scan(ctx)
+	if err != nil {
+		return Call{}, fmt.Errorf("store: call by agent: %w", err)
+	}
+	switch customers(calls, func(c Call) string { return c.CustomerID }) {
+	case 0:
+		return Call{}, unknownCall(agentID)
+	case 1:
+		return calls[0], nil
+	}
+	return Call{}, ErrAmbiguousHook
+}
+
+func customers[T any](rows []T, of func(T) string) int {
+	seen := map[string]bool{}
+	for _, row := range rows {
+		seen[of(row)] = true
+	}
+	return len(seen)
+}
+
+// deliveryKeptFor is how long a delivery is remembered, which is longer than Stream retries.
+const deliveryKeptFor = 24 * time.Hour
+
+// deliveriesPrunedEvery is how often deliveries older than a day are forgotten, which is
+// rarely enough that a busy hook does not pay for it on every delivery.
+const deliveriesPrunedEvery = time.Minute
+
+// FirstDelivery records a hook delivery and reports whether it is the first with that key.
+func (s *Store) FirstDelivery(ctx context.Context, key string) (bool, error) {
+	now := time.Now().UTC()
+	if last := s.deliveriesPruned.Load(); now.UnixNano()-last >= int64(deliveriesPrunedEvery) &&
+		s.deliveriesPruned.CompareAndSwap(last, now.UnixNano()) {
+		if _, err := s.db.ExecContext(ctx, "DELETE FROM hook_deliveries WHERE seen_at < ?", now.Add(-deliveryKeptFor)); err != nil {
+			return false, fmt.Errorf("store: forget hook deliveries: %w", err)
+		}
+	}
+	result, err := s.db.ExecContext(ctx,
+		"INSERT INTO hook_deliveries (key, seen_at) VALUES (?, now()) ON CONFLICT (key) DO NOTHING", key)
+	if err != nil {
+		return false, fmt.Errorf("store: record hook delivery: %w", err)
+	}
+	inserted, _ := result.RowsAffected()
+	return inserted == 1, nil
+}

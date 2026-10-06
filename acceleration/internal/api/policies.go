@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -25,11 +26,12 @@ var (
 // Policy is what an organization or an app decided about spend, data handling, prompt
 // injection, which models may be used and how usage is labelled.
 type Policy struct {
-	Budget          *Budget           `json:"budget,omitempty"`
-	DataPolicy      *DataPolicy       `json:"data_policy,omitempty"`
-	PromptInjection *bool             `json:"prompt_injection,omitempty" doc:"Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on."`
-	AllowedModels   *[]string         `json:"allowed_models,omitempty" example:"[\"deepseek/DeepSeek-V4-Flash-0731\"]" doc:"The only models requests may be routed to, as provider/model names, in every modality. Left out allows every model, and an empty list allows none. A request that could only go to models not on the list is refused, and a failover never reaches one."`
-	Tags            map[string]string `json:"tags,omitempty" example:"{\"application\":\"support\"}" doc:"Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags."`
+	Budget              *Budget           `json:"budget,omitempty"`
+	DataPolicy          *DataPolicy       `json:"data_policy,omitempty"`
+	PromptInjection     *bool             `json:"prompt_injection,omitempty" doc:"Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on."`
+	AllowedModels       *[]string         `json:"allowed_models,omitempty" example:"[\"deepseek/DeepSeek-V4-Flash-0731\"]" doc:"The only models requests may be routed to, as provider/model names, in every modality. Left out allows every model, and an empty list allows none. A request that could only go to models not on the list is refused, and a failover never reaches one."`
+	Tags                map[string]string `json:"tags,omitempty" example:"{\"application\":\"support\"}" doc:"Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags."`
+	RequireOwnStreamApp *bool             `json:"require_own_stream_app,omitempty" doc:"Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused."`
 }
 
 func (*Policy) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -204,10 +206,27 @@ func (s *Server) updateOrganizationPolicy(ctx context.Context, request *policyRe
 // savePolicy validates and stores a policy, and returns it as it now reads.
 func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id string, sent Policy) (Policy, error) {
 	document := store.PolicyDocument{
-		DataPolicy:      dataPolicyOf(sent.DataPolicy),
-		PromptInjection: sent.PromptInjection,
-		AllowedModels:   sent.AllowedModels,
-		Tags:            sent.Tags,
+		DataPolicy:          dataPolicyOf(sent.DataPolicy),
+		PromptInjection:     sent.PromptInjection,
+		AllowedModels:       sent.AllowedModels,
+		Tags:                sent.Tags,
+		RequireOwnStreamApp: sent.RequireOwnStreamApp,
+	}
+	// Any app's backend can write its organization's policy, so the one setting that keeps
+	// every app of an organization out of the shared Stream app is the operator's alone. It
+	// is never written over HTTP, and the store keeps it as it was. Sending back what was
+	// read is fine, so a policy read and written again round-trips; changing it is refused.
+	if scope == store.ScopeOrganization {
+		if sent.RequireOwnStreamApp != nil {
+			existing, err := s.store.Policy(ctx, scope, id)
+			if err != nil {
+				return Policy{}, err
+			}
+			if *sent.RequireOwnStreamApp != value(existing.RequireOwnStreamApp) {
+				return Policy{}, errors.New("an organization's require_own_stream_app is set by the router's operator")
+			}
+		}
+		document.RequireOwnStreamApp = nil
 	}
 	if !document.DataPolicy.Valid() {
 		return Policy{}, stack.Wrap(fmt.Errorf("retention is none or a duration such as 30d, not %q",
@@ -244,10 +263,11 @@ func (s *Server) policyOf(ctx context.Context, scope store.PolicyScope, id strin
 		return Policy{}, err
 	}
 	policy := Policy{
-		DataPolicy:      dataPolicyFor(document.DataPolicy),
-		PromptInjection: document.PromptInjection,
-		AllowedModels:   document.AllowedModels,
-		Tags:            document.Tags,
+		DataPolicy:          dataPolicyFor(document.DataPolicy),
+		PromptInjection:     document.PromptInjection,
+		AllowedModels:       document.AllowedModels,
+		Tags:                document.Tags,
+		RequireOwnStreamApp: document.RequireOwnStreamApp,
 	}
 	if document.Budget != nil {
 		spent, resets, err := s.policies.Spent(ctx, scope, id, *document.Budget)

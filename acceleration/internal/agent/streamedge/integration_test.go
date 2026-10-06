@@ -46,7 +46,8 @@ func (s *StreamEdgeIntegrationSuite) SetupTest() {
 
 // join puts one participant in the test's call.
 func (s *StreamEdgeIntegrationSuite) join(userID string) *Edge {
-	edge, err := New(Options{CallID: s.callID, User: User{ID: userID, Name: userID}})
+	edge, err := New(Options{CallID: s.callID, User: User{ID: userID, Name: userID},
+		APIKey: os.Getenv("STREAM_API_KEY"), APISecret: os.Getenv("STREAM_API_SECRET")})
 	s.Require().NoError(err)
 	s.Require().NoError(edge.Join(s.ctx))
 	s.T().Cleanup(func() { _ = edge.Leave() })

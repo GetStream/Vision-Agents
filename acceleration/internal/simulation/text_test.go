@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
@@ -237,7 +238,7 @@ func (s *TextSuite) SetupTest() {
 		LLM: reasoner, STT: transcriber, TTS: speaker, Logger: logger,
 		// A conversation in writing joins nothing, so this is never reached. It is here
 		// because a manager insists on knowing how it would have joined.
-		Edge: func(session.Spec, *slog.Logger) (agent.Edge, error) {
+		Edge: func(context.Context, session.Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
 			return nil, errors.New("there is no call to join")
 		},
 	})

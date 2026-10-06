@@ -13,6 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -107,6 +108,9 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	spec.CallerKind = KindFrom(ctx)
 
 	created, err := s.sessions.Create(ctx, spec)
+	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
+		return nil, err
+	}
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}

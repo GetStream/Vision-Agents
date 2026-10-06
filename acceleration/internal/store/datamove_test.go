@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 	"github.com/uptrace/bun/driver/pgdriver"
 
@@ -89,6 +90,7 @@ func (s *DataMoveSuite) SetupTest() {
 	for _, store := range []*Store{s.source, s.destination} {
 		_, err := store.DB().ExecContext(s.ctx, "TRUNCATE "+tables+" CASCADE")
 		s.Require().NoError(err)
+		store.SetStreamPins(StreamPins{})
 	}
 }
 
@@ -279,7 +281,8 @@ func (s *DataMoveSuite) TestADeleteIsReplayedToo() {
 // config without being named anywhere.
 func (s *DataMoveSuite) TestAConfigsBindingsMoveWithIt() {
 	config := &AgentConfig{CustomerID: "acme", Name: "bound", Connectors: []ConnectorBinding{{
-		Name: "crm", ConnectorID: "slack", Connection: ConnectionBinding{Type: "fixed", ConnectionID: "connection-1"},
+		// Per session: a fixed binding needs a live connection of the source's to be stored.
+		Name: "crm", ConnectorID: "slack", Connection: ConnectionBinding{Type: "session"},
 		Tools: []ToolGrant{{Name: "search", SchemaDigest: strings.Repeat("a", 64)}}, Required: true,
 	}}}
 	s.Require().NoError(s.source.CreateAgentConfig(s.ctx, config))
@@ -422,6 +425,159 @@ func (s *DataMoveSuite) seedPluginConnection(store *Store, customerID, token str
 		id, customerID, newID(), "slack", token)
 	s.Require().NoError(err)
 	return id
+}
+
+// pinnedSession is a session row on the source, pinned to the app given; zero leaves it
+// unpinned, as everything written before pins was.
+func (s *DataMoveSuite) pinnedSession(customerID string, app int64) string {
+	id := uuid.NewString()
+	s.Require().NoError(s.source.SaveSession(s.ctx, &AgentSession{
+		ID: id, CustomerID: customerID, StreamAppPK: app, AgentID: "agent", UserID: "user",
+	}))
+	return id
+}
+
+// pinOnDestination is the pin a moved session arrived with, nil for none.
+func (s *DataMoveSuite) pinOnDestination(id string) *int64 {
+	var pin *int64
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+		"SELECT stream_app_pk FROM agent_sessions WHERE id = ?", id).Scan(&pin))
+	return pin
+}
+
+func (s *DataMoveSuite) TestAnImportedRowCannotChooseItsStreamApp() {
+	// A pin decides which app a row's work is finished in, so an import may name only the
+	// app its customer acts in on this side.
+	s.destination.SetStreamPins(StreamPins{For: func(context.Context, string) (int64, error) { return 4242, nil }})
+	own, other, unpinned := s.pinnedSession("acme", 4242), s.pinnedSession("acme", 999), s.pinnedSession("acme", 0)
+
+	s.move("acme", "acme")
+
+	s.Equal(int64(4242), *s.pinOnDestination(own))
+	s.Equal(ForeignStreamApp, *s.pinOnDestination(other))
+	s.Equal(ForeignStreamApp, *s.pinOnDestination(unpinned), "an unpinned row was in somebody's deployment app, not this customer's")
+}
+
+func (s *DataMoveSuite) TestAnExportNamesTheAppANullPinMeant() {
+	// NULL is the app of whichever deployment wrote it, which means nothing elsewhere.
+	s.source.SetStreamPins(StreamPins{Deployment: func() int64 { return 1 }})
+	id := s.pinnedSession("acme", 0)
+
+	rows := s.export("acme").of("agent_sessions")
+
+	s.Require().Len(rows, 1)
+	s.Equal(id, rows[0]["id"])
+	s.EqualValues(1, rows[0]["stream_app_pk"])
+}
+
+func (s *DataMoveSuite) TestAMoveWithinOneDeploymentAppKeepsItsPins() {
+	// Both sides act in the same deployment app, so what it wrote stays its.
+	s.source.SetStreamPins(StreamPins{Deployment: func() int64 { return 1 }})
+	s.destination.SetStreamPins(StreamPins{Deployment: func() int64 { return 1 }})
+	id := s.pinnedSession("acme", 0)
+
+	s.move("acme", "acme")
+
+	s.Require().NotNil(s.pinOnDestination(id))
+	s.Equal(int64(1), *s.pinOnDestination(id))
+}
+
+func (s *DataMoveSuite) TestAMoveBetweenDeploymentsThatNeverPinnedLeavesRowsUnpinned() {
+	id := s.pinnedSession("acme", 0)
+
+	s.move("acme", "acme")
+
+	s.Nil(s.pinOnDestination(id), "every move before pins existed worked this way")
+}
+
+func (s *DataMoveSuite) TestARowPinnedWhileThisDeploymentsAppIsUnknownWaits() {
+	// The source knows its app and says so on every row. Until this side knows its own,
+	// it cannot tell that row's app from somebody else's, and calling it foreign would
+	// park it for good.
+	s.source.SetStreamPins(StreamPins{Deployment: func() int64 { return 1 }})
+	id := s.pinnedSession("acme", 0)
+	rows := s.export("acme").of("agent_sessions")
+	s.Require().Len(rows, 1)
+	encoded, err := json.Marshal(rows[0])
+	s.Require().NoError(err)
+
+	s.destination.SetStreamPins(StreamPins{Knowable: func() bool { return true }})
+	err = s.destination.ImportRow(s.ctx, "acme", "agent_sessions", encoded)
+	s.Require().ErrorIs(err, ErrStreamAppUnknown)
+
+	s.destination.SetStreamPins(StreamPins{Deployment: func() int64 { return 1 }})
+	s.Require().NoError(s.destination.ImportRow(s.ctx, "acme", "agent_sessions", encoded))
+	s.Require().NotNil(s.pinOnDestination(id))
+	s.Equal(int64(1), *s.pinOnDestination(id))
+}
+
+func (s *DataMoveSuite) TestStreamAppsAreNeverExported() {
+	// A sealed key opens only under the keyring that sealed it, and registering an app is
+	// done again where the customer moves to.
+	_, err := s.source.DB().ExecContext(s.ctx, "TRUNCATE stream_apps CASCADE")
+	s.Require().NoError(err)
+	_, err = s.source.PutStreamApp(s.ctx, StreamAppRegistration{
+		CustomerID: "acme", StreamAppPK: 4242, PrimaryKey: "own-key", VerifiedAt: time.Now(),
+		Keys: []StreamAppKey{{APIKey: "own-key", Sealed: []byte("sealed"), KEKVersion: 1}},
+	})
+	s.Require().NoError(err)
+	s.pinnedSession("acme", 0)
+
+	exported := s.export("acme")
+
+	s.NotEmpty(exported.of("agent_sessions"))
+	s.Empty(exported.of("stream_apps"))
+	s.Empty(exported.of("stream_app_keys"))
+	s.NotContains(DataTables(), "stream_apps")
+	s.NotContains(DataTables(), "stream_app_keys")
+}
+
+func (s *DataMoveSuite) TestStreamAppsRecordNoDataChanges() {
+	_, err := s.source.DB().ExecContext(s.ctx, "TRUNCATE stream_apps CASCADE")
+	s.Require().NoError(err)
+	s.capture("acme")
+
+	_, err = s.source.PutStreamApp(s.ctx, StreamAppRegistration{
+		CustomerID: "acme", StreamAppPK: 4242, PrimaryKey: "own-key", VerifiedAt: time.Now(),
+		Keys: []StreamAppKey{{APIKey: "own-key", Sealed: []byte("sealed"), KEKVersion: 1}},
+	})
+	s.Require().NoError(err)
+
+	var recorded int
+	s.Require().NoError(s.source.DB().QueryRowContext(s.ctx,
+		"SELECT count(*) FROM data_changes WHERE table_name IN ('stream_apps', 'stream_app_keys')").Scan(&recorded))
+	s.Zero(recorded)
+}
+
+func (s *DataMoveSuite) TestBackfillPinsTheDeploymentAppsRows() {
+	unpinned, own := s.pinnedSession("acme", 0), s.pinnedSession("acme", 4242)
+
+	pinned, err := s.source.BackfillStreamPins(s.ctx, 1)
+
+	s.Require().NoError(err)
+	s.GreaterOrEqual(pinned["agent_sessions"], int64(1))
+	for id, want := range map[string]int64{unpinned: 1, own: 4242} {
+		var pin int64
+		s.Require().NoError(s.source.DB().QueryRowContext(s.ctx,
+			"SELECT stream_app_pk FROM agent_sessions WHERE id = ?", id).Scan(&pin))
+		s.Equal(want, pin, "a row already pinned keeps its app")
+	}
+	_, err = s.source.BackfillStreamPins(s.ctx, 0)
+	s.Error(err, "an unknown deployment app pins nothing")
+}
+
+func (s *DataMoveSuite) TestADeploymentThatCanNeverKnowItsAppParksAPinnedRow() {
+	// With no Stream key to ask with, waiting would be waiting for ever.
+	s.source.SetStreamPins(StreamPins{Deployment: func() int64 { return 1 }})
+	id := s.pinnedSession("acme", 0)
+	rows := s.export("acme").of("agent_sessions")
+	s.Require().Len(rows, 1)
+	encoded, err := json.Marshal(rows[0])
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.destination.ImportRow(s.ctx, "acme", "agent_sessions", encoded))
+
+	s.Equal(ForeignStreamApp, *s.pinOnDestination(id))
 }
 
 func (s *DataMoveSuite) TestAMovedConnectorConnectionArrivesNeedingReauthorization() {

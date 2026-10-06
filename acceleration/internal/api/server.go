@@ -20,6 +20,7 @@ import (
 	"net/netip"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -34,8 +35,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -53,6 +54,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/users"
@@ -130,9 +132,19 @@ type Options struct {
 	// Streams serves the per-modality sockets, for callers running their own pipeline.
 	// Absent when the deployment routes nothing itself.
 	Streams *Streams
-	// Transcripts reads back what was said on a call. Absent when the deployment has no
-	// chat credentials, in which case nothing was written down to read.
-	Transcripts *chatlog.Reader
+	// Stream resolves which Stream app, and which credential, the router acts in for each
+	// customer: tokens, guests and the transcripts read back. Absent when the deployment
+	// has no Stream app at all, in which case those paths say so.
+	Stream *streamapp.Clients
+	// ProxyDeclaresKind is auth.proxy_declares_kind: the proxy in front says which kind of
+	// caller it verified. Registering a Stream app behind a proxy needs it, since without
+	// it every caller passes as a backend.
+	ProxyDeclaresKind bool
+	// TrustAPIKeyHeader lets X-Stream-Api-Key choose which of the calling app's registered
+	// keys mints its tokens.
+	TrustAPIKeyHeader bool
+	// DenyRegistration are Stream app ids that may never be registered.
+	DenyRegistration []string
 	// Campaigns rings lists of people. Absent without telephony or sessions, in which
 	// case a campaign can be written down but not run.
 	Campaigns *campaign.Runner
@@ -175,13 +187,10 @@ type Options struct {
 	// meant to answer a phone, in which case the dispatch socket says so rather than
 	// accepting a worker whose calls would never arrive.
 	Dispatch *dispatch.Pool
-	// StreamSecret signs the call events Stream sends. Without it the webhook refuses
-	// every request, because an unsigned webhook is anyone who found the URL. It also
-	// mints the tokens a browser joins a call with, which is why it never leaves here.
-	StreamSecret string
-	// StreamKey names the Stream app those tokens are for. A browser needs it to join,
-	// so unlike the secret it is meant to be handed out.
-	StreamKey string
+	// HookSecret is the deployment app's secret, which signs the events Stream sends to
+	// the hooks. Without it the hooks refuse every request, because an unsigned hook is
+	// anyone who found the URL.
+	HookSecret string
 	// CORSOrigins are the browser origins allowed to call this API directly, which is
 	// what a dashboard talking to the router without a proxy in between needs. Empty
 	// means no browser may, which is right for a deployment only servers reach.
@@ -219,6 +228,9 @@ type Options struct {
 	// Connectors holds the adapters connectors are built from. A custom connector may only
 	// name a scheme registered here, so with none registered every custom one is refused.
 	Connectors core.Registry
+	// ConnectorSecrets is the keyring connector consents and credentials are sealed under.
+	// Absent when connectors are off, in which case no consent can be started.
+	ConnectorSecrets *auth.Sealer
 	// TrustedProxies are the ranges this deployment's own proxies sit in, and they decide
 	// how much of X-Forwarded-For is believed when working out who a request is from.
 	// Empty means none of it is, and the connection's own address is used.
@@ -231,44 +243,52 @@ type Options struct {
 
 // Server serves the router's HTTP API.
 type Server struct {
-	routers       map[routing.Modality]routing.Inspector
-	store         *store.Store
-	configs       *appconfig.Store
-	users         *users.Recorder
-	live          *live.Client
-	phone         *phone.Service
-	sessions      *session.Manager
-	relayed       *relayed
-	directory     *node.Directory
-	forwarder     *node.Forwarder
-	streams       *Streams
-	transcripts   *chatlog.Reader
-	campaigns     *campaign.Runner
-	simulations   *simulation.Runner
-	knowledge     knowledge.Writer
-	pages         *urls.Service
-	voices        *voices.Service
-	library       *voices.Catalogue
-	dispatch      *dispatch.Pool
-	secrets       *auth.Sealer
-	streamSecret  string
-	streamKey     string
-	corsOrigins   []string
-	publicURL     string
-	dashboardURL  string
-	oauth         *plugins.Auth
-	pluginEvents  *pluginevents.Service
-	channels      *channels.Service
-	dlc           *dlc.Service
-	gate          *dlc.Gate
-	opsKey        string
-	authenticator auth.Authenticator
-	authMode      auth.Mode
-	dataRetention time.Duration
-	quota         *quota.Limiter
-	policies      *policy.Enforcer
-	connectors    core.Registry
-	trusted       []netip.Prefix
+	routers   map[routing.Modality]routing.Inspector
+	store     *store.Store
+	configs   *appconfig.Store
+	users     *users.Recorder
+	live      *live.Client
+	phone     *phone.Service
+	sessions  *session.Manager
+	relayed   *relayed
+	directory *node.Directory
+	forwarder *node.Forwarder
+	streams   *Streams
+	stream    *streamapp.Clients
+	// touched is when each key was last recorded as signing a hook.
+	touched           sync.Map
+	proxyDeclaresKind bool
+	trustAPIKeyHeader bool
+	denyRegistration  []string
+	hookSecret        string
+	campaigns         *campaign.Runner
+	simulations       *simulation.Runner
+	knowledge         knowledge.Writer
+	pages             *urls.Service
+	voices            *voices.Service
+	library           *voices.Catalogue
+	dispatch          *dispatch.Pool
+	secrets           *auth.Sealer
+	corsOrigins       []string
+	publicURL         string
+	dashboardURL      string
+	oauth             *plugins.Auth
+	pluginEvents      *pluginevents.Service
+	channels          *channels.Service
+	dlc               *dlc.Service
+	gate              *dlc.Gate
+	opsKey            string
+	authenticator     auth.Authenticator
+	authMode          auth.Mode
+	dataRetention     time.Duration
+	quota             *quota.Limiter
+	policies          *policy.Enforcer
+	connectors        core.Registry
+	// connectorSecrets seals consent attempts; credentials stores what a consent got. Both
+	// are nil when connectors are off.
+	connectorSecrets *auth.Sealer
+	credentials      core.CredentialStore
+	trusted          []netip.Prefix
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
 	serverSide *http.ServeMux
@@ -347,37 +367,39 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		}
 	}
 	server := &Server{
-		routers:       options.Routers,
-		store:         options.Store,
-		configs:       configs,
-		users:         recorder,
-		live:          options.Live,
-		phone:         options.Phone,
-		sessions:      options.Sessions,
-		directory:     options.Directory,
-		streams:       options.Streams,
-		transcripts:   options.Transcripts,
-		campaigns:     options.Campaigns,
-		simulations:   options.Simulations,
-		knowledge:     options.Knowledge,
-		pages:         options.KnowledgeURLs,
-		voices:        options.Voices,
-		library:       options.VoiceLibrary,
-		dispatch:      options.Dispatch,
-		secrets:       options.Secrets,
-		streamSecret:  options.StreamSecret,
-		streamKey:     options.StreamKey,
-		corsOrigins:   options.CORSOrigins,
-		publicURL:     options.PublicURL,
-		dashboardURL:  options.DashboardURL,
-		authenticator: authenticator,
-		authMode:      authMode,
-		dataRetention: retention,
-		quota:         options.Quota,
-		policies:      options.Policies,
-		connectors:    options.Connectors,
-		trusted:       options.TrustedProxies,
-		upgrader:      newUpgrader(options.CORSOrigins),
+		routers:           options.Routers,
+		store:             options.Store,
+		configs:           configs,
+		users:             recorder,
+		live:              options.Live,
+		phone:             options.Phone,
+		sessions:          options.Sessions,
+		directory:         options.Directory,
+		streams:           options.Streams,
+		stream:            options.Stream,
+		proxyDeclaresKind: options.ProxyDeclaresKind,
+		trustAPIKeyHeader: options.TrustAPIKeyHeader,
+		denyRegistration:  options.DenyRegistration,
+		hookSecret:        options.HookSecret,
+		campaigns:         options.Campaigns,
+		simulations:       options.Simulations,
+		knowledge:         options.Knowledge,
+		pages:             options.KnowledgeURLs,
+		voices:            options.Voices,
+		library:           options.VoiceLibrary,
+		dispatch:          options.Dispatch,
+		secrets:           options.Secrets,
+		corsOrigins:       options.CORSOrigins,
+		publicURL:         options.PublicURL,
+		dashboardURL:      options.DashboardURL,
+		authenticator:     authenticator,
+		authMode:          authMode,
+		dataRetention:     retention,
+		quota:             options.Quota,
+		policies:          options.Policies,
+		connectors:        options.Connectors,
+		trusted:           options.TrustedProxies,
+		upgrader:          newUpgrader(options.CORSOrigins),
 		oauth: &plugins.Auth{
 			HTTP:         options.PluginHTTP,
 			PublicURL:    options.PublicURL,
@@ -390,6 +412,13 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		opsKey:       options.OpsKey,
 		popularity:   newPopularity(options.Store, logger),
 		logger:       logger,
+	}
+	if options.Store != nil && options.ConnectorSecrets != nil {
+		credentials, err := pgsealed.New(options.Store, options.ConnectorSecrets)
+		if err != nil {
+			return nil, err
+		}
+		server.connectorSecrets, server.credentials = options.ConnectorSecrets, credentials
 	}
 	serverSide, err := serverSideRoutes(server.newAPI(chi.NewRouter()).OpenAPI())
 	if err != nil {
@@ -440,8 +469,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
+	mux.HandleFunc("POST "+phone.CallHookPath+"/{app}", s.receiveCallEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
+	mux.HandleFunc("POST "+chat.MessageHookPath+"/{app}", s.receiveMessageEvent)
 	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
+	mux.HandleFunc("GET "+connectorLaunchPath+"{id}", s.serveConnectorLaunch)
+	mux.HandleFunc("POST "+connectorLaunchPath+"{id}", s.handOffConnectorLaunch)
+	mux.HandleFunc("GET "+ConnectorCallbackPath, s.finishConnectorConsent)
+	mux.HandleFunc("GET "+ConnectorClientMetadataPath, s.serveConnectorClientMetadata)
 	mux.HandleFunc("GET /v1/agents/plugins/{plugin_id}/logo", s.servePluginLogo)
 	mux.HandleFunc("POST "+plugins.EventsPath+"{token}", s.receivePluginEvent)
 	mux.HandleFunc("GET "+channels.HookPath+"{token}", s.receiveChannelMessage)
@@ -464,11 +499,7 @@ func (s *Server) Handler() http.Handler {
 	// WaitForDelivery is false because most of what is served here is a long-
 	// lived socket; blocking the handler's return on event delivery would hold
 	// the connection open past its use. The flush in cmd/router covers shutdown.
-	instrumented := sentryhttp.New(sentryhttp.Options{
-		Repanic:         false,
-		WaitForDelivery: false,
-	})
-	served := instrumented.Handle(withRequestID(withTrace(withTiming(withCORS(s.corsOrigins,
+	served := withSentry(withRequestID(withTrace(withTiming(withCORS(s.corsOrigins,
 		s.onOwningNode(s.withCustomer(s.withRequestLog(s.withQuota(s.withServerSide(handler))))))))))
 	if s.directory == nil {
 		return served
@@ -476,6 +507,23 @@ func (s *Server) Handler() http.Handler {
 	// Peers reach this node on the same port its callers do, so what they forward is
 	// served beside everything else rather than on a listener of its own.
 	return node.Serve(served)
+}
+
+// withSentry reports what goes wrong serving a request to Sentry, except a request
+// carrying an app's Stream secrets: Sentry copies the body it is handed, and a secret in an
+// error report is a secret leaked.
+func withSentry(handler http.Handler) http.Handler {
+	instrumented := sentryhttp.New(sentryhttp.Options{
+		Repanic:         false,
+		WaitForDelivery: false,
+	}).Handle(handler)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, streamCredentialsPath) {
+			handler.ServeHTTP(w, r)
+			return
+		}
+		instrumented.ServeHTTP(w, r)
+	})
 }
 
 // withTiming reports how long the server itself spent, so a caller timing a call can tell
@@ -814,6 +862,13 @@ var errServerSideOnly = APIError{
 // withQuota looks at whether the caller is server-side rather than at whether there is one.
 func (s *Server) withCustomer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Stream is not a customer, and a delivery is authenticated by its signature. Who a
+		// request to a hook claims to be is not read, so it cannot name a tenant or record
+		// one under an organization.
+		if isHook(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		ctx, span := tracer.Start(r.Context(), "auth.authenticate")
 		principal, err := s.authenticator.Authenticate(ctx, r)
 		span.End()
@@ -829,6 +884,9 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 			ctx = context.WithValue(ctx, organizationContextKey{}, principal.OrganizationID)
 			ctx = context.WithValue(ctx, serverSideContextKey{}, principal.ServerSide)
 			ctx = context.WithValue(ctx, kindContextKey{}, principal.Kind)
+			if s.trustAPIKeyHeader {
+				ctx = context.WithValue(ctx, mintingKeyContextKey{}, strings.TrimSpace(r.Header.Get(mintingKeyHeader)))
+			}
 			ctx = context.WithValue(ctx, callerContextKey{}, routing.Caller{
 				UserID: principal.UserID,
 				IP:     clientIP(r, s.trusted),

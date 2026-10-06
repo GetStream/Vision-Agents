@@ -170,6 +170,24 @@ func (e AgentResponseItemKind) Valid() bool {
 	}
 }
 
+// Defines values for AuthorizationKind.
+const (
+	Consent   AuthorizationKind = "consent"
+	Reconnect AuthorizationKind = "reconnect"
+)
+
+// Valid indicates whether the value is a known member of the AuthorizationKind enum.
+func (e AuthorizationKind) Valid() bool {
+	switch e {
+	case Consent:
+		return true
+	case Reconnect:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for BudgetInterval.
 const (
 	BudgetIntervalDaily   BudgetInterval = "daily"
@@ -1216,19 +1234,19 @@ func (e RecordingStatus) Valid() bool {
 
 // Defines values for ReviewActor.
 const (
-	App    ReviewActor = "app"
-	Staff  ReviewActor = "staff"
-	Vendor ReviewActor = "vendor"
+	ReviewActorApp    ReviewActor = "app"
+	ReviewActorStaff  ReviewActor = "staff"
+	ReviewActorVendor ReviewActor = "vendor"
 )
 
 // Valid indicates whether the value is a known member of the ReviewActor enum.
 func (e ReviewActor) Valid() bool {
 	switch e {
-	case App:
+	case ReviewActorApp:
 		return true
-	case Staff:
+	case ReviewActorStaff:
 		return true
-	case Vendor:
+	case ReviewActorVendor:
 		return true
 	default:
 		return false
@@ -1637,6 +1655,129 @@ func (e SimulationRunState) Valid() bool {
 	case SimulationRunStatePassed:
 		return true
 	case SimulationRunStateRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StreamAppState.
+const (
+	StreamAppStateBlocked      StreamAppState = "blocked"
+	StreamAppStateConnected    StreamAppState = "connected"
+	StreamAppStateDisconnected StreamAppState = "disconnected"
+)
+
+// Valid indicates whether the value is a known member of the StreamAppState enum.
+func (e StreamAppState) Valid() bool {
+	switch e {
+	case StreamAppStateBlocked:
+		return true
+	case StreamAppStateConnected:
+		return true
+	case StreamAppStateDisconnected:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StreamKeyStateSignsWebhooks.
+const (
+	StreamKeyStateSignsWebhooksNo      StreamKeyStateSignsWebhooks = "no"
+	StreamKeyStateSignsWebhooksUnknown StreamKeyStateSignsWebhooks = "unknown"
+	StreamKeyStateSignsWebhooksYes     StreamKeyStateSignsWebhooks = "yes"
+)
+
+// Valid indicates whether the value is a known member of the StreamKeyStateSignsWebhooks enum.
+func (e StreamKeyStateSignsWebhooks) Valid() bool {
+	switch e {
+	case StreamKeyStateSignsWebhooksNo:
+		return true
+	case StreamKeyStateSignsWebhooksUnknown:
+		return true
+	case StreamKeyStateSignsWebhooksYes:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StreamKeyStateStatus.
+const (
+	StreamKeyStateStatusActive   StreamKeyStateStatus = "active"
+	StreamKeyStateStatusRejected StreamKeyStateStatus = "rejected"
+)
+
+// Valid indicates whether the value is a known member of the StreamKeyStateStatus enum.
+func (e StreamKeyStateStatus) Valid() bool {
+	switch e {
+	case StreamKeyStateStatusActive:
+		return true
+	case StreamKeyStateStatusRejected:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StreamTenancy.
+const (
+	StreamTenancyApp        StreamTenancy = "app"
+	StreamTenancyDeployment StreamTenancy = "deployment"
+)
+
+// Valid indicates whether the value is a known member of the StreamTenancy enum.
+func (e StreamTenancy) Valid() bool {
+	switch e {
+	case StreamTenancyApp:
+		return true
+	case StreamTenancyDeployment:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StreamTypeState.
+const (
+	StreamTypeStateMissing StreamTypeState = "missing"
+	StreamTypeStatePresent StreamTypeState = "present"
+	StreamTypeStateUnknown StreamTypeState = "unknown"
+	StreamTypeStateUnsafe  StreamTypeState = "unsafe"
+)
+
+// Valid indicates whether the value is a known member of the StreamTypeState enum.
+func (e StreamTypeState) Valid() bool {
+	switch e {
+	case StreamTypeStateMissing:
+		return true
+	case StreamTypeStatePresent:
+		return true
+	case StreamTypeStateUnknown:
+		return true
+	case StreamTypeStateUnsafe:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StreamWritesInto.
+const (
+	DeploymentApp StreamWritesInto = "deployment_app"
+	Nowhere       StreamWritesInto = "nowhere"
+	ThisApp       StreamWritesInto = "this_app"
+)
+
+// Valid indicates whether the value is a known member of the StreamWritesInto enum.
+func (e StreamWritesInto) Valid() bool {
+	switch e {
+	case DeploymentApp:
+		return true
+	case Nowhere:
+		return true
+	case ThisApp:
 		return true
 	default:
 		return false
@@ -2291,6 +2432,12 @@ type AgentResponsePage struct {
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
+// AppSettings What the router does for the calling app. It never carries a secret.
+type AppSettings struct {
+	// Stream Which Stream app the router writes the calling app's conversations, transcripts, calls and phone lines into, and whether that app holds the types they need.
+	Stream StreamSettings `json:"stream"`
+}
+
 // AttachNumberRequest defines model for AttachNumberRequest.
 type AttachNumberRequest struct {
 	// AllowedIps The vendor's signalling addresses, as IPs or CIDR blocks.
@@ -2311,6 +2458,27 @@ type AttachedNumber struct {
 	SipUri  string `json:"sip_uri"`
 	TrunkId string `json:"trunk_id"`
 }
+
+// Authorization A consent in flight for one connection: the page that starts it in a browser and the token that binds it to that browser.
+type Authorization struct {
+	// ExpiresAt When the attempt ends, 10 minutes after it began. A callback after that is refused.
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// HandoffToken Handed to the launch page by postMessage, never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused.
+	HandoffToken string `json:"handoff_token"`
+
+	// Id The attempt.
+	Id string `json:"id"`
+
+	// Kind consent for a connection no account was connected to yet, reconnect for one that has been connected before, which must come back with the same provider account.
+	Kind AuthorizationKind `json:"kind"`
+
+	// LaunchUrl The router's page to open in a popup from the dashboard. It asks the opener for handoff_token and then sends the browser to the provider.
+	LaunchUrl string `json:"launch_url"`
+}
+
+// AuthorizationKind consent for a connection no account was connected to yet, reconnect for one that has been connected before, which must come back with the same provider account.
+type AuthorizationKind string
 
 // AuthorizePluginRequest defines model for AuthorizePluginRequest.
 type AuthorizePluginRequest struct {
@@ -4098,6 +4266,9 @@ type Policy struct {
 	// PromptInjection Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
 
+	// RequireOwnStreamApp Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused.
+	RequireOwnStreamApp *bool `json:"require_own_stream_app,omitempty"`
+
 	// Tags Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags.
 	//
 	// Example: {"application":"support"}
@@ -5082,6 +5253,119 @@ type StatsBucket struct {
 	// Uptime Successes over total requests in the bucket.
 	Uptime *float64 `json:"uptime,omitempty"`
 }
+
+// StreamAppState Whether the router acts in a registered app. disconnected is one the app took back, and blocked one Stream suspended or that stopped checking tokens. Neither is ever written into the router's own app instead.
+type StreamAppState string
+
+// StreamCheck defines model for StreamCheck.
+type StreamCheck struct {
+	Reattach *[]string `json:"reattach"`
+
+	// Settings What the router does for the calling app. It never carries a secret.
+	Settings AppSettings `json:"settings"`
+}
+
+// StreamCredentials The keys the router acts in the calling app's own Stream app with. Secrets are written and never read back: no answer carries one.
+type StreamCredentials struct {
+	// AllowGuests Whether guests may be made in the app. Left out keeps what was set, which starts off false.
+	AllowGuests *bool `json:"allow_guests,omitempty"`
+
+	// ExpectedRevision The revision last read, 0 for an app never registered. A write made against an older one is a 409.
+	ExpectedRevision int64 `json:"expected_revision"`
+
+	// Keys Every key the router may act in the app with, which replaces those it held. Each is checked with Stream. Empty disconnects the app, which needs a proof.
+	Keys *[]StreamKeyInput `json:"keys"`
+
+	// PrimaryKey The key tokens are minted with. Left out is the first.
+	PrimaryKey *string         `json:"primary_key,omitempty"`
+	Proof      *StreamKeyInput `json:"proof,omitempty"`
+}
+
+// StreamKeyInput defines model for StreamKeyInput.
+type StreamKeyInput struct {
+	ApiKey string `json:"api_key"`
+
+	// ApiSecret The key's secret. It is sealed and never read back.
+	ApiSecret *string `json:"api_secret,omitempty"`
+
+	// CreatedAt When Stream made the key, which says which key is the oldest and so signs the app's webhooks.
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+}
+
+// StreamKeyState defines model for StreamKeyState.
+type StreamKeyState struct {
+	ApiKey string `json:"api_key"`
+
+	// CreatedAt When Stream made the key.
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+
+	// LastWebhookAt When Stream last signed a hook with this key.
+	LastWebhookAt *time.Time `json:"last_webhook_at,omitempty"`
+
+	// SecretLast4 The end of the secret, enough to tell two apart.
+	SecretLast4 *string `json:"secret_last4,omitempty"`
+
+	// SignsWebhooks Whether Stream signs the app's hooks with this key, which is its oldest. yes is one a hook arrived signed with.
+	SignsWebhooks StreamKeyStateSignsWebhooks `json:"signs_webhooks"`
+
+	// Status rejected is a key Stream stopped accepting, which the router no longer uses.
+	Status     StreamKeyStateStatus `json:"status"`
+	VerifiedAt *time.Time           `json:"verified_at,omitempty"`
+}
+
+// StreamKeyStateSignsWebhooks Whether Stream signs the app's hooks with this key, which is its oldest. yes is one a hook arrived signed with.
+type StreamKeyStateSignsWebhooks string
+
+// StreamKeyStateStatus rejected is a key Stream stopped accepting, which the router no longer uses.
+type StreamKeyStateStatus string
+
+// StreamSettings Which Stream app the router writes the calling app's conversations, transcripts, calls and phone lines into, and whether that app holds the types they need.
+type StreamSettings struct {
+	// AllowGuests Whether guests may be made in the registered app.
+	AllowGuests *bool `json:"allow_guests,omitempty"`
+
+	// CallType Whether a Stream app holds a type the router needs. unknown is a type Stream could not be asked about.
+	CallType StreamTypeState `json:"call_type"`
+
+	// ChannelType Whether a Stream app holds a type the router needs. unknown is a type Stream could not be asked about.
+	ChannelType StreamTypeState `json:"channel_type"`
+
+	// CheckedAt When Stream was asked. Absent when it could not be, and the types are then unknown. Answers are reused for a minute.
+	CheckedAt *time.Time `json:"checked_at,omitempty"`
+
+	// Keys The registered app's keys, oldest first. No secret is ever read back.
+	Keys *[]StreamKeyState `json:"keys,omitempty"`
+
+	// PrimaryKey The key tokens are minted with.
+	PrimaryKey *string `json:"primary_key,omitempty"`
+
+	// Revision The registration's revision, 0 for an app that registered none. A write names the one it read.
+	Revision *int64 `json:"revision,omitempty"`
+
+	// State Whether the router acts in a registered app. disconnected is one the app took back, and blocked one Stream suspended or that stopped checking tokens. Neither is ever written into the router's own app instead.
+	State *StreamAppState `json:"state,omitempty"`
+
+	// StateReason Why the router stopped acting in the app, for one that is blocked.
+	StateReason *string `json:"state_reason,omitempty"`
+
+	// StreamAppId The registered app's own id.
+	StreamAppId *int64 `json:"stream_app_id,omitempty"`
+
+	// Tenancy Whose Stream app the router acts in. deployment is one app, the router's own, for every app it serves; app is each app's own.
+	Tenancy StreamTenancy `json:"tenancy"`
+
+	// WritesInto Which Stream app the calling app's work is written into: this_app is its own, deployment_app is the router's own app, shared with every app it serves that has none, and nowhere is no app at all, so conversations are not kept and calls cannot be made.
+	WritesInto StreamWritesInto `json:"writes_into"`
+}
+
+// StreamTenancy Whose Stream app the router acts in. deployment is one app, the router's own, for every app it serves; app is each app's own.
+type StreamTenancy string
+
+// StreamTypeState Whether a Stream app holds a type the router needs. unknown is a type Stream could not be asked about.
+type StreamTypeState string
+
+// StreamWritesInto Which Stream app the calling app's work is written into: this_app is its own, deployment_app is the router's own app, shared with every app it serves that has none, and nowhere is no app at all, so conversations are not kept and calls cannot be made.
+type StreamWritesInto string
 
 // StsOptions How this config holds a conversation with one native audio model, in place of a transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a term, and a request naming a term is routed to a model that declared it or refused, never served by one that ignores it.
 type StsOptions struct {
@@ -6104,6 +6388,14 @@ type ListConnectorsParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// FinishConnectorConsentParams defines parameters for FinishConnectorConsent.
+type FinishConnectorConsentParams struct {
+	State *string `form:"state,omitempty" json:"state,omitempty"`
+	Code  *string `form:"code,omitempty" json:"code,omitempty"`
+	Iss   *string `form:"iss,omitempty" json:"iss,omitempty"`
+	Error *string `form:"error,omitempty" json:"error,omitempty"`
+}
+
 // GetConversationCommandParams defines parameters for GetConversationCommand.
 type GetConversationCommandParams struct {
 	AgentId string `form:"agent_id" json:"agent_id"`
@@ -6551,6 +6843,9 @@ type UpdateRouterConfigJSONRequestBody = RouterConfigRequest
 // SearchJSONRequestBody defines body for Search for application/json ContentType.
 type SearchJSONRequestBody = SearchRequest
 
+// UpdateAppStreamCredentialsJSONRequestBody defines body for UpdateAppStreamCredentials for application/json ContentType.
+type UpdateAppStreamCredentialsJSONRequestBody = StreamCredentials
+
 // RunRollupJSONRequestBody defines body for RunRollup for application/json ContentType.
 type RunRollupJSONRequestBody = RollupRequest
 
@@ -6881,6 +7176,13 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
+
+	// GetConnectorClientMetadata The router's OAuth client metadata
+	//
+	// The OAuth Client ID Metadata Document a provider that supports it fetches, at the URL that is the router's client_id. Served only when ROUTER_PUBLIC_URL is https. Unauthenticated because the provider fetches it.
+	//
+	// Corresponds with GET /.well-known/oauth-client-metadata (the `GetConnectorClientMetadata` operationId).
+	GetConnectorClientMetadata(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetHealth Liveness and dependency check
 	//
@@ -7275,6 +7577,15 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/agents/connections/{id} (the `GetConnection` operationId).
 	GetConnection(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CreateAuthorization Start a consent
+	//
+	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with POST /v1/agents/connections/{id}/authorizations (the `CreateAuthorization` operationId).
+	CreateAuthorization(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListConnectors List or search connectors
 	//
 	// The built-ins first, then the app's own, each by id and at its newest revision. `q` keeps the ones whose id, name, category or description holds it.
@@ -7305,6 +7616,27 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/connectors (the `CreateConnector` operationId).
 	CreateConnector(ctx context.Context, body CreateConnectorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// FinishConnectorConsent Finish a consent
+	//
+	// The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
+	//
+	// Corresponds with GET /v1/agents/connectors/oauth/callback (the `FinishConnectorConsent` operationId).
+	FinishConnectorConsent(ctx context.Context, params *FinishConnectorConsentParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetConnectorLaunchPage The page a consent starts on
+	//
+	// The launch_url of an authorization, opened in a popup by the dashboard. The page waits for the dashboard's origin to post the handoff token, trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens it; the page names no attempt and is the same for every one.
+	//
+	// Corresponds with GET /v1/agents/connectors/oauth/launch/{id} (the `GetConnectorLaunchPage` operationId).
+	GetConnectorLaunchPage(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// HandOffConnectorLaunch Bind a consent to this browser
+	//
+	// What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. A handoff token is traded once: a second handoff for the same consent is a 400. Unauthenticated because a browser sends it; the handoff token is the secret.
+	//
+	// Corresponds with POST /v1/agents/connectors/oauth/launch/{id} (the `HandOffConnectorLaunch` operationId).
+	HandOffConnectorLaunch(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetConnector Read a connector
 	//
@@ -8682,6 +9014,46 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/search (the `Search` operationId).
 	Search(ctx context.Context, body SearchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetAppSettings What the router does for the calling app
+	//
+	// Which Stream app the router writes the calling app's conversations and calls into, and whether that app holds the agent channel and call types. Stream is asked at most once a minute.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/settings/app (the `GetAppSettings` operationId).
+	GetAppSettings(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CheckAppStreamCredentials Check the calling app's own Stream app
+	//
+	// Asks Stream again about the registered app: whether it stands, whether it holds the agent channel and call types, and which numbers still have their lines in another app. Needs stream.tenancy=app.
+	//
+	// Server-side only.
+	//
+	// Corresponds with POST /v1/settings/app/stream/check (the `CheckAppStreamCredentials` operationId).
+	CheckAppStreamCredentials(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateAppStreamCredentialsWithBody Register the calling app's own Stream app
+	//
+	// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
+	UpdateAppStreamCredentialsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateAppStreamCredentials Register the calling app's own Stream app
+	//
+	// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
+	UpdateAppStreamCredentials(ctx context.Context, body UpdateAppStreamCredentialsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetActivity Who used the calling customer's agents, and how much
 	//
 	// Sessions opened, responses produced and calls held, counted per bucket, alongside how many distinct people were behind them.
@@ -8808,6 +9180,23 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/{modality}/stats/tags (the `GetTagStats` operationId).
 	GetTagStats(ctx context.Context, modality Modality, params *GetTagStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+// GetConnectorClientMetadata The router's OAuth client metadata
+//
+// The OAuth Client ID Metadata Document a provider that supports it fetches, at the URL that is the router's client_id. Served only when ROUTER_PUBLIC_URL is https. Unauthenticated because the provider fetches it.
+//
+// Corresponds with GET /.well-known/oauth-client-metadata (the `GetConnectorClientMetadata` operationId).
+func (c *Client) GetConnectorClientMetadata(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConnectorClientMetadataRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 // GetHealth Liveness and dependency check
@@ -9653,6 +10042,25 @@ func (c *Client) GetConnection(ctx context.Context, id string, reqEditors ...Req
 	return c.Client.Do(req)
 }
 
+// CreateAuthorization Start a consent
+//
+// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with POST /v1/agents/connections/{id}/authorizations (the `CreateAuthorization` operationId).
+func (c *Client) CreateAuthorization(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateAuthorizationRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListConnectors List or search connectors
 //
 // The built-ins first, then the app's own, each by id and at its newest revision. `q` keeps the ones whose id, name, category or description holds it.
@@ -9704,6 +10112,57 @@ func (c *Client) CreateConnectorWithBody(ctx context.Context, contentType string
 // Corresponds with POST /v1/agents/connectors (the `CreateConnector` operationId).
 func (c *Client) CreateConnector(ctx context.Context, body CreateConnectorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateConnectorRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// FinishConnectorConsent Finish a consent
+//
+// The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
+//
+// Corresponds with GET /v1/agents/connectors/oauth/callback (the `FinishConnectorConsent` operationId).
+func (c *Client) FinishConnectorConsent(ctx context.Context, params *FinishConnectorConsentParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewFinishConnectorConsentRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetConnectorLaunchPage The page a consent starts on
+//
+// The launch_url of an authorization, opened in a popup by the dashboard. The page waits for the dashboard's origin to post the handoff token, trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens it; the page names no attempt and is the same for every one.
+//
+// Corresponds with GET /v1/agents/connectors/oauth/launch/{id} (the `GetConnectorLaunchPage` operationId).
+func (c *Client) GetConnectorLaunchPage(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConnectorLaunchPageRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// HandOffConnectorLaunch Bind a consent to this browser
+//
+// What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. A handoff token is traded once: a second handoff for the same consent is a 400. Unauthenticated because a browser sends it; the handoff token is the secret.
+//
+// Corresponds with POST /v1/agents/connectors/oauth/launch/{id} (the `HandOffConnectorLaunch` operationId).
+func (c *Client) HandOffConnectorLaunch(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewHandOffConnectorLaunchRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -12620,6 +13079,86 @@ func (c *Client) Search(ctx context.Context, body SearchJSONRequestBody, reqEdit
 	return c.Client.Do(req)
 }
 
+// GetAppSettings What the router does for the calling app
+//
+// Which Stream app the router writes the calling app's conversations and calls into, and whether that app holds the agent channel and call types. Stream is asked at most once a minute.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/settings/app (the `GetAppSettings` operationId).
+func (c *Client) GetAppSettings(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAppSettingsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CheckAppStreamCredentials Check the calling app's own Stream app
+//
+// Asks Stream again about the registered app: whether it stands, whether it holds the agent channel and call types, and which numbers still have their lines in another app. Needs stream.tenancy=app.
+//
+// Server-side only.
+//
+// Corresponds with POST /v1/settings/app/stream/check (the `CheckAppStreamCredentials` operationId).
+func (c *Client) CheckAppStreamCredentials(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCheckAppStreamCredentialsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateAppStreamCredentialsWithBody Register the calling app's own Stream app
+//
+// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
+func (c *Client) UpdateAppStreamCredentialsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateAppStreamCredentialsRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateAppStreamCredentials Register the calling app's own Stream app
+//
+// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
+func (c *Client) UpdateAppStreamCredentials(ctx context.Context, body UpdateAppStreamCredentialsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateAppStreamCredentialsRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetActivity Who used the calling customer's agents, and how much
 //
 // Sessions opened, responses produced and calls held, counted per bucket, alongside how many distinct people were behind them.
@@ -12915,6 +13454,33 @@ func (c *Client) GetTagStats(ctx context.Context, modality Modality, params *Get
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewGetConnectorClientMetadataRequest constructs an http.Request for the GetConnectorClientMetadata method
+func NewGetConnectorClientMetadataRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/.well-known/oauth-client-metadata")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
 }
 
 // NewGetHealthRequest constructs an http.Request for the GetHealth method
@@ -14424,6 +14990,40 @@ func NewGetConnectionRequest(server string, id string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewCreateAuthorizationRequest constructs an http.Request for the CreateAuthorization method
+func NewCreateAuthorizationRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connections/%s/authorizations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListConnectorsRequest constructs an http.Request for the ListConnectors method
 func NewListConnectorsRequest(server string, params *ListConnectorsParams) (*http.Request, error) {
 	var err error
@@ -14538,6 +15138,164 @@ func NewCreateConnectorRequestWithBody(server string, contentType string, body i
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewFinishConnectorConsentRequest constructs an http.Request for the FinishConnectorConsent method
+func NewFinishConnectorConsentRequest(server string, params *FinishConnectorConsentParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/oauth/callback")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.State != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Code != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "code", *params.Code, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Iss != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "iss", *params.Iss, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Error != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "error", *params.Error, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetConnectorLaunchPageRequest constructs an http.Request for the GetConnectorLaunchPage method
+func NewGetConnectorLaunchPageRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/oauth/launch/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewHandOffConnectorLaunchRequest constructs an http.Request for the HandOffConnectorLaunch method
+func NewHandOffConnectorLaunchRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/oauth/launch/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -19565,6 +20323,100 @@ func NewSearchRequestWithBody(server string, contentType string, body io.Reader)
 	return req, nil
 }
 
+// NewGetAppSettingsRequest constructs an http.Request for the GetAppSettings method
+func NewGetAppSettingsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/settings/app")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCheckAppStreamCredentialsRequest constructs an http.Request for the CheckAppStreamCredentials method
+func NewCheckAppStreamCredentialsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/settings/app/stream/check")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateAppStreamCredentialsRequest calls the generic UpdateAppStreamCredentials builder with application/json body
+func NewUpdateAppStreamCredentialsRequest(server string, body UpdateAppStreamCredentialsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateAppStreamCredentialsRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewUpdateAppStreamCredentialsRequestWithBody constructs an http.Request for the UpdateAppStreamCredentials method, with any body, and a specified content type
+func NewUpdateAppStreamCredentialsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/settings/app/stream/credentials")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetActivityRequest constructs an http.Request for the GetActivity method
 func NewGetActivityRequest(server string, params *GetActivityParams) (*http.Request, error) {
 	var err error
@@ -20435,6 +21287,15 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// GetConnectorClientMetadataWithResponse The router's OAuth client metadata
+	//
+	// The OAuth Client ID Metadata Document a provider that supports it fetches, at the URL that is the router's client_id. Served only when ROUTER_PUBLIC_URL is https. Unauthenticated because the provider fetches it.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /.well-known/oauth-client-metadata (the `GetConnectorClientMetadata` operationId).
+	GetConnectorClientMetadataWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetConnectorClientMetadataResponse, error)
+
 	// GetHealthWithResponse Liveness and dependency check
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -20874,6 +21735,17 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/connections/{id} (the `GetConnection` operationId).
 	GetConnectionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectionResponse, error)
 
+	// CreateAuthorizationWithResponse Start a consent
+	//
+	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/connections/{id}/authorizations (the `CreateAuthorization` operationId).
+	CreateAuthorizationWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*CreateAuthorizationResponse, error)
+
 	// ListConnectorsWithResponse List or search connectors
 	//
 	// The built-ins first, then the app's own, each by id and at its newest revision. `q` keeps the ones whose id, name, category or description holds it.
@@ -20906,6 +21778,33 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/connectors (the `CreateConnector` operationId).
 	CreateConnectorWithResponse(ctx context.Context, body CreateConnectorJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateConnectorResponse, error)
+
+	// FinishConnectorConsentWithResponse Finish a consent
+	//
+	// The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/connectors/oauth/callback (the `FinishConnectorConsent` operationId).
+	FinishConnectorConsentWithResponse(ctx context.Context, params *FinishConnectorConsentParams, reqEditors ...RequestEditorFn) (*FinishConnectorConsentResponse, error)
+
+	// GetConnectorLaunchPageWithResponse The page a consent starts on
+	//
+	// The launch_url of an authorization, opened in a popup by the dashboard. The page waits for the dashboard's origin to post the handoff token, trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens it; the page names no attempt and is the same for every one.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/connectors/oauth/launch/{id} (the `GetConnectorLaunchPage` operationId).
+	GetConnectorLaunchPageWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectorLaunchPageResponse, error)
+
+	// HandOffConnectorLaunchWithResponse Bind a consent to this browser
+	//
+	// What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. A handoff token is traded once: a second handoff for the same consent is a 400. Unauthenticated because a browser sends it; the handoff token is the secret.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/connectors/oauth/launch/{id} (the `HandOffConnectorLaunch` operationId).
+	HandOffConnectorLaunchWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*HandOffConnectorLaunchResponse, error)
 
 	// GetConnectorWithResponse Read a connector
 	//
@@ -22419,6 +23318,50 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/search (the `Search` operationId).
 	SearchWithResponse(ctx context.Context, body SearchJSONRequestBody, reqEditors ...RequestEditorFn) (*SearchResponse, error)
 
+	// GetAppSettingsWithResponse What the router does for the calling app
+	//
+	// Which Stream app the router writes the calling app's conversations and calls into, and whether that app holds the agent channel and call types. Stream is asked at most once a minute.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/settings/app (the `GetAppSettings` operationId).
+	GetAppSettingsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAppSettingsResponse, error)
+
+	// CheckAppStreamCredentialsWithResponse Check the calling app's own Stream app
+	//
+	// Asks Stream again about the registered app: whether it stands, whether it holds the agent channel and call types, and which numbers still have their lines in another app. Needs stream.tenancy=app.
+	//
+	// Server-side only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/settings/app/stream/check (the `CheckAppStreamCredentials` operationId).
+	CheckAppStreamCredentialsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*CheckAppStreamCredentialsResponse, error)
+
+	// UpdateAppStreamCredentialsWithBodyWithResponse Register the calling app's own Stream app
+	//
+	// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
+	UpdateAppStreamCredentialsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAppStreamCredentialsResponse, error)
+
+	// UpdateAppStreamCredentialsWithResponse Register the calling app's own Stream app
+	//
+	// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
+	UpdateAppStreamCredentialsWithResponse(ctx context.Context, body UpdateAppStreamCredentialsJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAppStreamCredentialsResponse, error)
+
 	// GetActivityWithResponse Who used the calling customer's agents, and how much
 	//
 	// Sessions opened, responses produced and calls held, counted per bucket, alongside how many distinct people were behind them.
@@ -22567,6 +23510,61 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/{modality}/stats/tags (the `GetTagStats` operationId).
 	GetTagStatsWithResponse(ctx context.Context, modality Modality, params *GetTagStatsParams, reqEditors ...RequestEditorFn) (*GetTagStatsResponse, error)
+}
+
+type GetConnectorClientMetadataResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetConnectorClientMetadataResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetConnectorClientMetadataResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetConnectorClientMetadataResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetConnectorClientMetadataResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetConnectorClientMetadataResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetConnectorClientMetadataResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetConnectorClientMetadataResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type GetHealthResponse struct {
@@ -24978,6 +25976,82 @@ func (r GetConnectionResponse) ContentType() string {
 	return ""
 }
 
+type CreateAuthorizationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Authorization
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateAuthorizationResponse) GetJSON201() *Authorization {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateAuthorizationResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateAuthorizationResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateAuthorizationResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateAuthorizationResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateAuthorizationResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateAuthorizationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateAuthorizationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateAuthorizationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateAuthorizationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListConnectorsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -25110,6 +26184,143 @@ func (r CreateConnectorResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateConnectorResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type FinishConnectorConsentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r FinishConnectorConsentResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r FinishConnectorConsentResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r FinishConnectorConsentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r FinishConnectorConsentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r FinishConnectorConsentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r FinishConnectorConsentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetConnectorLaunchPageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetConnectorLaunchPageResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetConnectorLaunchPageResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetConnectorLaunchPageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetConnectorLaunchPageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetConnectorLaunchPageResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type HandOffConnectorLaunchResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r HandOffConnectorLaunchResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r HandOffConnectorLaunchResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r HandOffConnectorLaunchResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r HandOffConnectorLaunchResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r HandOffConnectorLaunchResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r HandOffConnectorLaunchResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -33062,6 +34273,241 @@ func (r SearchResponse) ContentType() string {
 	return ""
 }
 
+type GetAppSettingsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AppSettings
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAppSettingsResponse) GetJSON200() *AppSettings {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetAppSettingsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetAppSettingsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetAppSettingsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetAppSettingsResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAppSettingsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAppSettingsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAppSettingsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAppSettingsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CheckAppStreamCredentialsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *StreamCheck
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CheckAppStreamCredentialsResponse) GetJSON200() *StreamCheck {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CheckAppStreamCredentialsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CheckAppStreamCredentialsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CheckAppStreamCredentialsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CheckAppStreamCredentialsResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CheckAppStreamCredentialsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CheckAppStreamCredentialsResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r CheckAppStreamCredentialsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CheckAppStreamCredentialsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CheckAppStreamCredentialsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CheckAppStreamCredentialsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateAppStreamCredentialsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AppSettings
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateAppStreamCredentialsResponse) GetJSON200() *AppSettings {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateAppStreamCredentialsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UpdateAppStreamCredentialsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UpdateAppStreamCredentialsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r UpdateAppStreamCredentialsResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateAppStreamCredentialsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdateAppStreamCredentialsResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateAppStreamCredentialsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateAppStreamCredentialsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateAppStreamCredentialsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateAppStreamCredentialsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetActivityResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -34091,6 +35537,21 @@ func (r GetTagStatsResponse) ContentType() string {
 	return ""
 }
 
+// GetConnectorClientMetadataWithResponse The router's OAuth client metadata
+//
+// The OAuth Client ID Metadata Document a provider that supports it fetches, at the URL that is the router's client_id. Served only when ROUTER_PUBLIC_URL is https. Unauthenticated because the provider fetches it.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /.well-known/oauth-client-metadata (the `GetConnectorClientMetadata` operationId).
+func (c *ClientWithResponses) GetConnectorClientMetadataWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetConnectorClientMetadataResponse, error) {
+	rsp, err := c.GetConnectorClientMetadata(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetConnectorClientMetadataResponse(rsp)
+}
+
 // GetHealthWithResponse Liveness and dependency check
 //
 // Returns a wrapper object for the known response body format(s).
@@ -34800,6 +36261,23 @@ func (c *ClientWithResponses) GetConnectionWithResponse(ctx context.Context, id 
 	return ParseGetConnectionResponse(rsp)
 }
 
+// CreateAuthorizationWithResponse Start a consent
+//
+// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/connections/{id}/authorizations (the `CreateAuthorization` operationId).
+func (c *ClientWithResponses) CreateAuthorizationWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*CreateAuthorizationResponse, error) {
+	rsp, err := c.CreateAuthorization(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateAuthorizationResponse(rsp)
+}
+
 // ListConnectorsWithResponse List or search connectors
 //
 // The built-ins first, then the app's own, each by id and at its newest revision. `q` keeps the ones whose id, name, category or description holds it.
@@ -34849,6 +36327,51 @@ func (c *ClientWithResponses) CreateConnectorWithResponse(ctx context.Context, b
 		return nil, err
 	}
 	return ParseCreateConnectorResponse(rsp)
+}
+
+// FinishConnectorConsentWithResponse Finish a consent
+//
+// The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/connectors/oauth/callback (the `FinishConnectorConsent` operationId).
+func (c *ClientWithResponses) FinishConnectorConsentWithResponse(ctx context.Context, params *FinishConnectorConsentParams, reqEditors ...RequestEditorFn) (*FinishConnectorConsentResponse, error) {
+	rsp, err := c.FinishConnectorConsent(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseFinishConnectorConsentResponse(rsp)
+}
+
+// GetConnectorLaunchPageWithResponse The page a consent starts on
+//
+// The launch_url of an authorization, opened in a popup by the dashboard. The page waits for the dashboard's origin to post the handoff token, trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens it; the page names no attempt and is the same for every one.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/connectors/oauth/launch/{id} (the `GetConnectorLaunchPage` operationId).
+func (c *ClientWithResponses) GetConnectorLaunchPageWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectorLaunchPageResponse, error) {
+	rsp, err := c.GetConnectorLaunchPage(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetConnectorLaunchPageResponse(rsp)
+}
+
+// HandOffConnectorLaunchWithResponse Bind a consent to this browser
+//
+// What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. A handoff token is traded once: a second handoff for the same consent is a 400. Unauthenticated because a browser sends it; the handoff token is the secret.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/connectors/oauth/launch/{id} (the `HandOffConnectorLaunch` operationId).
+func (c *ClientWithResponses) HandOffConnectorLaunchWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*HandOffConnectorLaunchResponse, error) {
+	rsp, err := c.HandOffConnectorLaunch(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseHandOffConnectorLaunchResponse(rsp)
 }
 
 // GetConnectorWithResponse Read a connector
@@ -37281,6 +38804,74 @@ func (c *ClientWithResponses) SearchWithResponse(ctx context.Context, body Searc
 	return ParseSearchResponse(rsp)
 }
 
+// GetAppSettingsWithResponse What the router does for the calling app
+//
+// Which Stream app the router writes the calling app's conversations and calls into, and whether that app holds the agent channel and call types. Stream is asked at most once a minute.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/settings/app (the `GetAppSettings` operationId).
+func (c *ClientWithResponses) GetAppSettingsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAppSettingsResponse, error) {
+	rsp, err := c.GetAppSettings(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAppSettingsResponse(rsp)
+}
+
+// CheckAppStreamCredentialsWithResponse Check the calling app's own Stream app
+//
+// Asks Stream again about the registered app: whether it stands, whether it holds the agent channel and call types, and which numbers still have their lines in another app. Needs stream.tenancy=app.
+//
+// Server-side only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/settings/app/stream/check (the `CheckAppStreamCredentials` operationId).
+func (c *ClientWithResponses) CheckAppStreamCredentialsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*CheckAppStreamCredentialsResponse, error) {
+	rsp, err := c.CheckAppStreamCredentials(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCheckAppStreamCredentialsResponse(rsp)
+}
+
+// UpdateAppStreamCredentialsWithBodyWithResponse Register the calling app's own Stream app
+//
+// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
+func (c *ClientWithResponses) UpdateAppStreamCredentialsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAppStreamCredentialsResponse, error) {
+	rsp, err := c.UpdateAppStreamCredentialsWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateAppStreamCredentialsResponse(rsp)
+}
+
+// UpdateAppStreamCredentialsWithResponse Register the calling app's own Stream app
+//
+// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
+func (c *ClientWithResponses) UpdateAppStreamCredentialsWithResponse(ctx context.Context, body UpdateAppStreamCredentialsJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAppStreamCredentialsResponse, error) {
+	rsp, err := c.UpdateAppStreamCredentials(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateAppStreamCredentialsResponse(rsp)
+}
+
 // GetActivityWithResponse Who used the calling customer's agents, and how much
 //
 // Sessions opened, responses produced and calls held, counted per bucket, alongside how many distinct people were behind them.
@@ -37530,6 +39121,46 @@ func (c *ClientWithResponses) GetTagStatsWithResponse(ctx context.Context, modal
 		return nil, err
 	}
 	return ParseGetTagStatsResponse(rsp)
+}
+
+// ParseGetConnectorClientMetadataResponse parses an HTTP response from a GetConnectorClientMetadataWithResponse call
+func ParseGetConnectorClientMetadataResponse(rsp *http.Response) (*GetConnectorClientMetadataResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetConnectorClientMetadataResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseGetHealthResponse parses an HTTP response from a GetHealthWithResponse call
@@ -39464,6 +41095,67 @@ func ParseGetConnectionResponse(rsp *http.Response) (*GetConnectionResponse, err
 	return response, nil
 }
 
+// ParseCreateAuthorizationResponse parses an HTTP response from a CreateAuthorizationWithResponse call
+func ParseCreateAuthorizationResponse(rsp *http.Response) (*CreateAuthorizationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateAuthorizationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Authorization
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListConnectorsResponse parses an HTTP response from a ListConnectorsWithResponse call
 func ParseListConnectorsResponse(rsp *http.Response) (*ListConnectorsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -39559,6 +41251,110 @@ func ParseCreateConnectorResponse(rsp *http.Response) (*CreateConnectorResponse,
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseFinishConnectorConsentResponse parses an HTTP response from a FinishConnectorConsentWithResponse call
+func ParseFinishConnectorConsentResponse(rsp *http.Response) (*FinishConnectorConsentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &FinishConnectorConsentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 302:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case rsp.StatusCode == 403:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetConnectorLaunchPageResponse parses an HTTP response from a GetConnectorLaunchPageWithResponse call
+func ParseGetConnectorLaunchPageResponse(rsp *http.Response) (*GetConnectorLaunchPageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetConnectorLaunchPageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseHandOffConnectorLaunchResponse parses an HTTP response from a HandOffConnectorLaunchWithResponse call
+func ParseHandOffConnectorLaunchResponse(rsp *http.Response) (*HandOffConnectorLaunchResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &HandOffConnectorLaunchResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case rsp.StatusCode == 403:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
@@ -45934,6 +47730,196 @@ func ParseSearchResponse(rsp *http.Response) (*SearchResponse, error) {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetAppSettingsResponse parses an HTTP response from a GetAppSettingsWithResponse call
+func ParseGetAppSettingsResponse(rsp *http.Response) (*GetAppSettingsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAppSettingsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AppSettings
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCheckAppStreamCredentialsResponse parses an HTTP response from a CheckAppStreamCredentialsWithResponse call
+func ParseCheckAppStreamCredentialsResponse(rsp *http.Response) (*CheckAppStreamCredentialsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CheckAppStreamCredentialsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest StreamCheck
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateAppStreamCredentialsResponse parses an HTTP response from a UpdateAppStreamCredentialsWithResponse call
+func ParseUpdateAppStreamCredentialsResponse(rsp *http.Response) (*UpdateAppStreamCredentialsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateAppStreamCredentialsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AppSettings
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 

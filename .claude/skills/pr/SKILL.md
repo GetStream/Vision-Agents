@@ -25,10 +25,13 @@ description: Create a draft pull request for the Vision-Agents repo using gh CLI
 
 ## Body
 
-- Explain with pictures, not paragraphs. Near the top, a `## How it works` section shows the idea with mermaid diagrams (GitHub renders them): a `flowchart` for the data flow, a decision `flowchart` for branching logic, a `sequenceDiagram` for concurrency or a protocol. Give small tables for "change → result → test that proves it" and for before/after.
+- Explain with pictures, not paragraphs. Near the top, a `## How it works` section shows the idea with a chart. Give small tables for "change → result → test that proves it" and for before/after.
+  - **ASCII, in a fenced code block,** for branching logic (a tree) and data flow (boxes and arrows). Mermaid stacks these as tall columns of boxes; ASCII is shorter and reads the same in `gh pr view`. Draw with `├─ └─ │ ->` and keep each line within 80 columns, the default terminal width.
+  - **A mermaid `sequenceDiagram`** for a protocol or concurrency. It spreads across, not down, so ASCII saves no height, and the actor columns leave too little width for the messages. No `;` inside a message (it splits statements).
+  - Name each actor in full, or by a short form readers already know (`PG` for Postgres). No one-letter keys: the reader should not look anything up.
+  - After creating the PR, open it and check that each chart renders and lines up.
 - Keep prose short: one or two sentences per point, and nothing a diagram or table already shows. A reviewer should get the idea in a minute without a wall of text.
 - Cite evidence: `file:line`, test names, commits. Mark anything not checked as unverified.
-- In mermaid, no `;` inside labels or messages (it splits statements). Open the PR after creating it and check that the diagrams render.
 - `## Why` is motivation + context. `## Changes`, if included, is high-level; never per-bullet justifications, those belong in `## Why`.
 - Link public GitHub issues inline within `## Why` (e.g. "users reported X (#478)"), not as a trailing `Fixes #N`.
 - Do not paste CI, lint, or tool output in the body.

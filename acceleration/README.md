@@ -1400,9 +1400,9 @@ a new operation is reachable there as soon as the types are regenerated.
 
 The three sockets cannot be Huma operations, since an upgrade returns a connection rather than
 a response, and neither can the log stream, the data export and import, which stream, or the
-plugin callback, which redirects a browser. Their handlers are written by hand in
-`internal/api/sessionws.go`, `streamws.go`, `dispatchws.go`, `logs.go`, `datamove.go` and
-`plugins.go`, and the Python side of the sockets in `plugins/stream/.../_socket.py`. Each is
+plugin callback and the connector consent's launch page, handoff and callback, which a browser
+reaches. Their handlers are written by hand in `internal/api/sessionws.go`, `streamws.go`,
+`dispatchws.go`, `logs.go`, `datamove.go`, `plugins.go` and `authorizations.go`, and the Python side of the sockets in `plugins/stream/.../_socket.py`. Each is
 still declared, with its `101` or streamed response, in `internal/api/handwritten.go`, so a
 reader and a client generator know it exists and the server-side check reads its marks like
 any other operation's: an operation the spec cannot see is the one place a default that

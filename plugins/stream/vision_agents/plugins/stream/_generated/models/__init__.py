@@ -26,8 +26,11 @@ from .agent_response_item_page import AgentResponseItemPage
 from .agent_response_item_payload import AgentResponseItemPayload
 from .agent_response_page import AgentResponsePage
 from .agent_response_status import AgentResponseStatus
+from .app_settings import AppSettings
 from .attach_number_request import AttachNumberRequest
 from .attached_number import AttachedNumber
+from .authorization import Authorization
+from .authorization_kind import AuthorizationKind
 from .authorize_plugin_request import AuthorizePluginRequest
 from .available_number import AvailableNumber
 from .budget import Budget
@@ -127,6 +130,9 @@ from .fork_session_request import ForkSessionRequest
 from .fork_session_request_custom import ForkSessionRequestCustom
 from .generated_image import GeneratedImage
 from .generated_image_media_type import GeneratedImageMediaType
+from .get_connector_client_metadata_response_200 import (
+    GetConnectorClientMetadataResponse200,
+)
 from .get_conversation_messages_response_200 import GetConversationMessagesResponse200
 from .granularity import Granularity
 from .guest_user import GuestUser
@@ -284,6 +290,17 @@ from .speech_request import SpeechRequest
 from .speech_request_tags import SpeechRequestTags
 from .spend_bucket import SpendBucket
 from .stats_bucket import StatsBucket
+from .stream_app_state import StreamAppState
+from .stream_check import StreamCheck
+from .stream_credentials import StreamCredentials
+from .stream_key_input import StreamKeyInput
+from .stream_key_state import StreamKeyState
+from .stream_key_state_signs_webhooks import StreamKeyStateSignsWebhooks
+from .stream_key_state_status import StreamKeyStateStatus
+from .stream_settings import StreamSettings
+from .stream_tenancy import StreamTenancy
+from .stream_type_state import StreamTypeState
+from .stream_writes_into import StreamWritesInto
 from .sts_options import StsOptions
 from .sts_options_overwrites import StsOptionsOverwrites
 from .sts_options_turn_detection import StsOptionsTurnDetection
@@ -371,8 +388,11 @@ __all__ = (
     "AgentResponseItemPayload",
     "AgentResponsePage",
     "AgentResponseStatus",
+    "AppSettings",
     "AttachNumberRequest",
     "AttachedNumber",
+    "Authorization",
+    "AuthorizationKind",
     "AuthorizePluginRequest",
     "AvailableNumber",
     "Budget",
@@ -468,6 +488,7 @@ __all__ = (
     "ForkSessionRequestCustom",
     "GeneratedImage",
     "GeneratedImageMediaType",
+    "GetConnectorClientMetadataResponse200",
     "GetConversationMessagesResponse200",
     "Granularity",
     "GuestUser",
@@ -625,6 +646,17 @@ __all__ = (
     "SpeechRequestTags",
     "SpendBucket",
     "StatsBucket",
+    "StreamAppState",
+    "StreamCheck",
+    "StreamCredentials",
+    "StreamKeyInput",
+    "StreamKeyState",
+    "StreamKeyStateSignsWebhooks",
+    "StreamKeyStateStatus",
+    "StreamSettings",
+    "StreamTenancy",
+    "StreamTypeState",
+    "StreamWritesInto",
     "StsOptions",
     "StsOptionsOverwrites",
     "StsOptionsTurnDetection",

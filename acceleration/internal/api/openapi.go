@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -113,6 +114,15 @@ func init() {
 	huma.NewError = func(status int, message string, errs ...error) huma.StatusError {
 		details := make([]string, 0, len(errs))
 		for _, err := range errs {
+			// A detail names the value it refused. The value of a secret is the secret, and
+			// for a field missing or unexpected the value is the whole object around it,
+			// whatever else it carries. Only a single value at a field that is not a
+			// secret is repeated back.
+			var detail *huma.ErrorDetail
+			if errors.As(err, &detail) && (strings.Contains(strings.ToLower(detail.Location), "secret") || !scalar(detail.Value)) {
+				details = append(details, detail.Message+" ("+detail.Location+")")
+				continue
+			}
 			details = append(details, err.Error())
 		}
 		if len(details) > 0 {
@@ -128,6 +138,18 @@ func init() {
 		return statusError(status, message)
 	}
 	huma.NewErrorWithContext = answerFailure
+}
+
+// scalar reports whether a value is one thing rather than an object or a list of them.
+func scalar(value any) bool {
+	if value == nil {
+		return true
+	}
+	switch reflect.ValueOf(value).Kind() {
+	case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Pointer, reflect.Interface:
+		return false
+	}
+	return true
 }
 
 // namedEnum declares a string enum as a schema of its own, where a Huma enum tag would
@@ -236,6 +258,8 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	api.UseMiddleware(requireCustomer(api))
 	s.registerHealth(api)
 	s.registerPolicies(api)
+	s.registerSettings(api)
+	s.registerStreamCredentials(api)
 	s.registerSessionQuery(api)
 	s.registerSessionUpdate(api)
 	s.registerSessionStop(api)
@@ -266,6 +290,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerSync(api)
 	s.registerConnectors(api)
 	s.registerConnections(api)
+	s.registerAuthorizations(api)
 	s.registerChannels(api)
 	s.registerDLC(api)
 	return api

@@ -632,6 +632,14 @@ components:
         - has_more
         - items
       type: object
+    AppSettings:
+      description: What the router does for the calling app. It never carries a secret.
+      properties:
+        stream:
+          $ref: '#/components/schemas/StreamSettings'
+      required:
+        - stream
+      type: object
     AttachNumberRequest:
       properties:
         allowed_ips:
@@ -660,6 +668,37 @@ components:
         - sip_uri
         - trunk_id
       type: object
+    Authorization:
+      description: 'A consent in flight for one connection: the page that starts it in a browser and the token that binds it to that browser.'
+      properties:
+        expires_at:
+          description: When the attempt ends, 10 minutes after it began. A callback after that is refused.
+          format: date-time
+          type: string
+        handoff_token:
+          description: Handed to the launch page by postMessage, never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused.
+          type: string
+        id:
+          description: The attempt.
+          type: string
+        kind:
+          $ref: '#/components/schemas/AuthorizationKind'
+        launch_url:
+          description: The router's page to open in a popup from the dashboard. It asks the opener for handoff_token and then sends the browser to the provider.
+          type: string
+      required:
+        - id
+        - kind
+        - launch_url
+        - handoff_token
+        - expires_at
+      type: object
+    AuthorizationKind:
+      description: consent for a connection no account was connected to yet, reconnect for one that has been connected before, which must come back with the same provider account.
+      enum:
+        - consent
+        - reconnect
+      type: string
     AuthorizePluginRequest:
       properties:
         instance_url:
@@ -3404,6 +3443,9 @@ components:
         prompt_injection:
           description: Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
           type: boolean
+        require_own_stream_app:
+          description: 'Keep the app out of the router''s own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization''s off. An organization''s is set by the router''s operator and read here; sending it back unchanged is fine, and changing it is refused.'
+          type: boolean
         tags:
           additionalProperties:
             type: string
@@ -4868,6 +4910,178 @@ components:
         - provider
         - request_count
       type: object
+    StreamAppState:
+      description: Whether the router acts in a registered app. disconnected is one the app took back, and blocked one Stream suspended or that stopped checking tokens. Neither is ever written into the router's own app instead.
+      enum:
+        - connected
+        - disconnected
+        - blocked
+      type: string
+    StreamCheck:
+      properties:
+        reattach:
+          items:
+            type: string
+          nullable: true
+          type: array
+        settings:
+          $ref: '#/components/schemas/AppSettings'
+      required:
+        - settings
+        - reattach
+      type: object
+    StreamCredentials:
+      description: 'The keys the router acts in the calling app''s own Stream app with. Secrets are written and never read back: no answer carries one.'
+      properties:
+        allow_guests:
+          description: Whether guests may be made in the app. Left out keeps what was set, which starts off false.
+          type: boolean
+        expected_revision:
+          description: The revision last read, 0 for an app never registered. A write made against an older one is a 409.
+          format: int64
+          type: integer
+        keys:
+          description: Every key the router may act in the app with, which replaces those it held. Each is checked with Stream. Empty disconnects the app, which needs a proof.
+          items:
+            $ref: '#/components/schemas/StreamKeyInput'
+          maxItems: 8
+          nullable: true
+          type: array
+        primary_key:
+          description: The key tokens are minted with. Left out is the first.
+          type: string
+        proof:
+          $ref: '#/components/schemas/StreamKeyInput'
+          description: A key and secret of the app, which disconnecting needs. It is checked with Stream and kept nowhere.
+      required:
+        - keys
+        - expected_revision
+      type: object
+    StreamKeyInput:
+      properties:
+        api_key:
+          maxLength: 128
+          minLength: 1
+          type: string
+        api_secret:
+          description: The key's secret. It is sealed and never read back.
+          maxLength: 256
+          type: string
+          writeOnly: true
+        created_at:
+          description: When Stream made the key, which says which key is the oldest and so signs the app's webhooks.
+          format: date-time
+          type: string
+      required:
+        - api_key
+        - api_secret
+      type: object
+    StreamKeyState:
+      properties:
+        api_key:
+          type: string
+        created_at:
+          description: When Stream made the key.
+          format: date-time
+          type: string
+        last_webhook_at:
+          description: When Stream last signed a hook with this key.
+          format: date-time
+          type: string
+        secret_last4:
+          description: The end of the secret, enough to tell two apart.
+          type: string
+        signs_webhooks:
+          description: Whether Stream signs the app's hooks with this key, which is its oldest. yes is one a hook arrived signed with.
+          enum:
+            - "yes"
+            - "no"
+            - unknown
+          type: string
+        status:
+          description: rejected is a key Stream stopped accepting, which the router no longer uses.
+          enum:
+            - active
+            - rejected
+          type: string
+        verified_at:
+          format: date-time
+          type: string
+      required:
+        - api_key
+        - status
+        - signs_webhooks
+      type: object
+    StreamSettings:
+      description: Which Stream app the router writes the calling app's conversations, transcripts, calls and phone lines into, and whether that app holds the types they need.
+      properties:
+        allow_guests:
+          description: Whether guests may be made in the registered app.
+          type: boolean
+        call_type:
+          $ref: '#/components/schemas/StreamTypeState'
+          description: Whether the Stream app holds the agent call type calls are made with. Stream reports no grants for it here, so it is present or missing.
+        channel_type:
+          $ref: '#/components/schemas/StreamTypeState'
+          description: Whether the Stream app holds the agent channel type conversations are kept in. unsafe is one whose grants let somebody other than the app's backend make, change or join a conversation's channel, or read one they are not in.
+        checked_at:
+          description: When Stream was asked. Absent when it could not be, and the types are then unknown. Answers are reused for a minute.
+          format: date-time
+          type: string
+        keys:
+          description: The registered app's keys, oldest first. No secret is ever read back.
+          items:
+            $ref: '#/components/schemas/StreamKeyState'
+          nullable: true
+          type: array
+        primary_key:
+          description: The key tokens are minted with.
+          type: string
+        revision:
+          description: The registration's revision, 0 for an app that registered none. A write names the one it read.
+          format: int64
+          type: integer
+        state:
+          $ref: '#/components/schemas/StreamAppState'
+          description: Whether the router acts in the registered app. Absent for an app that registered none.
+        state_reason:
+          description: Why the router stopped acting in the app, for one that is blocked.
+          type: string
+        stream_app_id:
+          description: The registered app's own id.
+          format: int64
+          type: integer
+        tenancy:
+          $ref: '#/components/schemas/StreamTenancy'
+        writes_into:
+          $ref: '#/components/schemas/StreamWritesInto'
+      required:
+        - tenancy
+        - writes_into
+        - channel_type
+        - call_type
+      type: object
+    StreamTenancy:
+      description: Whose Stream app the router acts in. deployment is one app, the router's own, for every app it serves; app is each app's own.
+      enum:
+        - deployment
+        - app
+      type: string
+    StreamTypeState:
+      description: Whether a Stream app holds a type the router needs. unknown is a type Stream could not be asked about.
+      enum:
+        - present
+        - missing
+        - unsafe
+        - unknown
+      type: string
+    StreamWritesInto:
+      description: 'Which Stream app the calling app''s work is written into: this_app is its own, deployment_app is the router''s own app, shared with every app it serves that has none, and nowhere is no app at all, so conversations are not kept and calls cannot be made.'
+      enum:
+        - this_app
+        - deployment_app
+        - nowhere
+      type: string
     StsOptions:
       description: How this config holds a conversation with one native audio model, in place of a transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a term, and a request naming a term is routed to a model that declared it or refused, never served by one that ignores it.
       properties:
@@ -6348,6 +6562,23 @@ info:
   version: 0.2.0
 openapi: 3.0.3
 paths:
+  /.well-known/oauth-client-metadata:
+    get:
+      description: The OAuth Client ID Metadata Document a provider that supports it fetches, at the URL that is the router's client_id. Served only when ROUTER_PUBLIC_URL is https. Unauthenticated because the provider fetches it.
+      operationId: getConnectorClientMetadata
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+          description: The document
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: The router's OAuth client metadata
   /health:
     get:
       operationId: getHealth
@@ -7735,6 +7966,39 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Read a connection
+  /v1/agents/connections/{id}/authorizations:
+    post:
+      description: |-
+        Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: createAuthorization
+      parameters:
+        - description: The connection, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connection, as returned when it was created.
+            type: string
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Authorization'
+          description: The consent is waiting for its browser
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Start a consent
   /v1/agents/connectors:
     get:
       description: |-
@@ -7845,6 +8109,81 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Read a connector
+  /v1/agents/connectors/oauth/callback:
+    get:
+      description: 'The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.'
+      operationId: finishConnectorConsent
+      parameters:
+        - in: query
+          name: state
+          schema:
+            type: string
+        - in: query
+          name: code
+          schema:
+            type: string
+        - in: query
+          name: iss
+          schema:
+            type: string
+        - in: query
+          name: error
+          schema:
+            type: string
+      responses:
+        "302":
+          description: The browser is sent back to the dashboard
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "403":
+          description: The consent was started in another browser
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Finish a consent
+  /v1/agents/connectors/oauth/launch/{id}:
+    get:
+      description: The launch_url of an authorization, opened in a popup by the dashboard. The page waits for the dashboard's origin to post the handoff token, trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens it; the page names no attempt and is the same for every one.
+      operationId: getConnectorLaunchPage
+      parameters:
+        - description: The authorization.
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            text/html:
+              schema:
+                type: string
+          description: The launch page
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: The page a consent starts on
+    post:
+      description: 'What the launch page posts: `{"handoff_token": ...}`, from the router''s own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider''s authorize URL. A handoff token is traded once: a second handoff for the same consent is a 400. Unauthenticated because a browser sends it; the handoff token is the secret.'
+      operationId: handOffConnectorLaunch
+      parameters:
+        - description: The authorization.
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The cookie is set and the authorize URL returned
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "403":
+          description: Not from the launch page's origin, or not this consent's handoff token
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Bind a consent to this browser
   /v1/agents/conversations/{cid}/commands/{command_id}:
     get:
       description: |-
@@ -11589,6 +11928,109 @@ paths:
           $ref: '#/components/responses/InternalError'
       summary: Answer a question out of what is true now
       x-client-accessible: true
+  /v1/settings/app:
+    get:
+      description: |-
+        Which Stream app the router writes the calling app's conversations and calls into, and whether that app holds the agent channel and call types. Stream is asked at most once a minute.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: getAppSettings
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppSettings'
+          description: The app's settings
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Service Unavailable
+      summary: What the router does for the calling app
+  /v1/settings/app/stream/check:
+    post:
+      description: |-
+        Asks Stream again about the registered app: whether it stands, whether it holds the agent channel and call types, and which numbers still have their lines in another app. Needs stream.tenancy=app.
+
+        Server-side only.
+      operationId: checkAppStreamCredentials
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreamCheck'
+          description: What the check found
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Service Unavailable
+      summary: Check the calling app's own Stream app
+  /v1/settings/app/stream/credentials:
+    put:
+      description: |-
+        The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
+      operationId: updateAppStreamCredentials
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StreamCredentials'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppSettings'
+          description: The app's settings as they now are
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Service Unavailable
+      summary: Register the calling app's own Stream app
   /v1/stats/activity:
     get:
       description: |-
