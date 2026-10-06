@@ -18,6 +18,12 @@ const turnQueueSize = 256
 // turnWriteTimeout bounds a single write so a stuck database cannot wedge the writer.
 const turnWriteTimeout = 5 * time.Second
 
+// playoutGrace is how long a turn whose speech is queued on an edge waits for the track to
+// take it, once everything else about it is known. An edge takes queued speech within the
+// depth of its queue, so this only runs out when the track stopped pulling or the speech was
+// dropped, and the turn is then reported without the moment it never had.
+const playoutGrace = time.Second
+
 // turnTracker assembles the timings of an exchange as it unfolds.
 //
 // A request row already measures each provider call on its own. What it cannot say is
@@ -29,6 +35,8 @@ type turnTracker struct {
 	open map[string]*openTurn
 	// finished receives each turn once, when nothing more can be learned about it.
 	finished func(Turn)
+	// grace is how long a turn waits for the track to take its queued speech.
+	grace time.Duration
 }
 
 // openTurn is a turn that has not finished yet.
@@ -41,6 +49,12 @@ type openTurn struct {
 	firstTextAt  time.Time
 	ttsAt        time.Time
 	firstAudioAt time.Time
+	// queuedAt is when the edge queued the first frame of the reply for its outgoing track, and
+	// pulledAt when the track took the first frame that was not silence. Only an edge that
+	// reports them sets them, and firstAudioAt is when publishing returned, which for a chunk
+	// longer than the edge's queue is later than either.
+	queuedAt     time.Time
+	pulledAt     time.Time
 	sttLatencyMs float64
 	llmTTFTMs    float64
 	ttsTTFBMs    float64
@@ -57,10 +71,28 @@ type openTurn struct {
 	// settled is how many of them have completed.
 	settled     int
 	interrupted bool
+	// marks is what the edge reports queuedAt and pulledAt to.
+	marks turnMarks
+	// waiting is the timer that closes the turn once the track has taken its speech, or
+	// playoutGrace has passed. released is set when it has run.
+	waiting  *time.Timer
+	released bool
 }
 
+// turnMarks is what an edge reports one turn's playout milestones to. It lives on the open turn,
+// so handing it out for each chunk of a reply costs nothing, and a report that outlives the
+// turn finds it closed and is dropped.
+type turnMarks struct {
+	tracker *turnTracker
+	turn    *openTurn
+	id      string
+}
+
+func (m *turnMarks) FirstFrameQueued(at time.Time)   { m.tracker.queued(m.turn, m.id, at) }
+func (m *turnMarks) FirstAudiblePulled(at time.Time) { m.tracker.pulled(m.turn, m.id, at) }
+
 func newTurnTracker(finished func(Turn)) *turnTracker {
-	return &turnTracker{open: map[string]*openTurn{}, finished: finished}
+	return &turnTracker{open: map[string]*openTurn{}, finished: finished, grace: playoutGrace}
 }
 
 // begin opens a turn. The speech-to-text latency is the provider's own decode time for
@@ -72,12 +104,14 @@ func (t *turnTracker) begin(turnID string, participant stt.Participant, readyAt,
 		transcriptAt = readyAt
 	}
 
-	t.open[turnID] = &openTurn{
+	current := &openTurn{
 		participant:  participant,
 		transcriptAt: transcriptAt,
 		readyAt:      readyAt,
 		sttLatencyMs: sttLatencyMs,
 	}
+	current.marks = turnMarks{tracker: t, id: turnID, turn: current}
+	t.open[turnID] = current
 }
 
 func (t *turnTracker) modelStarted(turnID string, at time.Time) {
@@ -134,6 +168,57 @@ func (t *turnTracker) firstAudio(turnID string, at time.Time) {
 	}
 	current.firstAudioAt = at
 	current.roundtripMs = msBetween(current.transcriptAt, at)
+}
+
+// marksFor returns what an edge reports the first frames of a reply to, or nil when the turn
+// is not open or has already been told when its speech was taken, which leaves nothing for
+// the edge to report.
+func (t *turnTracker) marksFor(turnID string) PlayoutMarks {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current, ok := t.open[turnID]; ok && current.pulledAt.IsZero() {
+		return &current.marks
+	}
+	return nil
+}
+
+// queued records when the edge queued the first frame of the turn's reply.
+func (t *turnTracker) queued(current *openTurn, turnID string, at time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.open[turnID] == current && current.queuedAt.IsZero() {
+		current.queuedAt = at
+	}
+}
+
+// pulled records when the track took the first frame of the turn's reply that was not
+// silence. It runs on the track's goroutine, so it only wakes the turn if it was waiting to
+// close: reporting it is the timer's work, because the track must never wait on a consumer.
+func (t *turnTracker) pulled(current *openTurn, turnID string, at time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.open[turnID] != current || !current.pulledAt.IsZero() {
+		return
+	}
+	current.pulledAt = at
+	if current.waiting != nil {
+		current.waiting.Reset(0)
+	}
+}
+
+// release closes a turn that was waiting for the track, now that it has taken the speech or
+// playoutGrace has passed.
+func (t *turnTracker) release(current *openTurn, turnID string) {
+	t.mu.Lock()
+	if t.open[turnID] != current {
+		t.mu.Unlock()
+		return
+	}
+	current.released = true
+	finished := t.settleLocked(turnID, current)
+	t.mu.Unlock()
+
+	t.report(finished)
 }
 
 // dropped records speech that was synthesised but never reached the participant. A turn
@@ -202,6 +287,9 @@ func (t *turnTracker) interrupt(turnID string) {
 		return
 	}
 	current.interrupted = true
+	if current.waiting != nil {
+		current.waiting.Stop()
+	}
 	delete(t.open, turnID)
 	finished := measure(turnID, current)
 	t.mu.Unlock()
@@ -212,6 +300,15 @@ func (t *turnTracker) interrupt(turnID string) {
 // settleLocked closes the turn if nothing more can be learned about it.
 func (t *turnTracker) settleLocked(turnID string, current *openTurn) *Turn {
 	if !current.modelDone || current.settled < current.expected {
+		return nil
+	}
+	// Speech queued on an edge that has not taken it yet is about to give the turn its last
+	// moment, so closing now would report it without. The timer closes it as soon as the track
+	// has taken the speech, or when the grace says it is not going to.
+	if !current.queuedAt.IsZero() && current.pulledAt.IsZero() && !current.released {
+		if current.waiting == nil {
+			current.waiting = time.AfterFunc(t.grace, func() { t.release(current, turnID) })
+		}
 		return nil
 	}
 	delete(t.open, turnID)
@@ -235,24 +332,27 @@ func measure(turnID string, current *openTurn) Turn {
 		textWaitAt = decidedAt
 	}
 	return Turn{
-		TurnID:             turnID,
-		Participant:        current.participant,
-		StartedAt:          current.transcriptAt,
-		STTLatencyMs:       current.sttLatencyMs,
-		CadenceMs:          leg(current.transcriptAt, current.readyAt),
-		DecisionMs:         leg(current.readyAt, decidedAt),
-		ModelToFirstTextMs: leg(textWaitAt, current.firstTextAt),
-		TextToTTSMs:        leg(current.firstTextAt, current.ttsAt),
-		TTSToAudioMs:       leg(current.ttsAt, current.firstAudioAt),
-		LLMTTFTMs:          current.llmTTFTMs,
-		TTSTTFBMs:          current.ttsTTFBMs,
-		RoundtripMs:        current.roundtripMs,
+		TurnID:              turnID,
+		Participant:         current.participant,
+		StartedAt:           current.transcriptAt,
+		STTLatencyMs:        current.sttLatencyMs,
+		CadenceMs:           leg(current.transcriptAt, current.readyAt),
+		DecisionMs:          leg(current.readyAt, decidedAt),
+		ModelToFirstTextMs:  leg(textWaitAt, current.firstTextAt),
+		TextToTTSMs:         leg(current.firstTextAt, current.ttsAt),
+		TTSToAudioMs:        leg(current.ttsAt, current.firstAudioAt),
+		FirstFrameQueuedMs:  leg(current.transcriptAt, current.queuedAt),
+		FirstAudibleFrameMs: leg(current.transcriptAt, current.pulledAt),
+		LLMTTFTMs:           current.llmTTFTMs,
+		TTSTTFBMs:           current.ttsTTFBMs,
+		RoundtripMs:         current.roundtripMs,
 		// Voice in to voice out is the wait the participant felt plus the time the
 		// transcriber spent deciding the turn was over, since that ran first.
-		SpeechEndToAudioMs: speechEndToAudio(current),
-		AudioOutMs:         current.audioOutMs,
-		AudioDroppedMs:     current.audioDroppedMs,
-		Interrupted:        current.interrupted,
+		SpeechEndToAudioMs:   speechEndToAudio(current),
+		SpeechEndToAudibleMs: speechEndToAudible(current),
+		AudioOutMs:           current.audioOutMs,
+		AudioDroppedMs:       current.audioDroppedMs,
+		Interrupted:          current.interrupted,
 	}
 }
 
@@ -261,6 +361,15 @@ func speechEndToAudio(current *openTurn) float64 {
 		return 0
 	}
 	return current.roundtripMs + current.sttLatencyMs
+}
+
+// speechEndToAudible is voice in to the first frame of the reply the participants could hear,
+// worked out as speechEndToAudio is, from the moment the track took it.
+func speechEndToAudible(current *openTurn) float64 {
+	if leg(current.transcriptAt, current.pulledAt) == 0 {
+		return 0
+	}
+	return msBetween(current.transcriptAt, current.pulledAt) + current.sttLatencyMs
 }
 
 func msBetween(from, to time.Time) float64 {
@@ -309,25 +418,28 @@ func newTurnRecorder(pgStore *store.Store, owner routing.Owner, logger *slog.Log
 // Record queues a finished turn, dropping it if the writer is too far behind.
 func (r *turnRecorder) Record(turn Turn) {
 	row := store.Turn{
-		CustomerID:         r.owner.CustomerID,
-		AgentID:            r.owner.AgentID,
-		CallID:             r.owner.CallID,
-		TurnID:             turn.TurnID,
-		Tags:               r.owner.Tags,
-		StartedAt:          turn.StartedAt.UTC(),
-		CadenceMs:          measured(turn.CadenceMs),
-		DecisionMs:         measured(turn.DecisionMs),
-		ModelToFirstTextMs: measured(turn.ModelToFirstTextMs),
-		TextToTTSMs:        measured(turn.TextToTTSMs),
-		TTSToAudioMs:       measured(turn.TTSToAudioMs),
-		STTLatencyMs:       measured(turn.STTLatencyMs),
-		LLMTTFTMs:          measured(turn.LLMTTFTMs),
-		TTSTTFBMs:          measured(turn.TTSTTFBMs),
-		RoundtripMs:        measured(turn.RoundtripMs),
-		SpeechEndToAudioMs: measured(turn.SpeechEndToAudioMs),
-		AudioOutMs:         measured(turn.AudioOutMs),
-		AudioDroppedMs:     measured(turn.AudioDroppedMs),
-		Interrupted:        turn.Interrupted,
+		CustomerID:           r.owner.CustomerID,
+		AgentID:              r.owner.AgentID,
+		CallID:               r.owner.CallID,
+		TurnID:               turn.TurnID,
+		Tags:                 r.owner.Tags,
+		StartedAt:            turn.StartedAt.UTC(),
+		CadenceMs:            measured(turn.CadenceMs),
+		DecisionMs:           measured(turn.DecisionMs),
+		ModelToFirstTextMs:   measured(turn.ModelToFirstTextMs),
+		TextToTTSMs:          measured(turn.TextToTTSMs),
+		TTSToAudioMs:         measured(turn.TTSToAudioMs),
+		STTLatencyMs:         measured(turn.STTLatencyMs),
+		LLMTTFTMs:            measured(turn.LLMTTFTMs),
+		TTSTTFBMs:            measured(turn.TTSTTFBMs),
+		RoundtripMs:          measured(turn.RoundtripMs),
+		SpeechEndToAudioMs:   measured(turn.SpeechEndToAudioMs),
+		FirstFrameQueuedMs:   measured(turn.FirstFrameQueuedMs),
+		FirstAudibleFrameMs:  measured(turn.FirstAudibleFrameMs),
+		SpeechEndToAudibleMs: measured(turn.SpeechEndToAudibleMs),
+		AudioOutMs:           measured(turn.AudioOutMs),
+		AudioDroppedMs:       measured(turn.AudioDroppedMs),
+		Interrupted:          turn.Interrupted,
 	}
 
 	// A turn can finish after the recorder has been closed: interrupting a session closes

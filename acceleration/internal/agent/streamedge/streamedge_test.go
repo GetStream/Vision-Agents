@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -562,6 +563,226 @@ func (s *StreamEdgeSuite) TestCloseWakesAWriterAcrossRateChanges() {
 		s.Fail("Close did not finish")
 	}
 	cancel()
+}
+
+// fakeClock is the clock a speaker reads its playout milestones from in these tests, so a
+// test says how long a frame took to be pulled instead of waiting for it.
+type fakeClock struct {
+	mu sync.Mutex
+	at time.Time
+}
+
+func newFakeClock() *fakeClock { return &fakeClock{at: time.Unix(1_000_000, 0)} }
+
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.at
+}
+
+func (c *fakeClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.at = c.at.Add(d)
+}
+
+// playoutRecord keeps what a speaker reports for one reply.
+type playoutRecord struct {
+	mu     sync.Mutex
+	queued time.Time
+	pulled time.Time
+}
+
+func (r *playoutRecord) FirstFrameQueued(at time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.queued = at
+}
+
+func (r *playoutRecord) FirstAudiblePulled(at time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pulled = at
+}
+
+func (r *playoutRecord) times() (queued, pulled time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.queued, r.pulled
+}
+
+// silence returns speech with nothing in it.
+func silence(sampleRate int, durationMs int) audio.PcmData {
+	return audio.PcmData{Samples: make([]int16, sampleRate*durationMs/1000), SampleRate: sampleRate, Channels: 1}
+}
+
+// timedSpeaker is a speaker whose milestones are read from a clock the test moves.
+func (s *StreamEdgeSuite) timedSpeaker() (*speaker, *fakeClock) {
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	s.T().Cleanup(func() { _ = talker.Close() })
+	clock := newFakeClock()
+	talker.now = clock.Now
+	return talker, clock
+}
+
+// queueFull waits until the writer has filled the queue to its bound, or has finished.
+func (s *StreamEdgeSuite) queueFull(talker *speaker, written <-chan error) {
+	s.Require().Eventually(func() bool {
+		talker.mu.Lock()
+		defer talker.mu.Unlock()
+		return len(talker.frames) == playoutFrames
+	}, 2*time.Second, time.Millisecond, "the queue never filled to its bound")
+}
+
+func (s *StreamEdgeSuite) TestTheFirstFrameIsQueuedBeforePublishingReturns() {
+	talker, clock := s.timedSpeaker()
+	record := new(playoutRecord)
+
+	s.Require().NoError(talker.WriteMarked(s.ctx, speech(opusSampleRate, 100), record))
+	returned := clock.Now()
+
+	queued, pulled := record.times()
+	s.False(queued.IsZero(), "the first frame was never reported as queued")
+	s.False(queued.After(returned), "a frame cannot be queued after publishing has returned")
+	s.True(pulled.IsZero(), "nothing has been pulled yet")
+}
+
+func (s *StreamEdgeSuite) TestAChunkLongerThanTheQueueReturnsLaterThanTheFirstPullByTheExcess() {
+	// A second of speech does not fit the 400 ms queue, so publishing returns only as the
+	// track drains all but the end of it. Reading that return as when the reply started
+	// overstates it by the part of the chunk that did not fit.
+	talker, clock := s.timedSpeaker()
+	record := new(playoutRecord)
+	type result struct {
+		err      error
+		returned time.Time
+	}
+	written := make(chan result, 1)
+	go func() {
+		err := talker.WriteMarked(s.ctx, speech(opusSampleRate, 1_000), record)
+		written <- result{err: err, returned: clock.Now()}
+	}()
+	s.queueFull(talker, nil)
+
+	var firstPull time.Time
+	var done result
+	for pulls := 0; done.returned.IsZero(); pulls++ {
+		s.Require().Less(pulls, 100, "the publication never returned")
+		clock.Advance(opusFrameDuration)
+		_, err := talker.NextSample(s.ctx)
+		s.Require().NoError(err)
+		if firstPull.IsZero() {
+			firstPull = clock.Now()
+		}
+		s.Require().Eventually(func() bool {
+			talker.mu.Lock()
+			full := len(talker.frames) == playoutFrames
+			talker.mu.Unlock()
+			select {
+			case done = <-written:
+				return true
+			default:
+				return full
+			}
+		}, 2*time.Second, 100*time.Microsecond, "the writer neither refilled the queue nor returned")
+	}
+	s.Require().NoError(done.err)
+
+	queued, pulled := record.times()
+	s.False(queued.After(firstPull), "the first frame was queued before the track took anything")
+	s.Equal(firstPull, pulled, "the tone is audible from its first frame")
+	excess := time.Second - playoutFrames*opusFrameDuration
+	s.InDelta(float64(excess), float64(done.returned.Sub(firstPull)), float64(2*opusFrameDuration),
+		"publishing returns when the part that did not fit has been drained")
+}
+
+func (s *StreamEdgeSuite) TestTheFirstAudibleFrameIsTheOneAfterTheSilence() {
+	talker, clock := s.timedSpeaker()
+	record := new(playoutRecord)
+	lead := silence(opusSampleRate, 60)
+	lead.Samples = append(lead.Samples, speech(opusSampleRate, 100).Samples...)
+
+	s.Require().NoError(talker.WriteMarked(s.ctx, lead, record))
+	queued := clock.Now()
+	var pulls int
+	for pulls = 0; pulls < 8; pulls++ {
+		clock.Advance(opusFrameDuration)
+		_, err := talker.NextSample(s.ctx)
+		s.Require().NoError(err)
+		if _, pulled := record.times(); !pulled.IsZero() {
+			break
+		}
+	}
+
+	_, pulled := record.times()
+	s.Require().False(pulled.IsZero(), "the track never reported taking speech")
+	s.GreaterOrEqual(pulled.Sub(queued), 3*opusFrameDuration, "the first three frames are silence")
+	s.LessOrEqual(pulled.Sub(queued), 4*opusFrameDuration, "the speech starts at the fourth frame")
+}
+
+func (s *StreamEdgeSuite) TestAReplyWithNothingAudibleIsNeverReportedAsPulled() {
+	talker, clock := s.timedSpeaker()
+	record := new(playoutRecord)
+
+	s.Require().NoError(talker.WriteMarked(s.ctx, silence(opusSampleRate, 100), record))
+	for range 8 {
+		clock.Advance(opusFrameDuration)
+		_, err := talker.NextSample(s.ctx)
+		s.Require().NoError(err)
+	}
+
+	queued, pulled := record.times()
+	s.False(queued.IsZero())
+	s.True(pulled.IsZero(), "a silent frame is not the reply being heard")
+}
+
+func (s *StreamEdgeSuite) TestADroppedReplyNeverStampsTheNextOne() {
+	talker, clock := s.timedSpeaker()
+	dropped, next := new(playoutRecord), new(playoutRecord)
+
+	s.Require().NoError(talker.WriteMarked(s.ctx, speech(opusSampleRate, 100), dropped))
+	talker.drop()
+	clock.Advance(time.Second)
+	s.Require().NoError(talker.WriteMarked(s.ctx, speech(opusSampleRate, 100), next))
+	nextQueued := clock.Now()
+	clock.Advance(opusFrameDuration)
+	_, err := talker.NextSample(s.ctx)
+	s.Require().NoError(err)
+
+	_, droppedPulled := dropped.times()
+	s.True(droppedPulled.IsZero(), "speech thrown away was never taken by the track")
+	queued, pulled := next.times()
+	s.Equal(nextQueued, queued)
+	s.Equal(nextQueued.Add(opusFrameDuration), pulled, "the next reply is reported at its own first frame")
+}
+
+func (s *StreamEdgeSuite) TestSpeechDroppedBeforeItWasPulledIsNotReportedAfterTheCallIsLeft() {
+	talker, clock := s.timedSpeaker()
+	record := new(playoutRecord)
+
+	s.Require().NoError(talker.WriteMarked(s.ctx, speech(opusSampleRate, 100), record))
+	s.Require().NoError(talker.Close())
+	clock.Advance(opusFrameDuration)
+	_, err := talker.NextSample(s.ctx)
+	s.Require().NoError(err)
+
+	_, pulled := record.times()
+	s.True(pulled.IsZero())
+}
+
+func (s *StreamEdgeSuite) TestPullingAFrameAllocatesNothing() {
+	talker, _ := s.timedSpeaker()
+	record := new(playoutRecord)
+	s.Require().NoError(talker.WriteMarked(s.ctx, speech(opusSampleRate, 400), record))
+
+	pull := testing.AllocsPerRun(10, func() { _, _ = talker.NextSample(s.ctx) })
+
+	s.Zero(pull, "the track takes a frame on its own clock")
+	_, pulled := record.times()
+	s.False(pulled.IsZero(), "the run included reporting the first audible frame")
+	s.drain(talker)
+	idle := testing.AllocsPerRun(10, func() { _, _ = talker.NextSample(s.ctx) })
+	s.Zero(idle, "and so does the silence between replies")
 }
 
 func (s *StreamEdgeSuite) TestOnlyMonoSpeechIsAccepted() {

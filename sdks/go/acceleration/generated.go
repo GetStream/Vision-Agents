@@ -5789,6 +5789,12 @@ type TimelineEntry struct {
 	// DecisionMs Stable turn to the main model request, including flow and queueing.
 	DecisionMs *float64 `json:"decision_ms,omitempty"`
 
+	// FirstAudibleFrameMs Last transcript revision to the outgoing track taking the first frame of the reply that was not silence, which is when it could first be heard. Unlike roundtrip_ms it does not include the wait for a long first chunk to be queued. Absent where the edge does not report it.
+	FirstAudibleFrameMs *float64 `json:"first_audible_frame_ms,omitempty"`
+
+	// FirstFrameQueuedMs Last transcript revision to the first frame of the reply being queued for the outgoing track. Absent where the edge does not report it.
+	FirstFrameQueuedMs *float64 `json:"first_frame_queued_ms,omitempty"`
+
 	// Heard What the caller said, when it can be matched to this exchange.
 	Heard *string `json:"heard,omitempty"`
 
@@ -5809,6 +5815,9 @@ type TimelineEntry struct {
 
 	// Said What the agent answered.
 	Said *string `json:"said,omitempty"`
+
+	// SpeechEndToAudibleMs Last input audio to the outgoing track taking the first frame of the reply that was not silence, estimated like speech_end_to_audio_ms. It excludes network transport and playback.
+	SpeechEndToAudibleMs *float64 `json:"speech_end_to_audible_ms,omitempty"`
 
 	// SpeechEndToAudioMs Last input audio to first output audio, estimated using provider STT processing time plus roundtrip. It excludes network transport and playback.
 	SpeechEndToAudioMs *float64  `json:"speech_end_to_audio_ms,omitempty"`

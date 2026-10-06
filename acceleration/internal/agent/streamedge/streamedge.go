@@ -210,6 +210,13 @@ func (e *Edge) PublishAudioContext(ctx context.Context, pcm audio.PcmData) error
 	return e.speaker.WriteContext(ctx, pcm)
 }
 
+// PublishAudioMarked queues a chunk of speech like PublishAudioContext, and tells marks when
+// its first frame was queued and when the call took the first one that was not silence,
+// satisfying agent.MarkedPlayout.
+func (e *Edge) PublishAudioMarked(ctx context.Context, pcm audio.PcmData, marks agent.PlayoutMarks) error {
+	return e.speaker.WriteMarked(ctx, pcm, marks)
+}
+
 // SpeechPending reports whether published speech is still waiting to go out, satisfying
 // agent.Playout.
 func (e *Edge) SpeechPending() bool { return e.speaker.pending() }

@@ -64,6 +64,29 @@ type ContextPlayout interface {
 	PublishAudioContext(ctx context.Context, pcm audio.PcmData) error
 }
 
+// PlayoutMarks is told when the speech an edge was handed reaches its outgoing track.
+//
+// Publishing says neither. It returns once a chunk is queued, and a chunk longer than the
+// queue returns only as the track drains all but the end of it, so the return can come long
+// after the participants could first have heard the reply. Each call carries the time it
+// happened, and none may block: they run on the publishing goroutine and on the track's own.
+type PlayoutMarks interface {
+	// FirstFrameQueued is when the first frame of the reply was queued for the track.
+	FirstFrameQueued(at time.Time)
+	// FirstAudiblePulled is when the track took the first frame of the reply that was not
+	// silence. It is not called for speech dropped before the track got to it.
+	FirstAudiblePulled(at time.Time)
+}
+
+// MarkedPlayout is an edge that reports PlayoutMarks for the speech it is given. Marks may
+// be nil, which makes this PublishAudioContext.
+//
+// Separate from ContextPlayout rather than a change to it, because only an edge with a
+// track of its own has a moment the speech is taken at.
+type MarkedPlayout interface {
+	PublishAudioMarked(ctx context.Context, pcm audio.PcmData, marks PlayoutMarks) error
+}
+
 // Attendance is somebody arriving in or leaving the call.
 type Attendance struct {
 	Participant stt.Participant

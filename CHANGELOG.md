@@ -706,6 +706,19 @@ is on by default, and `ROUTER_SPECULATIVE_REPLIES=false` asks for the reply only
 ruling is in. A dropped reply is still paid for, and on a pause-heavy call most of them are
 dropped.
 
+### A turn says when its reply could first be heard
+
+`roundtrip_ms` and `speech_end_to_audio_ms` end when publishing the first chunk of a reply
+returns. The call takes at most 400 ms of speech ahead and publishing waits until the whole
+chunk fits, so for a first chunk longer than that the return comes later than the reply
+began to be heard, by the part that did not fit. A voice call's turn now also carries
+`first_frame_queued_ms`, when the first frame of the reply was queued for the outgoing track,
+`first_audible_frame_ms`, when the track took the first frame that was not silence, and
+`speech_end_to_audible_ms`, which is `speech_end_to_audio_ms` measured to that moment. They
+are on the `turn` event of the session socket, in the turn log, in the `turns` table and in
+`GET /v1/agents/calls/{id}/timeline`, and absent where the edge does not report them. The
+older fields are unchanged.
+
 ### A session says whether the user wrote, spoke or showed video
 
 Every session now has a `modality`: `text` for a conversation held in writing, `voice` for a

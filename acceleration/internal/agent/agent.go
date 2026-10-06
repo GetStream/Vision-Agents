@@ -587,6 +587,9 @@ func (a *Agent) finishTurn(turn Turn) {
 		"text_to_tts_ms", turn.TextToTTSMs, "tts_to_audio_ms", turn.TTSToAudioMs,
 		"transcript_to_audio_ms", turn.RoundtripMs,
 		"speech_end_to_audio_ms", turn.SpeechEndToAudioMs,
+		"first_frame_queued_ms", turn.FirstFrameQueuedMs,
+		"first_audible_frame_ms", turn.FirstAudibleFrameMs,
+		"speech_end_to_audible_ms", turn.SpeechEndToAudibleMs,
 		"interrupted", turn.Interrupted)
 	a.emitter.Send(turn)
 	if a.turnStore != nil {
@@ -2413,7 +2416,12 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				continue
 			}
 			var err error
-			if playout, ok := a.options.Edge.(ContextPlayout); ok {
+			if marked, ok := a.options.Edge.(MarkedPlayout); ok {
+				// Publishing returns once the chunk is queued, which for a long one is well
+				// after the participants could have heard it begin, so the edge says when.
+				err = marked.PublishAudioMarked(publishCtx, typed.Audio,
+					a.turns.marksFor(turnOf(typed.SynthesisID)))
+			} else if playout, ok := a.options.Edge.(ContextPlayout); ok {
 				err = playout.PublishAudioContext(publishCtx, typed.Audio)
 			} else {
 				// An edge without cancellable playout gets the legacy call while Agent.mu
