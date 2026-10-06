@@ -57,7 +57,7 @@ One word, one meaning, in code, docs and API alike. A name follows the Go auth l
 - **An error means nothing happens.** A request that fails verification returns an error and the endpoint acts on no part of it. A verified request the verifier has no mapping for returns a zero `VerifiedEvent`, not an error, and so does a verified body the verifier cannot parse.
 - **Slices, not single values.** One revocation event can name several tokens, and one delivery can batch several messages, so `Signals` and `Messages` are slices. A handshake sets only `Challenge`.
 - **The raw body is bytes.** `body` is read once, before anything parses it, because a signature covers those exact bytes. `InboundMessage.Raw` is that body unchanged, shared by every message of a batch, and `[]byte`, not `json.RawMessage`, because some providers post a form. `ProviderMessageID` tells the messages of a batch apart.
-- **Ids stay the provider's.** A `Signal` names an account and an `InboundMessage` names a provider unit, a thread key, an author and a message, all as the provider sends them. Mapping them to a connection, a thread channel or a Stream Chat user is the reader's job, not the verifier's.
+- **Ids stay the provider's.** A `Signal` names an account and an `InboundMessage` names a provider unit, an author and a message, all as the provider sends them. Mapping them and the thread key to a connection, a thread channel or a Stream Chat user is the reader's job, not the verifier's.
 
 ## Tests
 

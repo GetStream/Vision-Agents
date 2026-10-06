@@ -44,8 +44,8 @@ type Signal struct {
 	Kind        SignalKind
 }
 
-// InboundMessage is one message a person sent on an external thread, as the provider's ids
-// name it. Like Signal it names no connection or Stream Chat channel: the channel bridge
+// InboundMessage is one message a person sent on an external thread, named by the provider's
+// ids and by a thread key the verifier builds. Like Signal it names no connection or Stream Chat channel: the channel bridge
 // maps ProviderUnitID to a connection, ThreadKey to a thread channel and AuthorID to a
 // Stream Chat user.
 type InboundMessage struct {
