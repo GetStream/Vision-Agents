@@ -98,7 +98,7 @@ func (*Scheme) Complete(_ context.Context, in core.CompleteInput) (core.StoredCr
 
 // Retrieve hands the token out with no expiry, and stored as it is, so the resolver has
 // nothing to persist.
-func (*Scheme) Retrieve(_ context.Context, stored core.StoredCredentials, _ core.ResolvedManifest) (core.AccessCredential, core.StoredCredentials, error) {
+func (*Scheme) Retrieve(_ context.Context, stored core.StoredCredentials, _ core.ResolvedManifest, _ core.RetrieveOptions) (core.AccessCredential, core.StoredCredentials, error) {
 	if _, err := open(stored); err != nil {
 		return core.AccessCredential{}, core.StoredCredentials{}, err
 	}

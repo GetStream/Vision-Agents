@@ -17,16 +17,20 @@ type ConnectionRef struct {
 type Resolver interface {
 	Resolve(ctx context.Context, ref ConnectionRef, req CredentialRequest) (AccessCredential, error)
 	// Invalidate marks the connection as needing a reconnect and drops anything cached, so
-	// a revoked grant stops being used before it next fails.
-	Invalidate(ctx context.Context, ref ConnectionRef, why Outcome) error
+	// a revoked grant stops being used before it next fails. rejected is the credential the
+	// provider refused, as Resolve returned it. A refusal of a credential that had expired,
+	// or whose Revision the stored credentials have moved past (another router renewed
+	// them), says nothing about the grant: then only the cache is dropped.
+	Invalidate(ctx context.Context, ref ConnectionRef, rejected AccessCredential, why Outcome) error
 }
 
 // CredentialRequest is what one call asks of a credential.
 type CredentialRequest struct {
 	Audience string
 	Scopes   []string
-	// Deadline is the call's budget. Getting the access credential runs on a detached context, so a call
-	// that gives up does not leave a refresh half done.
+	// Deadline is the call's budget. The access credential handed out still works then: the
+	// resolver asks the scheme for that (RetrieveOptions.ValidUntil). Getting it runs on a
+	// detached context, so a call that gives up does not leave a refresh half done.
 	Deadline time.Time
 }
 
@@ -34,7 +38,9 @@ type CredentialRequest struct {
 //
 // Update loads the credential state under a lock that holds across replicas and runs fn.
 // fn may call checkpoint to persist the state before a side effect it cannot take back, such as
-// spending a rotating refresh token; returning changed persists the final state.
+// spending a rotating refresh token; returning changed persists the final state. Each commit,
+// the checkpoint's and the final one, leaves state.Revision at the revision it committed, so
+// whoever ran Update reads the committed revision from state once Update returns.
 type CredentialStore interface {
 	Update(ctx context.Context, ref ConnectionRef,
 		fn func(state *CredentialState, checkpoint func() error) (changed bool, err error)) error

@@ -1,6 +1,6 @@
 # internal/connectors/credentialstores/pgsealed
 
-The `core.CredentialStore` that keeps a connection's credential state in Postgres: the `connector_connections` row, with `core.StoredCredentials` sealed by `auth.Sealer` (AES-GCM, KEK keyring) into `credentials_sealed`. The SQL is the store's (`internal/store/credentials.go`: `WithLockedConnectorConnection`, `SaveConnectorConnectionAtRevision`); this package turns the row into a `core.CredentialState` and back, and owns sealing, the revision and the rewrap. Registering it in `core.Registry.CredentialStores` is T12's (the resolver), not this package's.
+The `core.CredentialStore` that keeps a connection's credential state in Postgres: the `connector_connections` row, with `core.StoredCredentials` sealed by `auth.Sealer` (AES-GCM, KEK keyring) into `credentials_sealed`. The SQL is the store's (`internal/store/credentials.go`: `WithLockedConnectorConnection`, `SaveConnectorConnectionAtRevision`); this package turns the row into a `core.CredentialState` and back, and owns sealing, the revision and the rewrap. The resolver (`internal/connectors/resolver`) takes it directly, built in `cmd/router/resolver.go`: a connection names no credential store, so `core.Registry.CredentialStores` stays empty until a second one exists.
 
 ## Flow
 

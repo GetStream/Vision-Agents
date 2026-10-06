@@ -34,8 +34,8 @@ var ErrTokenTypeNotRevocable = errors.New("oauth2code: the provider does not rev
 var errNoAccessToken = errors.New("oauth2code: the credential has no access token")
 
 // Retrieve returns the access token in stored, renewed first when it is inside the
-// margin of its expiry (RFC 6749 section 6). The StoredCredentials that come back are stored
-// itself when nothing was renewed, and new ones when a refresh succeeded; a failed refresh
+// margin of its expiry or expires at or before opts.ValidUntil (RFC 6749 section 6). The
+// StoredCredentials that come back are stored itself when nothing was renewed, and new ones when a refresh succeeded; a failed refresh
 // returns no StoredCredentials, stored is never written to, and the error is a *core.OutcomeError the resolver acts on. When the
 // refresh failed inside the margin, before the access token expired, that still valid token
 // comes back with the error, so a provider's bad minute is not a failed call: the resolver
@@ -46,14 +46,19 @@ var errNoAccessToken = errors.New("oauth2code: the credential has no access toke
 // while the window opened by the first attempt is still running: a retired token keeps
 // working inside it, so the retry cannot be the replay RFC 9700 section 4.14.2 revokes a
 // grant for. Without a grace, a retry could be exactly that, so there is none.
-func (s *Scheme) Retrieve(ctx context.Context, stored core.StoredCredentials, m core.ResolvedManifest) (core.AccessCredential, core.StoredCredentials, error) {
+func (s *Scheme) Retrieve(ctx context.Context, stored core.StoredCredentials, m core.ResolvedManifest, opts core.RetrieveOptions) (core.AccessCredential, core.StoredCredentials, error) {
 	current, err := open(stored)
 	if err != nil {
 		return core.AccessCredential{}, core.StoredCredentials{}, err
 	}
 	now := s.cfg.Now()
+	// The token must outlive both the margin and the call (opts.ValidUntil).
+	due := now.Add(margin(m))
+	if opts.ValidUntil.After(due) {
+		due = opts.ValidUntil
+	}
 	// A token with no known expiry is never renewed early: there is no margin to be inside.
-	if current.ExpiresAt.IsZero() || now.Add(margin(m)).Before(current.ExpiresAt) {
+	if current.ExpiresAt.IsZero() || due.Before(current.ExpiresAt) {
 		return credential(current), stored, nil
 	}
 	if current.RefreshToken == "" {
@@ -66,7 +71,7 @@ func (s *Scheme) Retrieve(ctx context.Context, stored core.StoredCredentials, m 
 			Err:     errors.New("oauth2code: the access token expired and the grant has no refresh token"),
 		}
 	}
-	next, err := s.refresh(ctx, m, current)
+	next, err := s.refresh(ctx, m, current, opts.Checkpoint)
 	if err != nil {
 		if s.cfg.Now().Before(current.ExpiresAt) {
 			return credential(current), core.StoredCredentials{}, err
@@ -153,7 +158,7 @@ func (s *Scheme) Revoke(ctx context.Context, stored core.StoredCredentials, m co
 
 // refresh is the refresh_token grant (RFC 6749 section 6) with one grace retry, and the
 // payload it leaves.
-func (s *Scheme) refresh(ctx context.Context, m core.ResolvedManifest, current storedPayload) (storedPayload, error) {
+func (s *Scheme) refresh(ctx context.Context, m core.ResolvedManifest, current storedPayload, checkpoint func() error) (storedPayload, error) {
 	// The manifest's refresh endpoint, when a provider renews somewhere else, then the token
 	// endpoint the code was redeemed at.
 	endpoint := firstSet(m.Endpoints["refresh"], current.TokenEndpoint)
@@ -179,6 +184,14 @@ func (s *Scheme) refresh(ctx context.Context, m core.ResolvedManifest, current s
 	if current.Resource != "" {
 		// RFC 8707 section 2.2: the resource of the access token asked for, on a refresh too.
 		form.Set("resource", current.Resource)
+	}
+	// The resolver's checkpoint commits that the outcome is not known yet before the refresh
+	// token leaves, so an answer that never arrives is never followed by the same token. The
+	// grace retry below needs none of its own: the first attempt already committed it.
+	if checkpoint != nil {
+		if err := checkpoint(); err != nil {
+			return storedPayload{}, err
+		}
 	}
 	start := s.cfg.Now()
 	token, err := s.redeem(ctx, endpoint, form, c)

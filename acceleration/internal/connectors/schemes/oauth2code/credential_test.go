@@ -22,7 +22,7 @@ func (s *OAuth2CodeSuite) TestAccessCredentialHandsOutTheTokenAsItIsUntilItIsIns
 	srv := fakeprovider.New(s.T())
 	scheme, stored := s.connected(srv, s.preregistered(srv), nil)
 
-	credential, again, err := scheme.Retrieve(s.ctx, stored, s.preregistered(srv))
+	credential, again, err := scheme.Retrieve(s.ctx, stored, s.preregistered(srv), core.RetrieveOptions{})
 	s.Require().NoError(err)
 	s.Equal(0, srv.Refreshes())
 	s.Equal(stored, again, "nothing was renewed, so the stored credentials are the ones given")
@@ -35,7 +35,7 @@ func (s *OAuth2CodeSuite) TestAccessCredentialRefreshesInsideTheDefaultMinuteBef
 	scheme, stored := s.connected(srv, resolved, nil)
 
 	s.now = s.now.Add(fakeprovider.AccessTTL - 59*time.Second)
-	credential, rotated, err := scheme.Retrieve(s.ctx, stored, resolved)
+	credential, rotated, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
 	s.Require().NoError(err)
 	s.Equal(1, srv.Refreshes())
 	s.NotEqual(s.accessToken(stored), s.accessToken(rotated))
@@ -50,7 +50,7 @@ func (s *OAuth2CodeSuite) TestOutsideTheDefaultMinuteAccessCredentialDoesNotRefr
 	scheme, stored := s.connected(srv, resolved, nil)
 
 	s.now = s.now.Add(fakeprovider.AccessTTL - 61*time.Second)
-	_, _, err := scheme.Retrieve(s.ctx, stored, resolved)
+	_, _, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
 	s.Require().NoError(err)
 	s.Equal(0, srv.Refreshes())
 }
@@ -62,7 +62,7 @@ func (s *OAuth2CodeSuite) TestTheManifestMarginDecidesWhenARefreshIsDue() {
 	scheme, stored := s.connected(srv, resolved, nil)
 
 	s.now = s.now.Add(fakeprovider.AccessTTL - 9*time.Minute)
-	_, _, err := scheme.Retrieve(s.ctx, stored, resolved)
+	_, _, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
 	s.Require().NoError(err)
 	s.Equal(1, srv.Refreshes())
 }
@@ -89,6 +89,83 @@ func (s *OAuth2CodeSuite) TestARefreshSendsTheGrantedScopesWhenThePolicySays() {
 	s.Equal("files:read files:write", scope)
 }
 
+func (s *OAuth2CodeSuite) TestATokenThatExpiresBeforeValidUntilIsRefreshedOutsideTheMargin() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.preregistered(srv)
+	scheme, stored := s.connected(srv, resolved, nil)
+	before, _, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
+	s.Require().NoError(err)
+
+	// Ten minutes left, well outside the one-minute margin, and a call that needs more.
+	s.now = before.ExpiresAt.Add(-10 * time.Minute)
+	credential, rotated, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{ValidUntil: before.ExpiresAt})
+	s.Require().NoError(err)
+	s.Equal(1, srv.Refreshes())
+	s.NotEqual(s.accessToken(stored), s.accessToken(rotated))
+	s.True(credential.ExpiresAt.After(before.ExpiresAt), "the new token outlives the call")
+	s.Equal(http.StatusOK, s.wrapped(srv, scheme, credential))
+}
+
+func (s *OAuth2CodeSuite) TestATokenThatOutlivesValidUntilIsNotRefreshed() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.preregistered(srv)
+	scheme, stored := s.connected(srv, resolved, nil)
+	before, _, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
+	s.Require().NoError(err)
+
+	s.now = before.ExpiresAt.Add(-10 * time.Minute)
+	_, again, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{ValidUntil: before.ExpiresAt.Add(-time.Second)})
+	s.Require().NoError(err)
+	s.Equal(0, srv.Refreshes())
+	s.Equal(stored, again)
+}
+
+func (s *OAuth2CodeSuite) TestARefreshCheckpointsOnceBeforeTheTokenLeaves() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.preregistered(srv)
+	scheme, stored := s.connected(srv, resolved, nil)
+	var refreshesAtCheckpoint []int
+	opts := core.RetrieveOptions{Checkpoint: func() error {
+		refreshesAtCheckpoint = append(refreshesAtCheckpoint, srv.Refreshes())
+		return nil
+	}}
+
+	s.now = s.now.Add(fakeprovider.AccessTTL)
+	_, _, err := scheme.Retrieve(s.ctx, stored, resolved, opts)
+	s.Require().NoError(err)
+	s.Equal([]int{0}, refreshesAtCheckpoint, "one checkpoint, before the refresh reached the provider")
+	s.Equal(1, srv.Refreshes())
+}
+
+func (s *OAuth2CodeSuite) TestARefreshWhoseCheckpointFailsSendsNothing() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.preregistered(srv)
+	scheme, stored := s.connected(srv, resolved, nil)
+	failed := errors.New("the checkpoint did not commit")
+	opts := core.RetrieveOptions{Checkpoint: func() error { return failed }}
+
+	s.now = s.now.Add(fakeprovider.AccessTTL)
+	_, returned, err := scheme.Retrieve(s.ctx, stored, resolved, opts)
+	s.ErrorIs(err, failed)
+	s.Equal(0, srv.Refreshes(), "the refresh token never left")
+	s.Equal(core.StoredCredentials{}, returned)
+}
+
+func (s *OAuth2CodeSuite) TestAccessCredentialThatIsNotDueNeverCheckpoints() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.preregistered(srv)
+	scheme, stored := s.connected(srv, resolved, nil)
+	checkpoints := 0
+	opts := core.RetrieveOptions{Checkpoint: func() error {
+		checkpoints++
+		return nil
+	}}
+
+	_, _, err := scheme.Retrieve(s.ctx, stored, resolved, opts)
+	s.Require().NoError(err)
+	s.Zero(checkpoints, "nothing that cannot be taken back was sent")
+}
+
 func (s *OAuth2CodeSuite) TestALostRefreshIsUncertainAndLeavesTheStoredCredentialsAlone() {
 	srv := fakeprovider.New(s.T())
 	resolved := s.preregistered(srv)
@@ -97,7 +174,7 @@ func (s *OAuth2CodeSuite) TestALostRefreshIsUncertainAndLeavesTheStoredCredentia
 	srv.Use(fakeprovider.LostResponse)
 
 	s.now = s.now.Add(fakeprovider.AccessTTL)
-	credential, returned, err := scheme.Retrieve(s.ctx, stored, resolved)
+	credential, returned, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
 	s.Equal(core.OutcomeUncertain, s.outcome(err).Kind)
 	s.Equal(1, srv.Refreshes(), "without a grace window the spent token is never sent again")
 	s.Equal(before, []byte(stored.Payload), "the caller's stored credentials are untouched")
@@ -113,7 +190,7 @@ func (s *OAuth2CodeSuite) TestALostRefreshInsideTheGraceWindowIsRetriedOnceWithT
 	srv.Use(fakeprovider.LostResponseOnce, fakeprovider.RotatingRefreshWithGrace)
 
 	s.now = s.now.Add(24 * time.Hour)
-	credential, rotated, err := scheme.Retrieve(s.ctx, stored, resolved)
+	credential, rotated, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
 	s.Require().NoError(err)
 	s.Equal(2, srv.Refreshes(), "the lost one and one retry")
 	s.NotEqual(s.refreshToken(stored), s.refreshToken(rotated))
@@ -127,7 +204,7 @@ func (s *OAuth2CodeSuite) TestTheGraceRetryIsMadeOnlyOnce() {
 	srv.Use(fakeprovider.LostResponse, fakeprovider.RotatingRefreshWithGrace)
 
 	s.now = s.now.Add(24 * time.Hour)
-	_, _, err := scheme.Retrieve(s.ctx, stored, resolved)
+	_, _, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
 	s.Equal(core.OutcomeUncertain, s.outcome(err).Kind)
 	s.Equal(2, srv.Refreshes())
 }
@@ -142,7 +219,7 @@ func (s *OAuth2CodeSuite) TestNoGraceRetryOnceTheWindowHasClosed() {
 	// Every read of the clock now moves it a whole grace window, so the answer of the first
 	// attempt arrives after the window it opened has closed.
 	s.step = time.Duration(resolved.Refresh.Grace)
-	_, _, err := scheme.Retrieve(s.ctx, stored, resolved)
+	_, _, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
 	s.Equal(core.OutcomeUncertain, s.outcome(err).Kind)
 	s.Equal(1, srv.Refreshes())
 }
@@ -163,11 +240,11 @@ func (s *OAuth2CodeSuite) TestAnExpiredTokenWithNoRefreshTokenIsInvalidGrant() {
 	scheme, stored := s.connected(srv, resolved, nil)
 
 	s.now = s.now.Add(fakeprovider.AccessTTL - time.Second)
-	_, _, err := scheme.Retrieve(s.ctx, stored, resolved)
+	_, _, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
 	s.Require().NoError(err, "inside the margin and still valid, it is handed out")
 
 	s.now = s.now.Add(time.Second)
-	_, _, err = scheme.Retrieve(s.ctx, stored, resolved)
+	_, _, err = scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
 	s.Equal(core.OutcomeInvalidGrant, s.outcome(err).Kind)
 	s.Equal(0, srv.Refreshes())
 }
@@ -193,7 +270,7 @@ func (s *OAuth2CodeSuite) TestEachRefusedRefreshIsTheOutcomeItsAnswerMeans() {
 		srv.Use(row.personality)
 
 		s.now = s.now.Add(fakeprovider.AccessTTL)
-		_, returned, err := scheme.Retrieve(s.ctx, stored, resolved)
+		_, returned, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
 		s.Equal(row.want, s.outcome(err), row.personality)
 		s.Equal(before, []byte(stored.Payload), row.personality)
 		s.Equal(core.StoredCredentials{}, returned, row.personality)
@@ -220,7 +297,7 @@ func (s *OAuth2CodeSuite) TestARefreshThatFailsBeforeExpiryStillHandsOutTheValid
 		srv.Use(row.personality)
 
 		s.now = s.now.Add(fakeprovider.AccessTTL - 30*time.Second)
-		credential, returned, err := scheme.Retrieve(s.ctx, stored, resolved)
+		credential, returned, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
 		s.Equal(row.want, s.outcome(err).Kind, row.personality)
 		s.Equal(core.StoredCredentials{}, returned, row.personality)
 		// Off again, since RateLimited answers resource calls with 429 too.
@@ -243,7 +320,7 @@ func (s *OAuth2CodeSuite) TestARefreshRefusedWithAnErrorCodeClassifyDoesNotNameI
 
 	secret = "rotated-elsewhere"
 	s.now = s.now.Add(fakeprovider.SlackAccessTTL)
-	_, _, err = scheme.Retrieve(s.ctx, stored, resolved)
+	_, _, err = scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
 	s.Equal(core.OutcomeTransient, s.outcome(err).Kind, "200 ok:false invalid_client_id is a refusal, not a lost token")
 	var refused *oauth2code.TokenError
 	s.Require().ErrorAs(err, &refused)
@@ -257,7 +334,7 @@ func (s *OAuth2CodeSuite) TestARefusalWhoseBodyWasCutOffIsNotRetriedInTheGraceWi
 	srv.Use(fakeprovider.CutOffRefusal)
 
 	s.now = s.now.Add(24 * time.Hour)
-	_, _, err := scheme.Retrieve(s.ctx, stored, resolved)
+	_, _, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
 	s.Equal(core.OutcomeTransient, s.outcome(err).Kind, "the 400 arrived, so nothing was spent")
 	s.Equal(1, srv.Refreshes(), "a refusal is not sent again")
 }
@@ -277,7 +354,7 @@ func (s *OAuth2CodeSuite) TestARefreshLooksThePreregisteredClientSecretUpAgain()
 
 	secret = "rotated-elsewhere"
 	s.now = s.now.Add(fakeprovider.AccessTTL)
-	_, _, err = scheme.Retrieve(s.ctx, stored, resolved)
+	_, _, err = scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
 	s.Equal(core.OutcomeTransient, s.outcome(err).Kind, "the fake refuses the new secret with invalid_client")
 	var refused *oauth2code.TokenError
 	s.Require().ErrorAs(err, &refused)
@@ -317,7 +394,7 @@ func (s *OAuth2CodeSuite) TestARefreshEndpointThatIsNotPublicIsRefusedBeforeTheT
 	resolved.Endpoints["refresh"] = "https://10.0.0.1/token"
 
 	s.now = s.now.Add(fakeprovider.AccessTTL)
-	_, _, err := scheme.Retrieve(s.ctx, stored, resolved)
+	_, _, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
 	s.Require().ErrorContains(err, "egress:")
 	s.Equal(0, srv.Refreshes())
 }
@@ -326,7 +403,7 @@ func (s *OAuth2CodeSuite) TestWrapSendsTheAccessTokenAsABearerHeaderOnACopyOfThe
 	srv := fakeprovider.New(s.T())
 	resolved := s.preregistered(srv)
 	scheme, stored := s.connected(srv, resolved, nil)
-	credential, _, err := scheme.Retrieve(s.ctx, stored, resolved)
+	credential, _, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
 	s.Require().NoError(err)
 
 	client := &http.Client{Transport: scheme.Wrap(srv.Client().Transport, credential)}
@@ -625,7 +702,7 @@ func (s *OAuth2CodeSuite) connected(srv *fakeprovider.Server, m core.ResolvedMan
 // refresh once and succeed.
 func (s *OAuth2CodeSuite) accessCredentialDue(scheme *oauth2code.Scheme, stored core.StoredCredentials, m core.ResolvedManifest) core.StoredCredentials {
 	s.now = s.now.Add(fakeprovider.AccessTTL)
-	_, renewed, err := scheme.Retrieve(s.ctx, stored, m)
+	_, renewed, err := scheme.Retrieve(s.ctx, stored, m, core.RetrieveOptions{})
 	s.Require().NoError(err)
 	return renewed
 }

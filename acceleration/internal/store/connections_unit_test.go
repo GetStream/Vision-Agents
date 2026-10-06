@@ -25,7 +25,7 @@ func (testScheme) Complete(context.Context, core.CompleteInput) (core.StoredCred
 	return core.StoredCredentials{}, core.AccountInfo{}, nil
 }
 
-func (testScheme) Retrieve(_ context.Context, stored core.StoredCredentials, _ core.ResolvedManifest) (core.AccessCredential, core.StoredCredentials, error) {
+func (testScheme) Retrieve(_ context.Context, stored core.StoredCredentials, _ core.ResolvedManifest, _ core.RetrieveOptions) (core.AccessCredential, core.StoredCredentials, error) {
 	return core.AccessCredential{}, stored, nil
 }
 
