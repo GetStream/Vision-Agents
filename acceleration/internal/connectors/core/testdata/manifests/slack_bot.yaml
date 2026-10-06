@@ -8,6 +8,8 @@
 #   [im]       https://docs.slack.dev/reference/events/message.im
 #   [threads]  https://docs.slack.dev/messaging/retrieving-messages
 #   [post]     https://docs.slack.dev/reference/methods/chat.postMessage
+#   [created]  https://docs.slack.dev/reference/events/channel_created
+#   [mention]  https://docs.slack.dev/reference/events/app_mention
 id: slack_bot
 revision: 1
 name: Slack bot
@@ -60,6 +62,12 @@ channel:
   # [handshake]: {"type": "url_verification", "challenge": "..."}.
   challenge: $.challenge
   messages:
+    # [im]: a message is event.type message. The customer's app may subscribe to other events
+    # on the same Request URL: channel_created, whose event.channel is an object ([created]),
+    # or app_mention, which «is not a message like the message.* event types» ([mention]) but
+    # carries the same post's user, text, ts and channel.
+    match:
+      $.event.type: message
     # Messages an app posts carry bot_id ([threads], «such as user or bot_id»), so the bot's
     # own replies are not read back as a person's.
     skip_if_present: [$.event.bot_id]

@@ -249,6 +249,36 @@ func (s *ChannelSuite) TestTheSlackBotsOwnMessageIsNotRead() {
 	s.Empty(s.read("slack_bot", "slack_bot.own.json").Messages)
 }
 
+// The customer's app may subscribe to other events on the same Request URL. channel_created's
+// event.channel is an object, so reading it as a message would fail the whole body.
+func (s *ChannelSuite) TestASlackEventThatIsNotAMessageIsNoMessageAndNoError() {
+	s.Equal(ChannelEvent{}, s.read("slack_bot", "slack_bot.channel_created.json"))
+}
+
+func (s *ChannelSuite) TestALinqReadReceiptIsNoMessage() {
+	s.Equal(ChannelEvent{}, s.read("linq", "linq.read.json"))
+}
+
+// An Update holds at most one of its optional fields, so an edit has no message.
+func (s *ChannelSuite) TestATelegramUpdateWithoutAMessageIsNoMessage() {
+	s.Equal(ChannelEvent{}, s.read("telegram", "telegram.edited.json"))
+}
+
+// A WhatsApp Business Account webhook also posts other fields, such as
+// message_template_status_update, whose value has no messages.
+func (s *ChannelSuite) TestAWhatsAppTemplateStatusIsNoMessage() {
+	s.Equal(ChannelEvent{}, s.read("whatsapp", "whatsapp.template_status.json"))
+}
+
+// An app subscribed to app_mention and message.channels can get one post as both events;
+// only the message is read.
+func (s *ChannelSuite) TestASlackPostThatMentionsTheAppIsOneMessage() {
+	messages := append(s.read("slack_bot", "slack_bot.app_mention.json").Messages,
+		s.read("slack_bot", "slack_bot.message.json").Messages...)
+	s.Require().Len(messages, 1)
+	s.Equal("1759740000.000200", messages[0].ProviderMessageID)
+}
+
 func (s *ChannelSuite) TestASlackHandshakeIsOnlyAChallenge() {
 	s.Equal(ChannelEvent{Challenge: "synthetic-challenge-value"}, s.read("slack_bot", "slack_bot.challenge.json"))
 }
