@@ -193,6 +193,37 @@ func (s *ConnectorEventsSuite) TestAnUninstallMovesEveryConnectionOfTheWorkspace
 	s.Equal(store.ConnectionConnected, s.status(untouched))
 }
 
+// A connection deleted between the lookup and its revocation has no grant left to end: the
+// delivery still revokes the rest and answers 200, so Slack does not deliver it again. The
+// later connection's lock is held until the earlier one has moved, which proves the lookup
+// listed both, and it is deleted before the lock is let go.
+func (s *ConnectorEventsSuite) TestAConnectionDeletedDuringAnUninstallCountsAsRevoked() {
+	team := s.team()
+	first, last := s.connected("slack", team, "UALICE"), s.connected("slack", team, "UBOB")
+	if last.ConnectionID < first.ConnectionID {
+		first, last = last, first
+	}
+	release := s.hold(last)
+	answered := make(chan int, 1)
+	go func() {
+		status, _, _ := s.deliver("slack", s.signed(uninstall(team), time.Now()))
+		answered <- status
+	}()
+
+	s.Require().Eventually(func() bool {
+		return s.status(first) == store.ConnectionNeedsReauthorization
+	}, 10*time.Second, 20*time.Millisecond, "the loop reached the held connection")
+	s.Require().NoError(s.store.DeleteConnectorConnection(context.Background(), last.CustomerID, last.ConnectionID))
+	release()
+
+	select {
+	case status := <-answered:
+		s.Equal(http.StatusOK, status)
+	case <-time.After(10 * time.Second):
+		s.Fail("the delivery was not answered")
+	}
+}
+
 func (s *ConnectorEventsSuite) TestAURLVerificationIsAnsweredWithItsChallenge() {
 	body := []byte(`{"token":"synthetic","challenge":"synthetic-challenge-value","type":"url_verification"}`)
 
@@ -289,6 +320,31 @@ func (s *ConnectorEventsSuite) connected(connector, team, user string) core.Conn
 		return true, nil
 	}))
 	return ref
+}
+
+// hold takes ref's credential lock and keeps it until the returned release is called, as a
+// refresh in flight on another router would.
+func (s *ConnectorEventsSuite) hold(ref core.ConnectionRef) (release func()) {
+	credentials, err := pgsealed.New(s.store, s.sealer)
+	s.Require().NoError(err)
+	locked, released, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		done <- credentials.Update(context.Background(), ref, func(*core.CredentialState, func() error) (bool, error) {
+			close(locked)
+			<-released
+			return false, nil
+		})
+	}()
+	<-locked
+	var once sync.Once
+	release = func() {
+		once.Do(func() {
+			close(released)
+			<-done
+		})
+	}
+	s.T().Cleanup(release)
+	return release
 }
 
 func (s *ConnectorEventsSuite) status(ref core.ConnectionRef) string {
