@@ -466,6 +466,10 @@ error a request failed with and, for a 5xx, the stack where that error entered t
 A 5xx body is now `{"error": "internal error"}` rather than the error's text: quote the
 request id to find the rest in the logs.
 
+### A connection is connected through the provider's consent
+
+`POST /v1/agents/connections/{id}/authorizations` (`createAuthorization`, server-side only) starts the OAuth consent for a connection and answers a `launch_url` and a `handoff_token`. The dashboard opens the launch page in a popup and posts it the token; the browser goes to the provider and comes back to `/v1/agents/connectors/oauth/callback`, which stores the grant and sends the browser to the dashboard with `connection_id` and `status`. The consent must finish in the browser that started it, within 10 minutes, once. A reconnect that comes back with another provider account keeps the old grant and ends as `account_mismatch`. The router needs `ROUTER_PUBLIC_URL` for it, and with an https one it serves its OAuth Client ID Metadata Document at `/.well-known/oauth-client-metadata`. The Go client is regenerated; other SDKs follow.
+
 ### An MCP server named by URL can log in, for the app or for each user
 
 The server decides whether it needs a login: saving a config asks each of its `mcp_servers`
