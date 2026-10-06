@@ -9,6 +9,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/danielgtaylor/huma/v2"
@@ -342,7 +343,7 @@ func (s *Server) routerOptions(ctx context.Context, customerID, configID string)
 		return store.RouterConfig{}, nil
 	}
 	if s.store == nil {
-		return store.RouterConfig{}, fmt.Errorf("%s", noRouterConfigs)
+		return store.RouterConfig{}, stack.Wrap(fmt.Errorf("%s", noRouterConfigs))
 	}
 
 	if config, err := s.configs.RouterConfig(ctx, customerID, configID); err == nil {
@@ -353,7 +354,7 @@ func (s *Server) routerOptions(ctx context.Context, customerID, configID string)
 		return store.RouterConfig{}, err
 	}
 	if !found {
-		return store.RouterConfig{}, fmt.Errorf("%s: %s", unknownRouterConfig, configID)
+		return store.RouterConfig{}, stack.Wrap(fmt.Errorf("%s: %s", unknownRouterConfig, configID))
 	}
 	return config, nil
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/socketedge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -66,14 +67,14 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 		writing.Lock()
 		defer writing.Unlock()
 		_ = connection.SetWriteDeadline(time.Now().Add(writeWait))
-		return connection.WriteMessage(kind, payload)
+		return stack.Wrap(connection.WriteMessage(kind, payload))
 	}
 	writeFrame := func(f frame) error {
 		payload, err := json.Marshal(f)
 		if err != nil {
-			return err
+			return stack.Wrap(err)
 		}
-		return write(websocket.TextMessage, payload)
+		return stack.Wrap(write(websocket.TextMessage, payload))
 	}
 	refuse := func(message string) {
 		_ = writeFrame(frame{"type": "error", "error": message})

@@ -5,26 +5,28 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // RecordCallResource saves the trunk and route one call leg was given, so the call's end
 // can find and delete them.
 func (s *Store) RecordCallResource(ctx context.Context, resource *CallResource) error {
 	if resource.TrunkID == "" {
-		return errors.New("store: a call resource needs a trunk")
+		return stack.Wrap(errors.New("store: a call resource needs a trunk"))
 	}
 	if resource.RouteID == "" {
-		return errors.New("store: a call resource needs a route")
+		return stack.Wrap(errors.New("store: a call resource needs a route"))
 	}
 	if resource.CallID == "" {
-		return errors.New("store: a call resource needs a call")
+		return stack.Wrap(errors.New("store: a call resource needs a call"))
 	}
 	if resource.CreatedAt.IsZero() {
 		resource.CreatedAt = time.Now().UTC()
 	}
 
 	if _, err := s.db.NewInsert().Model(resource).Exec(ctx); err != nil {
-		return fmt.Errorf("store: record call resource: %w", err)
+		return stack.Wrap(fmt.Errorf("store: record call resource: %w", err))
 	}
 	return nil
 }

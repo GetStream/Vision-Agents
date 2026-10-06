@@ -51,6 +51,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
@@ -1442,7 +1443,7 @@ func parseTagFilter(raw *[]string) (map[string]string, error) {
 	for _, entry := range *raw {
 		key, value, found := strings.Cut(entry, ":")
 		if !found || key == "" {
-			return nil, fmt.Errorf("tag %q must be written key:value", entry)
+			return nil, stack.Wrap(fmt.Errorf("tag %q must be written key:value", entry))
 		}
 		tags[key] = value
 	}

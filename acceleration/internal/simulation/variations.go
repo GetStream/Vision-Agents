@@ -9,6 +9,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // expandTimeout bounds the rewrite, and expandTokens bounds it. Ten ways of asking one
@@ -56,7 +57,7 @@ func expand(
 
 	session, err := router.Start(ctx, request)
 	if err != nil {
-		return nil, fmt.Errorf("simulation: open the rewriter: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("simulation: open the rewriter: %w", err))
 	}
 	defer session.Close()
 
@@ -69,12 +70,12 @@ func expand(
 		Text:            llm.TextParams{Format: llm.FormatJSONObject},
 	})
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	response, err := llm.Collect(stream)
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	return parseVariations(response.OutputText, count)
 }
@@ -84,7 +85,7 @@ func parseVariations(answer string, count int) ([]string, error) {
 		Variations []string `json:"variations"`
 	}
 	if err := json.Unmarshal([]byte(llm.Unfence(answer)), &rewritten); err != nil {
-		return nil, fmt.Errorf("simulation: decode the rewrites: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("simulation: decode the rewrites: %w", err))
 	}
 
 	kept := make([]string, 0, count)

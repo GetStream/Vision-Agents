@@ -31,6 +31,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -167,10 +168,10 @@ type message struct {
 // New validates the options and returns a Log. It writes nothing; Start does that.
 func New(options Options) (*Log, error) {
 	if options.AgentID == "" {
-		return nil, errors.New("chatlog: an agent id is required")
+		return nil, stack.Wrap(errors.New("chatlog: an agent id is required"))
 	}
 	if options.Agent.ID == "" {
-		return nil, errors.New("chatlog: an agent user id is required")
+		return nil, stack.Wrap(errors.New("chatlog: an agent user id is required"))
 	}
 	if options.APIKey == "" {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
@@ -179,7 +180,7 @@ func New(options Options) (*Log, error) {
 		options.APISecret = os.Getenv(apiSecretEnvVar)
 	}
 	if options.APIKey == "" || options.APISecret == "" {
-		return nil, errors.New("chatlog: " + apiKeyEnvVar + " and " + apiSecretEnvVar + " are required")
+		return nil, stack.Wrap(errors.New("chatlog: " + apiKeyEnvVar + " and " + apiSecretEnvVar + " are required"))
 	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
@@ -187,7 +188,7 @@ func New(options Options) (*Log, error) {
 
 	client, err := getstream.NewClient(options.APIKey, options.APISecret)
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	channel := options.Channel
@@ -226,7 +227,7 @@ func (l *Log) Start(ctx context.Context) error {
 	}
 	_, err := l.client.Chat().GetOrCreateChannel(ctx, ChannelType, l.channel, request)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 
 	l.started.Store(true)
@@ -665,7 +666,7 @@ func (l *Log) upsert(ctx context.Context, user User) error {
 	_, err := l.client.UpdateUsers(ctx, &getstream.UpdateUsersRequest{
 		Users: map[string]getstream.UserRequest{user.ID: request},
 	})
-	return err
+	return stack.Wrap(err)
 }
 
 // participantUser is who a participant is in chat. Their user id is what identifies them

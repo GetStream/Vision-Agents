@@ -33,6 +33,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -212,7 +213,7 @@ func New(options Options) (*STT, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, fmt.Errorf("inworld: api key is required (set %s)", apiKeyEnvVar)
+		return nil, stack.Wrap(fmt.Errorf("inworld: api key is required (set %s)", apiKeyEnvVar))
 	}
 	if options.Model == "" {
 		options.Model = DefaultModel
@@ -221,14 +222,14 @@ func New(options Options) (*STT, error) {
 		options.URL = DefaultURL
 	}
 	if !strings.HasPrefix(options.URL, "ws://") && !strings.HasPrefix(options.URL, "wss://") {
-		return nil, fmt.Errorf("inworld: url must be ws:// or wss://, got %s", options.URL)
+		return nil, stack.Wrap(fmt.Errorf("inworld: url must be ws:// or wss://, got %s", options.URL))
 	}
 	options.Keyterms = keyterms(stt.CleanKeyterms(options.Keyterms))
 	if len(options.Keyterms) > stt.MaxKeyterms {
-		return nil, fmt.Errorf("inworld: at most %d keyterms, got %d", stt.MaxKeyterms, len(options.Keyterms))
+		return nil, stack.Wrap(fmt.Errorf("inworld: at most %d keyterms, got %d", stt.MaxKeyterms, len(options.Keyterms)))
 	}
 	if options.VadThreshold != nil && (*options.VadThreshold < 0 || *options.VadThreshold > 1) {
-		return nil, fmt.Errorf("inworld: vad threshold must be between 0 and 1, got %v", *options.VadThreshold)
+		return nil, stack.Wrap(fmt.Errorf("inworld: vad threshold must be between 0 and 1, got %v", *options.VadThreshold))
 	}
 	if options.HandshakeTimeout == 0 {
 		options.HandshakeTimeout = 15 * time.Second
@@ -256,7 +257,7 @@ func (s *STT) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
-		return errors.New("inworld: already started")
+		return stack.Wrap(errors.New("inworld: already started"))
 	}
 	s.started = true
 	s.mu.Unlock()
@@ -267,9 +268,9 @@ func (s *STT) Start(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, s.options.URL, header)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("inworld: dial: %w (http %d)", err, response.StatusCode)
+			return stack.Wrap(fmt.Errorf("inworld: dial: %w (http %d)", err, response.StatusCode))
 		}
-		return fmt.Errorf("inworld: dial: %w", err)
+		return stack.Wrap(fmt.Errorf("inworld: dial: %w", err))
 	}
 	s.conn = conn
 
@@ -367,7 +368,7 @@ func (s *STT) configure() error {
 	}
 
 	if err := s.send(clientMessage{TranscribeConfig: held}); err != nil {
-		return fmt.Errorf("inworld: send config: %w", err)
+		return stack.Wrap(fmt.Errorf("inworld: send config: %w", err))
 	}
 	return nil
 }
@@ -398,7 +399,7 @@ func (s *STT) flush() {
 func (s *STT) send(frame clientMessage) error {
 	payload, err := json.Marshal(frame)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	return s.write(payload)
 }
@@ -406,7 +407,7 @@ func (s *STT) send(frame clientMessage) error {
 func (s *STT) write(payload []byte) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.conn.WriteMessage(websocket.TextMessage, payload)
+	return stack.Wrap(s.conn.WriteMessage(websocket.TextMessage, payload))
 }
 
 // readLoop translates server frames into events until the connection ends.

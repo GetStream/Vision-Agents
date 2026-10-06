@@ -17,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // resultBuffer is how many finished tasks may queue before the manager waits on the
@@ -159,7 +160,7 @@ func (m *manager) Create(
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		return "", fmt.Errorf("harness: the conversation has ended")
+		return "", stack.Wrap(fmt.Errorf("harness: the conversation has ended"))
 	}
 	var superseded string
 	if existing, ok := m.bySkill[skill.Name]; ok && m.cancelLocked(existing, ReasonSuperseded) {
@@ -168,7 +169,7 @@ func (m *manager) Create(
 	if m.liveLocked() >= m.limit {
 		m.mu.Unlock()
 		m.abandon(superseded)
-		return "", fmt.Errorf("harness: %d tasks are already running", m.limit)
+		return "", stack.Wrap(fmt.Errorf("harness: %d tasks are already running", m.limit))
 	}
 
 	messages := append(append([]llm.Message(nil), history...), llm.Message{Role: llm.User, Content: prompt})

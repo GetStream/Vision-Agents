@@ -26,6 +26,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
@@ -178,7 +179,7 @@ func normalize(options Options, fallbackModel string) (Options, *slog.Logger, er
 		options.APIKey = os.Getenv("ELEVENLABS_API_KEY")
 	}
 	if options.APIKey == "" {
-		return options, nil, errors.New("elevenlabs: api key is required (set ELEVENLABS_API_KEY)")
+		return options, nil, stack.Wrap(errors.New("elevenlabs: api key is required (set ELEVENLABS_API_KEY)"))
 	}
 	if options.VoiceID == "" {
 		options.VoiceID = os.Getenv("ELEVENLABS_VOICE_ID")
@@ -193,8 +194,8 @@ func normalize(options Options, fallbackModel string) (Options, *slog.Logger, er
 		options.SampleRate = DefaultSampleRate
 	}
 	if !slices.Contains(supportedSampleRates, options.SampleRate) {
-		return options, nil, fmt.Errorf("elevenlabs: sample rate %d is not one of %v",
-			options.SampleRate, supportedSampleRates)
+		return options, nil, stack.Wrap(fmt.Errorf("elevenlabs: sample rate %d is not one of %v",
+			options.SampleRate, supportedSampleRates))
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
@@ -221,11 +222,11 @@ func New(options Options) (*TTS, error) {
 	// The v3 family is not served here at all, so a caller that asked for one would get a
 	// connection the server refuses rather than a voice.
 	if Performs(options.Model) {
-		return nil, fmt.Errorf(
-			"elevenlabs: %s is a dialogue model, open it with NewDialogue", options.Model)
+		return nil, stack.Wrap(fmt.Errorf(
+			"elevenlabs: %s is a dialogue model, open it with NewDialogue", options.Model))
 	}
 	if options.Speed != 0 && (options.Speed < minSpeed || options.Speed > maxSpeed) {
-		return nil, fmt.Errorf("elevenlabs: speed %g is outside %g to %g", options.Speed, minSpeed, maxSpeed)
+		return nil, stack.Wrap(fmt.Errorf("elevenlabs: speed %g is outside %g to %g", options.Speed, minSpeed, maxSpeed))
 	}
 
 	return &TTS{
@@ -243,7 +244,7 @@ func (t *TTS) Start(ctx context.Context) error {
 	t.mu.Lock()
 	if t.started {
 		t.mu.Unlock()
-		return errors.New("elevenlabs: already started")
+		return stack.Wrap(errors.New("elevenlabs: already started"))
 	}
 	t.started = true
 	t.mu.Unlock()
@@ -254,9 +255,9 @@ func (t *TTS) Start(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, t.url(), header)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("elevenlabs: dial: %w (http %d)", err, response.StatusCode)
+			return stack.Wrap(fmt.Errorf("elevenlabs: dial: %w (http %d)", err, response.StatusCode))
 		}
-		return fmt.Errorf("elevenlabs: dial: %w", err)
+		return stack.Wrap(fmt.Errorf("elevenlabs: dial: %w", err))
 	}
 	t.conn = conn
 
@@ -269,9 +270,9 @@ func (t *TTS) Start(ctx context.Context) error {
 // the one with Final set closes it so the tail of the audio is generated immediately.
 func (t *TTS) Synthesize(request tts.Request) error {
 	if request.Voice != "" && request.Voice != t.options.VoiceID {
-		return fmt.Errorf(
+		return stack.Wrap(fmt.Errorf(
 			"elevenlabs: the connection is bound to voice %s, open a new session for %s",
-			t.options.VoiceID, request.Voice)
+			t.options.VoiceID, request.Voice))
 	}
 
 	current, opened, err := t.utteranceFor(request.ID)
@@ -298,7 +299,7 @@ func (t *TTS) Synthesize(request tts.Request) error {
 		// across deltas.
 		err := t.send(clientMessage{Text: request.Text + " ", ContextID: current.tracker.ID})
 		if err != nil {
-			return fmt.Errorf("elevenlabs: send text: %w", err)
+			return stack.Wrap(fmt.Errorf("elevenlabs: send text: %w", err))
 		}
 	}
 
@@ -306,7 +307,7 @@ func (t *TTS) Synthesize(request tts.Request) error {
 		// Closing the context flushes the remaining audio and makes the server report
 		// the synthesis as final straight after it.
 		if err := t.send(clientMessage{ContextID: current.tracker.ID, CloseContext: true}); err != nil {
-			return fmt.Errorf("elevenlabs: close context: %w", err)
+			return stack.Wrap(fmt.Errorf("elevenlabs: close context: %w", err))
 		}
 	}
 	return nil
@@ -334,7 +335,7 @@ func (t *TTS) Interrupt() error {
 	}
 
 	if len(failures) > 0 {
-		return fmt.Errorf("elevenlabs: interrupt: %w", errors.Join(failures...))
+		return stack.Wrap(fmt.Errorf("elevenlabs: interrupt: %w", errors.Join(failures...)))
 	}
 	return nil
 }
@@ -424,10 +425,10 @@ func (t *TTS) utteranceFor(id string) (*utterance, bool, error) {
 	defer t.mu.Unlock()
 
 	if t.shutdown {
-		return nil, false, errors.New("elevenlabs: session closed")
+		return nil, false, stack.Wrap(errors.New("elevenlabs: session closed"))
 	}
 	if !t.started || t.conn == nil {
-		return nil, false, errors.New("elevenlabs: not started")
+		return nil, false, stack.Wrap(errors.New("elevenlabs: not started"))
 	}
 
 	if id != "" {
@@ -452,7 +453,7 @@ func (t *TTS) openContext(id string) error {
 		Generation: &generationConf{ChunkLengthSchedule: []int{50, 120, 160, 290}},
 	}
 	if err := t.send(message); err != nil {
-		return fmt.Errorf("elevenlabs: open context: %w", err)
+		return stack.Wrap(fmt.Errorf("elevenlabs: open context: %w", err))
 	}
 	return nil
 }
@@ -460,15 +461,15 @@ func (t *TTS) openContext(id string) error {
 func (t *TTS) send(message clientMessage) error {
 	payload, err := json.Marshal(message)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 
 	t.writeMu.Lock()
 	defer t.writeMu.Unlock()
 	if t.conn == nil {
-		return errors.New("not connected")
+		return stack.Wrap(errors.New("not connected"))
 	}
-	return t.conn.WriteMessage(websocket.TextMessage, payload)
+	return stack.Wrap(t.conn.WriteMessage(websocket.TextMessage, payload))
 }
 
 // readLoop translates server frames into events until the connection ends.

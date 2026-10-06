@@ -14,6 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -294,17 +295,17 @@ func (s *Spec) Normalize() error {
 		s.Harness = harness.Default
 	}
 	if s.Harness != harness.Default {
-		return fmt.Errorf("session: there is no harness called %q", s.Harness)
+		return stack.Wrap(fmt.Errorf("session: there is no harness called %q", s.Harness))
 	}
 
 	if s.ID == "" {
 		id, err := uuid.NewV7()
 		if err != nil {
-			return fmt.Errorf("session: generating an id: %w", err)
+			return stack.Wrap(fmt.Errorf("session: generating an id: %w", err))
 		}
 		s.ID = id.String()
 	} else if _, err := uuid.Parse(s.ID); err != nil {
-		return fmt.Errorf("session: the id %q is not a UUID", s.ID)
+		return stack.Wrap(fmt.Errorf("session: the id %q is not a UUID", s.ID))
 	}
 
 	// Incognito is honoured here rather than at each of the places that records something,
@@ -332,14 +333,14 @@ func (s *Spec) Normalize() error {
 	s.CallID = strings.TrimSpace(s.CallID)
 	switch {
 	case s.Text && s.CallID != "":
-		return errors.New("session: a text session holds no call, so it cannot join one")
+		return stack.Wrap(errors.New("session: a text session holds no call, so it cannot join one"))
 	case s.Text && s.Native():
-		return errors.New("session: a text session has no voice, so it cannot run a speech-to-speech model")
+		return stack.Wrap(errors.New("session: a text session has no voice, so it cannot run a speech-to-speech model"))
 	case !s.Text && s.CallID == "":
-		return errors.New("session: a call id is required")
+		return stack.Wrap(errors.New("session: a call id is required"))
 	}
 	if s.CustomerID == "" {
-		return errors.New("session: a customer id is required")
+		return stack.Wrap(errors.New("session: a customer id is required"))
 	}
 
 	if s.CallType == "" {
@@ -391,15 +392,15 @@ func (s *Spec) Normalize() error {
 
 	s.Keyterms = stt.CleanKeyterms(s.Keyterms)
 	if len(s.Keyterms) > stt.MaxKeyterms {
-		return fmt.Errorf("session: at most %d keyterms may be named, and this asks for %d",
-			stt.MaxKeyterms, len(s.Keyterms))
+		return stack.Wrap(fmt.Errorf("session: at most %d keyterms may be named, and this asks for %d",
+			stt.MaxKeyterms, len(s.Keyterms)))
 	}
 
 	if s.VideoMaxFrames == 0 {
 		s.VideoMaxFrames = 1
 	}
 	if s.VideoMaxFrames < 1 || s.VideoMaxFrames > 8 {
-		return fmt.Errorf("session: video.max_frames must be between 1 and 8")
+		return stack.Wrap(fmt.Errorf("session: video.max_frames must be between 1 and 8"))
 	}
 
 	if err := s.Tags.Validate(); err != nil {

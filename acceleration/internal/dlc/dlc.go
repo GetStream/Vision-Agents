@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -182,5 +183,5 @@ func missingFields(what string, missing []string) error {
 		return nil
 	}
 	slices.Sort(missing)
-	return fmt.Errorf("%w: the %s needs %s", ErrInvalid, what, strings.Join(missing, ", "))
+	return stack.Wrap(fmt.Errorf("%w: the %s needs %s", ErrInvalid, what, strings.Join(missing, ", ")))
 }

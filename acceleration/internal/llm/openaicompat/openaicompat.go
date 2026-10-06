@@ -30,6 +30,7 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // defaultTimeout bounds one response. A conversational turn that takes this long has
@@ -91,16 +92,16 @@ type LLM struct {
 // New builds a provider. It performs no network access.
 func New(options Options) (*LLM, error) {
 	if options.Provider == "" {
-		return nil, errors.New("openaicompat: provider name is required")
+		return nil, stack.Wrap(errors.New("openaicompat: provider name is required"))
 	}
 	if options.Model == "" {
-		return nil, errors.New("openaicompat: model is required")
+		return nil, stack.Wrap(errors.New("openaicompat: model is required"))
 	}
 	if options.APIKey == "" {
-		return nil, fmt.Errorf("openaicompat: %s: api key is required", options.Provider)
+		return nil, stack.Wrap(fmt.Errorf("openaicompat: %s: api key is required", options.Provider))
 	}
 	if options.BaseURL == "" {
-		return nil, fmt.Errorf("openaicompat: %s: base url is required", options.Provider)
+		return nil, stack.Wrap(fmt.Errorf("openaicompat: %s: base url is required", options.Provider))
 	}
 	if options.StatsModel == "" {
 		options.StatsModel = options.Model
@@ -139,16 +140,16 @@ func (l *LLM) Client() *openai.Client { return &l.client }
 // Create asks for one response and returns the stream it arrives on.
 func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	if len(params.Input) == 0 {
-		return nil, fmt.Errorf("openaicompat: %s: a request needs at least one input message", l.options.Provider)
+		return nil, stack.Wrap(fmt.Errorf("openaicompat: %s: a request needs at least one input message", l.options.Provider))
 	}
 	if err := l.options.Capabilities.Validate(params); err != nil {
-		return nil, fmt.Errorf("openaicompat: %s: %w", l.options.Provider, err)
+		return nil, stack.Wrap(fmt.Errorf("openaicompat: %s: %w", l.options.Provider, err))
 	}
 
 	l.mu.Lock()
 	if l.closed {
 		l.mu.Unlock()
-		return nil, fmt.Errorf("openaicompat: %s: provider is closed", l.options.Provider)
+		return nil, stack.Wrap(fmt.Errorf("openaicompat: %s: provider is closed", l.options.Provider))
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, l.options.Timeout)
 	id := l.nextID.Add(1)
@@ -162,7 +163,7 @@ func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Strea
 		_ = upstream.Close()
 		cancel()
 		l.forget(id)
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	return llm.NewStream(
 		llm.StreamOptions{
@@ -291,7 +292,7 @@ func (p *puller) slot(index int64, id string) int64 {
 }
 
 // Err is the provider failure that ended the stream, if there was one.
-func (p *puller) Err() error { return p.err }
+func (p *puller) Err() error { return stack.Wrap(p.err) }
 
 // Close abandons the response. It only cancels: the upstream is released by the goroutine
 // reading it, once the cancellation has unblocked it.

@@ -12,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openweights"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ProviderName is the stable name used in routing config and stats.
@@ -35,7 +36,7 @@ func New(options openweights.Options) (*openaicompat.LLM, error) {
 		options.APIKey = os.Getenv(Host.APIKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, errors.New(ProviderName + ": " + Host.APIKeyEnvVar + " is required")
+		return nil, stack.Wrap(errors.New(ProviderName + ": " + Host.APIKeyEnvVar + " is required"))
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = os.Getenv(Host.BaseURLEnvVar)
@@ -43,7 +44,7 @@ func New(options openweights.Options) (*openaicompat.LLM, error) {
 	if options.BaseURL == "" {
 		account := os.Getenv(accountEnvVar)
 		if account == "" {
-			return nil, errors.New(ProviderName + ": " + accountEnvVar + " is required")
+			return nil, stack.Wrap(errors.New(ProviderName + ": " + accountEnvVar + " is required"))
 		}
 		options.BaseURL = "https://api.cloudflare.com/client/v4/accounts/" + account + "/ai/v1"
 	}

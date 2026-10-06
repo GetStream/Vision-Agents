@@ -8,6 +8,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/danielgtaylor/huma/v2"
@@ -153,12 +154,12 @@ func (s *Server) createCallToken(ctx context.Context, request *createCallTokenRe
 
 	client, err := getstream.NewClient(s.streamKey, s.streamSecret)
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	expiresAt := time.Now().UTC().Add(listenerTokenValidity)
 	token, err := client.CreateToken(userID, getstream.WithExpiration(listenerTokenValidity))
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	return &createCallTokenResponse{Body: CallToken{ApiKey: s.streamKey,
@@ -205,7 +206,7 @@ func (s *Server) createChatToken(ctx context.Context, request *createChatTokenRe
 
 	client, err := getstream.NewClient(s.streamKey, s.streamSecret)
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	if _, err := client.UpdateUsers(ctx, &getstream.UpdateUsersRequest{
@@ -214,7 +215,7 @@ func (s *Server) createChatToken(ctx context.Context, request *createChatTokenRe
 			userID:  {ID: userID, Name: &userName},
 		},
 	}); err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	// The channel is created by whoever holds the conversation, which for an agent nobody
@@ -227,20 +228,20 @@ func (s *Server) createChatToken(ctx context.Context, request *createChatTokenRe
 				Members:     []getstream.ChannelMemberRequest{{UserID: userID}},
 			},
 		}); err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	// Members in creation data are ignored when the channel already exists.
 	// Add the reader explicitly before minting a token for a members-only channel.
 	if _, err := client.Chat().UpdateChannel(ctx, chatlog.ChannelType, agentID,
 		&getstream.UpdateChannelRequest{AddMembers: []getstream.ChannelMemberRequest{{UserID: userID}}}); err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	expiresAt := time.Now().UTC().Add(listenerTokenValidity)
 	token, err := client.CreateToken(userID, getstream.WithExpiration(listenerTokenValidity))
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	return &createChatTokenResponse{Body: ChatToken{ApiKey: s.streamKey,

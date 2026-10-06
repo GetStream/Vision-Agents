@@ -11,6 +11,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -82,7 +83,7 @@ func (t *TimeRange) window() (after, before time.Time, err error) {
 		before = *t.Lt
 	}
 	if !after.IsZero() && !before.IsZero() && !after.Before(before) {
-		return time.Time{}, time.Time{}, errors.New("created_at $gte must be before $lt, or the window holds nothing")
+		return time.Time{}, time.Time{}, stack.Wrap(errors.New("created_at $gte must be before $lt, or the window holds nothing"))
 	}
 	return after, before, nil
 }
@@ -264,21 +265,21 @@ func sessionQueryOf(ctx context.Context, sent SessionQuery) (sessionQuery, error
 
 	switch {
 	case query.filter.Modality != "" && !SessionModality(query.filter.Modality).Valid():
-		return sessionQuery{}, errors.New("modality is text, voice or video")
+		return sessionQuery{}, stack.Wrap(errors.New("modality is text, voice or video"))
 	case state != "" && !state.Valid():
-		return sessionQuery{}, errors.New("state is live or ended")
+		return sessionQuery{}, stack.Wrap(errors.New("state is live or ended"))
 	case query.text != "" && query.filter.Project != "":
-		return sessionQuery{}, errors.New("a text search covers every project, so it cannot be combined with project_id")
+		return sessionQuery{}, stack.Wrap(errors.New("a text search covers every project, so it cannot be combined with project_id"))
 	case len(sent.Sort) > 0 && sent.Sort[0].Field != query.sort:
 		if query.text != "" {
-			return sessionQuery{}, errors.New("a text search is sorted by relevance")
+			return sessionQuery{}, stack.Wrap(errors.New("a text search is sorted by relevance"))
 		}
-		return sessionQuery{}, errors.New("only a text search is sorted by relevance")
+		return sessionQuery{}, stack.Wrap(errors.New("only a text search is sorted by relevance"))
 	}
 
 	if requested := string(value(filter.UserID)); requested != "" {
 		if KindFrom(ctx) != auth.KindServer {
-			return sessionQuery{}, errors.New("only a server-side caller may list another user's sessions")
+			return sessionQuery{}, stack.Wrap(errors.New("only a server-side caller may list another user's sessions"))
 		}
 		query.filter.UserID = requested
 	}
@@ -289,7 +290,7 @@ func sessionQueryOf(ctx context.Context, sent SessionQuery) (sessionQuery, error
 	}
 	if cursor != nil {
 		if cursor.Sort != query.sort {
-			return sessionQuery{}, errBadCursor
+			return sessionQuery{}, stack.Wrap(errBadCursor)
 		}
 		query.filter.Cursor = &cursor.SessionPosition
 	}

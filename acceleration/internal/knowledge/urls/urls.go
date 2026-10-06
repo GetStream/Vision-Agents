@@ -29,6 +29,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -190,14 +191,14 @@ type Subscription struct {
 func (s *Service) Add(ctx context.Context, customerID string, wanted Subscription) (store.KnowledgeURL, error) {
 	namespace := strings.TrimSpace(wanted.Namespace)
 	if namespace == "" {
-		return store.KnowledgeURL{}, errors.New("urls: a namespace is required, knowledge is never shared")
+		return store.KnowledgeURL{}, stack.Wrap(errors.New("urls: a namespace is required, knowledge is never shared"))
 	}
 	address, err := clean(wanted.URL)
 	if err != nil {
 		return store.KnowledgeURL{}, err
 	}
 	if wanted.RefreshHours < 0 {
-		return store.KnowledgeURL{}, fmt.Errorf("urls: refresh_hours cannot be negative, got %d", wanted.RefreshHours)
+		return store.KnowledgeURL{}, stack.Wrap(fmt.Errorf("urls: refresh_hours cannot be negative, got %d", wanted.RefreshHours))
 	}
 
 	page, subscribed, err := s.store.SubscribedKnowledgeURL(ctx, customerID, namespace, address)
@@ -300,7 +301,7 @@ type indexPayload struct {
 func (s *Service) enqueue(ctx context.Context, page store.KnowledgeURL) error {
 	payload, err := json.Marshal(indexPayload{CustomerID: page.CustomerID, ID: page.ID})
 	if err != nil {
-		return fmt.Errorf("urls: queue a read of %s: %w", page.URL, err)
+		return stack.Wrap(fmt.Errorf("urls: queue a read of %s: %w", page.URL, err))
 	}
 
 	_, err = s.queue.EnqueueContext(ctx, asynq.NewTask(TaskIndex, payload),
@@ -313,7 +314,7 @@ func (s *Service) enqueue(ctx context.Context, page store.KnowledgeURL) error {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("urls: queue a read of %s: %w", page.URL, err)
+		return stack.Wrap(fmt.Errorf("urls: queue a read of %s: %w", page.URL, err))
 	}
 	return nil
 }
@@ -410,17 +411,17 @@ func (s *Service) write(ctx context.Context, page *store.KnowledgeURL, read sear
 func clean(address string) (string, error) {
 	address = strings.TrimSpace(address)
 	if address == "" {
-		return "", errors.New("urls: a url is required")
+		return "", stack.Wrap(errors.New("urls: a url is required"))
 	}
 	parsed, err := url.Parse(address)
 	if err != nil {
-		return "", fmt.Errorf("urls: %s is not a url: %w", address, err)
+		return "", stack.Wrap(fmt.Errorf("urls: %s is not a url: %w", address, err))
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", fmt.Errorf("urls: %s is not a page that can be fetched", address)
+		return "", stack.Wrap(fmt.Errorf("urls: %s is not a page that can be fetched", address))
 	}
 	if parsed.Host == "" {
-		return "", fmt.Errorf("urls: %s names no host", address)
+		return "", stack.Wrap(fmt.Errorf("urls: %s names no host", address))
 	}
 	return address, nil
 }

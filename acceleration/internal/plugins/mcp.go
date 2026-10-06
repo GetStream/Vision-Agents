@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // PrefixSeparator keeps a plugin's tools from colliding with lookup, search or transfer.
@@ -196,7 +197,7 @@ func Offered(allowed []string, tool string) bool {
 func CheckToolPatterns(allowed []string) error {
 	for _, pattern := range allowed {
 		if _, err := path.Match(pattern, ""); err != nil {
-			return fmt.Errorf("plugins: %q is not a tool name or pattern", pattern)
+			return stack.Wrap(fmt.Errorf("plugins: %q is not a tool name or pattern", pattern))
 		}
 	}
 	return nil
@@ -227,7 +228,7 @@ func dial(ctx context.Context, conn Connection, transport *http.Client) (*client
 	}
 	var listed toolsListResult
 	if err := json.Unmarshal(raw, &listed); err != nil {
-		return nil, nil, fmt.Errorf("plugins: tools/list: %w", err)
+		return nil, nil, stack.Wrap(fmt.Errorf("plugins: tools/list: %w", err))
 	}
 	return opened, listed.Tools, nil
 }
@@ -368,7 +369,7 @@ func (c *client) call(ctx context.Context, method string, params any) (json.RawM
 	c.nextID++
 	body, err := json.Marshal(rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params})
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	raw, err := c.roundTrip(ctx, body)
 	if err != nil {
@@ -376,13 +377,13 @@ func (c *client) call(ctx context.Context, method string, params any) (json.RawM
 	}
 	var response rpcResponse
 	if err := json.Unmarshal(raw, &response); err != nil {
-		return nil, fmt.Errorf("plugins: %s: %w", method, err)
+		return nil, stack.Wrap(fmt.Errorf("plugins: %s: %w", method, err))
 	}
 	if response.Error != nil {
 		if len(response.Error.Data) > 0 {
-			return nil, fmt.Errorf("plugins: %s: %s %s", method, response.Error.Message, response.Error.Data)
+			return nil, stack.Wrap(fmt.Errorf("plugins: %s: %s %s", method, response.Error.Message, response.Error.Data))
 		}
-		return nil, fmt.Errorf("plugins: %s: %s", method, response.Error.Message)
+		return nil, stack.Wrap(fmt.Errorf("plugins: %s: %s", method, response.Error.Message))
 	}
 	return response.Result, nil
 }
@@ -390,7 +391,7 @@ func (c *client) call(ctx context.Context, method string, params any) (json.RawM
 func (c *client) notify(ctx context.Context, method string, params any) error {
 	body, err := json.Marshal(rpcRequest{JSONRPC: "2.0", Method: method, Params: params})
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	_, err = c.roundTrip(ctx, body)
 	return err
@@ -399,7 +400,7 @@ func (c *client) notify(ctx context.Context, method string, params any) error {
 func (c *client) roundTrip(ctx context.Context, body []byte) ([]byte, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json, text/event-stream")
@@ -414,7 +415,7 @@ func (c *client) roundTrip(ctx context.Context, body []byte) ([]byte, error) {
 	}
 	response, err := c.http.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("plugins: %s: %w", c.pluginID, err)
+		return nil, stack.Wrap(fmt.Errorf("plugins: %s: %w", c.pluginID, err))
 	}
 	defer response.Body.Close()
 	if session := response.Header.Get(sessionHeader); session != "" {
@@ -422,13 +423,13 @@ func (c *client) roundTrip(ctx context.Context, body []byte) ([]byte, error) {
 	}
 	raw, err := io.ReadAll(response.Body)
 	if err != nil {
-		return nil, fmt.Errorf("plugins: %s: %w", c.pluginID, err)
+		return nil, stack.Wrap(fmt.Errorf("plugins: %s: %w", c.pluginID, err))
 	}
 	if response.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("%w: %s: %s", ErrUnauthorized, c.pluginID, strings.TrimSpace(string(raw)))
+		return nil, stack.Wrap(fmt.Errorf("%w: %s: %s", ErrUnauthorized, c.pluginID, strings.TrimSpace(string(raw))))
 	}
 	if response.StatusCode >= 300 {
-		return nil, fmt.Errorf("plugins: %s: %s", c.pluginID, strings.TrimSpace(string(raw)))
+		return nil, stack.Wrap(fmt.Errorf("plugins: %s: %s", c.pluginID, strings.TrimSpace(string(raw))))
 	}
 	if strings.Contains(response.Header.Get("Content-Type"), "text/event-stream") {
 		return sseData(raw)
@@ -445,7 +446,7 @@ func sseData(raw []byte) ([]byte, error) {
 		}
 	}
 	if len(last) == 0 {
-		return nil, fmt.Errorf("plugins: empty event stream")
+		return nil, stack.Wrap(fmt.Errorf("plugins: empty event stream"))
 	}
 	return last, nil
 }

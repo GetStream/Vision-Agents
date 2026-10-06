@@ -36,6 +36,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 const (
@@ -122,7 +123,7 @@ func New(options Options) (*Provider, error) {
 		options.APISecret = os.Getenv(apiSecretEnvVar)
 	}
 	if options.APIKey == "" || options.APISecret == "" {
-		return nil, errors.New("vonage: " + apiKeyEnvVar + " and " + apiSecretEnvVar + " are required")
+		return nil, stack.Wrap(errors.New("vonage: " + apiKeyEnvVar + " and " + apiSecretEnvVar + " are required"))
 	}
 	if options.ApplicationID == "" {
 		options.ApplicationID = os.Getenv(applicationIDEnvVar)
@@ -167,15 +168,15 @@ func parsePrivateKey(value string) (*rsa.PrivateKey, error) {
 	if !strings.Contains(value, "-----BEGIN") {
 		read, err := os.ReadFile(value)
 		if err != nil {
-			return nil, fmt.Errorf("vonage: %s is neither a pem nor a readable file: %w",
-				privateKeyEnvVar, err)
+			return nil, stack.Wrap(fmt.Errorf("vonage: %s is neither a pem nor a readable file: %w",
+				privateKeyEnvVar, err))
 		}
 		pem = read
 	}
 
 	key, err := jwt.ParseRSAPrivateKeyFromPEM(pem)
 	if err != nil {
-		return nil, fmt.Errorf("vonage: %s is not an rsa private key: %w", privateKeyEnvVar, err)
+		return nil, stack.Wrap(fmt.Errorf("vonage: %s is not an rsa private key: %w", privateKeyEnvVar, err))
 	}
 	return key, nil
 }
@@ -183,12 +184,12 @@ func parsePrivateKey(value string) (*rsa.PrivateKey, error) {
 // SearchNumbers returns numbers Vonage is offering in a country.
 func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
 	if search.Country == "" {
-		return nil, errors.New("vonage: a country is required to search for numbers")
+		return nil, stack.Wrap(errors.New("vonage: a country is required to search for numbers"))
 	}
 	// Vonage matches one pattern one way, so it cannot be asked for digits at the front
 	// and digits anywhere in the same breath.
 	if search.Prefix != "" && search.Contains != "" {
-		return nil, errors.New("vonage: can match a prefix or a substring, not both")
+		return nil, stack.Wrap(errors.New("vonage: can match a prefix or a substring, not both"))
 	}
 
 	query := url.Values{"country": {strings.ToUpper(search.Country)}}
@@ -203,7 +204,7 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 	if search.Type != "" {
 		kind, ok := kinds[search.Type]
 		if !ok {
-			return nil, fmt.Errorf("vonage: does not sell %s numbers", search.Type)
+			return nil, stack.Wrap(fmt.Errorf("vonage: does not sell %s numbers", search.Type))
 		}
 		query.Set("type", kind)
 	}
@@ -236,10 +237,10 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 // BuyNumber buys a number out of a country's inventory, which is why the order names one.
 func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Number, error) {
 	if order.E164 == "" {
-		return phone.Number{}, errors.New("vonage: a number is required")
+		return phone.Number{}, stack.Wrap(errors.New("vonage: a number is required"))
 	}
 	if order.Country == "" {
-		return phone.Number{}, errors.New("vonage: buying a number needs the country it is sold in")
+		return phone.Number{}, stack.Wrap(errors.New("vonage: buying a number needs the country it is sold in"))
 	}
 
 	form := url.Values{
@@ -277,7 +278,7 @@ func (p *Provider) ReleaseNumber(ctx context.Context, e164 string) error {
 // Vonage routes an incoming call by handing it to an application that answers with an NCCO,
 // so pointing a number at a Stream trunk means hosting that NCCO. Buying the number does not.
 func (p *Provider) ConfigureInbound(context.Context, phone.Inbound) error {
-	return fmt.Errorf("%w: vonage numbers are bought here but bridged elsewhere", phone.ErrNotImplemented)
+	return stack.Wrap(fmt.Errorf("%w: vonage numbers are bought here but bridged elsewhere", phone.ErrNotImplemented))
 }
 
 // Dial calls a person and connects the answered leg to the Stream trunk.
@@ -287,12 +288,12 @@ func (p *Provider) ConfigureInbound(context.Context, phone.Inbound) error {
 // recognise Vonage by the address it calls from; the service arranges that before dialling.
 func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dialed, error) {
 	if err := outbound.Validate(); err != nil {
-		return phone.Dialed{}, fmt.Errorf("vonage: %w", err)
+		return phone.Dialed{}, stack.Wrap(fmt.Errorf("vonage: %w", err))
 	}
 	if p.applicationID == "" || p.privateKey == nil {
-		return phone.Dialed{}, fmt.Errorf(
+		return phone.Dialed{}, stack.Wrap(fmt.Errorf(
 			"vonage: placing a call needs %s and %s, which buying a number does not",
-			applicationIDEnvVar, privateKeyEnvVar)
+			applicationIDEnvVar, privateKeyEnvVar))
 	}
 
 	request := callRequest{
@@ -306,9 +307,9 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 	if outbound.RingTimeout > 0 {
 		seconds := int(outbound.RingTimeout.Seconds())
 		if seconds < minRingSeconds || seconds > maxRingSeconds {
-			return phone.Dialed{}, fmt.Errorf(
+			return phone.Dialed{}, stack.Wrap(fmt.Errorf(
 				"vonage: %ds is outside the %d-%ds vonage will ring for",
-				seconds, minRingSeconds, maxRingSeconds)
+				seconds, minRingSeconds, maxRingSeconds))
 		}
 		request.RingingTimer = seconds
 	}
@@ -322,7 +323,7 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 
 // SendDigits is not wrapped for Vonage, since nothing here places a Vonage call to press on.
 func (p *Provider) SendDigits(context.Context, string, string) error {
-	return fmt.Errorf("%w: vonage", phone.ErrNotImplemented)
+	return stack.Wrap(fmt.Errorf("%w: vonage", phone.ErrNotImplemented))
 }
 
 // Supports is a country, a pattern either way round, and a number type. Vonage's search has
@@ -357,7 +358,7 @@ func (p *Provider) Client() *http.Client { return p.client }
 // cancelling it needs.
 func (p *Provider) countryFor(ctx context.Context, e164 string) (string, error) {
 	if e164 == "" {
-		return "", errors.New("vonage: a number is required")
+		return "", stack.Wrap(errors.New("vonage: a number is required"))
 	}
 
 	query := url.Values{
@@ -374,7 +375,7 @@ func (p *Provider) countryFor(ctx context.Context, e164 string) (string, error) 
 			return strings.ToUpper(number.Country), nil
 		}
 	}
-	return "", fmt.Errorf("vonage: %s is not one of this account's numbers", e164)
+	return "", stack.Wrap(fmt.Errorf("vonage: %s is not one of this account's numbers", e164))
 }
 
 func (p *Provider) do(ctx context.Context, method, path string, query, form url.Values, into any) error {
@@ -390,7 +391,7 @@ func (p *Provider) do(ctx context.Context, method, path string, query, form url.
 
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, body)
 	if err != nil {
-		return fmt.Errorf("vonage: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("vonage: %s: %w", path, err))
 	}
 	request.SetBasicAuth(p.apiKey, p.apiSecret)
 	request.Header.Set("Accept", "application/json")
@@ -400,20 +401,20 @@ func (p *Provider) do(ctx context.Context, method, path string, query, form url.
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("vonage: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("vonage: %s: %w", path, err))
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return fmt.Errorf("vonage: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail)))
+		return stack.Wrap(fmt.Errorf("vonage: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return fmt.Errorf("vonage: decode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("vonage: decode %s: %w", path, err))
 	}
 	return nil
 }
@@ -423,16 +424,16 @@ func (p *Provider) do(ctx context.Context, method, path string, query, form url.
 func (p *Provider) doVoice(ctx context.Context, method, path string, payload, into any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("vonage: encode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("vonage: encode %s: %w", path, err))
 	}
 	token, err := p.token()
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 
 	request, err := http.NewRequestWithContext(ctx, method, p.voiceBaseURL+path, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("vonage: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("vonage: %s: %w", path, err))
 	}
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", "application/json")
@@ -440,20 +441,20 @@ func (p *Provider) doVoice(ctx context.Context, method, path string, payload, in
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("vonage: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("vonage: %s: %w", path, err))
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return fmt.Errorf("vonage: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail)))
+		return stack.Wrap(fmt.Errorf("vonage: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return fmt.Errorf("vonage: decode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("vonage: decode %s: %w", path, err))
 	}
 	return nil
 }
@@ -474,7 +475,7 @@ func (p *Provider) token() (string, error) {
 
 	token, err := jwt.NewWithClaims(jwt.SigningMethodRS256, claims).SignedString(p.privateKey)
 	if err != nil {
-		return "", fmt.Errorf("vonage: sign voice token: %w", err)
+		return "", stack.Wrap(fmt.Errorf("vonage: sign voice token: %w", err))
 	}
 	return token, nil
 }

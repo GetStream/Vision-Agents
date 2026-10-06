@@ -10,6 +10,7 @@ import (
 
 	"github.com/redis/rueidis"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -76,7 +77,7 @@ func (g *Gate) Allow(ctx context.Context, customerID, channel, to string) error 
 		return err
 	}
 	if optedOut {
-		return fmt.Errorf("%w: %s opted out of %s", ErrRefused, to, channel)
+		return stack.Wrap(fmt.Errorf("%w: %s opted out of %s", ErrRefused, to, channel))
 	}
 
 	sandboxed, err := g.sandboxed(ctx, customerID)
@@ -88,17 +89,17 @@ func (g *Gate) Allow(ctx context.Context, customerID, channel, to string) error 
 		return err
 	}
 	if !slices.Contains(recipients, to) {
-		return fmt.Errorf("%w: until a use case is approved, only sandbox recipients can be reached, and %s is not one", ErrRefused, to)
+		return stack.Wrap(fmt.Errorf("%w: until a use case is approved, only sandbox recipients can be reached, and %s is not one", ErrRefused, to))
 	}
 	spent := g.spent(ctx, customerID)
 	if channel == Voice {
 		if limit := g.sandbox.AudioMinutesPerDay; limit > 0 && spent.AudioSeconds >= limit*60 {
-			return fmt.Errorf("%w: the sandbox allows %d minutes of calls a day", ErrRefused, limit)
+			return stack.Wrap(fmt.Errorf("%w: the sandbox allows %d minutes of calls a day", ErrRefused, limit))
 		}
 		return nil
 	}
 	if limit := g.sandbox.MessagesPerDay; limit > 0 && spent.Messages >= limit {
-		return fmt.Errorf("%w: the sandbox allows %d messages a day", ErrRefused, limit)
+		return stack.Wrap(fmt.Errorf("%w: the sandbox allows %d messages a day", ErrRefused, limit))
 	}
 	return nil
 }
@@ -134,7 +135,7 @@ func (g *Gate) Usage(ctx context.Context, customerID string) (Usage, error) {
 // SetRecipients replaces the numbers an app may reach while sandboxed.
 func (g *Gate) SetRecipients(ctx context.Context, customerID string, recipients []string) error {
 	if g.sandbox.Recipients > 0 && len(recipients) > g.sandbox.Recipients {
-		return fmt.Errorf("%w: the sandbox allows %d recipients", ErrInvalid, g.sandbox.Recipients)
+		return stack.Wrap(fmt.Errorf("%w: the sandbox allows %d recipients", ErrInvalid, g.sandbox.Recipients))
 	}
 	return g.store.SetSandboxRecipients(ctx, customerID, recipients)
 }

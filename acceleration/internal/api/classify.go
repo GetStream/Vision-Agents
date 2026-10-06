@@ -10,6 +10,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -107,17 +108,17 @@ func lcmRequestOf(body *ClassifyRequest) (lcm.Request, error) {
 		case Choice:
 			options := value(question.Options)
 			if len(options) < 2 {
-				return lcm.Request{}, fmt.Errorf("question %q is a choice with fewer than two options", id)
+				return lcm.Request{}, stack.Wrap(fmt.Errorf("question %q is a choice with fewer than two options", id))
 			}
 			questions[id] = lcm.Choice(question.Instructions, options)
 		case Score:
 			levels := value(question.Levels)
 			if len(levels) < 2 {
-				return lcm.Request{}, fmt.Errorf("question %q is a score with fewer than two levels", id)
+				return lcm.Request{}, stack.Wrap(fmt.Errorf("question %q is a score with fewer than two levels", id))
 			}
 			questions[id] = lcm.Score(question.Instructions, levels)
 		default:
-			return lcm.Request{}, fmt.Errorf("question %q asks for %q, which is not a question type", id, question.Type)
+			return lcm.Request{}, stack.Wrap(fmt.Errorf("question %q asks for %q, which is not a question type", id, question.Type))
 		}
 	}
 	return lcm.Request{State: body.State, Questions: questions}, nil

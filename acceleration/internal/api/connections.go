@@ -13,6 +13,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -403,21 +404,21 @@ func ownerOf(ctx context.Context, owner ConnectionOwner) (string, error) {
 	switch owner.Type {
 	case store.OwnerApp:
 		if userID != "" {
-			return "", errors.New("an app-owned connection has no owner.user_id")
+			return "", stack.Wrap(errors.New("an app-owned connection has no owner.user_id"))
 		}
 		return "", nil
 	case store.OwnerUser:
 		if userID == "" {
-			return "", errors.New("owner.user_id is required for a user-owned connection")
+			return "", stack.Wrap(errors.New("owner.user_id is required for a user-owned connection"))
 		}
 		// The user is the one the backend acts for, never one the body names alone: the
 		// body is the caller's to write, the acting user is the principal's.
 		if acting := actingUser(ctx); acting == "" || acting != userID {
-			return "", errors.New("owner.user_id must be the user this backend acts for, named by " + auth.UserHeader)
+			return "", stack.Wrap(errors.New("owner.user_id must be the user this backend acts for, named by " + auth.UserHeader))
 		}
 		return userID, nil
 	default:
-		return "", fmt.Errorf("owner.type must be %s or %s", store.OwnerApp, store.OwnerUser)
+		return "", stack.Wrap(fmt.Errorf("owner.type must be %s or %s", store.OwnerApp, store.OwnerUser))
 	}
 }
 

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ProviderName is how this provider is named in stats.
@@ -80,10 +81,10 @@ func New(options Options) (*Provider, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("google: " + apiKeyEnvVar + " is required")
+		return nil, stack.Wrap(errors.New("google: " + apiKeyEnvVar + " is required"))
 	}
 	if options.Model == "" {
-		return nil, errors.New("google: a model is required")
+		return nil, stack.Wrap(errors.New("google: a model is required"))
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL

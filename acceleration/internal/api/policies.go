@@ -9,6 +9,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -206,16 +207,16 @@ func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id str
 		Tags:            sent.Tags,
 	}
 	if !document.DataPolicy.Valid() {
-		return Policy{}, fmt.Errorf("retention is none or a duration such as 30d, not %q",
-			document.DataPolicy.Retention)
+		return Policy{}, stack.Wrap(fmt.Errorf("retention is none or a duration such as 30d, not %q",
+			document.DataPolicy.Retention))
 	}
 	if sent.Budget != nil {
 		budget := store.Budget{LimitMicros: sent.Budget.LimitMicros, Interval: store.BudgetInterval(sent.Budget.Interval)}
 		if budget.LimitMicros < 1 {
-			return Policy{}, fmt.Errorf("a budget's limit_micros must be at least 1, not %d", budget.LimitMicros)
+			return Policy{}, stack.Wrap(fmt.Errorf("a budget's limit_micros must be at least 1, not %d", budget.LimitMicros))
 		}
 		if !budget.Interval.Valid() {
-			return Policy{}, fmt.Errorf("a budget resets hourly, daily, weekly or monthly, not %q", budget.Interval)
+			return Policy{}, stack.Wrap(fmt.Errorf("a budget resets hourly, daily, weekly or monthly, not %q", budget.Interval))
 		}
 		document.Budget = &budget
 	}
@@ -224,7 +225,7 @@ func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id str
 	}
 	for _, model := range value(sent.AllowedModels) {
 		if !s.routes(model) {
-			return Policy{}, fmt.Errorf("allowed_models names %q, which is not a provider/model this deployment routes", model)
+			return Policy{}, stack.Wrap(fmt.Errorf("allowed_models names %q, which is not a provider/model this deployment routes", model))
 		}
 	}
 	if err := s.policies.Save(ctx, scope, id, document); err != nil {

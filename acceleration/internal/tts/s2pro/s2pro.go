@@ -22,6 +22,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
@@ -125,16 +126,16 @@ func New(options Options) (*TTS, error) {
 		options.URL = os.Getenv("S2PRO_WS_URL")
 	}
 	if options.URL == "" {
-		return nil, errors.New("s2pro: websocket url is required (set S2PRO_WS_URL)")
+		return nil, stack.Wrap(errors.New("s2pro: websocket url is required (set S2PRO_WS_URL)"))
 	}
 	if !strings.HasPrefix(options.URL, "ws://") && !strings.HasPrefix(options.URL, "wss://") {
-		return nil, fmt.Errorf("s2pro: url must be ws:// or wss://, got %s", options.URL)
+		return nil, stack.Wrap(fmt.Errorf("s2pro: url must be ws:// or wss://, got %s", options.URL))
 	}
 	if options.APIKey == "" {
 		options.APIKey = os.Getenv("BASETEN_API_KEY")
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("s2pro: api key is required (set BASETEN_API_KEY)")
+		return nil, stack.Wrap(errors.New("s2pro: api key is required (set BASETEN_API_KEY)"))
 	}
 	if options.Model == "" {
 		options.Model = DefaultModel
@@ -143,7 +144,7 @@ func New(options Options) (*TTS, error) {
 		options.SampleRate = DefaultSampleRate
 	}
 	if options.ReferenceText != "" && options.ReferenceAudio == "" {
-		return nil, errors.New("s2pro: reference text needs reference audio")
+		return nil, stack.Wrap(errors.New("s2pro: reference text needs reference audio"))
 	}
 	if options.HandshakeTimeout == 0 {
 		options.HandshakeTimeout = 60 * time.Second
@@ -171,7 +172,7 @@ func (t *TTS) Start(ctx context.Context) error {
 	t.mu.Lock()
 	if t.started {
 		t.mu.Unlock()
-		return errors.New("s2pro: already started")
+		return stack.Wrap(errors.New("s2pro: already started"))
 	}
 	t.started = true
 	t.mu.Unlock()
@@ -182,9 +183,9 @@ func (t *TTS) Start(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, t.options.URL, header)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("s2pro: dial: %w (http %d)", err, response.StatusCode)
+			return stack.Wrap(fmt.Errorf("s2pro: dial: %w (http %d)", err, response.StatusCode))
 		}
-		return fmt.Errorf("s2pro: dial: %w", err)
+		return stack.Wrap(fmt.Errorf("s2pro: dial: %w", err))
 	}
 	t.conn = conn
 
@@ -208,7 +209,7 @@ func (t *TTS) Synthesize(request tts.Request) error {
 	if request.Text != "" {
 		frame := controlFrame{Type: controlText, ID: synthesis.ID, Text: request.Text}
 		if err := t.writeFrame(frame); err != nil {
-			return fmt.Errorf("s2pro: send text: %w", err)
+			return stack.Wrap(fmt.Errorf("s2pro: send text: %w", err))
 		}
 		synthesis.AddText(request.Text)
 	}
@@ -219,7 +220,7 @@ func (t *TTS) Synthesize(request tts.Request) error {
 	t.flush(synthesis.ID)
 	if err := t.writeFrame(t.flushFrame(synthesis.ID, request)); err != nil {
 		t.forget(synthesis.ID)
-		return fmt.Errorf("s2pro: flush: %w", err)
+		return stack.Wrap(fmt.Errorf("s2pro: flush: %w", err))
 	}
 
 	t.emitter.Send(tts.SynthesisStarted{
@@ -241,7 +242,7 @@ func (t *TTS) Interrupt() error {
 
 	for _, id := range ids {
 		if err := t.writeFrame(controlFrame{Type: controlCancel, ID: id}); err != nil {
-			return fmt.Errorf("s2pro: cancel: %w", err)
+			return stack.Wrap(fmt.Errorf("s2pro: cancel: %w", err))
 		}
 	}
 	return nil
@@ -319,32 +320,32 @@ func (t *TTS) Client() *websocket.Conn { return t.conn }
 func (t *TTS) handshake() error {
 	payload, err := json.Marshal(clientMetadata{SampleRate: t.options.SampleRate, Encoding: "linear16"})
 	if err != nil {
-		return fmt.Errorf("s2pro: encode metadata: %w", err)
+		return stack.Wrap(fmt.Errorf("s2pro: encode metadata: %w", err))
 	}
 	if err := t.write(websocket.TextMessage, payload); err != nil {
-		return fmt.Errorf("s2pro: send metadata: %w", err)
+		return stack.Wrap(fmt.Errorf("s2pro: send metadata: %w", err))
 	}
 
 	_, raw, err := t.conn.ReadMessage()
 	if err != nil {
-		return fmt.Errorf("s2pro: read handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("s2pro: read handshake: %w", err))
 	}
 
 	var message serverMessage
 	if err := json.Unmarshal(raw, &message); err != nil {
-		return fmt.Errorf("s2pro: decode handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("s2pro: decode handshake: %w", err))
 	}
 	if message.Type == messageError {
-		return fmt.Errorf("s2pro: handshake rejected: %s", message.Error)
+		return stack.Wrap(fmt.Errorf("s2pro: handshake rejected: %s", message.Error))
 	}
 	if message.Type != messageReady {
-		return fmt.Errorf("s2pro: expected %q, got %q", messageReady, message.Type)
+		return stack.Wrap(fmt.Errorf("s2pro: expected %q, got %q", messageReady, message.Type))
 	}
 	if message.SampleRate != 0 && message.SampleRate != t.options.SampleRate {
-		return fmt.Errorf(
+		return stack.Wrap(fmt.Errorf(
 			"s2pro: deployment generates at %d Hz, session wants %d",
 			message.SampleRate, t.options.SampleRate,
-		)
+		))
 	}
 	return nil
 }
@@ -355,15 +356,15 @@ func (t *TTS) track(request tts.Request) (*tts.Synthesis, error) {
 	defer t.mu.Unlock()
 
 	if t.shutdown {
-		return nil, errors.New("s2pro: session closed")
+		return nil, stack.Wrap(errors.New("s2pro: session closed"))
 	}
 	if !t.started || t.conn == nil {
-		return nil, errors.New("s2pro: not started")
+		return nil, stack.Wrap(errors.New("s2pro: not started"))
 	}
 	// A partial with no id could not be matched to its continuation, so it is a caller
 	// error rather than something to silently drop.
 	if !request.Final && request.ID == "" {
-		return nil, errors.New("s2pro: a partial request needs an id")
+		return nil, stack.Wrap(errors.New("s2pro: a partial request needs an id"))
 	}
 
 	synthesis := t.speaking[request.ID]
@@ -417,7 +418,7 @@ func (t *TTS) voiceFor(request tts.Request) string {
 func (t *TTS) writeFrame(frame controlFrame) error {
 	payload, err := json.Marshal(frame)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	return t.write(websocket.TextMessage, payload)
 }
@@ -426,9 +427,9 @@ func (t *TTS) write(messageType int, payload []byte) error {
 	t.writeMu.Lock()
 	defer t.writeMu.Unlock()
 	if t.conn == nil {
-		return errors.New("not connected")
+		return stack.Wrap(errors.New("not connected"))
 	}
-	return t.conn.WriteMessage(messageType, payload)
+	return stack.Wrap(t.conn.WriteMessage(messageType, payload))
 }
 
 // readLoop turns server frames into events until the connection ends.

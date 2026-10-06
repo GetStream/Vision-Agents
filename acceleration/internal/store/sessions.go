@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // How many sessions are handed back at once. A person scrolling a sidebar reads a page at a
@@ -138,7 +140,7 @@ func (s *Store) SawVideo(ctx context.Context, id string) error {
 // spec left to save.
 func (s *Store) DescribeSession(ctx context.Context, customerID, id, title, description string, custom map[string]any) error {
 	if customerID == "" || id == "" {
-		return errors.New("store: a customer and a session id are required")
+		return stack.Wrap(errors.New("store: a customer and a session id are required"))
 	}
 
 	query := s.db.NewUpdate().Model((*AgentSession)(nil)).
@@ -153,11 +155,11 @@ func (s *Store) DescribeSession(ctx context.Context, customerID, id, title, desc
 
 	result, err := query.Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: describe session: %w", err)
+		return stack.Wrap(fmt.Errorf("store: describe session: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: describe session: %w", err)
+		return stack.Wrap(fmt.Errorf("store: describe session: %w", err))
 	}
 	if affected == 0 {
 		return unknownStoredSession(id)
@@ -169,7 +171,7 @@ func (s *Store) DescribeSession(ctx context.Context, customerID, id, title, desc
 func (s *Store) SessionExists(ctx context.Context, id string) (bool, error) {
 	exists, err := s.db.NewSelect().Model((*AgentSession)(nil)).Where("id = ?", id).Exists(ctx)
 	if err != nil {
-		return false, fmt.Errorf("store: session exists: %w", err)
+		return false, stack.Wrap(fmt.Errorf("store: session exists: %w", err))
 	}
 	return exists, nil
 }
@@ -177,7 +179,7 @@ func (s *Store) SessionExists(ctx context.Context, id string) (bool, error) {
 // StoredSession returns one session a customer ran.
 func (s *Store) StoredSession(ctx context.Context, customerID, id string) (AgentSession, error) {
 	if customerID == "" || id == "" {
-		return AgentSession{}, errors.New("store: a customer and a session id are required")
+		return AgentSession{}, stack.Wrap(errors.New("store: a customer and a session id are required"))
 	}
 
 	var session AgentSession
@@ -190,7 +192,7 @@ func (s *Store) StoredSession(ctx context.Context, customerID, id string) (Agent
 		return AgentSession{}, unknownStoredSession(id)
 	}
 	if err != nil {
-		return AgentSession{}, fmt.Errorf("store: stored session: %w", err)
+		return AgentSession{}, stack.Wrap(fmt.Errorf("store: stored session: %w", err))
 	}
 	return session, nil
 }
@@ -199,7 +201,7 @@ func (s *Store) StoredSession(ctx context.Context, customerID, id string) (Agent
 // A session that is not there is not an error: a retried delete has nothing left to do.
 func (s *Store) DeleteSession(ctx context.Context, customerID, id string) error {
 	if customerID == "" || id == "" {
-		return errors.New("store: a customer and a session id are required")
+		return stack.Wrap(errors.New("store: a customer and a session id are required"))
 	}
 
 	_, err := s.db.NewDelete().Model((*AgentSession)(nil)).
@@ -207,7 +209,7 @@ func (s *Store) DeleteSession(ctx context.Context, customerID, id string) error 
 		Where("customer_id = ?", customerID).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: delete session: %w", err)
+		return stack.Wrap(fmt.Errorf("store: delete session: %w", err))
 	}
 	return nil
 }
@@ -221,7 +223,7 @@ func (s *Store) DeleteSession(ctx context.Context, customerID, id string) error 
 // filter.
 func (s *Store) QuerySessions(ctx context.Context, customerID string, filter SessionFilter) ([]AgentSession, error) {
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
 	query := s.db.NewSelect().Model((*AgentSession)(nil)).
@@ -234,7 +236,7 @@ func (s *Store) QuerySessions(ctx context.Context, customerID string, filter Ses
 
 	var sessions []AgentSession
 	if err := query.Scan(ctx, &sessions); err != nil {
-		return nil, fmt.Errorf("store: query sessions: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: query sessions: %w", err))
 	}
 	return sessions, nil
 }
@@ -253,7 +255,7 @@ func (s *Store) QuerySessions(ctx context.Context, customerID string, filter Ses
 // their conversations.
 func (s *Store) SearchSessions(ctx context.Context, customerID, text string, filter SessionFilter) ([]AgentSession, error) {
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 	if text == "" {
 		return s.QuerySessions(ctx, customerID, filter)
@@ -277,7 +279,7 @@ func (s *Store) SearchSessions(ctx context.Context, customerID, text string, fil
 
 	var sessions []AgentSession
 	if err := query.Scan(ctx, &sessions); err != nil {
-		return nil, fmt.Errorf("store: search sessions: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: search sessions: %w", err))
 	}
 	return sessions, nil
 }
@@ -392,7 +394,7 @@ func (s *Store) FinishResponse(ctx context.Context, id, status, failure string, 
 // conversation. A nil after is the first page.
 func (s *Store) SessionResponses(ctx context.Context, customerID, sessionID string, limit int, after *ResponsePosition) ([]AgentResponse, error) {
 	if customerID == "" || sessionID == "" {
-		return nil, errors.New("store: a customer and a session id are required")
+		return nil, stack.Wrap(errors.New("store: a customer and a session id are required"))
 	}
 
 	query := s.db.NewSelect().Model((*AgentResponse)(nil)).
@@ -407,7 +409,7 @@ func (s *Store) SessionResponses(ctx context.Context, customerID, sessionID stri
 
 	var responses []AgentResponse
 	if err := query.Scan(ctx, &responses); err != nil {
-		return nil, fmt.Errorf("store: session responses: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: session responses: %w", err))
 	}
 	return responses, nil
 }
@@ -453,7 +455,7 @@ func (s *Store) AppendResponseItems(ctx context.Context, items []AgentResponseIt
 // the first page.
 func (s *Store) SessionItems(ctx context.Context, customerID, sessionID, responseID string, limit int, after *ItemPosition) ([]AgentResponseItem, error) {
 	if customerID == "" || sessionID == "" {
-		return nil, errors.New("store: a customer and a session id are required")
+		return nil, stack.Wrap(errors.New("store: a customer and a session id are required"))
 	}
 
 	// Joined to responses rather than trusting the session id on the item, because the
@@ -476,7 +478,7 @@ func (s *Store) SessionItems(ctx context.Context, customerID, sessionID, respons
 
 	var items []AgentResponseItem
 	if err := query.Scan(ctx, &items); err != nil {
-		return nil, fmt.Errorf("store: session items: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: session items: %w", err))
 	}
 	return items, nil
 }
@@ -494,7 +496,7 @@ var ErrUnknownResponse = errors.New("store: that response is not part of this co
 // a transcript read out of Chat gives a model.
 func (s *Store) Exchanges(ctx context.Context, customerID, sessionID, upTo string) ([]Exchange, error) {
 	if customerID == "" || sessionID == "" {
-		return nil, errors.New("store: a customer and a session id are required")
+		return nil, stack.Wrap(errors.New("store: a customer and a session id are required"))
 	}
 
 	var responses []AgentResponse
@@ -505,7 +507,7 @@ func (s *Store) Exchanges(ctx context.Context, customerID, sessionID, upTo strin
 		Order("created_at ASC", "id ASC").
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("store: exchanges: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: exchanges: %w", err))
 	}
 	if upTo != "" {
 		end := -1
@@ -516,7 +518,7 @@ func (s *Store) Exchanges(ctx context.Context, customerID, sessionID, upTo strin
 			}
 		}
 		if end < 0 {
-			return nil, ErrUnknownResponse
+			return nil, stack.Wrap(ErrUnknownResponse)
 		}
 		responses = responses[:end+1]
 	}
@@ -535,7 +537,7 @@ func (s *Store) Exchanges(ctx context.Context, customerID, sessionID, upTo strin
 		Order("response_id ASC", "ordinal ASC").
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("store: exchanges: answers: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: exchanges: answers: %w", err))
 	}
 	// An agent that speaks again once delegated work comes back answers one question twice,
 	// and both halves are the answer.
@@ -557,7 +559,7 @@ func (s *Store) Exchanges(ctx context.Context, customerID, sessionID, upTo strin
 // RewindResponses takes every response after kept out of the session's conversation.
 func (s *Store) RewindResponses(ctx context.Context, customerID, sessionID, kept string, at time.Time) error {
 	if customerID == "" || sessionID == "" || kept == "" {
-		return errors.New("store: a customer, a session and a response id are required")
+		return stack.Wrap(errors.New("store: a customer, a session and a response id are required"))
 	}
 	if at.IsZero() {
 		at = time.Now().UTC()
@@ -571,7 +573,7 @@ func (s *Store) RewindResponses(ctx context.Context, customerID, sessionID, kept
 		Where("(created_at, id) > (SELECT created_at, id FROM agent_responses WHERE id = ?)", kept).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: rewind responses: %w", err)
+		return stack.Wrap(fmt.Errorf("store: rewind responses: %w", err))
 	}
 	return nil
 }
@@ -579,13 +581,13 @@ func (s *Store) RewindResponses(ctx context.Context, customerID, sessionID, kept
 // RecordUser stores an end user this app was seen acting for.
 func (s *Store) RecordUser(ctx context.Context, user *User) error {
 	if user.ID == "" {
-		return errors.New("store: a user id is required")
+		return stack.Wrap(errors.New("store: a user id is required"))
 	}
 	if user.CustomerID == "" {
-		return errors.New("store: customer id is required")
+		return stack.Wrap(errors.New("store: customer id is required"))
 	}
 	if user.Kind == "" {
-		return errors.New("store: a user kind is required")
+		return stack.Wrap(errors.New("store: a user kind is required"))
 	}
 	if user.CreatedAt.IsZero() {
 		user.CreatedAt = time.Now().UTC()
@@ -602,7 +604,7 @@ func (s *Store) RecordUser(ctx context.Context, user *User) error {
 		On("CONFLICT (customer_id, id) DO NOTHING").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: record user: %w", err)
+		return stack.Wrap(fmt.Errorf("store: record user: %w", err))
 	}
 	return nil
 }
@@ -617,7 +619,7 @@ func (s *Store) RecordGuest(ctx context.Context, guest *User) error {
 // account that signed up is nobody's to claim.
 func (s *Store) Guest(ctx context.Context, customerID, id string) (User, error) {
 	if customerID == "" || id == "" {
-		return User{}, errors.New("store: a customer and a guest id are required")
+		return User{}, stack.Wrap(errors.New("store: a customer and a guest id are required"))
 	}
 
 	var guest User
@@ -631,7 +633,7 @@ func (s *Store) Guest(ctx context.Context, customerID, id string) (User, error) 
 		return User{}, notAGuest(id, customerID)
 	}
 	if err != nil {
-		return User{}, fmt.Errorf("store: guest: %w", err)
+		return User{}, stack.Wrap(fmt.Errorf("store: guest: %w", err))
 	}
 	return guest, nil
 }
@@ -644,10 +646,10 @@ func (s *Store) Guest(ctx context.Context, customerID, id string) (User, error) 
 // somebody else.
 func (s *Store) ClaimGuest(ctx context.Context, customerID, guestID, userID string) (int64, error) {
 	if customerID == "" || guestID == "" || userID == "" {
-		return 0, errors.New("store: a customer, a guest and a user id are required")
+		return 0, stack.Wrap(errors.New("store: a customer, a guest and a user id are required"))
 	}
 	if guestID == userID {
-		return 0, errors.New("store: a guest cannot be claimed by itself")
+		return 0, stack.Wrap(errors.New("store: a guest cannot be claimed by itself"))
 	}
 
 	var moved int64
@@ -704,7 +706,7 @@ func (s *Store) ClaimGuest(ctx context.Context, customerID, guestID, userID stri
 		return nil
 	})
 	if err != nil {
-		return 0, fmt.Errorf("store: %w", err)
+		return 0, stack.Wrap(fmt.Errorf("store: %w", err))
 	}
 	return moved, nil
 }
@@ -721,9 +723,9 @@ func jsonbOf[V any](values map[string]V) string {
 }
 
 func unknownStoredSession(id string) error {
-	return fmt.Errorf("store: there is no session %s", id)
+	return stack.Wrap(fmt.Errorf("store: there is no session %s", id))
 }
 
 func notAGuest(id, customerID string) error {
-	return fmt.Errorf("store: %s is not a guest of %s", id, customerID)
+	return stack.Wrap(fmt.Errorf("store: %s is not a guest of %s", id, customerID))
 }

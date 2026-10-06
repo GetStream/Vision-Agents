@@ -13,6 +13,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -273,7 +274,7 @@ func channelCredentialsComplaint(kind channels.Kind, body ConnectChannelRequest)
 func (s *Server) sealChannelSecrets(customerID string, secrets channels.Secrets) ([]byte, error) {
 	raw, err := json.Marshal(secrets)
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	return s.secrets.SealWithAAD(string(raw), []byte(customerID))
 }
@@ -572,7 +573,7 @@ type channelLinkResponse struct {
 func channelToken() (string, error) {
 	raw := make([]byte, 24)
 	if _, err := rand.Read(raw); err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 	return hex.EncodeToString(raw), nil
 }

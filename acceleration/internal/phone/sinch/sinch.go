@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 const (
@@ -121,8 +122,8 @@ func New(options Options) (*Provider, error) {
 		options.ApplicationSecret = os.Getenv(applicationSecretEnvVar)
 	}
 	if options.ProjectID == "" || options.KeyID == "" || options.KeySecret == "" {
-		return nil, errors.New("sinch: " + projectIDEnvVar + ", " + keyIDEnvVar +
-			" and " + keySecretEnvVar + " are required")
+		return nil, stack.Wrap(errors.New("sinch: " + projectIDEnvVar + ", " + keyIDEnvVar +
+			" and " + keySecretEnvVar + " are required"))
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
@@ -159,12 +160,12 @@ func New(options Options) (*Provider, error) {
 // asking for local numbers, which is what an agent wants.
 func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
 	if search.Country == "" {
-		return nil, errors.New("sinch: a country is required to search for numbers")
+		return nil, stack.Wrap(errors.New("sinch: a country is required to search for numbers"))
 	}
 	// Sinch applies one pattern one way, so it cannot be asked for digits at the front and
 	// digits anywhere at the same time.
 	if search.Prefix != "" && search.Contains != "" {
-		return nil, errors.New("sinch: can match a prefix or a substring, not both")
+		return nil, stack.Wrap(errors.New("sinch: can match a prefix or a substring, not both"))
 	}
 
 	kind := search.Type
@@ -173,7 +174,7 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 	}
 	named, ok := kinds[kind]
 	if !ok {
-		return nil, fmt.Errorf("sinch: does not sell %s numbers", kind)
+		return nil, stack.Wrap(fmt.Errorf("sinch: does not sell %s numbers", kind))
 	}
 
 	query := url.Values{
@@ -222,7 +223,7 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 // BuyNumber rents a number. Sinch rents by number, so the order's country is not needed.
 func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Number, error) {
 	if order.E164 == "" {
-		return phone.Number{}, errors.New("sinch: a number is required")
+		return phone.Number{}, stack.Wrap(errors.New("sinch: a number is required"))
 	}
 
 	var rented activeNumber
@@ -249,7 +250,7 @@ func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Numb
 // active number at Sinch, which is a different resource from the one it was bought from.
 func (p *Provider) ReleaseNumber(ctx context.Context, e164 string) error {
 	if e164 == "" {
-		return errors.New("sinch: a number is required")
+		return stack.Wrap(errors.New("sinch: a number is required"))
 	}
 	path := p.path("activeNumbers", e164) + ":release"
 	return p.do(ctx, http.MethodPost, path, nil, struct{}{}, nil)
@@ -257,7 +258,7 @@ func (p *Provider) ReleaseNumber(ctx context.Context, e164 string) error {
 
 // ConfigureInbound is not wrapped for Sinch.
 func (p *Provider) ConfigureInbound(context.Context, phone.Inbound) error {
-	return fmt.Errorf("%w: sinch numbers are bought here but bridged elsewhere", phone.ErrNotImplemented)
+	return stack.Wrap(fmt.Errorf("%w: sinch numbers are bought here but bridged elsewhere", phone.ErrNotImplemented))
 }
 
 // Dial calls a person and bridges the answered call to the trunk.
@@ -268,12 +269,12 @@ func (p *Provider) ConfigureInbound(context.Context, phone.Inbound) error {
 // digits are a field on the callout rather than an action in the plan.
 func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dialed, error) {
 	if err := outbound.Validate(); err != nil {
-		return phone.Dialed{}, fmt.Errorf("sinch: %w", err)
+		return phone.Dialed{}, stack.Wrap(fmt.Errorf("sinch: %w", err))
 	}
 	if p.applicationKey == "" || p.applicationSecret == "" {
-		return phone.Dialed{}, fmt.Errorf(
+		return phone.Dialed{}, stack.Wrap(fmt.Errorf(
 			"sinch: placing a call needs %s and %s, which buying a number does not",
-			applicationKeyEnvVar, applicationSecretEnvVar)
+			applicationKeyEnvVar, applicationSecretEnvVar))
 	}
 
 	answered, err := json.Marshal(svaml{Action: connectSip{
@@ -282,7 +283,7 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		CLI:         outbound.From,
 	}})
 	if err != nil {
-		return phone.Dialed{}, fmt.Errorf("sinch: render answer: %w", err)
+		return phone.Dialed{}, stack.Wrap(fmt.Errorf("sinch: render answer: %w", err))
 	}
 
 	request := calloutRequest{
@@ -300,14 +301,14 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		return phone.Dialed{}, err
 	}
 	if placed.CallID == "" {
-		return phone.Dialed{}, errors.New("sinch: the callout came back without a call id")
+		return phone.Dialed{}, stack.Wrap(errors.New("sinch: the callout came back without a call id"))
 	}
 	return phone.Dialed{VendorCallID: placed.CallID, Status: "queued"}, nil
 }
 
 // SendDigits is not wrapped for Sinch, since nothing here places a Sinch call to press on.
 func (p *Provider) SendDigits(context.Context, string, string) error {
-	return fmt.Errorf("%w: sinch", phone.ErrNotImplemented)
+	return stack.Wrap(fmt.Errorf("%w: sinch", phone.ErrNotImplemented))
 }
 
 // Supports is a country, a pattern either way round and a number type. Sinch's search has no
@@ -361,7 +362,7 @@ func (p *Provider) bearer(ctx context.Context) (string, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, p.authURL,
 		strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", fmt.Errorf("sinch: asking for a token: %w", err)
+		return "", stack.Wrap(fmt.Errorf("sinch: asking for a token: %w", err))
 	}
 	request.SetBasicAuth(p.keyID, p.keySecret)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -369,22 +370,22 @@ func (p *Provider) bearer(ctx context.Context) (string, error) {
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return "", fmt.Errorf("sinch: asking for a token: %w", err)
+		return "", stack.Wrap(fmt.Errorf("sinch: asking for a token: %w", err))
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return "", fmt.Errorf("sinch: asking for a token: %s: %s",
-			response.Status, strings.TrimSpace(string(detail)))
+		return "", stack.Wrap(fmt.Errorf("sinch: asking for a token: %s: %s",
+			response.Status, strings.TrimSpace(string(detail))))
 	}
 
 	var granted token
 	if err := json.NewDecoder(response.Body).Decode(&granted); err != nil {
-		return "", fmt.Errorf("sinch: decoding a token: %w", err)
+		return "", stack.Wrap(fmt.Errorf("sinch: decoding a token: %w", err))
 	}
 	if granted.AccessToken == "" {
-		return "", errors.New("sinch: the token request came back without a token")
+		return "", stack.Wrap(errors.New("sinch: the token request came back without a token"))
 	}
 
 	p.token = granted.AccessToken
@@ -397,13 +398,13 @@ func (p *Provider) bearer(ctx context.Context) (string, error) {
 func (p *Provider) doCalling(ctx context.Context, method, path string, payload, into any) error {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("sinch: encode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("sinch: encode %s: %w", path, err))
 	}
 
 	request, err := http.NewRequestWithContext(ctx, method, p.callingBaseURL+path,
 		bytes.NewReader(encoded))
 	if err != nil {
-		return fmt.Errorf("sinch: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("sinch: %s: %w", path, err))
 	}
 	request.SetBasicAuth(p.applicationKey, p.applicationSecret)
 	request.Header.Set("Content-Type", "application/json")
@@ -411,20 +412,20 @@ func (p *Provider) doCalling(ctx context.Context, method, path string, payload, 
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("sinch: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("sinch: %s: %w", path, err))
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return fmt.Errorf("sinch: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail)))
+		return stack.Wrap(fmt.Errorf("sinch: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return fmt.Errorf("sinch: decode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("sinch: decode %s: %w", path, err))
 	}
 	return nil
 }
@@ -432,7 +433,7 @@ func (p *Provider) doCalling(ctx context.Context, method, path string, payload, 
 func (p *Provider) do(ctx context.Context, method, path string, query url.Values, body, into any) error {
 	bearer, err := p.bearer(ctx)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 
 	endpoint := p.baseURL + path
@@ -444,14 +445,14 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("sinch: encode %s: %w", path, err)
+			return stack.Wrap(fmt.Errorf("sinch: encode %s: %w", path, err))
 		}
 		payload = bytes.NewReader(encoded)
 	}
 
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, payload)
 	if err != nil {
-		return fmt.Errorf("sinch: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("sinch: %s: %w", path, err))
 	}
 	request.Header.Set("Authorization", "Bearer "+bearer)
 	request.Header.Set("Accept", "application/json")
@@ -461,20 +462,20 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("sinch: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("sinch: %s: %w", path, err))
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return fmt.Errorf("sinch: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail)))
+		return stack.Wrap(fmt.Errorf("sinch: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return fmt.Errorf("sinch: decode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("sinch: decode %s: %w", path, err))
 	}
 	return nil
 }

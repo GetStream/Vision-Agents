@@ -13,6 +13,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -121,11 +122,11 @@ func appPlugin(config store.AgentConfig, id string) (plugins.Plugin, error) {
 			continue
 		}
 		if server.User {
-			return plugins.Plugin{}, fmt.Errorf("%s is connected by each end user, in the conversation", id)
+			return plugins.Plugin{}, stack.Wrap(fmt.Errorf("%s is connected by each end user, in the conversation", id))
 		}
 		return session.ServerPlugin(server), nil
 	}
-	return plugins.Plugin{}, errors.New(unknownPlugin)
+	return plugins.Plugin{}, stack.Wrap(errors.New(unknownPlugin))
 }
 
 // authorizePlugin starts a plugin login and returns the URL the browser should open.

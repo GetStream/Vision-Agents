@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Term is one optional thing a request asks a provider for beyond a target and a
@@ -353,28 +355,28 @@ func (o STT) Merge(over STT) STT {
 // than ignored once a socket is open.
 func (o STT) Validate() error {
 	if o.Mode != "" && o.Mode != ModeVerbatim && o.Mode != ModeSmart {
-		return fmt.Errorf("options: mode is %s or %s, not %q", ModeVerbatim, ModeSmart, o.Mode)
+		return stack.Wrap(fmt.Errorf("options: mode is %s or %s, not %q", ModeVerbatim, ModeSmart, o.Mode))
 	}
 	// Smart rewrites what was said, and a word cannot be timed or attributed to a speaker
 	// once it may not be the word that was spoken. Refusing beats returning timings that
 	// point into a transcript nobody said.
 	if o.Mode == ModeSmart {
 		if on(o.Diarize) || o.MaxSpeakers != nil {
-			return errors.New("options: smart mode cannot diarize, since it rewrites what was said")
+			return stack.Wrap(errors.New("options: smart mode cannot diarize, since it rewrites what was said"))
 		}
 		if on(o.Words) {
-			return errors.New("options: smart mode has no word timings, since it rewrites what was said")
+			return stack.Wrap(errors.New("options: smart mode has no word timings, since it rewrites what was said"))
 		}
 	}
 	if !o.DataPolicy.Valid() {
-		return fmt.Errorf("options: retention is none or a duration such as 30d, not %q", o.DataPolicy.Retention)
+		return stack.Wrap(fmt.Errorf("options: retention is none or a duration such as 30d, not %q", o.DataPolicy.Retention))
 	}
 	for provider, block := range o.Overwrites {
 		if provider == "" {
-			return errors.New("options: an overwrite has to name the provider it is for")
+			return stack.Wrap(errors.New("options: an overwrite has to name the provider it is for"))
 		}
 		if !json.Valid(block) {
-			return fmt.Errorf("options: the overwrites for %s are not valid JSON", provider)
+			return stack.Wrap(fmt.Errorf("options: the overwrites for %s are not valid JSON", provider))
 		}
 	}
 	return nil
@@ -481,14 +483,14 @@ func (o TTS) Merge(over TTS) TTS {
 // Validate reports the first thing about these options a voice could not be asked for.
 func (o TTS) Validate() error {
 	if !o.DataPolicy.Valid() {
-		return fmt.Errorf("options: retention is none or a duration such as 30d, not %q", o.DataPolicy.Retention)
+		return stack.Wrap(fmt.Errorf("options: retention is none or a duration such as 30d, not %q", o.DataPolicy.Retention))
 	}
 	for provider, block := range o.Overwrites {
 		if provider == "" {
-			return errors.New("options: an overwrite has to name the provider it is for")
+			return stack.Wrap(errors.New("options: an overwrite has to name the provider it is for"))
 		}
 		if !json.Valid(block) {
-			return fmt.Errorf("options: the overwrites for %s are not valid JSON", provider)
+			return stack.Wrap(fmt.Errorf("options: the overwrites for %s are not valid JSON", provider))
 		}
 	}
 	return nil
@@ -730,31 +732,31 @@ func (o STS) Validate() error {
 	switch o.TurnDetection {
 	case "", TurnServerVAD, TurnSemantic, TurnManual:
 	default:
-		return fmt.Errorf("options: turn_detection is %s, %s or %s, not %q",
-			TurnServerVAD, TurnSemantic, TurnManual, o.TurnDetection)
+		return stack.Wrap(fmt.Errorf("options: turn_detection is %s, %s or %s, not %q",
+			TurnServerVAD, TurnSemantic, TurnManual, o.TurnDetection))
 	}
 	// A silence threshold only means something to a silence timer. A model reading the
 	// words does not wait out a pause, so a threshold it was given would be a setting that
 	// was accepted and changed nothing.
 	if o.TurnDetection != "" && o.TurnDetection != TurnServerVAD && (o.SilenceMs != nil || o.PrefixPaddingMs != nil) {
-		return fmt.Errorf("options: silence_ms and prefix_padding_ms tune a %s turn detector, not %s",
-			TurnServerVAD, o.TurnDetection)
+		return stack.Wrap(fmt.Errorf("options: silence_ms and prefix_padding_ms tune a %s turn detector, not %s",
+			TurnServerVAD, o.TurnDetection))
 	}
 	if o.SilenceMs != nil && *o.SilenceMs < 0 {
-		return fmt.Errorf("options: silence_ms cannot be negative, got %d", *o.SilenceMs)
+		return stack.Wrap(fmt.Errorf("options: silence_ms cannot be negative, got %d", *o.SilenceMs))
 	}
 	if o.PrefixPaddingMs != nil && *o.PrefixPaddingMs < 0 {
-		return fmt.Errorf("options: prefix_padding_ms cannot be negative, got %d", *o.PrefixPaddingMs)
+		return stack.Wrap(fmt.Errorf("options: prefix_padding_ms cannot be negative, got %d", *o.PrefixPaddingMs))
 	}
 	if !o.DataPolicy.Valid() {
-		return fmt.Errorf("options: retention is none or a duration such as 30d, not %q", o.DataPolicy.Retention)
+		return stack.Wrap(fmt.Errorf("options: retention is none or a duration such as 30d, not %q", o.DataPolicy.Retention))
 	}
 	for provider, block := range o.Overwrites {
 		if provider == "" {
-			return errors.New("options: an overwrite has to name the provider it is for")
+			return stack.Wrap(errors.New("options: an overwrite has to name the provider it is for"))
 		}
 		if !json.Valid(block) {
-			return fmt.Errorf("options: the overwrites for %s are not valid JSON", provider)
+			return stack.Wrap(fmt.Errorf("options: the overwrites for %s are not valid JSON", provider))
 		}
 	}
 	return nil

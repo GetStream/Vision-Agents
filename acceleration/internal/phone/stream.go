@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	getstream "github.com/GetStream/getstream-go/v5"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 const (
@@ -84,10 +86,10 @@ type Trunk struct {
 // rather than fetched later.
 func (s *Stream) CreateTrunk(ctx context.Context, trunk Trunk) (string, Bridge, error) {
 	if trunk.Name == "" {
-		return "", Bridge{}, errors.New("phone: a trunk needs a name")
+		return "", Bridge{}, stack.Wrap(errors.New("phone: a trunk needs a name"))
 	}
 	if len(trunk.Numbers) == 0 {
-		return "", Bridge{}, errors.New("phone: a trunk needs at least one number")
+		return "", Bridge{}, stack.Wrap(errors.New("phone: a trunk needs at least one number"))
 	}
 
 	request := &getstream.CreateSIPTrunkRequest{
@@ -101,11 +103,11 @@ func (s *Stream) CreateTrunk(ctx context.Context, trunk Trunk) (string, Bridge, 
 
 	response, err := s.client.Video().CreateSIPTrunk(ctx, request)
 	if err != nil {
-		return "", Bridge{}, fmt.Errorf("phone: create sip trunk: %w", err)
+		return "", Bridge{}, stack.Wrap(fmt.Errorf("phone: create sip trunk: %w", err))
 	}
 	created := response.Data.SipTrunk
 	if created == nil {
-		return "", Bridge{}, errors.New("phone: stream created no trunk")
+		return "", Bridge{}, stack.Wrap(errors.New("phone: stream created no trunk"))
 	}
 
 	return created.ID, Bridge{
@@ -141,13 +143,13 @@ type Route struct {
 // a trunk without a rule per number.
 func (s *Stream) CreateRoute(ctx context.Context, route Route) (string, error) {
 	if route.Name == "" {
-		return "", errors.New("phone: a routing rule needs a name")
+		return "", stack.Wrap(errors.New("phone: a routing rule needs a name"))
 	}
 	if len(route.TrunkIDs) == 0 {
-		return "", errors.New("phone: a routing rule needs a trunk")
+		return "", stack.Wrap(errors.New("phone: a routing rule needs a trunk"))
 	}
 	if len(route.CalledNumbers) == 0 {
-		return "", errors.New("phone: a routing rule needs the numbers it answers for")
+		return "", stack.Wrap(errors.New("phone: a routing rule needs the numbers it answers for"))
 	}
 
 	callType := route.CallType
@@ -181,7 +183,7 @@ func (s *Stream) CreateRoute(ctx context.Context, route Route) (string, error) {
 
 	response, err := s.client.Video().CreateSIPInboundRoutingRule(ctx, request)
 	if err != nil {
-		return "", fmt.Errorf("phone: create sip routing rule: %w", err)
+		return "", stack.Wrap(fmt.Errorf("phone: create sip routing rule: %w", err))
 	}
 	return response.Data.ID, nil
 }
@@ -193,7 +195,7 @@ func (s *Stream) DeleteTrunk(ctx context.Context, id string) error {
 		return nil
 	}
 	if _, err := s.client.Video().DeleteSIPTrunk(ctx, id, nil); err != nil {
-		return fmt.Errorf("phone: delete sip trunk: %w", err)
+		return stack.Wrap(fmt.Errorf("phone: delete sip trunk: %w", err))
 	}
 	return nil
 }
@@ -205,7 +207,7 @@ func (s *Stream) DeleteRoute(ctx context.Context, id string) error {
 		return nil
 	}
 	if _, err := s.client.Video().DeleteSIPInboundRoutingRule(ctx, id, nil); err != nil {
-		return fmt.Errorf("phone: delete sip routing rule: %w", err)
+		return stack.Wrap(fmt.Errorf("phone: delete sip routing rule: %w", err))
 	}
 	return nil
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -65,7 +66,7 @@ func dlcError(err error) error {
 		errors.Is(err, store.ErrUnknownOptOut):
 		return huma.Error404NotFound(err.Error())
 	}
-	return err
+	return stack.Wrap(err)
 }
 
 // dlcCustomer is the customer a 10DLC operation acts for, or the error to answer with.

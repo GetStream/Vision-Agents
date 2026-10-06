@@ -16,6 +16,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -124,7 +125,7 @@ func notConnected(server string) error {
 func ConfiguredPlugin(entry store.PluginEntry) (plugins.Plugin, error) {
 	plugin, ok := plugins.Lookup(entry.Name)
 	if !ok {
-		return plugins.Plugin{}, fmt.Errorf("session: no plugin called %s", entry.Name)
+		return plugins.Plugin{}, stack.Wrap(fmt.Errorf("session: no plugin called %s", entry.Name))
 	}
 	return plugin.Configured(plugins.Options{
 		Readonly: entry.Readonly, Scopes: entry.Scopes, Toolsets: entry.Toolsets, Tools: entry.Tools,

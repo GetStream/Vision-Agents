@@ -10,6 +10,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // PolicyScope is what a policy document belongs to.
@@ -109,7 +110,7 @@ type AppOrganization struct {
 // empty document rather than an error, since that is what almost every scope is.
 func (s *Store) Policy(ctx context.Context, scope PolicyScope, id string) (PolicyDocument, error) {
 	if id == "" {
-		return PolicyDocument{}, errors.New("store: a policy needs a scope id")
+		return PolicyDocument{}, stack.Wrap(errors.New("store: a policy needs a scope id"))
 	}
 	var policy Policy
 	err := s.db.NewSelect().Model(&policy).
@@ -120,7 +121,7 @@ func (s *Store) Policy(ctx context.Context, scope PolicyScope, id string) (Polic
 		return PolicyDocument{}, nil
 	}
 	if err != nil {
-		return PolicyDocument{}, fmt.Errorf("store: policy: %w", err)
+		return PolicyDocument{}, stack.Wrap(fmt.Errorf("store: policy: %w", err))
 	}
 	return policy.Document, nil
 }
@@ -128,7 +129,7 @@ func (s *Store) Policy(ctx context.Context, scope PolicyScope, id string) (Polic
 // SavePolicy replaces a scope's document.
 func (s *Store) SavePolicy(ctx context.Context, scope PolicyScope, id string, document PolicyDocument) error {
 	if id == "" {
-		return errors.New("store: a policy needs a scope id")
+		return stack.Wrap(errors.New("store: a policy needs a scope id"))
 	}
 	policy := &Policy{Scope: scope, ScopeID: id, Document: document, UpdatedAt: time.Now().UTC()}
 	_, err := s.db.NewInsert().Model(policy).
@@ -137,7 +138,7 @@ func (s *Store) SavePolicy(ctx context.Context, scope PolicyScope, id string, do
 		Set("updated_at = EXCLUDED.updated_at").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: save policy: %w", err)
+		return stack.Wrap(fmt.Errorf("store: save policy: %w", err))
 	}
 	return nil
 }
@@ -168,7 +169,7 @@ func (s *Store) OrganizationOf(ctx context.Context, appID string) (string, error
 		return "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("store: organization of: %w", err)
+		return "", stack.Wrap(fmt.Errorf("store: organization of: %w", err))
 	}
 	return membership.OrganizationID, nil
 }
@@ -182,7 +183,7 @@ func (s *Store) SpendSince(ctx context.Context, customerID string, since time.Ti
 		Where("started_at >= ?", since).
 		Scan(ctx, &spent)
 	if err != nil {
-		return 0, fmt.Errorf("store: spend since: %w", err)
+		return 0, stack.Wrap(fmt.Errorf("store: spend since: %w", err))
 	}
 	return spent, nil
 }
@@ -198,7 +199,7 @@ func (s *Store) OrganizationSpendSince(ctx context.Context, organizationID strin
 		Where("started_at >= ?", since).
 		Scan(ctx, &spent)
 	if err != nil {
-		return 0, fmt.Errorf("store: organization spend since: %w", err)
+		return 0, stack.Wrap(fmt.Errorf("store: organization spend since: %w", err))
 	}
 	return spent, nil
 }

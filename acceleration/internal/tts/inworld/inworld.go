@@ -25,6 +25,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
@@ -180,7 +181,7 @@ func New(options Options) (*TTS, error) {
 		options.APIKey = os.Getenv("INWORLD_API_KEY")
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("inworld: api key is required (set INWORLD_API_KEY)")
+		return nil, stack.Wrap(errors.New("inworld: api key is required (set INWORLD_API_KEY)"))
 	}
 	if options.VoiceID == "" {
 		options.VoiceID = os.Getenv("INWORLD_VOICE_ID")
@@ -195,7 +196,7 @@ func New(options Options) (*TTS, error) {
 		options.SampleRate = DefaultSampleRate
 	}
 	if options.SampleRate <= 0 {
-		return nil, fmt.Errorf("inworld: sample rate must be positive, got %d", options.SampleRate)
+		return nil, stack.Wrap(fmt.Errorf("inworld: sample rate must be positive, got %d", options.SampleRate))
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
@@ -226,7 +227,7 @@ func (t *TTS) Start(ctx context.Context) error {
 	t.mu.Lock()
 	if t.started {
 		t.mu.Unlock()
-		return errors.New("inworld: already started")
+		return stack.Wrap(errors.New("inworld: already started"))
 	}
 	t.started = true
 	t.mu.Unlock()
@@ -250,16 +251,16 @@ func (t *TTS) dial(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, t.url(), header)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("inworld: dial: %w (http %d)", err, response.StatusCode)
+			return stack.Wrap(fmt.Errorf("inworld: dial: %w (http %d)", err, response.StatusCode))
 		}
-		return fmt.Errorf("inworld: dial: %w", err)
+		return stack.Wrap(fmt.Errorf("inworld: dial: %w", err))
 	}
 
 	t.mu.Lock()
 	if t.shutdown {
 		t.mu.Unlock()
 		conn.Close()
-		return errors.New("inworld: closed")
+		return stack.Wrap(errors.New("inworld: closed"))
 	}
 	t.conn = conn
 	t.mu.Unlock()
@@ -317,7 +318,7 @@ func (t *TTS) Synthesize(request tts.Request) error {
 				TimestampType: "TIMESTAMP_TYPE_UNSPECIFIED",
 			},
 		}); err != nil {
-			return fmt.Errorf("inworld: create context: %w", err)
+			return stack.Wrap(fmt.Errorf("inworld: create context: %w", err))
 		}
 	}
 
@@ -331,7 +332,7 @@ func (t *TTS) Synthesize(request tts.Request) error {
 			ContextID: current.tracker.ID,
 			SendText:  &sendText{Text: request.Text},
 		}); err != nil {
-			return fmt.Errorf("inworld: send text: %w", err)
+			return stack.Wrap(fmt.Errorf("inworld: send text: %w", err))
 		}
 	}
 
@@ -340,7 +341,7 @@ func (t *TTS) Synthesize(request tts.Request) error {
 			ContextID:    current.tracker.ID,
 			FlushContext: &emptyAction{},
 		}); err != nil {
-			return fmt.Errorf("inworld: flush: %w", err)
+			return stack.Wrap(fmt.Errorf("inworld: flush: %w", err))
 		}
 	}
 	return nil
@@ -368,7 +369,7 @@ func (t *TTS) Interrupt() error {
 	}
 
 	if len(failures) > 0 {
-		return fmt.Errorf("inworld: interrupt: %w", errors.Join(failures...))
+		return stack.Wrap(fmt.Errorf("inworld: interrupt: %w", errors.Join(failures...)))
 	}
 	return nil
 }
@@ -431,18 +432,18 @@ func (t *TTS) utteranceFor(request tts.Request) (*utterance, bool, error) {
 	defer t.mu.Unlock()
 
 	if t.shutdown {
-		return nil, false, errors.New("inworld: session closed")
+		return nil, false, stack.Wrap(errors.New("inworld: session closed"))
 	}
 	if !t.started || t.conn == nil {
-		return nil, false, errors.New("inworld: not started")
+		return nil, false, stack.Wrap(errors.New("inworld: not started"))
 	}
 
 	if request.ID != "" {
 		if existing, ok := t.active[request.ID]; ok && !existing.settled {
 			if request.Voice != "" && request.Voice != existing.voice {
-				return nil, false, fmt.Errorf(
+				return nil, false, stack.Wrap(fmt.Errorf(
 					"inworld: utterance %s is being said in voice %s, not %s",
-					request.ID, existing.voice, request.Voice)
+					request.ID, existing.voice, request.Voice))
 			}
 			return existing, false, nil
 		}
@@ -460,7 +461,7 @@ func (t *TTS) utteranceFor(request tts.Request) (*utterance, bool, error) {
 func (t *TTS) send(message clientFrame) error {
 	payload, err := json.Marshal(message)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 
 	t.writeMu.Lock()
@@ -470,7 +471,7 @@ func (t *TTS) send(message clientFrame) error {
 	conn, shutdown := t.conn, t.shutdown
 	t.mu.Unlock()
 	if shutdown {
-		return errors.New("not connected")
+		return stack.Wrap(errors.New("not connected"))
 	}
 	if conn != nil {
 		if err := conn.WriteMessage(websocket.TextMessage, payload); err == nil {
@@ -480,16 +481,16 @@ func (t *TTS) send(message clientFrame) error {
 
 	t.logger.Debug("reconnecting to speak")
 	if err := t.dial(context.Background()); err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 
 	t.mu.Lock()
 	conn = t.conn
 	t.mu.Unlock()
 	if conn == nil {
-		return errors.New("not connected")
+		return stack.Wrap(errors.New("not connected"))
 	}
-	return conn.WriteMessage(websocket.TextMessage, payload)
+	return stack.Wrap(conn.WriteMessage(websocket.TextMessage, payload))
 }
 
 func (t *TTS) keepAlive() {

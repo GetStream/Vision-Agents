@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -286,10 +287,10 @@ func (s *Server) customManifest(ctx context.Context, sent CustomConnectorRequest
 	for _, scheme := range sent.Schemes {
 		if !slices.Contains(known, scheme) {
 			if len(known) == 0 {
-				return core.Manifest{}, fmt.Errorf("scheme %q is not one this deployment has: it has none yet", scheme)
+				return core.Manifest{}, stack.Wrap(fmt.Errorf("scheme %q is not one this deployment has: it has none yet", scheme))
 			}
-			return core.Manifest{}, fmt.Errorf("scheme %q is not one this deployment has (%s)",
-				scheme, strings.Join(known, ", "))
+			return core.Manifest{}, stack.Wrap(fmt.Errorf("scheme %q is not one this deployment has (%s)",
+				scheme, strings.Join(known, ", ")))
 		}
 	}
 	var client core.ClientPolicy
@@ -299,7 +300,7 @@ func (s *Server) customManifest(ctx context.Context, sent CustomConnectorRequest
 			// built-in's client.env names, and the deployment has none registered with an
 			// app's own server.
 			if core.ClientRegistrationMethod(registration) == core.ClientOperator {
-				return core.Manifest{}, errors.New("client.registration cannot be operator for a custom connector: this deployment has no client registered with it")
+				return core.Manifest{}, stack.Wrap(errors.New("client.registration cannot be operator for a custom connector: this deployment has no client registered with it"))
 			}
 			client.Registration = append(client.Registration, core.ClientRegistrationMethod(registration))
 		}
@@ -310,7 +311,7 @@ func (s *Server) customManifest(ctx context.Context, sent CustomConnectorRequest
 	// names none (pickClient in internal/connectors/schemes/oauth2code/client.go), so such a
 	// definition could be stored and never connected.
 	if slices.Contains(sent.Schemes, "oauth2_code") && len(client.Registration) == 0 {
-		return core.Manifest{}, errors.New("client.registration is required with oauth2_code: name how the OAuth client is registered (customer, cimd or dcr)")
+		return core.Manifest{}, stack.Wrap(errors.New("client.registration is required with oauth2_code: name how the OAuth client is registered (customer, cimd or dcr)"))
 	}
 	manifest := core.Manifest{
 		ID: sent.ID,
@@ -333,7 +334,7 @@ func (s *Server) customManifest(ctx context.Context, sent CustomConnectorRequest
 	// one that resolves to a private address, which would let a caller probe the names the
 	// router's resolver knows.
 	if err := egress.ValidatePublicHTTPSURL(ctx, sent.Endpoint); err != nil {
-		return core.Manifest{}, errors.New("endpoint must be a public https URL without userinfo, query or fragment")
+		return core.Manifest{}, stack.Wrap(errors.New("endpoint must be a public https URL without userinfo, query or fragment"))
 	}
 	return manifest, nil
 }

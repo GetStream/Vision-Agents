@@ -14,6 +14,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // BuiltinCustomer is the customer the built-in connector definitions are stored under. It is
@@ -80,10 +81,10 @@ func (s *Store) SeedConnectorDefinitions(ctx context.Context, fsys fs.FS) error 
 // revision is replaced: the store numbers revisions.
 func (s *Store) CreateConnectorDefinition(ctx context.Context, customerID string, manifest core.Manifest) (ConnectorDefinition, error) {
 	if customerID == BuiltinCustomer {
-		return ConnectorDefinition{}, errors.New("store: customer id is required")
+		return ConnectorDefinition{}, stack.Wrap(errors.New("store: customer id is required"))
 	}
 	if !strings.HasPrefix(manifest.ID, CustomPrefix) {
-		return ConnectorDefinition{}, fmt.Errorf("store: a custom connector id starts with %s, so it cannot shadow a built-in: %q", CustomPrefix, manifest.ID)
+		return ConnectorDefinition{}, stack.Wrap(fmt.Errorf("store: a custom connector id starts with %s, so it cannot shadow a built-in: %q", CustomPrefix, manifest.ID))
 	}
 	return s.saveRevision(ctx, customerID, manifest)
 }
@@ -92,7 +93,7 @@ func (s *Store) CreateConnectorDefinition(ctx context.Context, customerID string
 // or its own.
 func (s *Store) ConnectorDefinition(ctx context.Context, customerID, id string, revision int) (ConnectorDefinition, error) {
 	if customerID == "" || id == "" {
-		return ConnectorDefinition{}, errors.New("store: a customer and a connector id are required")
+		return ConnectorDefinition{}, stack.Wrap(errors.New("store: a customer and a connector id are required"))
 	}
 
 	var definition ConnectorDefinition
@@ -103,10 +104,10 @@ func (s *Store) ConnectorDefinition(ctx context.Context, customerID, id string, 
 		Limit(1).
 		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ConnectorDefinition{}, fmt.Errorf("%w: %s revision %d", ErrNoConnectorDefinition, id, revision)
+		return ConnectorDefinition{}, stack.Wrap(fmt.Errorf("%w: %s revision %d", ErrNoConnectorDefinition, id, revision))
 	}
 	if err != nil {
-		return ConnectorDefinition{}, fmt.Errorf("store: connector definition: %w", err)
+		return ConnectorDefinition{}, stack.Wrap(fmt.Errorf("store: connector definition: %w", err))
 	}
 	return definition, nil
 }
@@ -114,14 +115,14 @@ func (s *Store) ConnectorDefinition(ctx context.Context, customerID, id string, 
 // LatestConnectorDefinition returns the newest revision of a definition the customer can see.
 func (s *Store) LatestConnectorDefinition(ctx context.Context, customerID, id string) (ConnectorDefinition, error) {
 	if customerID == "" || id == "" {
-		return ConnectorDefinition{}, errors.New("store: a customer and a connector id are required")
+		return ConnectorDefinition{}, stack.Wrap(errors.New("store: a customer and a connector id are required"))
 	}
 	definition, err := latestDefinition(ctx, s.db, []string{BuiltinCustomer, customerID}, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ConnectorDefinition{}, fmt.Errorf("%w: %s", ErrNoConnectorDefinition, id)
+		return ConnectorDefinition{}, stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorDefinition, id))
 	}
 	if err != nil {
-		return ConnectorDefinition{}, fmt.Errorf("store: latest connector definition: %w", err)
+		return ConnectorDefinition{}, stack.Wrap(fmt.Errorf("store: latest connector definition: %w", err))
 	}
 	return definition, nil
 }
@@ -163,7 +164,7 @@ type ConnectorDefinitionPosition struct {
 // to one more than ConnectorDefinitionLimit, so a caller can tell the page is not the last.
 func (s *Store) ListConnectorDefinitions(ctx context.Context, customerID string, filter ConnectorDefinitionFilter) ([]ConnectorDefinition, error) {
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
 	// The newest revision first, then the text matched on it, so an older revision that
@@ -189,7 +190,7 @@ func (s *Store) ListConnectorDefinitions(ctx context.Context, customerID string,
 		Limit(ConnectorDefinitionLimit(filter.Limit) + 1).
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("store: list connector definitions: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: list connector definitions: %w", err))
 	}
 	return definitions, nil
 }
@@ -248,7 +249,7 @@ func (s *Store) saveRevision(ctx context.Context, customerID string, manifest co
 		return err
 	})
 	if err != nil {
-		return ConnectorDefinition{}, fmt.Errorf("store: save connector definition %s: %w", manifest.ID, err)
+		return ConnectorDefinition{}, stack.Wrap(fmt.Errorf("store: save connector definition %s: %w", manifest.ID, err))
 	}
 	return saved, nil
 }
@@ -317,7 +318,7 @@ func latestDefinition(ctx context.Context, db bun.IDB, customers []string, id st
 		Order("revision DESC").
 		Limit(1).
 		Scan(ctx)
-	return definition, err
+	return definition, stack.Wrap(err)
 }
 
 // builtinManifests parses every *.yaml in fsys as a built-in manifest. Each must be valid,
