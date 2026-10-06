@@ -2,6 +2,8 @@
 
 from .activity_bucket import ActivityBucket
 from .activity_granularity import ActivityGranularity
+from .add_trunk_number_request import AddTrunkNumberRequest
+from .add_trunk_number_request_tags import AddTrunkNumberRequestTags
 from .agent_channels import AgentChannels
 from .agent_config import AgentConfig
 from .agent_config_patch import AgentConfigPatch
@@ -130,6 +132,7 @@ from .create_response_request import CreateResponseRequest
 from .create_session_request import CreateSessionRequest
 from .create_session_request_custom import CreateSessionRequestCustom
 from .create_session_request_tags import CreateSessionRequestTags
+from .create_sip_trunk_request import CreateSipTrunkRequest
 from .custom_connector_request import CustomConnectorRequest
 from .data_change import DataChange
 from .data_change_key import DataChangeKey
@@ -312,6 +315,8 @@ from .simulation_run import SimulationRun
 from .simulation_run_mode import SimulationRunMode
 from .simulation_run_state import SimulationRunState
 from .simulation_tags import SimulationTags
+from .sip_trunk import SipTrunk
+from .sip_trunk_transport import SipTrunkTransport
 from .skill import Skill
 from .skill_request import SkillRequest
 from .skipped_vendor import SkippedVendor
@@ -370,6 +375,7 @@ from .update_session_request import UpdateSessionRequest
 from .update_session_request_custom import UpdateSessionRequestCustom
 from .update_session_request_thinking import UpdateSessionRequestThinking
 from .update_session_request_verbosity import UpdateSessionRequestVerbosity
+from .update_sip_trunk_request import UpdateSipTrunkRequest
 from .use_case import UseCase
 from .use_case_channels import UseCaseChannels
 from .use_case_for_review import UseCaseForReview
@@ -394,6 +400,8 @@ from .whats_app_profile import WhatsAppProfile
 __all__ = (
     "ActivityBucket",
     "ActivityGranularity",
+    "AddTrunkNumberRequest",
+    "AddTrunkNumberRequestTags",
     "AgentChannels",
     "AgentConfig",
     "AgentConfigPatch",
@@ -518,6 +526,7 @@ __all__ = (
     "CreateSessionRequest",
     "CreateSessionRequestCustom",
     "CreateSessionRequestTags",
+    "CreateSipTrunkRequest",
     "CustomConnectorRequest",
     "DataChange",
     "DataChangeKey",
@@ -698,6 +707,8 @@ __all__ = (
     "SimulationRunMode",
     "SimulationRunState",
     "SimulationTags",
+    "SipTrunk",
+    "SipTrunkTransport",
     "Skill",
     "SkillRequest",
     "SkippedVendor",
@@ -756,6 +767,7 @@ __all__ = (
     "UpdateSessionRequestCustom",
     "UpdateSessionRequestThinking",
     "UpdateSessionRequestVerbosity",
+    "UpdateSipTrunkRequest",
     "UseCase",
     "UseCaseChannels",
     "UseCaseForReview",
