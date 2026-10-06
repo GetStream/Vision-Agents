@@ -6,11 +6,13 @@ Exported from Claude Docs on 2026-10-05 (https://claude.ai/code/artifact/e4d9711
 
 33 subtasks in 7 phases, each one PR, in the order they can land, plus 21 subtasks (T37 to T57) added on October 5 from the channel decisions, plus 4 subtasks (T58 to T61) added on October 6 to move plugins onto connectors. Status on October 6: 25 merged on accelerate (T1 to T13, T15 to T17, T19, T20, T24, T26, T32, T34, T37, T39, T40). They implement [Accelerate connectors: architecture design](architecture.md) on top of the code that exists today. Connector-layer subtasks are Linear sub-issues of [AI-816](https://linear.app/stream/issue/AI-816/basic-connectorsmcp-support); the channel bridge and the omni-channel conversation have their own parent issues, AI-866 and AI-867. Each subtask's Linear number follows its title.
 
+On October 6 the 36 open subtasks were regrouped into 26 PRs in 4 waves, each with its first production caller («Remaining work: 26 PRs in 4 waves»).
+
 ## Ground rules
 
 - **Base branch is `accelerate`.** Every PR targets it. The prototype branch `codex/connector-support` is a source of code to copy where the design says «keep», not a base: it changes 197 files at once, carries SDK regenerations for ten languages and an irreversible plugin migration, none of which is reviewable as one PR.
 - **What `accelerate` has today** (checked October 1): `internal/plugins` with five catalog entries and endpoints in `api/legacy.yaml:1061-1177`; one-version AES-GCM sealer in `internal/auth/secret.go` (`KEKVersion = 1`); no `internal/egress`, no `internal/mcp`, no `internal/connectors`; Huma for new operations (`internal/api/policies.go` is the pattern); `cmd/openapi` renders the spec and a test fails when it is stale.
-- **Layer order inside a phase:** migration and store, then core logic, then API, then session wiring, then SDKs. A PR touches one layer unless the layer is useless alone.
+- **Layer order inside a phase:** migration and store, then core logic, then API, then session wiring, then SDKs. Since October 6 a PR also ships its first production caller: an endpoint, the session or a command. A test is not a caller. A subtask with no caller merges into the subtask that adds one («Remaining work: 26 PRs in 4 waves»).
 - **New endpoints use Huma, not `legacy.yaml`.** The prototype registered its connector endpoints through the generated oapi-codegen server (`ListConnectorsRequestObject` and friends in `internal/api/connectors.go`). AGENTS.md forbids adding to `legacy.yaml`, so the API phase ports the handlers to `huma.Register`.
 - **Go first, SDKs later.** AGENTS.md: SDK changes start with Go; the other SDKs follow in their own PRs. Each API PR regenerates `openapi.yaml` and the Go SDK only.
 - **Every PR keeps `go vet ./...` and `go test ./...` green** (`.github/workflows/ci.yml:78-98`), adds its own tests against real local servers and a temporary database, never mocks (AGENTS.md), and leaves the router startable with the feature off until the session wiring lands.
@@ -23,6 +25,38 @@ Exported from Claude Docs on 2026-10-05 (https://claude.ai/code/artifact/e4d9711
 &#91;embedded content: PR waves · 53 PRs in 13 waves by dependency depth, 9 merged\]
 
 A wave is the earliest point a PR can start: its depth in the dependency graph, computed from each subtask's Dependencies line. PRs in one wave do not depend on each other, so two people can take two of them. The waves are a conservative schedule; a PR may start as soon as its own dependencies merged, which is often earlier than its wave. The phases below group PRs by layer; the waves group them by time. T34 to T36 (channels) are drawn dashed: they have a wave by dependency (11 and 12) but no date until a channel is scheduled. T37 to T57 are not drawn yet; the table at the start of Phase 7 gives their waves.
+
+### Remaining work: 26 PRs in 4 waves (October 6)
+
+The 36 open subtasks are now 26 PRs in 4 waves, plus SDK parity. Each PR carries the code together with its first production caller. Reason: on `accelerate` at `81a418a5`, `Resolver.Resolve` (`resolver/resolver.go:133`) and `core.Transports` (`core/transport.go:64`) have no caller outside tests and `internal/connectors`. They wait for T21, two waves later. The chart above and the Phase 7 table predate this regrouping.
+
+| Wave | PR | Subtasks | Linear | First production caller |
+| --- | --- | --- | --- | --- |
+| 1 | MCP tools of a connection | T14 + T18 + T31 | AI-849 | `POST /v1/agents/connections/{id}/validate` and `GET …/tools`: first callers of `Resolver.Resolve`, `core.Transports` and the MCP source |
+| 1 | Slack channel end to end | T57 + T38 + T35 | AI-878 | A Slack event on `POST /v1/connectors/events/{provider_app_id}` reaches the bridge, the thread channel and the reply |
+| 1 | Session history from the caller | T49 | AI-888 | Session API field |
+| 1 | Slack app for each customer | T54 | AI-872 | The PR adds the endpoint that creates the app; T54 names none yet |
+| 2 | Connectors in a session | T21 + T22 | AI-851 | The session `ToolRunner` chain and `POST /v1/agents/sessions` |
+| 2 | Episode cards | T43 + T41 | AI-883 | The bridge and the call path write cards |
+| 2 | Raw event forwarding | T46 | AI-875 | The bridge forwards events it does not handle |
+| 2 | Source http | T25 | AI-852 | None yet: deferred until a manifest declares `operations` |
+| 3 | Login in the chat | T59 | AI-898 | Conversation reply attachment |
+| 3 | MCP Events over connections | T60 | AI-899 | Deliveries route |
+| 3 | Plugins onto connectors | T58 + T61 | AI-900 | `router plugins migrate` |
+| 3 | Invocation log and audit | T29 + T47 | AI-856 | Dispatcher and resolver writes, paged read endpoints |
+| 3 | Step-up, rate limits, policy | T27, T28, T30 (3 PRs) | AI-854, AI-855, AI-857 | Dispatcher |
+| 3 | Sessions read episode cards | T56 + T42 | AI-885 | Text and voice session context |
+| 3 | Episode close and summary | T55 | AI-884 | Idle timer and call end |
+| 3 | Tenancy | T48 | AI-887 | Message hook in each customer app |
+| 3 | More channels | T36, T51, T52, T53 (4 PRs) | AI-863, AI-879, AI-880, AI-881 | Each one a channel on the bridge |
+| 4 | Remove the plugin system | T23 | AI-859 | Deletion |
+| 4 | Proxy | T44 | AI-873 | Proxy endpoint |
+| 4 | Token export | T45 | AI-874 | Token endpoint |
+| after | SDK parity | T33 + T50 | AI-861 | Other SDKs, periodically (AGENTS.md) |
+
+- **One change of design.** T35 no longer waits for T41: Slack works without an episode card first, and the episode-cards PR adds the card for every channel.
+- **Not merged on purpose.** T61 and T23 stay apart: goose runs migrations at router start, so T23's drop would run before anyone runs `router plugins migrate`. T14 and T21 stay apart to keep the PR reviewable.
+- **Merged tickets.** AI-850, AI-858, AI-853, AI-869, AI-862, AI-882, AI-876, AI-886, AI-877 and AI-897 are duplicates of the ticket in the table.
 
 ## Phase 0: foundations and guardrails
 
@@ -174,6 +208,8 @@ Three PRs. After them a connection with a grant can be turned into an authorized
 
 ### T14. Source mcp · [AI-849](https://linear.app/stream/issue/AI-849)
 
+**Status: one PR with T18 and T31** (AI-849, October 6). The validate and tools endpoints are the source's first caller.
+
 - **Description.** `internal/connectors/sources/mcp` implementing `core.ToolSource` from the branch's `internal/mcp/mcp.go`: `Discover` with the official Go SDK, paginated `tools/list`, `ToolSchemaDigest` over name, description and input schema; `Open` returns a `Toolset` with the allowlist, digest check, JSON Schema validation of arguments, prefixed names and collision detection, 4 MiB response and 32 KiB result caps, `isError` kept as an error. Plus `core/contracttest.SourceContract`.
 - **Scope.** The source package, the contract suite, tests against a local MCP server from T5.
 - **Out of scope.** The dispatcher and envelope (T21); `http` and `openapi` sources (T25).
@@ -216,6 +252,8 @@ Five PRs. Each registers its operations with `huma.Register` beside Go request a
 
 ### T18. Credentials write, validate and tools · [AI-850](https://linear.app/stream/issue/AI-850)
 
+**Status: merged into T14's PR** (AI-849, October 6).
+
 - **Description.** `PUT /v1/agents/connections/{id}/credentials` with `expected_revision`: a static value for `api_key` and `bearer`, activation for `none`, and an OAuth grant import that takes no endpoints from the caller (port of `OAuthClientForImport`). `POST /v1/agents/connections/{id}/validate` runs `Resolver.Resolve` then `Source.Discover` and stores `cached_tools` with digests. `GET /v1/agents/connections/{id}/tools` returns the cache.
 - **Scope.** Handlers, OpenAPI and Go SDK regen, tests.
 - **Out of scope.** Scope check against tool needs (T31).
@@ -248,6 +286,8 @@ Four PRs. After T21 an agent on staging can call a Slack or Linear tool; after T
 
 ### T21. Session attach and the dispatcher · [AI-851](https://linear.app/stream/issue/AI-851)
 
+**Status: one PR with T22** (AI-851, October 6).
+
 - **Description.** `session.attachConnectors` from the branch (`connector_tools.go:32-227`): resolve each binding against its connection, check tenant, provider, owner (`fixed` needs `app`; `session` needs `user` equal to the verified `Spec.Caller`, never anonymous or guest), status, and the grant list; required failures stop the session, optional ones produce `connector_unavailable` events. The multi-person rule: a session with more than one verified participant exposes app-owned bindings only. Then the Dispatcher replacing `connectorToolRunner` (`mcp_tools.go`): the authority map from exposed name to (binding, connection, source, tool), the envelope (timeout from the binding, cancel on interruption with `notifications/cancelled`, size cap, `outcome_unknown` for a timed-out call), and the dispatch-time recheck of the current config and connection (`connector_tools.go:229-288`). Wire it into the `ToolRunner` chain in `manager.go:354-370`.
 - **Scope.** `internal/session/connector_tools.go`, `dispatcher.go`, `spec.go` (`ConnectorBindings`, `ConnectorSelections`), `manager.go`, `session.go` events, integration tests with two users and two accounts, required versus optional, disconnect during an open session, grant removed on an open session.
 - **Out of scope.** The API field on session creation (T22); plugins removal (T23).
@@ -255,6 +295,8 @@ Four PRs. After T21 an agent on staging can call a Slack or Linear tool; after T
 - **Acceptance.** Alice's session cannot call through Bob's connection by any input; a tool not in the grant is not exposed and not callable; a required connector that cannot open fails session creation with a clear error; the branch's `connector_tools_integration_test.go` cases pass.
 
 ### T22. Session creation with connector selections and fork revalidation · [AI-853](https://linear.app/stream/issue/AI-853)
+
+**Status: merged into T21's PR** (AI-851, October 6).
 
 - **Description.** `connector_bindings[{name, connection_id}]` on `POST /v1/agents/sessions`: only aliases declared as `session` may be supplied; fixed aliases cannot be overridden; the selection must belong to the verified caller. Migration `agent_sessions.connector_selections jsonb` (branch `20260929200000`) so a fork of a closed session re-resolves selections against the current config and principal.
 - **Scope.** `internal/api/sessions.go`, `session/spec.go`, the migration, store, OpenAPI and Go SDK regen, the Python plugin's `SessionOptions` (`plugins/stream`), tests.
@@ -272,6 +314,8 @@ Four PRs. After T21 an agent on staging can call a Slack or Linear tool; after T
 - **Acceptance.** `grep -rn plugin_id acceleration/` finds nothing outside the migration's down block; the OpenAPI freshness test passes; `router plugins migrate` reported 0 unmapped rows on staging before the drop.
 
 ### T58. Manifests for the plugins with no connector
+
+**Status: merged into T61's PR** (AI-900, October 6).
 
 - **Description.** Built-in manifests for the 7 catalog plugins with no connector: shopify, sentry, hubspot, google_calendar, google_drive, google_docs, gmail. Each copies the plugin's endpoints, scopes, setup steps and client env from `internal/plugins/plugins.yaml` and checks them against the vendor page, as T32 did. Google's three share one OAuth client env.
 - **Scope.** `internal/connectors/providers/*.yaml`, the consent test per manifest.
@@ -294,6 +338,8 @@ Four PRs. After T21 an agent on staging can call a Slack or Linear tool; after T
 
 ### T61. Move plugin rows onto connectors
 
+**Status: one PR with T58** (AI-900, October 6). The command is the manifests' first caller.
+
 - **Description.** `router plugins migrate`, a Go command, not SQL: sealing needs the keyring, and the AAD binds connection id and revision (T8). It writes each `agent_plugin_connections` row as an `oauth2_code` connection (owner `app` when `user_id` is empty, else `user`) with its tokens sealed; each `agent_plugin_clients` row as a `connector_oauth_clients` record, the most recently updated one when two configs of one app differ; each `agent_plugins` entry as a `fixed` binding and each `user_plugins` entry as a `session` binding. It is idempotent and reports every row it cannot map. Event subscriptions are not moved; T60 re-creates them.
 - **Scope.** The command, a dry-run flag that prints the plan, integration tests on a copy of plugin rows.
 - **Dependencies.** T58, T21, T22 (tools run through connectors), T20, T19, T40, T8.
@@ -310,6 +356,8 @@ Four PRs. After T21 an agent on staging can call a Slack or Linear tool; after T
 - **Acceptance.** The diff touches nothing under `core/`, `api/` or `session/`; the contract suite passes; an app-owned Salesforce connection resolves a token without a browser.
 
 ### T25. Source http: operations defined as data · [AI-852](https://linear.app/stream/issue/AI-852)
+
+**Status: deferred** (October 6). No manifest declares `operations` yet, so the source would have no caller. It lands with the first provider that needs it.
 
 - **Description.** `sources/http`: a connection's manifest or custom definition lists operations (`name`, `description`, `method`, `path` template, parameter mapping to path, query, header or body, `body: json | form`, response filter); `Discover` returns them as `ToolSpec` with digests; `Open` runs them through `ResolvedBinding.Transport` with the same envelope. A Twilio-shaped `POST .../Messages.json` with a form body is the test case.
 - **Scope.** The source package, `SourceContract` run, manifest schema extension for `operations`.
@@ -345,6 +393,8 @@ Four PRs. After T21 an agent on staging can call a Slack or Linear tool; after T
 
 ### T29. Invocation log and dependents · [AI-856](https://linear.app/stream/issue/AI-856)
 
+**Status: one PR with T47** (AI-856, October 6).
+
 - **Description.** Two PRs if the first grows past a screenful. (a) An `connector_invocations` row per call: binding, connection, tool, latency, `error_type` from the set `customer_auth`, `external_server`, `client_timeout`, `outcome_unknown`, `denied`, and `GET /v1/agents/connections/{id}/invocations` paged by cursor (read the `pagination` skill first). (b) `used_by` on the connection response and `DELETE /v1/agents/users/{id}/connections` for offboarding and GDPR, hard-deleting `owner_id` and `account_id`.
 - **Scope.** Migration, store, dispatcher hook, handlers, OpenAPI and Go SDK regen.
 - **Out of scope.** Audit of grants and consents (a later PR).
@@ -360,6 +410,8 @@ Four PRs. After T21 an agent on staging can call a Slack or Linear tool; after T
 - **Acceptance.** A `wait` binding finishes its call after an interruption, as LiveKit does; a `cancel` binding sends the cancel, as today.
 
 ### T31. Scope check on connect · [AI-858](https://linear.app/stream/issue/AI-858)
+
+**Status: merged into T14's PR** (AI-849, October 6).
 
 - **Description.** `needs_scopes` on a `ToolSpec` (from the manifest per tool, or a provider's `_meta` when present); validate compares `granted_scopes` with the union over granted tools and reports `connector_scope_required` with the missing scopes.
 - **Scope.** Manifest field, validate handler, tests.
@@ -377,6 +429,8 @@ Four PRs. After T21 an agent on staging can call a Slack or Linear tool; after T
 
 ### T33. SDK parity · [AI-861](https://linear.app/stream/issue/AI-861)
 
+**Status: one pass with T50** (AI-861, October 6).
+
 - **Description.** One PR per SDK (JS, Python plugin, Swift, Kotlin, Dart, .NET, Ruby, Rust, PHP) regenerating types from the spec and exposing `connectors` on config and `connector_bindings` on session creation. Per AGENTS.md this runs periodically after Go is stable; each SDK's own skill says how.
 - **Scope.** Generated types plus the thin wrappers; language test suites.
 - **Dependencies.** T22, T23.
@@ -385,6 +439,8 @@ Four PRs. After T21 an agent on staging can call a Slack or Linear tool; after T
 ## Phase 7: connector layer for channels and direct calls
 
 Eleven PRs in the connector layer, layer 1 of the [channels doc](channels.md): the manifest `channel` block, the verifier result, the events endpoint for each provider app, provider app records, the proxy, token export, raw event forwarding and audit. They stay sub-issues of [AI-816](https://linear.app/stream/issue/AI-816/basic-connectorsmcp-support). The layers above them, the channel bridge and the omni-channel conversation, have their own parent issues in the next two sections. **Required** marks what the first channel cannot ship without; **Proposal** marks the rest. The design behind them is «Decisions, 2026-10-05» in the architecture doc, a proposal until Thierry confirms it.
+
+Superseded on October 6 by «Remaining work: 26 PRs in 4 waves»; kept for the record.
 
 | Wave | Connector layer (AI-816) | Plugins onto connectors (AI-816) | Channel bridge ([AI-866](https://linear.app/stream/issue/AI-866)) | Omni-channel conversation ([AI-867](https://linear.app/stream/issue/AI-867)) |
 | --- | --- | --- | --- | --- |
@@ -425,6 +481,8 @@ Waves follow the same rule as the chart above: one more than the deepest depende
 - Acceptance. A manifest with only a `channel` block loads; an unknown verifier kind, or a reply template that names an undeclared input, is refused with the field named; `TestCoreNamesNoProvider` still passes.
 
 ### T38. Events endpoint for each provider app · [AI-869](https://linear.app/stream/issue/AI-869)
+
+**Status: merged into T57's PR** (AI-878, October 6).
 
 - **Required.** Description. `POST /v1/connectors/events/{provider_app_id}` (proposal), a second route into T26's handler. The URL names the customer's provider app, and with it the tenant and the signing secret, so the Router needs no global lookup by account. Token signals go to `Resolver.Invalidate`; messages go to the channel bridge (T57). Slack sends `tokens_revoked` and `app_uninstalled` to the app's Request URL ([tokens\_revoked](https://docs.slack.dev/reference/events/tokens_revoked), [app\_uninstalled](https://docs.slack.dev/reference/events/app_uninstalled)), so one URL serves signals and messages. T26's route for each connector stays for connectors without a provider app for each customer.
 - Scope. Route, provider-app lookup, verifier with that app's secret, tests.
@@ -488,12 +546,16 @@ Waves follow the same rule as the chart above: one more than the deepest depende
 
 ### T47. Audit of token requests, proxy calls and grants · [AI-876](https://linear.app/stream/issue/AI-876)
 
+**Status: merged into T29's PR** (AI-856, October 6).
+
 - **Required before T44 and T45.** Description. One row for each proxy call, token export, and grant created, refreshed or revoked, with correlation ids, like the Observability tab of Vercel Connect. T29 lists «Audit of grants and consents (a later PR)» as out of scope; this is that PR.
 - Scope. Migration, writes from the resolver and the proxy, a paged read endpoint (pagination skill first).
 - Dependencies. T29.
 - Acceptance. Each proxy call and each export leaves exactly one row; incognito sessions leave no arguments.
 
 ### T50. SDK parity for direct-call and event endpoints · [AI-877](https://linear.app/stream/issue/AI-877)
+
+**Status: merged into T33** (AI-861, October 6).
 
 - **Required by AGENTS.md.** Description. T38, T44, T45 and T46 regenerate `openapi.yaml` and the Go SDK in their own PRs. The other SDKs follow in parity PRs, as in T33. No SDK wraps a provider SDK: customers use the provider's official SDK pointed at the proxy.
 - Dependencies. T44, T45, T46.
@@ -504,6 +566,8 @@ Six PRs in the Router above the connector layer: the channel bridge and the firs
 
 ### T57. Channel bridge core · [AI-878](https://linear.app/stream/issue/AI-878)
 
+**Status: one PR with T38 and T35** (AI-878, October 6). Slack is the bridge's first caller. T35 no longer waits for T41: the episode cards come in T41's PR for every channel.
+
 - **Required.** Description. The inbound half maps a verified message (T26, T37) to a provider unit, an external thread and an author, and writes it to the thread channel as the person, without `source`. Router's message hook then wakes or starts the session. The outbound half takes a reply (`source: agent`) in a linked thread channel, which the message hook hands over, resolves the credential (T12) and sends it through the reply endpoint and body template of the manifest `channel` block (T34). Store `channel_threads`: external thread ↔ thread channel cid, with `stream_app_pk`. Retried deliveries (same ProviderMessageID, T37) and the bot's own messages are dropped. An external author maps to a Stream Chat user.
 - Scope. The bridge package, the store table, the message-hook hand-off, a fake-provider channel personality, tests.
 - Out of scope. Any real provider (T35, T36, T51 to T53); episode cards (T41).
@@ -512,6 +576,8 @@ Six PRs in the Router above the connector layer: the channel bridge and the firs
 - Acceptance. The fake provider posts a message event; the bridge writes it to a new thread channel without `source`; the message hook wakes a text session; the session's reply reaches the bridge and leaves with the connection's credential; a second event on the same thread uses the same thread channel.
 
 ### T35. Slack channel · [AI-862](https://linear.app/stream/issue/AI-862)
+
+**Status: merged into T57's PR** (AI-878, October 6). The episode card in the acceptance moves to T41.
 
 - **Required.** Description. Slack Events API on the customer's provider app (T40; for Athena the Stream-owned app): acknowledge within 3 seconds, honour `x-slack-retry-num`, channel + `thread_ts` as the thread key, write into the thread channel, reply with `chat.postMessage` and the bot token. A built-in manifest for the bot token (owner `app`, identity = the Slack team) sits beside the user-token tool manifest `slack.yaml`, unless the hosted Slack MCP accepts a bot token (`unverified`). Athena's first scenario is this channel.
 - Scope. The Slack bot manifest with its `channel` block, Slack verifier parameters, tests with recorded Slack events.
@@ -550,6 +616,8 @@ Seven PRs that give the agent one history across channels. Parent issue: [AI-867
 
 ### T43. Contact map · [AI-882](https://linear.app/stream/issue/AI-882)
 
+**Status: merged into T41's PR** (AI-883, October 6).
+
 - **Required for phone-number channels.** Description. Table (customer, agent, E.164 number) → omni-channel cid. Channel ids hold no raw number. SMS, WhatsApp, iMessage and calls look it up and set `ConversationID`; the session API accepts `conversation_id` (`[api/sessions.go:513](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/api/sessions.go#L513)`). Slack and Telegram need account linking (later).
 - Scope. Migration, store, E.164 normalization, lookups in the bridge and the call path.
 - Dependencies. T7 (merged).
@@ -557,6 +625,8 @@ Seven PRs that give the agent one history across channels. Parent issue: [AI-867
 - Acceptance. The same number from SMS and from a call maps to one omni-channel; a new number creates one row.
 
 ### T41. Thread channel and episode card · [AI-883](https://linear.app/stream/issue/AI-883)
+
+**Status: one PR with T43** (AI-883, October 6).
 
 - **Required for channels.** Description. On the first message of an episode the bridge creates one episode card in the person's omni-channel: `source` (`sms`, `whatsapp`, `slack`, `imessage`), `status: in_progress`, `started_at`, `thread_channel`. A call writes a card with `source: call` and `call_id` when its session starts, linked to the call channel `agent:<call id>`. The card stays one message, so an episode takes one place in the 200-message history window (`[chatlog/reader.go:13-16](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/chatlog/reader.go#L13-L16)`).
 - Scope. Card writes from the bridge and the call path, the episode store, tests.
@@ -574,6 +644,8 @@ Seven PRs that give the agent one history across channels. Parent issue: [AI-867
 
 ### T56. Session reads the episode cards · [AI-885](https://linear.app/stream/issue/AI-885)
 
+**Status: one PR with T42** (AI-885, October 6).
+
 - **Required for channels.** Description. A text session reads its own thread channel word for word and the person's episode cards as extra context: `summarized` → the summary; `in_progress`, `ended` or `summary_failed` → the last lines of `thread_channel`. This covers an SMS that arrives seconds after a call, before its summary.
 - Scope. Session context build, tests.
 - Dependencies. T41.
@@ -581,6 +653,8 @@ Seven PRs that give the agent one history across channels. Parent issue: [AI-867
 - Acceptance. A session on a new SMS thread sees the card of an earlier Slack thread; an SMS 10 seconds after a call reads the call's last raw lines while its summary is not ready.
 
 ### T42. Voice session reads the history · [AI-886](https://linear.app/stream/issue/AI-886)
+
+**Status: merged into T56's PR** (AI-885, October 6).
 
 - **Required for calls in the omni-channel.** Description. Today only a persistent text conversation loads history; voice is refused with «persistent conversations require text mode» (`[session/manager.go:229-231](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/session/manager.go#L229-L231)`). A voice session reads the person's episode cards as T56 does.
 - Scope. Session manager, context build, tests.
