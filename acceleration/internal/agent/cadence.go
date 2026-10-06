@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -180,7 +181,8 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	current.confidence = transcript.Confidence
 	current.latencyMs = transcript.ProcessingTimeMs
 	current.utterance = transcript.Utterance
-	final := transcript.Mode == stt.ModeFinal && !incompleteIdentifier(text)
+	unfinished := incompleteIdentifier(text) || visiblyUnfinished(text)
+	final := transcript.Mode == stt.ModeFinal && !unfinished
 	if sameWords(current.text, text) {
 		// The transcriber finalizing words already waited on means they have stopped, so
 		// the wait is cut short. It is never lengthened: a final that arrives late must
@@ -210,9 +212,11 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	if final {
 		delay = c.finalGapLocked()
 	}
-	if incompleteIdentifier(text) {
+	if unfinished {
 		// Member IDs, PINs and clock times arrive a digit at a time. Answering
-		// "ABC12345" 350ms before the last 6 is how verify_identity got the wrong id.
+		// "ABC12345" 350ms before the last 6 is how verify_identity got the wrong id. Words
+		// that end on a comma or a joining word are a caller part way through a list or a
+		// sentence, and get the same longer wait.
 		delay = c.retry
 	}
 	c.scheduleLocked(current, delay)
@@ -520,6 +524,44 @@ func growsTranscript(previous, next string) bool {
 	prev := strings.ToLower(words(previous))
 	nxt := strings.ToLower(words(next))
 	return prev != "" && nxt != prev && strings.HasPrefix(nxt, prev)
+}
+
+// continuationWords are the words a speaker leaves a sentence on when more is on its way:
+// the conjunctions that join on another clause and the sounds made while finding the next
+// word. They are English; other languages are covered by the comma alone.
+var continuationWords = []string{"and", "or", "but", "so", "because", "um", "uh", "er"}
+
+// clauseCommas are the commas a transcriber writes: the Latin one, and the fullwidth,
+// ideographic and Arabic ones, so the test holds in any language that is punctuated.
+const clauseCommas = ",，、،"
+
+// visiblyUnfinished reports whether the words stop where a speaker is plainly about to say
+// more: on a comma, a coordinating conjunction, or a filled hesitation.
+//
+// A pause there is a breath in the middle of a turn, a list being read out or a clause being
+// joined on, far more often than the end of one. A transcriber finalizing the words says
+// where the audio went quiet, not that the caller is done, so it is no reason to answer.
+// The comma is matched as a character and the rest as whole words, ignoring case and any
+// punctuation after them, so "band" and "summer" are not "and" and "um".
+func visiblyUnfinished(text string) bool {
+	text = strings.TrimRightFunc(text, unicode.IsSpace)
+	if last, _ := utf8.DecodeLastRuneInString(text); strings.ContainsRune(clauseCommas, last) {
+		return true
+	}
+	lastWord := text
+	if space := strings.LastIndexFunc(text, unicode.IsSpace); space >= 0 {
+		_, width := utf8.DecodeRuneInString(text[space:])
+		lastWord = text[space+width:]
+	}
+	lastWord = strings.TrimRightFunc(lastWord, func(symbol rune) bool {
+		return !unicode.IsLetter(symbol) && !unicode.IsDigit(symbol)
+	})
+	for _, word := range continuationWords {
+		if strings.EqualFold(lastWord, word) {
+			return true
+		}
+	}
+	return false
 }
 
 // incompleteIdentifier reports whether the last token still looks like a PIN, member ID,
