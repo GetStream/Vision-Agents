@@ -15,7 +15,9 @@ The suites every adapter of one kind runs, so what the core relies on is proved 
 | `TestClassifyMakes…` (six) | One answer or more per outcome, from a real local server: 200 OK; 401 `invalid_token` InvalidGrant; 403 `insufficient_scope` ScopeRequired with its scopes; 429 RateLimited with `Retry-After`; 503 and a refused dial Transient; 500 and a connection closed after the request Uncertain |
 | `TestRevokeSaysWhatItDid` | nil means the provider refuses the credential afterwards; an error (`Subject.RevokeErr`) means it still takes it, and is not an `*core.OutcomeError` |
 
-After every test, `TearDownTest` looks for every secret `Subject.Secrets` named in every error text, every URL Wrap sent or Begin returned, and every line written to the test's logger, which is also `slog.Default()` while the test runs (JSON and text handlers both).
+After every test, `TearDownTest` looks for every secret `Subject.Secrets` named in every error text, every URL Wrap sent or Begin returned, and every line written to the test's logger, which is also `slog.Default()` while the test runs (JSON and text handlers both). It looks for each secret in every form `forms` lists: as it is, percent-encoded as `net/url` writes a query value, a path segment, a path, a fragment and userinfo, and escaped as both slog handlers write a string. A hand-rolled encoding (lowercase hex, base64) is not among them.
+
+A fixture secret should hold characters those forms write differently (`+ / = ; , @ : ? # " \` and an inner space, as `apikey_test.go`'s key does), so a secret in a URL or a log line cannot pass because it was written encoded.
 
 ## Adopting it
 

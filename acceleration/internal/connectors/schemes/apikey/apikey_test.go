@@ -15,8 +15,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/apikey"
 )
 
-// key is synthetic: no provider issued it.
-const key = "contract-api-key-0123456789abcdef"
+// key is synthetic: no provider issued it. Its characters are all a field value takes
+// (RFC 9110 section 5.5: visible ASCII, an inner space), and among them ones net/url's
+// escapes and slog's quoting each write differently, so the contract finds the key in a
+// URL or a log line however it is written there.
+const key = `contract-api-key 0123~456+789/abc==;,@:?#"\end`
 
 func TestAPIKeySchemeContract(t *testing.T) {
 	suite.Run(t, &contracttest.SchemeContract{New: func(t *testing.T, _ *slog.Logger) contracttest.Subject {

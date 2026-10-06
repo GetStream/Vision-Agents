@@ -16,6 +16,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -113,15 +115,17 @@ func (s *SchemeContract) SetupTest() {
 	}
 }
 
-// TearDownTest is where the secrets are looked for: in every error, URL and log line the
-// test produced.
+// TearDownTest is where the secrets are looked for, in each of their forms: in every error,
+// URL and log line the test produced.
 func (s *SchemeContract) TearDownTest() {
 	slog.SetDefault(s.previous)
 	logs := s.logs.String()
 	for _, secret := range s.secrets {
-		s.NotContains(logs, secret, "a log line holds a secret")
-		for _, text := range s.public {
-			s.NotContains(text, secret, "an error or a URL holds a secret")
+		for _, form := range forms(secret) {
+			s.NotContains(logs, form, "a log line holds a secret")
+			for _, text := range s.public {
+				s.NotContains(text, form, "an error or a URL holds a secret")
+			}
 		}
 	}
 }
@@ -263,7 +267,8 @@ func (s *SchemeContract) TestAnErrorAboutAnUnusableValueDoesNotQuoteIt() {
 func (s *SchemeContract) TestWrapAppliesOnlyACredentialThisSchemeIssued() {
 	stored := s.connect()
 	credential, _ := s.retrieve(stored)
-	foreign := "contract-foreign-" + random()
+	// Characters forms writes differently, so the scan below finds it in any of them.
+	foreign := `contract-foreign~+/=;,@:" \` + random()
 	s.secrets = append(s.secrets, foreign)
 	shaped, err := json.Marshal(map[string]string{
 		"access_token": foreign, "token": foreign, "key": foreign, "api_key": foreign, "header": "X-Contract-Foreign",
@@ -284,7 +289,9 @@ func (s *SchemeContract) TestWrapAppliesOnlyACredentialThisSchemeIssued() {
 		s.say(err)
 		for _, r := range sent.requests() {
 			for _, secret := range s.secrets {
-				s.NotContains(r.URL.String(), secret, "another scheme's credential went on the wire")
+				for _, form := range forms(secret) {
+					s.NotContains(r.URL.String(), form, "another scheme's credential went on the wire")
+				}
 				for _, values := range r.Header {
 					for _, value := range values {
 						s.NotContains(value, secret, "another scheme's credential went on the wire")
@@ -481,6 +488,35 @@ func answers(w http.ResponseWriter, r *http.Request) {
 // whether the resolver has something to persist.
 func same(a, b core.StoredCredentials) bool {
 	return a.Scheme == b.Scheme && a.Version == b.Version && bytes.Equal(a.Payload, b.Payload)
+}
+
+// forms are the texts secret is written as: itself; percent-encoded as net/url writes it in a
+// query value (QueryEscape, which url.Values.Encode uses), a path segment (PathEscape), and a
+// URL's path, fragment and userinfo (what URL.String writes for each); and escaped as slog
+// writes a string value, with strconv.Quote in the text handler and JSON string escapes
+// without HTML escaping in the JSON one (log/slog text_handler.go and json_handler.go,
+// go1.27). Texts are not decoded instead, since a log line can hold a URL and cannot be
+// decoded as a whole.
+func forms(secret string) []string {
+	u := url.URL{Path: secret, Fragment: secret, User: url.User(secret)}
+	quoted := strconv.Quote(secret)
+	var escaped bytes.Buffer
+	encoder := json.NewEncoder(&escaped)
+	encoder.SetEscapeHTML(false)
+	_ = encoder.Encode(secret)
+	jsoned := strings.TrimSuffix(escaped.String(), "\n")
+	all := []string{
+		secret,
+		url.QueryEscape(secret),
+		url.PathEscape(secret),
+		u.EscapedPath(),
+		u.EscapedFragment(),
+		u.User.String(),
+		quoted[1 : len(quoted)-1],
+		jsoned[1 : len(jsoned)-1],
+	}
+	slices.Sort(all)
+	return slices.Compact(all)
 }
 
 func ok(status int) bool {
