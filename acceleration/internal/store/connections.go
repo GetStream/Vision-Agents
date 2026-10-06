@@ -55,6 +55,10 @@ const (
 // those is an ordinary 404.
 var ErrNoConnectorConnection = errors.New("store: no such connector connection")
 
+// ErrConnectorConnectionBound says an unforced delete left a live connection alone because
+// an agent config of the customer's binds it as its fixed connection.
+var ErrConnectorConnectionBound = errors.New("store: an agent config binds this connector connection")
+
 // ErrUnregisteredScheme says a connection names a scheme no adapter is registered for.
 var ErrUnregisteredScheme = errors.New("store: no such scheme is registered")
 
@@ -273,30 +277,12 @@ func (s *Store) ConnectorConnectionsByOwner(ctx context.Context, customerID stri
 }
 
 // DeleteConnectorConnection soft deletes a live connection and drops its credentials at once,
-// so nothing can use it from here on. Whether a config still binds it is the caller's to ask
-// first (ConnectorConnectionReferenced).
+// so nothing can use it from here on, whether or not a config still binds it. It is the
+// forced delete; DeleteUnboundConnectorConnection is the one that refuses a bound connection.
 func (s *Store) DeleteConnectorConnection(ctx context.Context, customerID, id string) error {
-	if customerID == "" || id == "" {
-		return stack.Wrap(errors.New("store: a customer and a connection id are required"))
-	}
-	now := time.Now().UTC()
-	result, err := s.db.NewUpdate().Model((*ConnectorConnection)(nil)).
-		Set("status = ?", ConnectionDisconnected).
-		Set("credentials_sealed = ?", []byte{}).
-		Set("credentials_kek_version = 0").
-		Set("expires_at = NULL").
-		Set("deleted_at = ?", now).
-		Set("updated_at = ?", now).
-		Where("customer_id = ?", customerID).
-		Where("id = ?", id).
-		Where("deleted_at IS NULL").
-		Exec(ctx)
+	affected, err := s.softDeleteConnection(ctx, customerID, id, false)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("store: delete connector connection: %w", err))
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return stack.Wrap(fmt.Errorf("store: delete connector connection: %w", err))
+		return err
 	}
 	if affected == 0 {
 		return stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorConnection, id))
@@ -304,26 +290,89 @@ func (s *Store) DeleteConnectorConnection(ctx context.Context, customerID, id st
 	return nil
 }
 
-// ConnectorConnectionReferenced reports whether a live agent config of the customer's binds
-// the live connection as its fixed connection, so deleting it would break that agent.
+// DeleteUnboundConnectorConnection soft deletes a live connection as DeleteConnectorConnection
+// does, unless a live agent config of the customer's binds it as its fixed connection.
+//
+// The check is a NOT EXISTS inside the UPDATE, so no bind can commit between a check and the
+// delete. Under READ COMMITTED a statement sees the rows committed before it began
+// (https://www.postgresql.org/docs/current/transaction-iso.html#XACT-READ-COMMITTED), so a
+// bind that commits after this UPDATE began is not seen; closing that takes the config write
+// too (AI-889).
+func (s *Store) DeleteUnboundConnectorConnection(ctx context.Context, customerID, id string) error {
+	affected, err := s.softDeleteConnection(ctx, customerID, id, true)
+	if err != nil {
+		return err
+	}
+	if affected == 1 {
+		return nil
+	}
+	// Nothing was deleted, so the connection was gone or bound when the UPDATE looked. This
+	// read only names which: it decides no write, so a bind or unbind landing since can at
+	// most mislabel the refusal, never delete a bound row. A live connection it finds unbound
+	// was unbound after the UPDATE refused it, and a retry deletes it.
+	if _, err := s.ConnectorConnectionReferenced(ctx, customerID, id); err != nil {
+		return err
+	}
+	return stack.Wrap(fmt.Errorf("%w: %s", ErrConnectorConnectionBound, id))
+}
+
+// boundByConfig is true for a connection cc that a live agent config of the same customer
+// binds as its fixed connection. ConnectorConnectionReferenced and
+// DeleteUnboundConnectorConnection both use it, so what one reports bound the other refuses.
 //
 // A binding is matched by containment on the shape the prototype stored
 // ({"connection": {"type": "fixed", "connection_id": ...}}, ConnectorBinding in
 // internal/store/models.go on codex/connector-support at cf62af0d), which T20 keeps. A
 // customer has few configs and agent_configs_customer_idx finds them, so the column has no
 // index of its own.
+const boundByConfig = `EXISTS (
+    SELECT 1 FROM agent_configs AS ac
+    WHERE ac.customer_id = cc.customer_id
+      AND ac.deleted_at IS NULL
+      AND ac.connectors @> jsonb_build_array(jsonb_build_object(
+          'connection', jsonb_build_object('type', 'fixed', 'connection_id', cc.id))))`
+
+// softDeleteConnection marks a live connection deleted and drops its credentials in one
+// statement, and when unbound is set only if no config binds it. It returns the rows it
+// changed: one, or none.
+func (s *Store) softDeleteConnection(ctx context.Context, customerID, id string, unbound bool) (int64, error) {
+	if customerID == "" || id == "" {
+		return 0, stack.Wrap(errors.New("store: a customer and a connection id are required"))
+	}
+	now := time.Now().UTC()
+	query := s.db.NewUpdate().Model((*ConnectorConnection)(nil)).
+		Set("status = ?", ConnectionDisconnected).
+		Set("credentials_sealed = ?", []byte{}).
+		Set("credentials_kek_version = 0").
+		Set("expires_at = NULL").
+		Set("deleted_at = ?", now).
+		Set("updated_at = ?", now).
+		Where("cc.customer_id = ?", customerID).
+		Where("cc.id = ?", id).
+		Where("cc.deleted_at IS NULL")
+	if unbound {
+		query = query.Where("NOT " + boundByConfig)
+	}
+	result, err := query.Exec(ctx)
+	if err != nil {
+		return 0, stack.Wrap(fmt.Errorf("store: delete connector connection: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, stack.Wrap(fmt.Errorf("store: delete connector connection: %w", err))
+	}
+	return affected, nil
+}
+
+// ConnectorConnectionReferenced reports whether a live agent config of the customer's binds
+// the live connection as its fixed connection, so deleting it would break that agent.
 func (s *Store) ConnectorConnectionReferenced(ctx context.Context, customerID, id string) (bool, error) {
 	if customerID == "" || id == "" {
 		return false, stack.Wrap(errors.New("store: a customer and a connection id are required"))
 	}
 	var referenced bool
 	err := s.db.QueryRowContext(ctx, `
-SELECT EXISTS (
-    SELECT 1 FROM agent_configs AS ac
-    WHERE ac.customer_id = cc.customer_id
-      AND ac.deleted_at IS NULL
-      AND ac.connectors @> jsonb_build_array(jsonb_build_object(
-          'connection', jsonb_build_object('type', 'fixed', 'connection_id', cc.id))))
+SELECT `+boundByConfig+`
 FROM connector_connections AS cc
 WHERE cc.customer_id = ? AND cc.id = ? AND cc.deleted_at IS NULL`, customerID, id).Scan(&referenced)
 	if errors.Is(err, sql.ErrNoRows) {
