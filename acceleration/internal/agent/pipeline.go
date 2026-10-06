@@ -296,6 +296,12 @@ func (a *Agent) quiesce(ctx context.Context) error {
 // swapCascade moves a running cascade onto the sessions prepared for it, in place.
 func (a *Agent) swapCascade(current, next Settings, prep *prepared) []error {
 	a.mu.Lock()
+	if prep.tts != nil {
+		// The edge keeps the call while its speaker changes. Invalidate the old
+		// publication epoch before the previous voice is closed, so a late chunk
+		// cannot be rebound to the replacement voice's epoch.
+		a.cancelPlayoutAndForgetLocked()
+	}
 	canceledEOT := a.cancelEOTGatesLocked(a.pipe)
 	staleAudio := a.detachEOTAudioLocked()
 	replacedLLM, replacedTTS := a.llm, a.tts
@@ -445,6 +451,9 @@ func (a *Agent) stopPipeline(keepHarness bool) []error {
 // lets each of its goroutines run out of work. It does not wait for them.
 func (a *Agent) releasePipeline(keepHarness bool) (*pipeline, []error) {
 	a.mu.Lock()
+	// A released voice may still have a writer waiting for edge capacity. Cancel its
+	// shared epoch before any session close or pipeline wait can depend on that writer.
+	a.cancelPlayoutAndForgetLocked()
 	p := a.pipe
 	canceledEOT := a.cancelEOTGatesLocked(p)
 	staleAudio := a.detachEOTAudioLocked()

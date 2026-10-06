@@ -1154,6 +1154,15 @@ directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
 ## Bug Fixes
 
+- Primary EOT voice calls stop an active reply on clear caller interruptions without
+  waiting for a second model decision. Local playback clears before provider cancellation,
+  and delayed audio from the interrupted reply cannot restart it. Brief acknowledgements
+  and likely echo keep the cautious path. (#749)
+
+- ElevenLabs streaming speech recovers from a closed connection on the next new
+  utterance, rather than remaining silent until the agent restarts. Failed utterances
+  are settled without replaying already spoken audio. (#749)
+
 - Standalone agent demo links now select the actual call type and the `agent` chat
   channel, allowing Pronto to display conversation messages when transcript storage
   is configured. (#749)

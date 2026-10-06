@@ -341,6 +341,241 @@ func (s *StreamEdgeSuite) TestPublishingIsPacedByWhatIsHeard() {
 	}, 5*time.Second, 10*time.Millisecond, "the utterance never finished being published")
 }
 
+func (s *StreamEdgeSuite) TestContextPublicationStopsBeforeWritingWhenCancelled() {
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	s.T().Cleanup(func() { _ = talker.Close() })
+	ctx, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	s.ErrorIs(talker.WriteContext(ctx, speech(48_000, 100)), context.Canceled)
+	s.Empty(talker.frames)
+
+	s.Require().NoError(talker.WriteContext(s.ctx, speech(48_000, 100)))
+	s.Equal(5, len(s.drain(talker)), "a later publication still reaches the track")
+}
+
+func (s *StreamEdgeSuite) TestCancelledPublicationCannotRefillAfterDrop() {
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	s.T().Cleanup(func() { _ = talker.Close() })
+	s.Require().NoError(talker.Write(speech(48_000, 400)))
+	s.Require().Len(talker.frames, playoutFrames)
+
+	ctx, cancel := context.WithCancel(s.ctx)
+	written := make(chan error, 1)
+	go func() { written <- talker.WriteContext(ctx, speech(44_100, 200)) }()
+	s.Require().Eventually(func() bool {
+		talker.mu.Lock()
+		defer talker.mu.Unlock()
+		return talker.writers == 1 && len(talker.frames) == playoutFrames && talker.cancelWakeDone == ctx.Done()
+	}, time.Second, time.Millisecond)
+
+	started := time.Now()
+	cancel()
+	talker.drop()
+	dropFinished := time.Now()
+	nextWritten := make(chan error, 1)
+	go func() { nextWritten <- talker.WriteContext(s.ctx, speech(24_000, 113)) }()
+	var returned time.Time
+	select {
+	case err := <-written:
+		returned = time.Now()
+		s.ErrorIs(err, context.Canceled)
+	case <-time.After(time.Second):
+		s.Fail("cancelling a publication did not wake the full-queue writer")
+	}
+	if !returned.IsZero() {
+		s.T().Logf("local cancel-to-drop: %s; drop-to-writer-return: %s", dropFinished.Sub(started), returned.Sub(dropFinished))
+	}
+	select {
+	case err := <-nextWritten:
+		s.Require().NoError(err)
+	case <-time.After(time.Second):
+		s.Fail("the next generation did not acquire the write gate")
+	}
+
+	talker.mu.Lock()
+	s.True(talker.unflushed, "the older cancelled writer reset the new generation's encoder tail")
+	talker.mu.Unlock()
+	heardMs := len(s.drain(talker)) * 20
+	s.GreaterOrEqual(heardMs, 113, "the next valid epoch's short tail was lost")
+	s.LessOrEqual(heardMs, 113+20, "the old cancelled epoch was heard after DropSpeech")
+}
+
+func (s *StreamEdgeSuite) TestContextCancellationAloneWakesAFullQueueWriter() {
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	s.T().Cleanup(func() { _ = talker.Close() })
+	s.Require().NoError(talker.Write(speech(48_000, 400)))
+
+	ctx, cancel := context.WithCancel(s.ctx)
+	written := make(chan error, 1)
+	go func() { written <- talker.WriteContext(ctx, speech(48_000, 100)) }()
+	s.Require().Eventually(func() bool {
+		talker.mu.Lock()
+		defer talker.mu.Unlock()
+		return talker.writers == 1 && len(talker.frames) == playoutFrames && talker.cancelWakeDone == ctx.Done()
+	}, time.Second, time.Millisecond)
+
+	started := time.Now()
+	cancel()
+	select {
+	case err := <-written:
+		s.ErrorIs(err, context.Canceled)
+		s.T().Logf("local context cancellation-to-writer-return: %s", time.Since(started))
+	case <-time.After(time.Second):
+		s.Fail("context cancellation did not wake the full-queue writer")
+	}
+	talker.drop()
+}
+
+func (s *StreamEdgeSuite) TestLegacyWriteCannotRefillAfterDrop() {
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	s.T().Cleanup(func() { _ = talker.Close() })
+	s.Require().NoError(talker.Write(speech(48_000, 400)))
+
+	written := make(chan error, 1)
+	go func() { written <- talker.Write(speech(44_100, 1_000)) }()
+	s.Require().Eventually(func() bool {
+		talker.mu.Lock()
+		defer talker.mu.Unlock()
+		return talker.writers == 1 && len(talker.frames) == playoutFrames
+	}, time.Second, time.Millisecond)
+
+	talker.drop()
+	select {
+	case err := <-written:
+		s.ErrorIs(err, context.Canceled)
+	case <-time.After(time.Second):
+		s.Fail("DropSpeech did not wake the legacy writer")
+	}
+	talker.mu.Lock()
+	s.Empty(talker.frames, "the legacy writer refilled the queue after DropSpeech")
+	talker.mu.Unlock()
+}
+
+func (s *StreamEdgeSuite) TestCancellationWhileWaitingForWriteGateReturnsPromptly() {
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	s.T().Cleanup(func() { _ = talker.Close() })
+	s.Require().NoError(talker.Write(speech(48_000, 400)))
+
+	activeCtx, cancelActive := context.WithCancel(s.ctx)
+	active := make(chan error, 1)
+	go func() { active <- talker.WriteContext(activeCtx, speech(48_000, 100)) }()
+	s.Require().Eventually(func() bool {
+		talker.mu.Lock()
+		defer talker.mu.Unlock()
+		return talker.writers == 1 && len(talker.frames) == playoutFrames && talker.cancelWakeDone == activeCtx.Done()
+	}, time.Second, time.Millisecond)
+
+	waitingCtx, cancelWaiting := context.WithCancel(s.ctx)
+	waiting := make(chan error, 1)
+	go func() { waiting <- talker.WriteContext(waitingCtx, speech(48_000, 100)) }()
+	s.Require().Eventually(func() bool {
+		talker.mu.Lock()
+		defer talker.mu.Unlock()
+		return talker.writers == 2
+	}, time.Second, time.Millisecond)
+
+	started := time.Now()
+	cancelWaiting()
+	select {
+	case err := <-waiting:
+		s.ErrorIs(err, context.Canceled)
+		s.T().Logf("local write-gate cancellation-to-return: %s", time.Since(started))
+	case <-time.After(time.Second):
+		s.Fail("cancelling a writer waiting on the gate did not return")
+	}
+
+	cancelActive()
+	talker.drop()
+	select {
+	case err := <-active:
+		s.ErrorIs(err, context.Canceled)
+	case <-time.After(time.Second):
+		s.Fail("DropSpeech did not wake the active queue writer")
+	}
+}
+
+func (s *StreamEdgeSuite) TestLargePublicationNeverQueuesMoreThanThePlayoutBound() {
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	s.T().Cleanup(func() { _ = talker.Close() })
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	written := make(chan error, 1)
+	go func() { written <- talker.WriteContext(ctx, speech(48_000, 10_000)) }()
+
+	s.Require().Eventually(func() bool {
+		talker.mu.Lock()
+		defer talker.mu.Unlock()
+		return len(talker.frames) == playoutFrames && talker.writers == 1
+	}, 2*time.Second, time.Millisecond)
+	select {
+	case <-written:
+		s.Fail("ten seconds of audio finished without a track draining it")
+	default:
+	}
+
+	talker.mu.Lock()
+	s.LessOrEqual(len(talker.frames), playoutFrames)
+	talker.mu.Unlock()
+	cancel()
+	talker.drop()
+	select {
+	case err := <-written:
+		s.ErrorIs(err, context.Canceled)
+	case <-time.After(time.Second):
+		s.Fail("cancelling a large blocked publication did not return")
+	}
+}
+
+func (s *StreamEdgeSuite) TestCloseWakesAWriterAcrossRateChanges() {
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	// Leave a resampler tail at one rate; the next write drains it while changing rates.
+	s.Require().NoError(talker.Write(speech(24_000, 13)))
+	s.Require().NoError(talker.Write(speech(44_100, 120)))
+	s.drain(talker)
+	s.Require().NoError(talker.Write(speech(48_000, 400)))
+
+	ctx, cancel := context.WithCancel(s.ctx)
+	written := make(chan error, 1)
+	go func() { written <- talker.WriteContext(ctx, speech(16_000, 1_000)) }()
+	s.Require().Eventually(func() bool {
+		talker.mu.Lock()
+		defer talker.mu.Unlock()
+		return talker.writers == 1 && len(talker.frames) == playoutFrames
+	}, time.Second, time.Millisecond)
+	_, err := talker.NextSample(s.ctx)
+	s.Require().NoError(err)
+	s.Require().Eventually(func() bool {
+		talker.mu.Lock()
+		defer talker.mu.Unlock()
+		return len(talker.frames) == playoutFrames
+	}, time.Second, time.Millisecond, "the 16 kHz rate transition did not publish another frame")
+
+	cancel()
+	dropped := make(chan struct{})
+	closed := make(chan struct{})
+	go func() { talker.drop(); close(dropped) }()
+	go func() { _ = talker.Close(); close(closed) }()
+
+	select {
+	case err := <-written:
+		s.ErrorIs(err, context.Canceled)
+	case <-time.After(time.Second):
+		s.Fail("the blocked writer did not leave with the speaker")
+	}
+	select {
+	case <-dropped:
+	case <-time.After(time.Second):
+		s.Fail("DropSpeech did not finish")
+	}
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		s.Fail("Close did not finish")
+	}
+	cancel()
+}
+
 func (s *StreamEdgeSuite) TestOnlyMonoSpeechIsAccepted() {
 	talker := newSpeaker(slog.New(slog.DiscardHandler))
 	s.T().Cleanup(func() { _ = talker.Close() })

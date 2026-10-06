@@ -333,8 +333,10 @@ type stubTTS struct {
 	said       []tts.Request
 	interrupts int
 	// silent stops the stub producing audio, so a test can hold a turn open.
-	silent bool
-	delay  time.Duration
+	silent           bool
+	delay            time.Duration
+	interruptEntered chan struct{}
+	interruptRelease chan struct{}
 }
 
 func newStubTTS(streaming bool) *stubTTS {
@@ -378,8 +380,16 @@ func (s *stubTTS) Synthesize(request tts.Request) error {
 
 func (s *stubTTS) Interrupt() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.interrupts++
+	entered, release := s.interruptEntered, s.interruptRelease
+	s.interruptEntered, s.interruptRelease = nil, nil
+	if entered != nil {
+		close(entered)
+	}
+	s.mu.Unlock()
+	if release != nil {
+		<-release
+	}
 	return nil
 }
 
@@ -496,11 +506,12 @@ type AgentSuite struct {
 	suite.Suite
 	ctx context.Context
 
-	edge  *loopbackEdge
-	voice *stubTTS
-	model *stubLLM
-	flow  *stubLLM
-	ears  *stubSTT
+	edge        *loopbackEdge
+	edgeFactory func(*loopbackEdge) Edge
+	voice       *stubTTS
+	model       *stubLLM
+	flow        *stubLLM
+	ears        *stubSTT
 	// opened counts the transcription sessions the agent asked for, which is how a test
 	// tells a transcriber that was replaced from one that was never reopened.
 	opened atomic.Int64
@@ -550,6 +561,7 @@ func TestAgentSuite(t *testing.T) {
 
 func (s *AgentSuite) SetupTest() {
 	s.ctx = context.Background()
+	s.edgeFactory = nil
 	s.remembers = nil
 	s.knows = nil
 	s.namespace = ""
@@ -718,9 +730,13 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		finding = s.searchRouter()
 		searchTarget = "stub/now"
 	}
+	var edge Edge = s.edge
+	if s.edgeFactory != nil {
+		edge = s.edgeFactory(s.edge)
+	}
 
 	agent, err := New(Options{
-		Edge:               s.edge,
+		Edge:               edge,
 		Instructions:       "be brief",
 		CustomerID:         "acme",
 		AgentID:            s.agentID,
@@ -777,6 +793,17 @@ func (s *AgentSuite) synthesises(turnID string) {
 		SynthesisID: turnID,
 		Audio:       audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1},
 	})
+}
+
+// openingReplyStarted separates the live reply's Create from an earlier speculative
+// preview. Tests that hold Create use it before introducing an overlap.
+func (s *AgentSuite) openingReplyStarted() bool {
+	if len(s.model.requests()) == 0 {
+		return false
+	}
+	s.agent.mu.Lock()
+	defer s.agent.mu.Unlock()
+	return s.agent.generating && s.agent.speakingTurn != ""
 }
 
 func (s *AgentSuite) says(participant stt.Participant, text string) {
@@ -2233,7 +2260,7 @@ func (s *AgentSuite) TestAReplyWaitingOnHeadersDoesNotBlockTheFloor() {
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
 	s.says(participant, "explain the menu")
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.eventually(s.openingReplyStarted, "the first reply never started")
 	s.flow.then = []string{`{"disposition":"wait","floor":"continue"}`}
 
 	s.mutters(participant, "okay")
@@ -2251,7 +2278,7 @@ func (s *AgentSuite) TestBargeInCancelsAReplyThatIsStillOpening() {
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
 	s.says(participant, "explain the menu")
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.eventually(s.openingReplyStarted, "the first reply never started")
 	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
 
 	s.mutters(participant, "wait stop")
@@ -2414,12 +2441,12 @@ func (s *AgentSuite) TestShorteningLeavesSpeechAlreadyOnItsWayOut() {
 	// but what has already been said is still worth hearing, so nothing that has been
 	// published is thrown away.
 	s.join(true)
-	s.model.reply = nil
+	s.edge.holdSpeech(true)
+	s.model.reply = []string{"The menu has a vegetarian option and two other courses."}
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
 	s.says(participant, "explain the menu")
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
-	s.synthesises(s.model.requests()[0].ID)
 	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply was never published")
 	s.flow.then = []string{`{"disposition":"respond","floor":"shorten"}`}
 
@@ -2476,8 +2503,18 @@ func (s *AgentSuite) TestAToolResultDoesNotCutOffTheReplyAlreadyBeingSpoken() {
 	// itself, to say what a tool came back with, does not: the reply that promised to go
 	// and check is still coming out of the voice, and dropping the rest of it is the
 	// agent cutting itself off mid-sentence.
-	s.ownsTools("order 12 ships tomorrow")
+	s.ownsTools("")
+	releaseTool := make(chan struct{})
+	var releaseOnce sync.Once
+	s.T().Cleanup(func() { releaseOnce.Do(func() { close(releaseTool) }) })
+	toolEntered := make(chan struct{})
+	s.runner = &stubToolRunner{
+		entered: toolEntered,
+		release: releaseTool,
+		result:  "order 12 ships tomorrow",
+	}
 	s.join(false)
+	s.edge.holdSpeech(true)
 	s.model.reply = []string{"Let me check."}
 	s.model.then = []string{"It ships tomorrow."}
 	s.asksFor("lookup_order", `{"order":"12"}`)
@@ -2485,27 +2522,25 @@ func (s *AgentSuite) TestAToolResultDoesNotCutOffTheReplyAlreadyBeingSpoken() {
 	s.speak(participant)
 
 	s.says(participant, "where is my order")
+	select {
+	case <-toolEntered:
+	case <-time.After(settleFor):
+		s.FailNow("the tool was never asked for the order")
+	}
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 },
+		"the promise to check was never published")
+	alreadyQueued := len(s.edge.heard())
+	releaseOnce.Do(func() { close(releaseTool) })
 
 	// Being asked a second time is the tool turn taking the floor from the first.
 	s.eventually(func() bool { return len(s.model.requests()) == 2 },
 		"the tool result was never answered")
-
-	// The tail of the first reply, arriving late the way a provider sends it. It is a
-	// size nothing else in the test produces, so it can be picked out of what was heard.
-	promised := s.model.requests()[0].ID
-	s.voice.emitter.Send(tts.AudioChunk{
-		SynthesisID: promised,
-		Audio:       audio.PcmData{Samples: make([]int16, 200), SampleRate: 16_000, Channels: 1},
-	})
-
-	s.eventually(func() bool {
-		for _, chunk := range s.edge.heard() {
-			if len(chunk.Samples) == 200 {
-				return true
-			}
-		}
-		return false
-	}, "the end of the sentence the agent was already speaking was thrown away")
+	s.eventually(func() bool { return len(s.edge.heard()) > alreadyQueued },
+		"the tool result never reached the voice")
+	// The old turn's already-published chunk remains in the edge queue while the tool
+	// result starts another turn; ordinary rollover must not drop valid audio tails.
+	s.Greater(len(s.edge.heard()), alreadyQueued,
+		"the second reply publishes without clearing the first reply's queued audio")
 }
 
 func (s *AgentSuite) TestBargeInWithNothingToSayIsIgnored() {

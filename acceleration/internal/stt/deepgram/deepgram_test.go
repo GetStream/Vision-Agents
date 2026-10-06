@@ -130,12 +130,31 @@ func (s *DeepgramSuite) TestProviderIsReported() {
 	s.Equal(ProviderName, provider.Provider())
 }
 
-func (s *DeepgramSuite) TestStartOfTurnDoesNotEnterTheSharedContract() {
+func (s *DeepgramSuite) TestStartOfTurnProducesAReplacementTranscript() {
+	provider := s.newSTT(Options{})
+	speaker := stt.Participant{ID: "p1", UserID: "u1"}
+	provider.participant = speaker
+
+	provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{
+		EventType:  msginterfaces.TurnEventStartOfTurn,
+		Transcript: "  wait  ",
+	})
+
+	events := s.drain(provider)
+	s.Require().Len(events, 1)
+	transcript, ok := events[0].(stt.Transcript)
+	s.Require().True(ok)
+	s.Equal("wait", transcript.Text)
+	s.Equal(stt.ModeReplacement, transcript.Mode)
+	s.Equal(int64(1), transcript.Utterance)
+	s.Equal(speaker, transcript.Participant)
+}
+
+func (s *DeepgramSuite) TestStartOfTurnDoesNotEmitAnEmptyTranscript() {
 	provider := s.newSTT(Options{})
 
 	provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{
-		EventType:           msginterfaces.TurnEventStartOfTurn,
-		EndOfTurnConfidence: 0.1,
+		EventType: msginterfaces.TurnEventStartOfTurn,
 	})
 
 	s.Empty(s.drain(provider))
@@ -190,6 +209,37 @@ func (s *DeepgramSuite) TestASecondRunOfSpeechIsNumberedApartFromTheFirst() {
 		"the end of a run belongs to the run it ends")
 	s.Equal(int64(2), events[2].(stt.Transcript).Utterance,
 		"an end followed by a start is one boundary, not two")
+}
+
+func (s *DeepgramSuite) TestStartUpdateAndFinalShareTheNextUtteranceNumber() {
+	provider := s.newSTT(Options{})
+
+	provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{
+		EventType:  msginterfaces.TurnEventEndOfTurn,
+		Transcript: "first",
+	})
+	provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{
+		EventType:  msginterfaces.TurnEventStartOfTurn,
+		Transcript: "second",
+	})
+	provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{
+		EventType:  msginterfaces.TurnEventUpdate,
+		Transcript: "second thought",
+	})
+	provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{
+		EventType:  msginterfaces.TurnEventEndOfTurn,
+		Transcript: "Second thought.",
+	})
+
+	events := s.drain(provider)
+	s.Require().Len(events, 4)
+	s.Equal(int64(1), events[0].(stt.Transcript).Utterance)
+	for _, event := range events[1:] {
+		s.Equal(int64(2), event.(stt.Transcript).Utterance)
+	}
+	s.Equal(stt.ModeReplacement, events[1].(stt.Transcript).Mode)
+	s.Equal(stt.ModeReplacement, events[2].(stt.Transcript).Mode)
+	s.Equal(stt.ModeFinal, events[3].(stt.Transcript).Mode)
 }
 
 func (s *DeepgramSuite) TestAResumedTurnStaysTheSameUtterance() {

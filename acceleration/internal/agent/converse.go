@@ -120,6 +120,8 @@ type floor struct {
 	Quiet bool
 	// Speaking is the reply currently allowed to make audio, empty when there is none.
 	Speaking string
+	// Reply is what the caller has heard the agent say on its current or draining turn.
+	Reply string
 	// Delegating reports whether the subagent is still working on something.
 	Delegating bool
 	// LastSpokeAt is when the agent last published audio.
@@ -980,6 +982,85 @@ func overlapNoise(text string) bool {
 	switch t {
 	case "huh", "uh", "mm", "hm", "hmm":
 		return true
+	}
+	return false
+}
+
+// substantiveBargeIn distinguishes a caller taking the floor from a brief acknowledgement
+// or a transcript that is simply echoing what the agent just said.
+func substantiveBargeIn(text, reply string) bool {
+	normalized := strings.ToLower(words(text))
+	if normalized == "" || shortBackchannel(normalized) || wordSequenceEcho(reply, normalized) {
+		return false
+	}
+
+	lexicalWords := 0
+	firstLexical := ""
+	for _, word := range strings.Fields(normalized) {
+		if backchannelWord(word) {
+			continue
+		}
+		if lexicalWords == 0 {
+			firstLexical = word
+		}
+		lexicalWords++
+	}
+	if lexicalWords == 1 && explicitInterruptionWord(firstLexical) {
+		return true
+	}
+	return lexicalWords >= 2
+}
+
+func shortBackchannel(text string) bool {
+	switch strings.ToLower(words(text)) {
+	case "mhm", "mm", "hm", "hmm", "uh", "uh huh", "mm hmm", "yeah", "yep", "yup",
+		"yes", "okay", "ok", "right", "sure", "i see", "got it", "thanks", "thank you",
+		"great", "correct", "absolutely", "all right", "alright":
+		return true
+	default:
+		return false
+	}
+}
+
+func backchannelWord(word string) bool {
+	switch word {
+	case "mhm", "mm", "hm", "hmm", "uh", "huh", "yeah", "yep", "yup", "yes",
+		"okay", "ok", "right", "sure", "got", "it", "thanks", "thank", "you", "great",
+		"correct", "absolutely", "all", "alright":
+		return true
+	default:
+		return false
+	}
+}
+
+func explicitInterruptionWord(word string) bool {
+	switch word {
+	case "stop", "wait", "no", "hold", "cancel", "pause":
+		return true
+	default:
+		return false
+	}
+}
+
+// wordSequenceEcho checks a complete token sequence, with word boundaries on both ends.
+// It cannot mistake a short word such as "no" inside "know" for the caller repeating it.
+func wordSequenceEcho(reply, text string) bool {
+	wanted := strings.Fields(strings.ToLower(words(text)))
+	heard := strings.Fields(strings.ToLower(words(reply)))
+	if len(wanted) == 0 || len(wanted) > len(heard) {
+		return false
+	}
+	for start := 0; start+len(wanted) <= len(heard); start++ {
+		match := true
+		for index, word := range wanted {
+			if heard[start+index] != word {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
 	}
 	return false
 }

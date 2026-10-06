@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -353,14 +356,25 @@ func (s *ElevenLabsSuite) TestAServerErrorIsReportedWithoutKillingTheSession() {
 		[]byte(`{"contextId":"u1","error":"voice not found"}`)))
 
 	events := s.collect(provider, func(event tts.Event) bool {
-		_, failed := event.(tts.Error)
-		return failed
+		complete, ok := event.(tts.SynthesisComplete)
+		return ok && complete.SynthesisID == "u1"
 	})
-	failure := events[len(events)-1].(tts.Error)
-
+	var failure *tts.Error
+	var complete *tts.SynthesisComplete
+	for _, event := range events {
+		switch typed := event.(type) {
+		case tts.Error:
+			failure = &typed
+		case tts.SynthesisComplete:
+			complete = &typed
+		}
+	}
+	s.Require().NotNil(failure)
 	s.ErrorContains(failure.Err, "voice not found")
 	s.Equal("u1", failure.SynthesisID)
 	s.False(failure.Fatal, "one bad utterance should not close the connection")
+	s.Require().NotNil(complete)
+	s.True(complete.Interrupted, "rejected contexts are terminal and must be accounted for")
 }
 
 func (s *ElevenLabsSuite) TestCloseSettlesAnUtteranceThatNeverFinished() {
@@ -428,10 +442,630 @@ func (s *ElevenLabsSuite) TestALostConnectionSettlesWhatWasInFlight() {
 		}
 	}
 	s.Require().True(sawFailure, "a dropped connection should be reported")
-	s.True(failure.Fatal)
+	s.Equal("u1", failure.SynthesisID, "connection loss is attributed to the active utterance")
+	s.False(failure.Fatal, "the session can reconnect for a later synthesis")
 
 	complete := events[len(events)-1].(tts.SynthesisComplete)
 	s.True(complete.Interrupted, "the caller should not be left waiting for audio")
+}
+
+func (s *ElevenLabsSuite) TestIdleSocketLossReconnectsForANewSynthesis() {
+	fake := newFakeElevenLabs()
+	defer fake.close()
+	provider, firstConn := s.connect(fake, Options{})
+	defer provider.Close()
+	oldSocket := provider.conn
+	<-fake.url
+	s.collect(provider, func(event tts.Event) bool {
+		_, ok := event.(tts.Connected)
+		return ok
+	})
+
+	s.Require().NoError(firstConn.WriteControl(
+		websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, "idle"),
+		time.Now().Add(time.Second),
+	))
+	disconnected := s.collect(provider, func(event tts.Event) bool {
+		_, ok := event.(tts.Disconnected)
+		return ok
+	})
+	s.Require().IsType(tts.Disconnected{}, disconnected[len(disconnected)-1])
+
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "after-idle", Text: "hello", Final: true}))
+	secondConn := fake.accept()
+	s.Require().NotNil(secondConn, "a later utterance should establish a replacement socket")
+	<-fake.url
+	messages := s.clientMessages(secondConn, 3)
+	s.Equal("after-idle", messages[0].ContextID)
+	s.Equal("after-idle", messages[1].ContextID)
+	s.Equal("after-idle", messages[2].ContextID)
+
+	// A late frame delivered by the old reader must not be attributed to the new socket.
+	lateAudio := base64.StdEncoding.EncodeToString([]byte{0, 0, 0, 0})
+	provider.handleMessage(oldSocket, serverMessage{ContextID: "after-idle", Audio: lateAudio, IsFinal: true})
+	s.Require().NoError(speak(secondConn, "after-idle", make([]int16, 240)))
+	s.Require().NoError(finish(secondConn, "after-idle"))
+	events := s.collect(provider, func(event tts.Event) bool {
+		complete, ok := event.(tts.SynthesisComplete)
+		return ok && complete.SynthesisID == "after-idle"
+	})
+	var chunks int
+	for _, event := range events {
+		if chunk, ok := event.(tts.AudioChunk); ok && chunk.SynthesisID == "after-idle" {
+			chunks++
+		}
+	}
+	s.Equal(1, chunks, "only the replacement connection's audio should be forwarded")
+}
+
+func (s *ElevenLabsSuite) TestDisconnectInterruptsOnceAndNeverReopensTheFailedID() {
+	fake := newFakeElevenLabs()
+	defer fake.close()
+	provider, firstConn := s.connect(fake, Options{})
+	defer provider.Close()
+	oldSocket := provider.conn
+	<-fake.url
+	s.collect(provider, func(event tts.Event) bool {
+		_, ok := event.(tts.Connected)
+		return ok
+	})
+
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "partial", Text: "hello"}))
+	s.clientMessages(firstConn, 2)
+	s.Require().NoError(speak(firstConn, "partial", make([]int16, 240)))
+	s.collect(provider, func(event tts.Event) bool {
+		chunk, ok := event.(tts.AudioChunk)
+		return ok && chunk.SynthesisID == "partial"
+	})
+	firstConn.Close()
+
+	failed := s.collect(provider, func(event tts.Event) bool {
+		complete, ok := event.(tts.SynthesisComplete)
+		return ok && complete.SynthesisID == "partial"
+	})
+	var errorsForID, completesForID int
+	for _, event := range failed {
+		switch typed := event.(type) {
+		case tts.Error:
+			if typed.SynthesisID == "partial" {
+				errorsForID++
+			}
+		case tts.SynthesisComplete:
+			if typed.SynthesisID == "partial" {
+				completesForID++
+				s.True(typed.Interrupted)
+			}
+		}
+	}
+	s.Equal(1, errorsForID)
+	s.Equal(1, completesForID)
+
+	// These late input frames belong to the already failed stream and must be discarded.
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "partial", Text: "late", Final: true}))
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "next", Text: "new", Final: true}))
+	secondConn := fake.accept()
+	s.Require().NotNil(secondConn)
+	<-fake.url
+	messages := s.clientMessages(secondConn, 3)
+	for _, message := range messages {
+		s.Equal("next", message.ContextID, "failed input must never be replayed")
+		s.NotContains(message.Text, "late")
+	}
+
+	lateAudio := base64.StdEncoding.EncodeToString([]byte{0, 0, 0, 0})
+	provider.handleMessage(oldSocket, serverMessage{ContextID: "next", Audio: lateAudio, IsFinal: true})
+	s.Require().NoError(speak(secondConn, "next", make([]int16, 240)))
+	s.Require().NoError(finish(secondConn, "next"))
+	newEvents := s.collect(provider, func(event tts.Event) bool {
+		complete, ok := event.(tts.SynthesisComplete)
+		return ok && complete.SynthesisID == "next"
+	})
+	for _, event := range newEvents {
+		switch typed := event.(type) {
+		case tts.AudioChunk:
+			s.Equal("next", typed.SynthesisID)
+		case tts.Error:
+			s.NotEqual("partial", typed.SynthesisID, "a terminal old ID must not fail again")
+		case tts.SynthesisComplete:
+			s.NotEqual("partial", typed.SynthesisID, "a terminal old ID must not complete again")
+		}
+	}
+	select {
+	case event := <-provider.Events():
+		switch typed := event.(type) {
+		case tts.AudioChunk:
+			s.NotEqual("partial", typed.SynthesisID)
+		case tts.Error:
+			s.NotEqual("partial", typed.SynthesisID)
+		case tts.SynthesisComplete:
+			s.NotEqual("partial", typed.SynthesisID, "the failed ID must have exactly one completion")
+		}
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func (s *ElevenLabsSuite) TestContextFailureSettlesOnlyThatIDAndTheSocketStaysUsable() {
+	fake := newFakeElevenLabs()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{})
+	defer provider.Close()
+	clientBefore := provider.Client()
+	<-fake.url
+	s.collect(provider, func(event tts.Event) bool {
+		_, ok := event.(tts.Connected)
+		return ok
+	})
+
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "rejected", Text: "bad", Final: true}))
+	s.clientMessages(conn, 3)
+	s.Require().NoError(conn.WriteMessage(websocket.TextMessage,
+		[]byte(`{"contextId":"rejected","error":"context rejected"}`)))
+	failed := s.collect(provider, func(event tts.Event) bool {
+		complete, ok := event.(tts.SynthesisComplete)
+		return ok && complete.SynthesisID == "rejected"
+	})
+	var errs, dones int
+	for _, event := range failed {
+		switch typed := event.(type) {
+		case tts.Error:
+			if typed.SynthesisID == "rejected" {
+				errs++
+			}
+		case tts.SynthesisComplete:
+			if typed.SynthesisID == "rejected" {
+				dones++
+				s.True(typed.Interrupted)
+			}
+		}
+	}
+	s.Equal(1, errs)
+	s.Equal(1, dones)
+
+	// Same-ID late final is suppressed; a different ID proceeds on the same socket.
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "rejected", Final: true}))
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "good", Text: "hello", Final: true}))
+	s.clientMessages(conn, 3)
+	s.Require().NoError(speak(conn, "good", make([]int16, 240)))
+	s.Require().NoError(finish(conn, "good"))
+	s.collect(provider, func(event tts.Event) bool {
+		complete, ok := event.(tts.SynthesisComplete)
+		return ok && complete.SynthesisID == "good"
+	})
+	s.Same(clientBefore, provider.Client(), "a context rejection should not replace a healthy socket")
+	s.NotNil(conn, "the same server-side connection remains open")
+}
+
+func (s *ElevenLabsSuite) TestSessionFailureWithoutContextSettlesEachActiveID() {
+	fake := newFakeElevenLabs()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{})
+	defer provider.Close()
+	<-fake.url
+	s.collect(provider, func(event tts.Event) bool {
+		_, ok := event.(tts.Connected)
+		return ok
+	})
+
+	for _, id := range []string{"one", "two"} {
+		s.Require().NoError(provider.Synthesize(tts.Request{ID: id, Text: id}))
+	}
+	s.clientMessages(conn, 4)
+	s.Require().NoError(conn.WriteMessage(websocket.TextMessage,
+		[]byte(`{"error":"upstream session rejected"}`)))
+
+	completions := map[string]bool{}
+	errorsByID := map[string]int{}
+	deadline := time.After(5 * time.Second)
+	for len(completions) < 2 {
+		select {
+		case event := <-provider.Events():
+			switch typed := event.(type) {
+			case tts.Error:
+				s.NotEmpty(typed.SynthesisID, "session failure is attributed per active utterance")
+				errorsByID[typed.SynthesisID]++
+			case tts.SynthesisComplete:
+				completions[typed.SynthesisID] = typed.Interrupted
+			}
+		case <-deadline:
+			s.FailNow("timed out waiting for per-ID terminal events")
+		}
+	}
+	s.Equal(map[string]bool{"one": true, "two": true}, completions)
+	s.Equal(map[string]int{"one": 1, "two": 1}, errorsByID)
+}
+
+func (s *ElevenLabsSuite) TestConcurrentNewIDsShareOneReplacementSocket() {
+	fake := newFakeElevenLabs()
+	defer fake.close()
+	provider, firstConn := s.connect(fake, Options{})
+	defer provider.Close()
+	<-fake.url
+	s.collect(provider, func(event tts.Event) bool {
+		_, ok := event.(tts.Connected)
+		return ok
+	})
+	firstConn.Close()
+	s.collect(provider, func(event tts.Event) bool {
+		_, ok := event.(tts.Disconnected)
+		return ok
+	})
+
+	results := make(chan error, 2)
+	for _, id := range []string{"new-a", "new-b"} {
+		id := id
+		go func() {
+			results <- provider.Synthesize(tts.Request{ID: id, Text: id, Final: true})
+		}()
+	}
+	s.NoError(<-results)
+	s.NoError(<-results)
+	secondConn := fake.accept()
+	s.Require().NotNil(secondConn)
+	<-fake.url
+	messages := s.clientMessages(secondConn, 6)
+	seen := map[string]map[string]bool{}
+	for _, message := range messages {
+		if seen[message.ContextID] == nil {
+			seen[message.ContextID] = map[string]bool{}
+		}
+		if message.CloseContext {
+			seen[message.ContextID]["closed"] = true
+		} else if message.Text == " " {
+			seen[message.ContextID]["opened"] = true
+		} else {
+			seen[message.ContextID]["text"] = true
+		}
+	}
+	s.Require().Len(seen, 2, "both new IDs should use the same replacement connection")
+	for _, id := range []string{"new-a", "new-b"} {
+		s.True(seen[id]["opened"])
+		s.True(seen[id]["text"])
+		s.True(seen[id]["closed"])
+	}
+
+	for _, id := range []string{"new-a", "new-b"} {
+		s.NoError(speak(secondConn, id, make([]int16, 240)))
+		s.NoError(finish(secondConn, id))
+	}
+	done := map[string]bool{}
+	deadline := time.After(5 * time.Second)
+	for len(done) < 2 {
+		select {
+		case event := <-provider.Events():
+			if complete, ok := event.(tts.SynthesisComplete); ok {
+				done[complete.SynthesisID] = true
+			}
+		case <-deadline:
+			s.FailNow("timed out waiting for both replacement utterances")
+		}
+	}
+}
+
+func (s *ElevenLabsSuite) TestCloseCancelsAnInProgressHandshake() {
+	requestSeen := make(chan struct{}, 1)
+	releaseHandler := make(chan struct{})
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestSeen <- struct{}{}
+		<-releaseHandler
+		_, _ = upgrader.Upgrade(w, r, nil)
+	}))
+	defer func() {
+		close(releaseHandler)
+		server.Close()
+	}()
+
+	provider := s.newTTS(Options{
+		BaseURL:          "ws" + strings.TrimPrefix(server.URL, "http"),
+		HandshakeTimeout: 15 * time.Second,
+		CloseTimeout:     100 * time.Millisecond,
+	})
+	startResult := make(chan error, 1)
+	go func() { startResult <- provider.Start(context.Background()) }()
+	select {
+	case <-requestSeen:
+	case <-time.After(2 * time.Second):
+		s.FailNow("the test server did not receive the handshake")
+	}
+
+	closed := make(chan error, 1)
+	startedClose := time.Now()
+	go func() { closed <- provider.Close() }()
+	select {
+	case err := <-closed:
+		s.NoError(err)
+		s.Less(time.Since(startedClose), time.Second, "Close should cancel DialContext before waiting")
+	case <-time.After(time.Second):
+		s.FailNow("Close did not cancel the stalled handshake")
+	}
+	select {
+	case err := <-startResult:
+		s.Error(err, "the canceled handshake should not install a socket")
+	case <-time.After(time.Second):
+		s.FailNow("Start did not return after its lifetime was canceled")
+	}
+}
+
+func (s *ElevenLabsSuite) TestInitialDialContextObservesCallerAndSessionCancellation() {
+	for _, cancelSession := range []bool{false, true} {
+		caller, cancelCaller := context.WithCancel(context.Background())
+		session, cancelSessionLifetime := context.WithCancel(context.Background())
+		dialCtx, release := mergeDialContext(caller, session)
+		if cancelSession {
+			cancelSessionLifetime()
+		} else {
+			cancelCaller()
+		}
+		select {
+		case <-dialCtx.Done():
+		case <-time.After(time.Second):
+			s.Fail("the initial dial must stop when either its caller or session closes")
+		}
+		release()
+		cancelCaller()
+		cancelSessionLifetime()
+	}
+}
+
+func (s *ElevenLabsSuite) TestFinishedDialCancellationCannotCloseANewerAttempt() {
+	firstClient, firstPeer := net.Pipe()
+	defer firstPeer.Close()
+	first := &dialAttempt{}
+	s.Require().True(first.attach(firstClient))
+	s.True(first.finish())
+
+	secondClient, secondPeer := net.Pipe()
+	defer secondClient.Close()
+	defer secondPeer.Close()
+	second := &dialAttempt{}
+	s.Require().True(second.attach(secondClient))
+
+	// A cancellation callback from the completed generation must be scoped to that
+	// generation and leave a newer replacement transport usable.
+	first.close()
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := secondClient.Write([]byte{0x7f})
+		writeDone <- err
+	}()
+	read := make([]byte, 1)
+	_, err := secondPeer.Read(read)
+	s.NoError(err)
+	s.Equal(byte(0x7f), read[0])
+	s.NoError(<-writeDone)
+}
+
+func (s *ElevenLabsSuite) TestCloseCancelsAStalledReplacementHandshake() {
+	requestSeen := make(chan struct{}, 2)
+	firstServerConn := make(chan *websocket.Conn, 1)
+	releaseFirst := make(chan struct{})
+	releaseSecond := make(chan struct{})
+	var releaseSecondOnce sync.Once
+	lateServerConn := make(chan *websocket.Conn, 1)
+	secondHandlerDone := make(chan struct{}, 1)
+	var requests int32
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&requests, 1)
+		requestSeen <- struct{}{}
+		if n == 1 {
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err == nil {
+				firstServerConn <- conn
+				<-releaseFirst
+			}
+			return
+		}
+		<-releaseSecond
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err == nil {
+			lateServerConn <- conn
+		}
+		secondHandlerDone <- struct{}{}
+	}))
+	defer func() {
+		close(releaseFirst)
+		releaseSecondOnce.Do(func() { close(releaseSecond) })
+		server.Close()
+	}()
+
+	provider := s.newTTS(Options{
+		BaseURL:          "ws" + strings.TrimPrefix(server.URL, "http"),
+		HandshakeTimeout: 15 * time.Second,
+		CloseTimeout:     100 * time.Millisecond,
+	})
+	s.Require().NoError(provider.Start(context.Background()))
+	<-requestSeen
+	firstConn := <-firstServerConn
+	s.collect(provider, func(event tts.Event) bool {
+		_, ok := event.(tts.Connected)
+		return ok
+	})
+	firstConn.Close()
+	s.collect(provider, func(event tts.Event) bool {
+		_, ok := event.(tts.Disconnected)
+		return ok
+	})
+
+	synthesizeDone := make(chan error, 1)
+	go func() {
+		synthesizeDone <- provider.Synthesize(tts.Request{ID: "during-reconnect", Text: "hello", Final: true})
+	}()
+	select {
+	case <-requestSeen:
+	case <-time.After(2 * time.Second):
+		s.FailNow("the replacement handshake did not start")
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- provider.Close() }()
+	select {
+	case err := <-closed:
+		s.NoError(err)
+	case <-time.After(time.Second):
+		s.FailNow("Close did not cancel the replacement handshake")
+	}
+	select {
+	case err := <-synthesizeDone:
+		s.Error(err, "the in-progress synthesis must not succeed on a late connection")
+	case <-time.After(time.Second):
+		s.FailNow("Synthesize did not return after Close canceled the dial")
+	}
+	s.Nil(provider.Client(), "Close must not leave a replacement socket installed")
+
+	releaseSecondOnce.Do(func() { close(releaseSecond) })
+	select {
+	case <-secondHandlerDone:
+	case <-time.After(time.Second):
+		s.FailNow("the stalled server handshake did not finish after release")
+	}
+	select {
+	case lateConn := <-lateServerConn:
+		// The server can finish writing its upgrade response after the client has
+		// already canceled and closed its raw transport. That must not install a
+		// client-side socket or announce a replacement generation.
+		_ = lateConn.Close()
+	default:
+	}
+	s.Nil(provider.Client(), "a late server handshake must not install a client socket")
+}
+
+func (s *ElevenLabsSuite) TestStartContextDoesNotDisableSessionReconnect() {
+	fake := newFakeElevenLabs()
+	defer fake.close()
+
+	startCtx, cancelStart := context.WithCancel(context.Background())
+	provider := s.newTTS(Options{BaseURL: fake.baseURL(), CloseTimeout: 100 * time.Millisecond})
+	s.Require().NoError(provider.Start(startCtx))
+	firstConn := fake.accept()
+	<-fake.url
+	s.Require().NotNil(firstConn)
+	s.collect(provider, func(event tts.Event) bool {
+		_, ok := event.(tts.Connected)
+		return ok
+	})
+	cancelStart()
+
+	s.Require().NoError(firstConn.Close())
+	s.collect(provider, func(event tts.Event) bool {
+		_, ok := event.(tts.Disconnected)
+		return ok
+	})
+
+	s.NoError(provider.Synthesize(tts.Request{ID: "after-start-context", Text: "hello", Final: true}))
+	secondConn := fake.accept()
+	s.Require().NotNil(secondConn, "the session-owned lifetime should allow reconnect")
+	messages := s.clientMessages(secondConn, 3)
+	s.Equal("after-start-context", messages[0].ContextID)
+	s.Equal("after-start-context", messages[1].ContextID)
+	s.Equal("after-start-context", messages[2].ContextID)
+	s.NoError(speak(secondConn, "after-start-context", make([]int16, 240)))
+	s.NoError(finish(secondConn, "after-start-context"))
+	s.collect(provider, func(event tts.Event) bool {
+		complete, ok := event.(tts.SynthesisComplete)
+		return ok && complete.SynthesisID == "after-start-context"
+	})
+	s.NoError(provider.Close())
+}
+
+func (s *ElevenLabsSuite) TestCloseUnblocksAudioWhenEventBufferIsFull() {
+	fake := newFakeElevenLabs()
+	defer fake.close()
+	provider, serverConn := s.connect(fake, Options{CloseTimeout: 100 * time.Millisecond})
+	s.collect(provider, func(event tts.Event) bool {
+		_, ok := event.(tts.Connected)
+		return ok
+	})
+
+	s.NoError(provider.Synthesize(tts.Request{ID: "stalled-audio", Text: "hello"}))
+	s.clientMessages(serverConn, 2)
+	s.collect(provider, func(event tts.Event) bool {
+		started, ok := event.(tts.SynthesisStarted)
+		return ok && started.SynthesisID == "stalled-audio"
+	})
+	for i := 0; i < cap(provider.emitter.Events()); i++ {
+		provider.emitter.Send(tts.Connected{Provider: ProviderName, Model: provider.Model(), At: time.Now()})
+	}
+	s.NoError(speak(serverConn, "stalled-audio", make([]int16, 240)))
+
+	provider.mu.Lock()
+	current := provider.active["stalled-audio"]
+	provider.mu.Unlock()
+	s.Require().NotNil(current)
+	blocked := false
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if !current.eventMu.TryLock() {
+			blocked = true
+			break
+		}
+		current.eventMu.Unlock()
+		time.Sleep(time.Millisecond)
+	}
+	s.Require().True(blocked, "audio forwarding should be blocked behind the full event buffer")
+
+	closed := make(chan error, 1)
+	started := time.Now()
+	go func() { closed <- provider.Close() }()
+	select {
+	case err := <-closed:
+		s.NoError(err)
+		s.Less(time.Since(started), time.Second, "Close must be bounded when the consumer stops draining")
+	case <-time.After(time.Second):
+		s.FailNow("Close remained blocked on an event send")
+	}
+	for range provider.Events() {
+	}
+}
+
+func (s *ElevenLabsSuite) TestCloseUnblocksStartedWhenEventBufferIsFull() {
+	fake := newFakeElevenLabs()
+	defer fake.close()
+	provider, _ := s.connect(fake, Options{CloseTimeout: 100 * time.Millisecond})
+	s.collect(provider, func(event tts.Event) bool {
+		_, ok := event.(tts.Connected)
+		return ok
+	})
+	for i := 0; i < cap(provider.emitter.Events()); i++ {
+		provider.emitter.Send(tts.Connected{Provider: ProviderName, Model: provider.Model(), At: time.Now()})
+	}
+
+	synthesizeDone := make(chan error, 1)
+	go func() {
+		synthesizeDone <- provider.Synthesize(tts.Request{ID: "stalled-started", Text: "hello", Final: true})
+	}()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		provider.mu.Lock()
+		_, active := provider.active["stalled-started"]
+		provider.mu.Unlock()
+		if active {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	provider.mu.Lock()
+	_, active := provider.active["stalled-started"]
+	provider.mu.Unlock()
+	s.Require().True(active)
+
+	closed := make(chan error, 1)
+	started := time.Now()
+	go func() { closed <- provider.Close() }()
+	select {
+	case err := <-closed:
+		s.NoError(err)
+		s.Less(time.Since(started), time.Second, "Close must release a blocked Started send")
+	case <-time.After(time.Second):
+		s.FailNow("Close remained blocked waiting for Started")
+	}
+	select {
+	case <-synthesizeDone:
+	case <-time.After(time.Second):
+		s.FailNow("Synthesize remained blocked after Close")
+	}
+	for range provider.Events() {
+	}
 }
 
 func (s *ElevenLabsSuite) TestSatisfiesTTSInterface() {

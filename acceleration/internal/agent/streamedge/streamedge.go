@@ -210,6 +210,11 @@ func (e *Edge) Attendance() <-chan agent.Attendance { return e.attending.Events(
 // PublishAudio sends a chunk of the agent's speech to the call.
 func (e *Edge) PublishAudio(pcm audio.PcmData) error { return e.speaker.Write(pcm) }
 
+// PublishAudioContext queues a chunk of speech, stopping when ctx is cancelled.
+func (e *Edge) PublishAudioContext(ctx context.Context, pcm audio.PcmData) error {
+	return e.speaker.WriteContext(ctx, pcm)
+}
+
 // SpeechPending reports whether published speech is still waiting to go out, satisfying
 // agent.Playout.
 func (e *Edge) SpeechPending() bool { return e.speaker.pending() }

@@ -303,6 +303,13 @@ type Agent struct {
 	// words that overlap it can tell a correction from the line echoing back. It is the
 	// spoken text as it streams, or the whole phrase for a greeting or a murmur.
 	saying string
+	// playoutCtx is shared by every synthesis sent since the last interruption. Cancelling
+	// it stops a writer already in the edge; synthesisContexts keeps late chunks attached
+	// to the epoch that owned their request instead of a newer one.
+	playoutCtx    context.Context
+	cancelPlayout context.CancelFunc
+	synthesisCtx  map[string]context.Context
+	interruptDone chan struct{}
 	// abandoned is every turn an interruption gave up on. Audio belonging to one of them
 	// is dropped rather than published, which is what makes barge-in immediate even while
 	// a provider is still sending. It holds one entry per interruption and lives only as
@@ -455,6 +462,7 @@ func New(options Options) (*Agent, error) {
 		previews:         map[string]*replyPreview{},
 		modelCallTimes:   map[string]float64{},
 		generatingCancel: map[string]context.CancelFunc{},
+		synthesisCtx:     map[string]context.Context{},
 		cadence:          settling,
 		duplex:           listening,
 	}
@@ -812,13 +820,26 @@ func (a *Agent) Interrupt() {
 	a.mu.Lock()
 	participant := a.lastParticipant
 	turnID := a.speakingTurn
-	for _, cancel := range a.toolCancels {
-		cancel()
+	if turnID == "" && a.interruptDone == nil {
+		// Text-only work has no speaking turn to name, but an explicit Interrupt still
+		// means the caller is giving up on any tool work and speech left in the edge.
+		a.cancelPlayoutLocked()
+		a.utterances = 0
+		a.saying = ""
+		a.toolReply = false
+		a.dropSpeech()
+		for _, cancel := range a.toolCancels {
+			cancel()
+		}
 	}
-	a.toolReply = false
 	a.mu.Unlock()
-	a.abandon(turnID)
-	a.interrupt(participant)
+	if turnID == "" {
+		return
+	}
+	if stopped, ok := a.stopPlayback(participant, turnID, time.Time{}, "manual", "api"); ok {
+		a.abandon(turnID)
+		a.finishInterrupt(stopped)
+	}
 }
 
 // SetInstructions changes what the agent is told to be from the next turn on. The reply
@@ -922,6 +943,12 @@ func (a *Agent) close() error {
 	a.mu.Lock()
 	a.closed = true
 	cancel := a.cancel
+	a.cancelPlayoutAndForgetLocked()
+	a.dropSpeech()
+	if a.interruptDone != nil {
+		close(a.interruptDone)
+		a.interruptDone = nil
+	}
 	a.mu.Unlock()
 	// A swap waiting for its turn boundary gives up once closed is set, and one already
 	// changing the pipeline finishes first, so the pipeline released below is whole.
@@ -1099,6 +1126,7 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 	for event := range session.Events() {
 		switch typed := event.(type) {
 		case stt.Transcript:
+			receivedAt := time.Now()
 			if strings.TrimSpace(typed.Text) == "" {
 				a.logger.Debug("the transcriber sent nothing but silence",
 					"provider", typed.Provider, "participant", typed.Participant.ID, "mode", typed.Mode)
@@ -1112,7 +1140,24 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 			a.lastHeardAt = time.Now()
 			a.lastParticipant = typed.Participant
 			a.mu.Unlock()
-			a.act(a.converse.Observe(typed, a.floor()))
+			state := a.floor()
+			var stopped interruption
+			stopNow := false
+			if a.primaryPartialInterrupt(typed, state) {
+				if current, ok := a.stopPlayback(typed.Participant, state.Speaking, receivedAt,
+					"primary_partial", "transcript"); ok {
+					stopped, stopNow = current, true
+					state = a.floor()
+					// Record these words while interruptDone still blocks queued work. The
+					// caller's newly arrived revision must own the floor before cleanup can
+					// release an older queued answer.
+				}
+			}
+			actions := a.converse.Observe(typed, state)
+			if stopNow {
+				a.finishInterruptedTurn(stopped)
+			}
+			a.act(actions)
 			a.expeditePrimaryEOTFinal(typed)
 
 		case stt.Connected:
@@ -1220,13 +1265,22 @@ func (a *Agent) consumePresence(p *pipeline) {
 // floor is what the agent is doing right now, which is what the judgements that depend on
 // whether it is mid-sentence are made against.
 func (a *Agent) floor() floor {
+	pending := a.speechPending()
 	a.mu.Lock()
+	active := a.utterances > 0 || a.generating || a.pendingTools > 0 || pending || a.interruptDone != nil
 	state := floor{
-		Quiet:           a.utterances == 0 && !a.generating && a.pendingTools == 0,
+		Quiet:           !active,
 		Speaking:        a.speakingTurn,
+		Reply:           "",
 		LastSpokeAt:     a.lastSpokeAt,
 		LastHeardAt:     a.lastHeardAt,
 		LastParticipant: a.lastParticipant,
+	}
+	if active {
+		state.Reply = a.saying
+		if state.Reply == "" {
+			state.Reply = lastAssistantSaid(a.history)
+		}
 	}
 	current := a.harness
 	a.mu.Unlock()
@@ -1267,14 +1321,10 @@ func (a *Agent) perform(action Action) {
 		a.ask(action.Candidate)
 
 	case ActInterrupt:
-		a.abandon(action.TurnID)
-		a.mu.Lock()
-		for _, cancel := range a.toolCancels {
-			cancel()
+		if stopped, ok := a.stopPlayback(action.Participant, action.TurnID, time.Time{},
+			"semantic", "transcript"); ok {
+			a.finishInterruptedTurn(stopped)
 		}
-		a.toolReply = false
-		a.mu.Unlock()
-		a.interrupt(action.Participant)
 
 	case ActShorten:
 		a.abandon(action.TurnID)
@@ -2164,14 +2214,11 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	for event := range voice.Events() {
 		switch typed := event.(type) {
 		case tts.AudioChunk:
-			// Audio from an abandoned turn is dropped here rather than published, so
-			// barge-in silences the agent even while the provider is still sending.
-			//
-			// Only an interruption abandons a turn. A turn the agent started for itself,
-			// to say what a tool returned or what delegated work came back with, does not:
-			// treating it as one would throw away the tail of the sentence being spoken
-			// and cut the agent off mid-word.
-			if a.abandonedTurn(turnOf(typed.SynthesisID)) {
+			// Every active synthesis carries the publication epoch it began in. Normal
+			// turn rollover leaves that epoch alone, while interruption clears it for all
+			// queued tails as well as the current sentence.
+			publishCtx, active := a.synthesisContext(typed.SynthesisID)
+			if !active {
 				a.turns.dropped(turnOf(typed.SynthesisID), typed.Audio.DurationMs())
 				if dropping != typed.SynthesisID {
 					dropping = typed.SynthesisID
@@ -2180,15 +2227,43 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				}
 				continue
 			}
-			if err := a.options.Edge.PublishAudio(typed.Audio); err != nil {
+			var err error
+			if playout, ok := a.options.Edge.(ContextPlayout); ok {
+				err = playout.PublishAudioContext(publishCtx, typed.Audio)
+			} else {
+				// An edge without cancellable playout gets the legacy call while Agent.mu
+				// is held, so its bounded chunk write cannot race past DropSpeech.
+				a.mu.Lock()
+				if current := a.synthesisCtx[typed.SynthesisID]; current != publishCtx ||
+					publishCtx.Err() != nil {
+					a.mu.Unlock()
+					a.turns.dropped(turnOf(typed.SynthesisID), typed.Audio.DurationMs())
+					continue
+				}
+				err = a.options.Edge.PublishAudio(typed.Audio)
+				a.mu.Unlock()
+			}
+			if errors.Is(err, context.Canceled) || publishCtx.Err() != nil {
+				a.turns.dropped(turnOf(typed.SynthesisID), typed.Audio.DurationMs())
+				continue
+			}
+			if err != nil {
 				a.fail(err, "edge")
+				continue
 			}
 			a.mu.Lock()
-			a.lastSpokeAt = time.Now()
+			stillActive := a.synthesisCtx[typed.SynthesisID] == publishCtx && publishCtx.Err() == nil
+			if stillActive {
+				a.lastSpokeAt = time.Now()
+				// This records local edge admission after its backpressure wait, not when
+				// the participant hears the chunk on the wire.
+				a.turns.firstAudio(turnOf(typed.SynthesisID), time.Now())
+			}
 			a.mu.Unlock()
-			// The wait ends when the participant can hear something, so this is timed
-			// after the publish rather than before it.
-			a.turns.firstAudio(turnOf(typed.SynthesisID), time.Now())
+			if !stillActive {
+				a.turns.dropped(turnOf(typed.SynthesisID), typed.Audio.DurationMs())
+				continue
+			}
 
 		case tts.SynthesisStarted:
 			a.logger.Debug("the voice took an utterance",
@@ -2196,14 +2271,13 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				"provider", typed.Provider, "voice", typed.Voice)
 
 		case tts.SynthesisComplete:
-			a.settle()
+			active := a.finishSynthesis(typed.SynthesisID)
 			a.logger.Debug("finished speaking",
 				"synthesis", typed.SynthesisID, "turn", turnOf(typed.SynthesisID),
 				"audio_ms", typed.AudioDurationMs, "ttfb_ms", typed.TimeToFirstByteMs,
 				"interrupted", typed.Interrupted)
-			a.respondQueued()
 			a.turns.spoke(turnOf(typed.SynthesisID), typed.TimeToFirstByteMs, typed.AudioDurationMs)
-			if !typed.Interrupted {
+			if active && !typed.Interrupted {
 				// An interrupted utterance was not heard in full, so it must not be
 				// recorded as a finished spoken reply.
 				a.emitter.Send(Spoke{
@@ -2212,8 +2286,11 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 					TimeToFirstByteMs: typed.TimeToFirstByteMs,
 				})
 			}
-			// An answer that came back while the agent was talking waited for this.
-			a.followUp()
+			if active {
+				a.respondQueued()
+				// An answer that came back while the agent was talking waited for this.
+				a.followUp()
+			}
 
 		case tts.Connected:
 			a.logger.Info("ready to speak", "provider", typed.Provider, "model", typed.Model)
@@ -2229,12 +2306,17 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
 
 		case tts.Error:
+			active := a.finishSynthesis(typed.SynthesisID)
 			// A failure naming an utterance still settles it, since the router turns that
 			// utterance's completion into the failed row.
 			if typed.SynthesisID == "" {
 				a.settle()
 			}
 			a.fail(typed.Err, "tts")
+			if active {
+				a.respondQueued()
+				a.followUp()
+			}
 		}
 	}
 }
@@ -2491,15 +2573,29 @@ func (a *Agent) speakSentence(turnID, text string) error {
 	if !voice.Streaming() {
 		id := fmt.Sprintf("%s%s%d", turnID, sentenceSuffix, a.sentences)
 		a.sentences++
-		a.begin()
-		return voice.Synthesize(tts.Request{ID: id, Text: text, Final: true})
+		if !a.begin(turnID, id) {
+			return nil
+		}
+		if err := voice.Synthesize(tts.Request{ID: id, Text: text, Final: true}); err != nil {
+			a.finishSynthesis(id)
+			return err
+		}
+		return nil
 	}
 
 	if a.openTurn != turnID {
 		a.openTurn = turnID
-		a.begin()
+		if !a.begin(turnID, turnID) {
+			return nil
+		}
+	} else if !a.registerSynthesis(turnID, turnID, false) {
+		return nil
 	}
-	return voice.Synthesize(tts.Request{ID: turnID, Text: text})
+	if err := voice.Synthesize(tts.Request{ID: turnID, Text: text}); err != nil {
+		a.finishSynthesis(turnID)
+		return err
+	}
+	return nil
 }
 
 // speakWhole says a piece of text that is already complete, as one utterance.
@@ -2509,8 +2605,14 @@ func (a *Agent) speakWhole(turnID, text string) error {
 		return errors.New("agent: not joined")
 	}
 	a.turns.ttsStarted(turnID, time.Now())
-	a.begin()
-	return voice.Synthesize(tts.Request{ID: turnID, Text: text, Final: true})
+	if !a.begin(turnID, turnID) {
+		return nil
+	}
+	if err := voice.Synthesize(tts.Request{ID: turnID, Text: text, Final: true}); err != nil {
+		a.finishSynthesis(turnID)
+		return err
+	}
+	return nil
 }
 
 // closeUtterance ends a streaming voice's utterance for a turn. A non-streaming one
@@ -2520,7 +2622,14 @@ func (a *Agent) closeUtterance(turnID string) error {
 	if voice == nil || !voice.Streaming() || a.openTurn != turnID {
 		return nil
 	}
-	return voice.Synthesize(tts.Request{ID: turnID, Final: true})
+	if !a.registerSynthesis(turnID, turnID, false) {
+		return nil
+	}
+	if err := voice.Synthesize(tts.Request{ID: turnID, Final: true}); err != nil {
+		a.finishSynthesis(turnID)
+		return err
+	}
+	return nil
 }
 
 // expectedSyntheses is how many syntheses a finished reply will produce in total. A
@@ -2551,57 +2660,137 @@ func (a *Agent) resetTurn() {
 	a.mu.Unlock()
 }
 
-// interrupt abandons the reply being spoken because a participant started talking.
-func (a *Agent) interrupt(participant stt.Participant) {
+// primaryPartialInterrupt recognizes a substantive transcript revision before it waits for
+// the flow controller. The same revision still enters cadence, and only settled words can
+// be answered.
+func (a *Agent) primaryPartialInterrupt(transcript stt.Transcript, state floor) bool {
+	if a.options.EOT == nil || a.options.EOTMode != EOTModePrimary || a.options.Text ||
+		transcript.Final() || state.Quiet || state.Speaking == "" ||
+		strings.HasPrefix(state.Speaking, backchannelPrefix) ||
+		overlapNoise(transcript.Text) || !substantiveBargeIn(transcript.Text, state.Reply) {
+		return false
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed || a.switching.Load() || a.speakingTurn != state.Speaking {
+		return false
+	}
+	if transcript.Speaker != "" {
+		known := a.voices[transcript.Participant.ID]
+		if known == "" {
+			a.voices[transcript.Participant.ID] = transcript.Speaker
+		} else if known != transcript.Speaker {
+			return false
+		}
+	}
+	return true
+}
+
+type interruption struct {
+	turnID      string
+	participant stt.Participant
+	reply       *llm.Stream
+	voice       *ttsrouter.Session
+	model       *stsrouter.Session
+	done        chan struct{}
+}
+
+// stopPlayback abandons the current turn only if the action still names it. Cancelling
+// the publication epoch and dropping the edge queue happen under the same lock that
+// admits new synthesis, before any provider call can hold up local silence.
+func (a *Agent) stopPlayback(
+	participant stt.Participant,
+	expectedTurn string,
+	receivedAt time.Time,
+	path string,
+	source string,
+) (interruption, bool) {
 	a.mu.Lock()
 	turnID := a.speakingTurn
-	if turnID == "" {
+	if turnID == "" || expectedTurn == "" || turnID != expectedTurn || a.interruptDone != nil {
 		a.mu.Unlock()
-		return
+		return interruption{}, false
 	}
 	// A murmur is meant to overlap with what someone is saying, so hearing them carry on
 	// is not an interruption: there is no reply to abandon and nothing was cut short.
 	if strings.HasPrefix(turnID, backchannelPrefix) {
 		a.mu.Unlock()
-		return
+		return interruption{}, false
 	}
 	a.abandoned[turnID] = struct{}{}
 	a.speakingTurn = ""
 	a.generating = false
 	a.saying = ""
-	reply, voice, model := a.streams[turnID], a.tts, a.sts
+	a.toolReply = false
+	stopped := interruption{
+		turnID:      turnID,
+		participant: participant,
+		reply:       a.streams[turnID],
+		voice:       a.tts,
+		model:       a.sts,
+		done:        make(chan struct{}),
+	}
+	a.interruptDone = stopped.done
+	a.cancelPlayoutLocked()
+	// Every synthesis in the canceled epoch has ended from the listener's point of view.
+	// Keep its canceled context by ID until its terminal event, so a late completion can
+	// neither claim a new epoch nor settle a newer utterance.
+	a.utterances = 0
+	a.dropSpeech()
+	localStopAt := time.Now()
+	for _, cancel := range a.toolCancels {
+		cancel()
+	}
 	a.mu.Unlock()
 
-	a.finishGenerate(turnID)
-	a.logger.Debug("stopping mid-reply, the caller took the floor",
-		"turn", turnID, "participant", participant.ID)
+	if !receivedAt.IsZero() {
+		localStopMs := float64(localStopAt.Sub(receivedAt).Microseconds()) / 1000
+		a.logger.Debug("stopped local playback",
+			"path", path, "source", source, "turn", turnID, "local_stop_ms", localStopMs)
+	}
+	return stopped, true
+}
 
-	if voice != nil {
-		if err := voice.Interrupt(); err != nil {
+func (a *Agent) finishInterruptedTurn(stopped interruption) {
+	a.abandon(stopped.turnID)
+	a.finishInterrupt(stopped)
+}
+
+// finishInterrupt cancels provider work after local playback has stopped.
+func (a *Agent) finishInterrupt(stopped interruption) {
+	a.finishGenerate(stopped.turnID)
+	a.logger.Debug("stopping mid-reply, the caller took the floor",
+		"turn", stopped.turnID, "participant", stopped.participant.ID)
+
+	if stopped.voice != nil {
+		if err := stopped.voice.Interrupt(); err != nil {
 			a.fail(err, "tts")
 		}
 	}
 	// A native model is told to stop the reply it is speaking. It has no word for how
 	// much the caller heard beyond what it sent, so the router's own count stands in.
-	if model != nil {
-		if err := model.Interrupt(0); err != nil {
+	if stopped.model != nil {
+		if err := stopped.model.Interrupt(0); err != nil {
 			a.fail(err, "sts")
 		}
 	}
-	// Cancelling the voice only stops what it has not synthesised yet. What it already sent
-	// is queued at the edge, and leaving it there is the caller being talked over for as
-	// long as that queue is deep.
-	a.dropSpeech()
 	// The reply still settles after this, and is still billed: what it generated before
 	// being cut off was generated all the same.
-	if reply != nil {
-		if err := reply.Close(); err != nil {
+	if stopped.reply != nil {
+		if err := stopped.reply.Close(); err != nil {
 			a.fail(err, "llm")
 		}
 	}
 
-	a.turns.interrupt(turnID)
-	a.emitter.Send(Interrupted{TurnID: turnID, Participant: participant})
+	a.turns.interrupt(stopped.turnID)
+	a.emitter.Send(Interrupted{TurnID: stopped.turnID, Participant: stopped.participant})
+	a.mu.Lock()
+	if a.interruptDone == stopped.done {
+		a.interruptDone = nil
+		close(stopped.done)
+	}
+	a.mu.Unlock()
 	a.respondQueued()
 }
 
@@ -2669,10 +2858,99 @@ func (a *Agent) voice() *ttsrouter.Session {
 }
 
 // begin counts an utterance as in flight, so Finish waits for it.
-func (a *Agent) begin() {
+func (a *Agent) begin(turnID, synthesisID string) bool {
+	return a.registerSynthesis(turnID, synthesisID, true)
+}
+
+func (a *Agent) registerSynthesis(turnID, synthesisID string, count bool) bool {
+	for {
+		a.mu.Lock()
+		if done := a.interruptDone; done != nil {
+			a.mu.Unlock()
+			<-done
+			continue
+		}
+		if a.closed || turnID == "" || synthesisID == "" || a.speakingTurn != turnID {
+			a.mu.Unlock()
+			return false
+		}
+		if _, abandoned := a.abandoned[turnID]; abandoned {
+			a.mu.Unlock()
+			return false
+		}
+		if a.synthesisCtx == nil {
+			a.synthesisCtx = map[string]context.Context{}
+		}
+		publishCtx, exists := a.synthesisCtx[synthesisID]
+		if !exists {
+			if !count {
+				a.mu.Unlock()
+				return false
+			}
+			if a.playoutCtx == nil {
+				parent := a.ctx
+				if parent == nil {
+					parent = context.Background()
+				}
+				a.playoutCtx, a.cancelPlayout = context.WithCancel(parent)
+			}
+			publishCtx = a.playoutCtx
+			a.synthesisCtx[synthesisID] = publishCtx
+		} else if publishCtx.Err() != nil {
+			a.mu.Unlock()
+			return false
+		}
+		if count {
+			a.utterances++
+		}
+		a.mu.Unlock()
+		return true
+	}
+}
+
+func (a *Agent) synthesisContext(synthesisID string) (context.Context, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.utterances++
+	publishCtx := a.synthesisCtx[synthesisID]
+	return publishCtx, publishCtx != nil && publishCtx.Err() == nil
+}
+
+// finishSynthesis forgets one exact synthesis ID and reports whether its epoch was still
+// active. A canceled completion is retained long enough to be recognized, but never
+// settles a new reply that began in a later epoch.
+func (a *Agent) finishSynthesis(synthesisID string) bool {
+	if synthesisID == "" {
+		return false
+	}
+	a.mu.Lock()
+	publishCtx := a.synthesisCtx[synthesisID]
+	delete(a.synthesisCtx, synthesisID)
+	active := publishCtx != nil && publishCtx.Err() == nil
+	if active && a.utterances > 0 {
+		// Deleting the ID and settling its count are one operation. Otherwise an
+		// interruption could reset the count and a new reply could begin between them.
+		a.utterances--
+	}
+	a.mu.Unlock()
+	return active
+}
+
+// cancelPlayoutLocked invalidates every synthesis begun in the current publication epoch.
+// A future synthesis creates one fresh context lazily; audio chunks never allocate one.
+func (a *Agent) cancelPlayoutLocked() {
+	if a.cancelPlayout != nil {
+		a.cancelPlayout()
+	}
+	a.playoutCtx = nil
+	a.cancelPlayout = nil
+}
+
+// cancelPlayoutAndForgetLocked is for pipeline shutdown/replacement, where the old voice
+// will no longer produce useful terminal events. Interruptions use cancelPlayoutLocked
+// alone so each late ID remains bound to its canceled epoch until it completes.
+func (a *Agent) cancelPlayoutAndForgetLocked() {
+	a.cancelPlayoutLocked()
+	clear(a.synthesisCtx)
 }
 
 // settle counts an utterance as finished.
