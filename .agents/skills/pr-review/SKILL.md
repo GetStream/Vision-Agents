@@ -23,12 +23,12 @@ Review the pull request. Do not edit, commit, or push. Post to GitHub only as
 
 ## Where to post
 
-`$mode` picks where the findings go:
+The second argument picks where the findings go. Here it is "$mode"; empty means it was not given.
 
 - `show`: write the review in this conversation. Post nothing to GitHub.
 - `post`: write it here, then submit it on the PR as one review with inline comments.
 
-If `$mode` is neither and the user's message does not say, ask with AskUserQuestion before you
+If it is neither and the user's message does not say, ask with AskUserQuestion before you
 resolve the PR, so the rest of the review runs without a stop. Ask one question, header `Findings`,
 with these options:
 
