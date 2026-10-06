@@ -132,6 +132,11 @@ and the controller answers the same way every time, so waiting is a loop only th
 end. After `defaultPatience` of unchanged words the conversation stops waiting and answers
 with a short question instead.
 
+An acoustic score below its threshold is put again after 200 ms rather than 700 ms, and only once
+new audio has arrived since the last score. The patience deadline is that of the transcript
+revision the first score ruled on, so the retries share it; when it passes with nothing new to
+score, the words are answered with the question without asking the scorer again.
+
 It matters because the reason for waiting is often wrong. A transcriber that mishears half a
 sentence produces something that reads as unfinished, the agent decides not to reply, and the
 caller is left talking to a line that has gone quiet on them. Asking them to say it again

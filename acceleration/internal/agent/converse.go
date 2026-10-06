@@ -56,11 +56,16 @@ const (
 	interruptGrace = 150 * time.Millisecond
 	// defaultPatience is how long the same unfinished words are waited on before the
 	// caller is asked what they meant instead.
-	defaultPatience = 3 * time.Second
+	defaultPatience = 2500 * time.Millisecond
 	// callerHold is how recently the caller's words must have changed for them to still
 	// hold the floor. A revision younger than this means somebody is mid-utterance, so a
 	// turn the agent owes waits rather than talking over them.
 	callerHold = 1500 * time.Millisecond
+	// primaryEOTLowRetry is how long the same words wait before the acoustic score is asked
+	// again after it ruled they were not finished. It is shorter than the retry a flow
+	// controller's Wait gets because a score moves with the caller's silence and costs far less
+	// than a model call.
+	primaryEOTLowRetry = 200 * time.Millisecond
 )
 
 const (
@@ -214,8 +219,12 @@ type queuedCandidate struct {
 // unfinished is a thought the controller keeps wanting to wait on, and when the waiting
 // for it began.
 type unfinished struct {
-	text  string
-	since time.Time
+	text string
+	// revision is the accepted transcript revision the wait is about, and primary says an
+	// acoustic score has ruled on it, which is what puts it on the fast retry.
+	revision uint64
+	primary  bool
+	since    time.Time
 }
 
 // judged is what a judgement was about: who was speaking and what they said.
@@ -481,6 +490,17 @@ func (c *converse) forgetOverlapLocked(candidateID string) (overlapState, bool) 
 // interrupted before it is answered, and a turn the agent talks through is held before
 // the reply it is waiting on is cut short.
 func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
+	return c.ruled(ruling, state, false)
+}
+
+// ruledPrimaryEOTLow is Ruled for the Wait an acoustic score below its threshold makes. The
+// score is a real answer, not a failure to get one, so the same words are put to it again
+// after primaryEOTLowRetry rather than the usual retry, within the patience for them.
+func (c *converse) ruledPrimaryEOTLow(ruling harness.Decided, state floor) []Action {
+	return c.ruled(ruling, state, true)
+}
+
+func (c *converse) ruled(ruling harness.Decided, state floor, primary bool) []Action {
 	c.mu.Lock()
 	seen, provisional := c.forgetOverlapLocked(ruling.CandidateID)
 	c.mu.Unlock()
@@ -532,8 +552,12 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 	}
 
 	if ruling.Disposition == harness.Wait {
-		if c.patient(ready) {
-			c.cadence.Resolve(ruling.CandidateID, true)
+		if patient, remaining := c.patient(ready, primary); patient {
+			retry := time.Duration(0)
+			if primary {
+				retry = min(primaryEOTLowRetry, remaining)
+			}
+			c.cadence.resolveAfter(ruling.CandidateID, true, retry)
 			return []Action{c.decide(Action{
 				Kind:        ActWait,
 				Reason:      "the caller has not finished the thought",
@@ -923,16 +947,54 @@ func settlement(result harness.Result) string {
 // nothing more, and it answers the same way every time, so waiting is a loop that only the
 // caller can end. Somebody who has gone quiet mid-sentence has usually finished and been
 // misheard, and at that point asking them is better than listening to silence.
-func (c *converse) patient(ready candidate) bool {
+func (c *converse) patient(ready candidate, primary bool) (bool, time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	waiting, known := c.waiting[ready.Participant.ID]
-	if !known || !sameWords(waiting.text, ready.Text) {
-		c.waiting[ready.Participant.ID] = unfinished{text: ready.Text, since: time.Now()}
-		return true
+	// An acoustic score says whose words it waited on by the accepted revision, which only
+	// changes when the words do, and keeps the patience deadline it started with for as long
+	// as it is asked about them.
+	same := known && sameWords(waiting.text, ready.Text)
+	if primary && ready.Revision != 0 {
+		same = known && waiting.revision == ready.Revision
 	}
-	return time.Since(waiting.since) < c.patience
+	if !same {
+		waiting = unfinished{text: ready.Text, revision: ready.Revision, since: time.Now()}
+	}
+	waiting.primary = waiting.primary || primary
+	c.waiting[ready.Participant.ID] = waiting
+	if !same {
+		return true, c.patience
+	}
+	remaining := c.patience - time.Since(waiting.since)
+	return remaining > 0, remaining
+}
+
+// primaryRetry reports whether a candidate is the acoustic score being asked again about
+// the revision it already ruled unfinished, and when the patience for it runs out.
+func (c *converse) primaryRetry(ready candidate) (time.Time, bool) {
+	if ready.Revision == 0 {
+		return time.Time{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	waiting, known := c.waiting[ready.Participant.ID]
+	if !known || !waiting.primary || waiting.revision != ready.Revision {
+		return time.Time{}, false
+	}
+	return waiting.since.Add(c.patience), true
+}
+
+// unaskedAfter is Unasked with the retry chosen by the caller: the turn was not put to a
+// ruling because nothing had changed since the last one, so it is checked again in a moment.
+func (c *converse) unaskedAfter(candidateID string, retryAfter time.Duration) {
+	c.mu.Lock()
+	delete(c.candidates, candidateID)
+	c.forgetOverlapLocked(candidateID)
+	c.mu.Unlock()
+	c.cadence.resolveAfter(candidateID, true, retryAfter)
 }
 
 // patienceEnds is when the wait on a participant's unfinished words runs out, after which

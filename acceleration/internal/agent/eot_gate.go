@@ -614,6 +614,10 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 			Floor:       harness.Continue,
 			TookMs:      float64(result.latency) / float64(time.Millisecond),
 		}
+		if gate.primary {
+			a.rulePrimaryEOTLow(wait)
+			return
+		}
 		a.rule(wait)
 		return
 	}
@@ -729,4 +733,36 @@ func (a *Agent) decideFromHarness(p *pipeline, current *harness.Harness, decisio
 	copy := decision
 	gate.held = &copy
 	a.mu.Unlock()
+}
+
+// eotAudioUnchanged reports whether nothing has been heard from a participant since the audio
+// last put to the acoustic scorer was copied, so asking again would score the same window.
+// It copies nothing.
+func (a *Agent) eotAudioUnchanged(participantID string) bool {
+	a.mu.Lock()
+	ring := a.audioHistory[participantID]
+	a.mu.Unlock()
+	if ring == nil {
+		return false
+	}
+	ring.mu.Lock()
+	defer ring.mu.Unlock()
+	return ring.hasScoredSnapshot && ring.generation == ring.lastScoredGeneration
+}
+
+// waitForFreshAudio leaves a candidate the acoustic score already ruled unfinished until
+// there is something new to score, looking again after primaryEOTLowRetry. When the patience
+// for the words runs out first, the wait ends as it would on a score: the same words are
+// answered with a question.
+func (a *Agent) waitForFreshAudio(ready candidate, deadline time.Time) {
+	remaining := time.Until(deadline)
+	if remaining > 0 {
+		a.converse.unaskedAfter(ready.ID, min(primaryEOTLowRetry, remaining))
+		return
+	}
+	a.rulePrimaryEOTLow(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Wait,
+		Floor:       harness.Continue,
+	})
 }

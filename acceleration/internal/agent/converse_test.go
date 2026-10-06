@@ -1007,3 +1007,101 @@ func (s *ConverseSuite) TestWorkThatNeedsTheCallerAskedRecordsTheQuestion() {
 	s.Equal("Where are you starting from?", back.Text,
 		"the question is the useful half of what came back")
 }
+
+// waited puts a wait ruling to a candidate the way an acoustic score below its threshold does.
+func (s *ConverseSuite) waitedOnByScore(ready candidate) []Action {
+	return s.converse.ruledPrimaryEOTLow(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Wait,
+		Floor:       harness.Continue,
+	}, s.quiet())
+}
+
+func (s *ConverseSuite) TestAWaitFromALowScoreIsRetriedSoonerThanOneFromTheController() {
+	// The cadence retry here is 20 ms, shorter than the score's. A real one is 700 ms
+	// against 200, so what is asserted is which of the two the wait was given.
+	s.start(DuplexOptions{}, time.Hour)
+	s.settling.retry = time.Hour
+
+	ready := s.settle("book a", s.quiet())
+	started := time.Now()
+	actions := s.waitedOnByScore(ready)
+
+	s.Require().Equal([]ActionKind{ActWait}, kinds(actions))
+	again := s.held()
+	s.Equal(ready.Revision, again.Revision, "the same words are put again")
+	s.NotEqual(ready.ID, again.ID, "under an id of their own")
+	s.GreaterOrEqual(time.Since(started), primaryEOTLowRetry-20*time.Millisecond)
+	s.Less(time.Since(started), 2*primaryEOTLowRetry)
+}
+
+func (s *ConverseSuite) TestTheRetryOfALowScoreNeverRunsPastThePatience() {
+	patience := 60 * time.Millisecond
+	s.start(DuplexOptions{}, patience)
+	s.settling.retry = time.Hour
+
+	ready := s.settle("book a", s.quiet())
+	started := time.Now()
+	s.waitedOnByScore(ready)
+
+	again := s.held()
+	s.Less(time.Since(started), primaryEOTLowRetry/2, "the retry waited past the end of the patience")
+	s.GreaterOrEqual(time.Since(started), patience-20*time.Millisecond)
+
+	s.converse.Settled(again, s.quiet())
+	actions := s.waitedOnByScore(again)
+
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(actions), "the patience for the words was over")
+	s.Equal(unfinishedNote, actions[0].Clarify)
+}
+
+func (s *ConverseSuite) TestRetriesOfALowScoreShareTheDeadlineOfTheRevision() {
+	s.start(DuplexOptions{}, 400*time.Millisecond)
+	s.settling.retry = time.Hour
+
+	ready := s.settle("book a", s.quiet())
+	s.waitedOnByScore(ready)
+	deadline, _ := s.converse.patienceEnds(caller.ID)
+	_, retrying := s.converse.primaryRetry(ready)
+	s.True(retrying, "the first low score starts the fast retry")
+
+	again := s.held()
+	s.converse.Settled(again, s.quiet())
+	s.waitedOnByScore(again)
+
+	got, retrying := s.converse.primaryRetry(again)
+	s.True(retrying)
+	s.True(got.Equal(deadline), "a retry moved the deadline of the words it was about")
+}
+
+func (s *ConverseSuite) TestNewWordsAreNotOnTheFastRetryOfTheOldOnes() {
+	s.start(DuplexOptions{}, time.Hour)
+	s.settling.retry = time.Hour
+
+	first := s.settle("book a", s.quiet())
+	s.waitedOnByScore(first)
+
+	second := s.settle("book a table", s.quiet())
+
+	s.NotEqual(first.Revision, second.Revision, "different words are a different revision")
+	_, retrying := s.converse.primaryRetry(second)
+	s.False(retrying, "the patience and the fast retry belong to the words that earned them")
+}
+
+func (s *ConverseSuite) TestAWaitFromTheControllerKeepsTheUsualRetry() {
+	s.start(DuplexOptions{}, time.Hour)
+
+	ready := s.settle("book a", s.quiet())
+	started := time.Now()
+	s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Wait,
+		Floor:       harness.Continue,
+	}, s.quiet())
+
+	s.held()
+	s.GreaterOrEqual(time.Since(started), testRetry-5*time.Millisecond)
+	s.Less(time.Since(started), primaryEOTLowRetry, "the controller's wait took the score's retry")
+	_, retrying := s.converse.primaryRetry(ready)
+	s.False(retrying)
+}

@@ -714,6 +714,15 @@ kept for that check, which takes it over without asking the model a second time.
 if the words change, the floor changes, the caller leaves, the call ends, a check does not
 answer, or the patience for the words runs out.
 
+### A low acoustic score is asked again sooner, and patience is shorter
+
+When the acoustic end-of-turn score rules a caller's words unfinished, it is now put again after
+200 ms instead of 700 ms, but only once new audio has arrived since the last score: audio that
+was already scored is not copied, scored or previewed again, and at most one score is in flight
+for a participant. The retries share the patience of the words they are about, which is now 2.5 s
+instead of 3 s, and when it runs out the words are answered with a short question. The flow
+controller's waits keep the 700 ms retry.
+
 ### A turn says when its reply could first be heard
 
 `roundtrip_ms` and `speech_end_to_audio_ms` end when publishing the first chunk of a reply

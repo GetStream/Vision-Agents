@@ -225,8 +225,17 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 // Resolve records what became of a candidate. Waiting retries the same words after a
 // longer pause; every other decision commits them and starts the next utterance cleanly.
 func (c *cadence) Resolve(candidateID string, wait bool) bool {
+	return c.resolveAfter(candidateID, wait, 0)
+}
+
+// resolveAfter is Resolve with the pause before a Wait retries the same words chosen by the
+// caller. Zero leaves it at the configured retry.
+func (c *cadence) resolveAfter(candidateID string, wait bool, retryAfter time.Duration) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if retryAfter <= 0 {
+		retryAfter = c.retry
+	}
 
 	for _, current := range c.speakers {
 		if current.candidateID != candidateID {
@@ -235,8 +244,8 @@ func (c *cadence) Resolve(candidateID string, wait bool) bool {
 		current.candidateID = ""
 		if wait {
 			c.logger.Debug("giving the caller longer to finish",
-				"participant", current.participant.ID, "candidate", candidateID, "retry", c.retry)
-			c.scheduleLocked(current, c.retry)
+				"participant", current.participant.ID, "candidate", candidateID, "retry", retryAfter)
+			c.scheduleLocked(current, retryAfter)
 		} else {
 			current.committed = current.text
 			current.committedUtterance = current.utterance

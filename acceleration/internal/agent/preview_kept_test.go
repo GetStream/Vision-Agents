@@ -236,10 +236,13 @@ func (s *AgentSuite) TestAWaitFromALowAcousticScoreKeepsThePreviewForTheNextScor
 		writeEOTResponse(s.T(), w, r.Header.Get("X-Request-ID"), len(pcm)/2, score)
 	}))
 	s.join(false)
-	s.quickRetry()
 	participant := stt.Participant{ID: "caller", UserID: "caller", Name: "Caller"}
 
 	s.primaryCandidate(participant, "please find a table")
+	s.eventually(func() bool { return requests.Load() == 1 && s.keptPreviews() == 1 },
+		"the low score did not keep the preview")
+	// The score is asked again once there is something new to score.
+	s.speak(participant)
 
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 },
 		"the second score did not release the caller turn")

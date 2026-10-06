@@ -1390,6 +1390,13 @@ func (a *Agent) rule(ruling harness.Decided) {
 	a.releasePreview(ruling.CandidateID)
 }
 
+// rulePrimaryEOTLow is rule for the Wait an acoustic score below its threshold makes, which
+// the same words are put to again sooner than they are after the flow controller's.
+func (a *Agent) rulePrimaryEOTLow(ruling harness.Decided) {
+	a.act(a.converse.ruledPrimaryEOTLow(ruling, a.floor()))
+	a.releasePreview(ruling.CandidateID)
+}
+
 // perform carries out one decision. Every branch here is mechanical: which provider to
 // touch and in what order. Why any of it is happening was settled in converse.
 func (a *Agent) perform(action Action) {
@@ -1470,10 +1477,23 @@ func (a *Agent) ask(ready candidate) {
 	speaking = speaking || a.speechPending()
 	eligible := !speaking && !ready.Unfinished && !anotherVoice && !a.options.Text &&
 		(a.options.Guardrail == nil || a.options.Guardrail.Policy().Mode != guardrail.ModeBlocking)
+	// The acoustic score ruled these words unfinished and is being asked again. Nothing heard
+	// since means it would score the same window, so it is not asked, and nothing is copied or
+	// previewed for it. The preview of the first check is the one the answer will use.
+	retrying := false
+	if eligible && a.options.EOT != nil && a.options.EOTMode == EOTModePrimary {
+		if deadline, again := a.converse.primaryRetry(ready); again {
+			if a.eotAudioUnchanged(ready.Participant.ID) {
+				a.waitForFreshAudio(ready, deadline)
+				return
+			}
+			retrying = true
+		}
+	}
 	previewing := eligible && a.previewsReplies()
 	// The reply started for these same words before a Wait is taken over rather than asked
 	// for again, so there is never more than one preview for a participant.
-	if !a.takeKeptPreview(ready, previewing) && previewing {
+	if !a.takeKeptPreview(ready, previewing) && previewing && !retrying {
 		a.preview(ready, current, instructions)
 	}
 
