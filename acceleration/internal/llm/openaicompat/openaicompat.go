@@ -13,10 +13,12 @@
 package openaicompat
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -163,7 +165,7 @@ func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Strea
 		_ = upstream.Close()
 		cancel()
 		l.forget(id)
-		return nil, stack.Wrap(err)
+		return nil, stack.Wrap(withBody(err))
 	}
 	return llm.NewStream(
 		llm.StreamOptions{
@@ -173,6 +175,22 @@ func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Strea
 		},
 		&puller{llm: l, id: id, upstream: upstream, cancel: cancel},
 	), nil
+}
+
+// withBody adds the provider's own words to an API error the client could not read them
+// from. Gemini answers a streaming request's error as a list, `[{"error": ...}]`, and the
+// client only looks for an `error` at the top, so all it would say is the status.
+func withBody(err error) error {
+	var apiError *openai.Error
+	if !errors.As(err, &apiError) || apiError.RawJSON() != "" || apiError.Response == nil ||
+		apiError.Response.Body == nil {
+		return err
+	}
+	body, readErr := io.ReadAll(io.LimitReader(apiError.Response.Body, 2048))
+	if readErr != nil || len(bytes.TrimSpace(body)) == 0 {
+		return err
+	}
+	return fmt.Errorf("%w: %s", err, bytes.TrimSpace(body))
 }
 
 // Close abandons everything in flight.

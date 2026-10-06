@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -32,6 +33,8 @@ type OpenAICompatSuite struct {
 	hold chan struct{}
 	// status replaces 200 when non-zero.
 	status int
+	// errorBody replaces the error a non-zero status answers with.
+	errorBody string
 }
 
 func TestOpenAICompatSuite(t *testing.T) {
@@ -43,6 +46,7 @@ func (s *OpenAICompatSuite) SetupTest() {
 	s.requests = nil
 	s.hold = nil
 	s.status = 0
+	s.errorBody = ""
 
 	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, err := io.ReadAll(r.Body)
@@ -56,6 +60,10 @@ func (s *OpenAICompatSuite) SetupTest() {
 
 		if s.status != 0 {
 			w.WriteHeader(s.status)
+			if s.errorBody != "" {
+				fmt.Fprint(w, s.errorBody)
+				return
+			}
 			fmt.Fprint(w, `{"error":{"message":"nope"}}`)
 			return
 		}
@@ -233,6 +241,20 @@ func (s *OpenAICompatSuite) TestNewRejectsAConfigItCannotUse() {
 
 	_, err = New(Options{Provider: "p", Model: "m", APIKey: "k"})
 	s.ErrorContains(err, "base url is required")
+}
+
+func (s *OpenAICompatSuite) TestAnErrorSentAsAListStillSaysWhy() {
+	s.status = http.StatusBadRequest
+	s.errorBody = `[{"error":{"code":400,"message":"Function call is missing a thought_signature","status":"INVALID_ARGUMENT"}}]`
+	provider := s.provider(Options{})
+
+	_, err := provider.Create(s.T().Context(), hello())
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "Function call is missing a thought_signature")
+	var apiError *openai.Error
+	s.Require().ErrorAs(err, &apiError, "the router still tells a refused request from an outage")
+	s.Equal(http.StatusBadRequest, apiError.StatusCode)
 }
 
 func (s *OpenAICompatSuite) TestStreamedDeltasAssembleIntoTheAnswer() {
