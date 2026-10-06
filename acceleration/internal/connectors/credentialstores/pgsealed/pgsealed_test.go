@@ -430,6 +430,30 @@ func (s *PGSealedSuite) TestAStatusChangeKeepsTheRevisionAndTheBlob() {
 	s.Equal("Reconnect the account", stored.LastError)
 }
 
+func (s *PGSealedSuite) TestTheAccountAConsentFoundIsWrittenBesideTheCredentialsAndARefreshKeepsIt() {
+	ref := s.connected("acme-app", tokens{Access: "a", Refresh: "r"}, time.Time{})
+	credentialStore := s.credentialStore(s.v1)
+	s.Require().NoError(credentialStore.Update(s.ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+		state.Credentials = credentials(tokens{Access: "a2", Refresh: "r2"})
+		state.AccountID = "T1:U1"
+		state.Metadata = map[string]string{"team_id": "T1"}
+		state.Scopes = []string{"chat:write"}
+		return true, nil
+	}))
+
+	s.Require().NoError(credentialStore.Update(s.ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+		s.Equal("T1:U1", state.AccountID, "what the consent wrote is what the next use sees")
+		state.Credentials = credentials(tokens{Access: "a3", Refresh: "r3"})
+		return true, nil
+	}))
+
+	stored := s.stored(ref)
+	s.Equal(4, stored.Revision)
+	s.Equal("T1:U1", stored.AccountID)
+	s.Equal(map[string]string{"team_id": "T1"}, stored.Metadata)
+	s.Equal([]string{"chat:write"}, stored.GrantedScopes)
+}
+
 func (s *PGSealedSuite) TestTheRevisionIsNotTheCallbacksToMove() {
 	ref := s.connected("acme-app", tokens{Access: "a", Refresh: "r"}, time.Time{})
 

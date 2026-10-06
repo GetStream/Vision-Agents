@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
@@ -107,6 +109,9 @@ func (l *locked) state() core.CredentialState {
 		Status:      l.connection.Status,
 		Credentials: cloneCredentials(l.credentials),
 		LastError:   l.connection.LastError,
+		AccountID:   l.connection.AccountID,
+		Metadata:    maps.Clone(l.connection.Metadata),
+		Scopes:      slices.Clone(l.connection.GrantedScopes),
 	}
 	if l.connection.ExpiresAt != nil {
 		state.ExpiresAt = *l.connection.ExpiresAt
@@ -143,6 +148,9 @@ func (b *CredentialStore) commit(ref core.ConnectionRef, stored *locked, state *
 	}
 	connection.Status = state.Status
 	connection.LastError = state.LastError
+	connection.AccountID = state.AccountID
+	connection.Metadata = maps.Clone(state.Metadata)
+	connection.GrantedScopes = slices.Clone(state.Scopes)
 	connection.ExpiresAt = nil
 	if !state.ExpiresAt.IsZero() {
 		expires := state.ExpiresAt.UTC().Truncate(time.Microsecond)

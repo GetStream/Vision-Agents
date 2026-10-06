@@ -52,4 +52,12 @@ type CredentialState struct {
 	ExpiresAt time.Time
 	// LastError is shown to whoever has to reconnect, so it says what to do, not a stack.
 	LastError string
+	// AccountID, Metadata and Scopes are what the consent that stored Credentials learned
+	// (AccountInfo, from Scheme.Complete). A refresh keeps them. A reconnect compares
+	// AccountID under the lock before it replaces anything, because a consent for another
+	// account is another connection, not an update (architecture doc, one-way door 1).
+	// AccountInfo.Unverified is not kept here.
+	AccountID string
+	Metadata  map[string]string
+	Scopes    []string
 }
