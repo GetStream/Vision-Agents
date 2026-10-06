@@ -3,17 +3,13 @@ package conversation
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
@@ -100,8 +96,7 @@ func replied(t *testing.T, service *Service, app int64, customer, text string) *
 func TestEachCustomersConversationIsWrittenToItsOwnApp(t *testing.T) {
 	apps := newTwoApps(t)
 	own := apps.give(t, "acme", 77)
-	service, err := NewForChats(t.TempDir(), apps)
-	require.NoError(t, err)
+	service := NewForChats(apps)
 	t.Cleanup(service.Close)
 
 	acme := replied(t, service, 77, "acme", "acme's question")
@@ -115,135 +110,12 @@ func TestEachCustomersConversationIsWrittenToItsOwnApp(t *testing.T) {
 	require.Equal(t, int64(77), acme.StreamApp())
 }
 
-func TestAPerAppRecordIsFiledUnderItsCustomer(t *testing.T) {
-	// An older binary reads only the top of the outbox and would deliver what it found into
-	// the deployment's app, so a record kept in another app is out of its sight.
-	apps := newTwoApps(t)
-	apps.give(t, "acme", 77)
-	root := t.TempDir()
-	service, err := NewForChats(root, apps)
-	require.NoError(t, err)
-	t.Cleanup(service.Close)
-
-	acme := replied(t, service, 77, "acme", "hello")
-	globex := replied(t, service, 0, "globex", "hello")
-
-	require.FileExists(t, filepath.Join(root, appsDir, hex.EncodeToString([]byte("acme")),
-		strings.TrimPrefix(acme.CID(), "agent:"), "state.json"))
-	require.NoFileExists(t, filepath.Join(root, strings.TrimPrefix(acme.CID(), "agent:"), "state.json"))
-	require.FileExists(t, filepath.Join(root, strings.TrimPrefix(globex.CID(), "agent:"), "state.json"),
-		"the deployment app's records keep the layout every record had")
-}
-
-func TestACustomerIdCannotEscapeTheOutbox(t *testing.T) {
-	apps := newTwoApps(t)
-	root := t.TempDir()
-	service, err := NewForChats(root, apps)
-	require.NoError(t, err)
-	t.Cleanup(service.Close)
-
-	dir := service.recordDir("../../etc", 77, "support-"+uuid.NewString())
-
-	relative, err := filepath.Rel(root, dir)
-	require.NoError(t, err)
-	require.False(t, strings.HasPrefix(relative, ".."), dir)
-}
-
-// pendingRecord writes a record with one reply waiting to be delivered, as a process that
-// stopped before delivering it would leave it.
-func pendingRecord(t *testing.T, dir, customer string, app int64, text string) string {
-	t.Helper()
-	id := "support-" + uuid.NewString()
-	started := time.Now().UTC()
-	finished := started.Add(time.Second)
-	record := disk{
-		OutboxVersion: 1, CommandLedger: true, CID: "agent:" + id, Customer: customer, Agent: "agent",
-		Owner: "employee", StreamApp: app,
-		Pending: []operation{{Create: true, Message: Message{
-			ID: uuid.NewString(), Role: "assistant", State: "completed", Text: text, StartedAt: started, FinishedAt: &finished,
-		}}},
-	}
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, id), 0o700))
-	require.NoError(t, writeJSON(filepath.Join(dir, id, "state.json"), record))
-	return id
-}
-
-func perApp(root, customer string) string {
-	return filepath.Join(root, appsDir, hex.EncodeToString([]byte(customer)))
-}
-
-func TestARecoveredConversationDeliversIntoItsOwnApp(t *testing.T) {
-	apps := newTwoApps(t)
-	own := apps.give(t, "acme", 77)
-	root := t.TempDir()
-	id := pendingRecord(t, perApp(root, "acme"), "acme", 77, "written before the restart")
-
-	service, err := NewForChats(root, apps)
-	require.NoError(t, err)
-	t.Cleanup(service.Close)
-
-	require.Eventually(t, func() bool { return len(own.Messages(id)) == 1 }, 8*time.Second, 20*time.Millisecond)
-	require.Empty(t, apps.deployment.Messages(id))
-}
-
-func TestARecordFromBeforeKeepsWritingToTheDeploymentApp(t *testing.T) {
-	// acme has an app of its own now, but this was written before it did.
-	apps := newTwoApps(t)
-	own := apps.give(t, "acme", 77)
-	root := t.TempDir()
-	id := pendingRecord(t, root, "acme", 0, "written in the shared app")
-
-	service, err := NewForChats(root, apps)
-	require.NoError(t, err)
-	t.Cleanup(service.Close)
-
-	require.Eventually(t, func() bool { return len(apps.deployment.Messages(id)) == 1 }, 8*time.Second, 20*time.Millisecond)
-	require.Empty(t, own.Messages(id))
-}
-
-func TestOneAppWithoutCredentialsDoesNotHoldUpAnother(t *testing.T) {
-	apps := newTwoApps(t)
-	own := apps.give(t, "acme", 77)
-	apps.give(t, "globex", 99)
-	apps.down[99] = true
-	root := t.TempDir()
-	stuck := pendingRecord(t, perApp(root, "globex"), "globex", 99, "waiting for globex's app")
-	delivered := pendingRecord(t, perApp(root, "acme"), "acme", 77, "acme's")
-
-	service, err := NewForChats(root, apps)
-	require.NoError(t, err)
-	t.Cleanup(service.Close)
-
-	require.Eventually(t, func() bool { return len(own.Messages(delivered)) == 1 }, 8*time.Second, 20*time.Millisecond)
-	waiting, err := loadDisk(filepath.Join(perApp(root, "globex"), stuck))
-	require.NoError(t, err)
-	require.Len(t, waiting.Pending, 1, "a parked conversation keeps its pending writes")
-	require.Empty(t, apps.deployment.Messages(stuck), "and they are delivered nowhere else")
-}
-
-func TestAnOutboxRecordInAnotherCustomersDirectoryIsLeftAlone(t *testing.T) {
-	apps := newTwoApps(t)
-	apps.give(t, "acme", 77)
-	root := t.TempDir()
-	misfiled := pendingRecord(t, perApp(root, "acme"), "globex", 77, "not acme's")
-
-	service, err := NewForChats(root, apps)
-	require.NoError(t, err)
-	t.Cleanup(service.Close)
-
-	service.mu.Lock()
-	_, loaded := service.all[known{"globex", "agent:" + misfiled}]
-	service.mu.Unlock()
-	require.False(t, loaded)
-}
-
 func TestARotatedClientIsUsedOnTheNextWrite(t *testing.T) {
 	// The client is resolved on every write, so a credential replaced between two of them
 	// is the one the second is made with.
 	apps := newTwoApps(t)
 	apps.give(t, "acme", 77)
-	service, err := NewForChats(t.TempDir(), apps)
-	require.NoError(t, err)
+	service := NewForChats(apps)
 	t.Cleanup(service.Close)
 	c := replied(t, service, 77, "acme", "first")
 
@@ -251,7 +123,7 @@ func TestARotatedClientIsUsedOnTheNextWrite(t *testing.T) {
 	apps.mu.Lock()
 	apps.apps[77] = rotated
 	apps.mu.Unlock()
-	_, err = rotated.Client.Chat().GetOrCreateChannel(t.Context(), "agent", strings.TrimPrefix(c.CID(), "agent:"),
+	_, err := rotated.Client.Chat().GetOrCreateChannel(t.Context(), "agent", strings.TrimPrefix(c.CID(), "agent:"),
 		&getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: ptr("agent")}})
 	require.NoError(t, err)
 	require.NoError(t, c.Begin("second"))
@@ -265,8 +137,7 @@ func TestARotatedClientIsUsedOnTheNextWrite(t *testing.T) {
 func TestATitleIsWrittenWhereTheConversationLives(t *testing.T) {
 	apps := newTwoApps(t)
 	own := apps.give(t, "acme", 77)
-	service, err := NewForChats(t.TempDir(), apps)
-	require.NoError(t, err)
+	service := NewForChats(apps)
 	t.Cleanup(service.Close)
 	c := replied(t, service, 77, "acme", "hello")
 
@@ -281,8 +152,7 @@ func TestHistoryWithNoOutboxRecordReadsTheRecordedApp(t *testing.T) {
 	// remembers which app the conversation's session was in.
 	apps := newTwoApps(t)
 	own := apps.give(t, "acme", 77)
-	first, err := NewForChats(t.TempDir(), apps)
-	require.NoError(t, err)
+	first := NewForChats(apps)
 	c := replied(t, first, 77, "acme", "kept in acme's app")
 	cid := c.CID()
 	c.Release()
@@ -294,8 +164,7 @@ func TestHistoryWithNoOutboxRecordReadsTheRecordedApp(t *testing.T) {
 	apps.own["acme-before"] = 77
 	apps.mu.Unlock()
 
-	second, err := NewForChats(t.TempDir(), &pinnedTo{Chats: apps, app: 77, client: own.Client})
-	require.NoError(t, err)
+	second := NewForChats(&pinnedTo{Chats: apps, app: 77, client: own.Client})
 	t.Cleanup(second.Close)
 	second.SetPins(func(context.Context, string, string) (int64, bool, error) { return 77, true, nil })
 
@@ -329,8 +198,7 @@ func TestAConversationInTheSharedAppIsOnlyReadOnceItCannotBeWrittenThere(t *test
 	// acme registered an app of its own and the fallback is off: what it said in the
 	// deployment's app is still its to read, and nothing more is added there.
 	apps := newTwoApps(t)
-	service, err := NewForChats(t.TempDir(), apps)
-	require.NoError(t, err)
+	service := NewForChats(apps)
 	t.Cleanup(service.Close)
 	c := replied(t, service, 0, "acme", "said in the shared app")
 	c.Release()
@@ -352,23 +220,6 @@ func TestAConversationInTheSharedAppIsOnlyReadOnceItCannotBeWrittenThere(t *test
 	require.Error(t, service.Describe(t.Context(), "acme", c.CID(), "renamed", ""))
 }
 
-func TestRollingBackToDeploymentModeKeepsTheDeploymentAppsConversationsOpen(t *testing.T) {
-	// App mode wrote this conversation for the deployment's own customer, pinned to the
-	// deployment app by its id. Deployment mode, knowing that id, still delivers it there.
-	deployment := chattest.NewServer(t)
-	root := t.TempDir()
-	id := pendingRecord(t, root, "1", 1, "written by app mode")
-	clients := streamapp.NewClients(streamapp.NewDeployment(streamapp.DeploymentOptions{
-		APIKey: "deploy-key", Secret: "deploy-secret", BaseURL: deployment.URL, App: 1,
-	}), streamapp.ClientsOptions{})
-
-	service, err := NewForChats(root, StreamApps(clients))
-	require.NoError(t, err)
-	t.Cleanup(service.Close)
-
-	require.Eventually(t, func() bool { return len(deployment.Messages(id)) == 1 }, 8*time.Second, 20*time.Millisecond)
-}
-
 // AppsSuite covers conversations kept in customers' own Stream apps, side by side in one
 // service: acme's app is 77 and globex's is 99.
 type AppsSuite struct {
@@ -377,7 +228,6 @@ type AppsSuite struct {
 	acme    *chattest.Server
 	globex  *chattest.Server
 	service *Service
-	root    string
 	logs    *logged
 }
 
@@ -412,9 +262,7 @@ func (s *AppsSuite) SetupTest() {
 	s.apps = newTwoApps(s.T())
 	s.acme = s.apps.give(s.T(), "acme", 77)
 	s.globex = s.apps.give(s.T(), "globex", 99)
-	s.root = s.T().TempDir()
-	service, err := NewForChats(s.root, s.apps)
-	s.Require().NoError(err)
+	service := NewForChats(s.apps)
 	s.logs = &logged{}
 	service.logger = slog.New(slog.NewTextHandler(s.logs, nil))
 	s.service = service
@@ -512,8 +360,9 @@ func (s *AppsSuite) TestAnUnsentTurnInACustomersOwnAppShowsInItsHistory() {
 }
 
 func (s *AppsSuite) TestAnotherCustomersUnsentTurnsUnderTheSameIdAreNotInHistory() {
-	// initech's conversation in the deployment's app has a reply waiting to be delivered.
-	id := pendingRecord(s.T(), s.root, "initech", 0, "initech's unsent reply")
+	// globex's conversation has a reply waiting to be delivered.
+	parked := s.parkedReply()
+	id := strings.TrimPrefix(parked.CID(), "agent:")
 	// acme made a channel under the same id in its own app, which Stream allows.
 	_, err := s.acme.Client.Chat().GetOrCreateChannel(s.T().Context(), "agent", id, &getstream.GetOrCreateChannelRequest{
 		Data: &getstream.ChannelInput{CreatedByID: ptr("agent"),
@@ -525,5 +374,5 @@ func (s *AppsSuite) TestAnotherCustomersUnsentTurnsUnderTheSameIdAreNotInHistory
 	page, err := s.service.HistoryForCaller(s.T().Context(), "acme", "agent", "agent:"+id, "", "employee")
 	s.Require().NoError(err)
 
-	s.NotContains(texts(page), "initech's unsent reply")
+	s.NotContains(texts(page), "waiting for globex's app")
 }

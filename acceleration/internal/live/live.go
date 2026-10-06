@@ -17,6 +17,9 @@ import (
 	"time"
 
 	"github.com/redis/rueidis"
+	"github.com/redis/rueidis/rueidisotel"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Health is the recent behaviour of one provider and model.
@@ -82,7 +85,7 @@ func New(options Options) (*Client, error) {
 		options.MaxErrorRate = 0.5
 	}
 
-	client, err := rueidis.NewClient(rueidis.ClientOption{
+	client, err := rueidisotel.NewClient(rueidis.ClientOption{
 		InitAddress:  []string{options.Address},
 		Username:     options.Username,
 		Password:     options.Password,
@@ -103,7 +106,7 @@ func (c *Client) Close() { c.redis.Close() }
 
 // Ping verifies the connection is usable.
 func (c *Client) Ping(ctx context.Context) error {
-	return c.redis.Do(ctx, c.redis.B().Ping().Build()).Error()
+	return stack.Wrap(c.redis.Do(ctx, c.redis.B().Ping().Build()).Error())
 }
 
 // Usage is one request's contribution to the live counters.
@@ -175,7 +178,7 @@ func (c *Client) RecordRequest(ctx context.Context, usage Usage) error {
 func (c *Client) Health(ctx context.Context, modality, provider, model string) (Health, error) {
 	entries, err := c.redis.Do(ctx, c.redis.B().Hgetall().Key(healthKey(modality, provider, model)).Build()).AsStrMap()
 	if err != nil {
-		return Health{}, fmt.Errorf("live: read health: %w", err)
+		return Health{}, stack.Wrap(fmt.Errorf("live: read health: %w", err))
 	}
 
 	health := Health{Provider: provider, Model: model, Available: true}

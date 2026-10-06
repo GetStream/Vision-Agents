@@ -1,9 +1,8 @@
-import 'models.dart';
-
 /// One thing a client can do to a running conversation over its socket.
 ///
-/// These are the commands `readCommands` in the router accepts. Everything else a caller
-/// might want is a request rather than a frame. A separate type from [AgentEvent], because a
+/// These are the commands `readCommands` in the router accepts, less `respond`: asking goes
+/// through `responses.create`. Everything else a caller might want is a request rather than
+/// a frame. A separate type from [AgentEvent], because a
 /// frame going in and one coming out have nothing to share.
 sealed class Command {
   const Command();
@@ -19,26 +18,6 @@ final class SayCommand extends Command {
 
   @override
   Map<String, Object?> toJson() => {'type': 'say', 'text': text};
-}
-
-/// Answer this as though it had been heard.
-final class RespondCommand extends Command {
-  const RespondCommand(this.text, {this.images = const []});
-
-  final String text;
-
-  /// Handed to the vision skill, which reports what it finds back into the conversation.
-  final List<AgentImage> images;
-
-  @override
-  Map<String, Object?> toJson() => {
-    'type': 'respond',
-    'text': text,
-    if (images.isNotEmpty)
-      'images': [
-        for (final image in images) {'url': image.url, 'detail': ?image.detail},
-      ],
-  };
 }
 
 /// Abandon the reply in flight.

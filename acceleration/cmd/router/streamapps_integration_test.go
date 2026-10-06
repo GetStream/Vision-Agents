@@ -148,15 +148,8 @@ func (s *StreamAppsCLISuite) TestLegacyCountsOtherCustomersWorkInTheDeploymentAp
 	s.Require().NoError(s.store.SaveSession(s.ctx, &store.AgentSession{
 		ID: uuid.NewString(), CustomerID: "1", AgentID: "agent", UserID: "user",
 	}))
-	outbox := s.T().TempDir()
-	s.Require().NoError(os.MkdirAll(filepath.Join(outbox, "support-"+uuid.NewString()), 0o700))
-	record := filepath.Join(outbox, "support-"+uuid.NewString())
-	s.Require().NoError(os.MkdirAll(record, 0o700))
-	s.Require().NoError(os.WriteFile(filepath.Join(record, "state.json"),
-		[]byte(`{"outbox_version": 1, "customer": "`+other+`"}`), 0o600))
-
 	var out bytes.Buffer
-	s.Require().NoError(runLegacy(s.ctx, []string{"--by-customer"}, s.settings, slog.New(slog.DiscardHandler), outbox, &out))
+	s.Require().NoError(runLegacy(s.ctx, []string{"--by-customer"}, s.settings, slog.New(slog.DiscardHandler), &out))
 
 	s.Contains(out.String(), other)
 	for _, line := range strings.Split(out.String(), "\n") {

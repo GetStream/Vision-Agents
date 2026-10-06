@@ -1,35 +1,278 @@
 plugins:
+  # https://mcp.slack.com/.well-known/oauth-authorization-server, opened October 5, 2026.
+  # The resource metadata is at the origin, not under /mcp, and the server advertises no
+  # registration_endpoint, so the deployment sets SLACK_MCP_CLIENT_ID and
+  # SLACK_MCP_CLIENT_SECRET from a Slack app of its own (client_secret_post), with
+  # https://<public_url>/v1/agents/plugins/callback as a redirect URL.
   - id: slack
     name: Slack
     category: Communication
     description: Search the workspace, read and send messages, and look people up.
     url: https://mcp.slack.com/mcp
     auth: oauth
+    logo: slack.svg
+    # scopes_supported in its protected-resource metadata, read October 5, 2026.
+    scopes_supported:
+      - canvases:read
+      - canvases:write
+      - channels:history
+      - channels:read
+      - channels:write
+      - chat:write
+      - emoji:read
+      - files:read
+      - files:write
+      - groups:history
+      - groups:read
+      - groups:write
+      - im:history
+      - im:read
+      - im:write
+      - lists:read
+      - lists:write
+      - mpim:history
+      - mpim:read
+      - mpim:write
+      - reactions:read
+      - reactions:write
+      - search:read.files
+      - search:read.im
+      - search:read.mpim
+      - search:read.private
+      - search:read.public
+      - search:read.users
+      - users:read
+      - users:read.email
+    # Slack grants nothing by default, so the tools need their scopes named. These are user
+    # token scopes; https://docs.slack.dev/ai/slack-mcp-server/ lists which tool needs which.
+    # Search is per kind of conversation: public channels by default, and search:read.private,
+    # .mpim, .im and .files through plugin_options.
+    scopes:
+      - channels:history
+      - channels:read
+      - chat:write
+      - search:read.public
+      - users:read
+  # https://calendly.com/.well-known/oauth-authorization-server, opened October 5, 2026.
+  # OAuth with dynamic client registration; the authorization server is calendly.com and the
+  # resource is mcp.calendly.com.
   - id: calendly
     name: Calendly
     category: Scheduling
     description: Check availability, create scheduling links, and book meetings.
     url: https://mcp.calendly.com
     auth: oauth
+    logo: calendly.svg
+    # scopes_supported in its protected-resource metadata, read October 5, 2026.
+    scopes_supported:
+      - mcp:scheduling:read
+      - mcp:scheduling:write
+    # The two the server advertises. Booking a meeting is a write.
+    scopes:
+      - mcp:scheduling:read
+      - mcp:scheduling:write
+  # https://mcp.cal.com/.well-known/oauth-authorization-server, opened October 5, 2026.
+  # OAuth with dynamic client registration, public client (token_endpoint_auth_method none).
+  # Registration only takes redirect hosts on Cal.com's own list: localhost, claude.ai,
+  # chatgpt.com and cursor.com passed, getstream.io did not. The authorize endpoint ignores
+  # scope and resource and always asks app.cal.com for the same fixed set, so scopes here
+  # would change nothing; toolsets are what narrow it.
   - id: calcom
     name: Cal.com
     category: Scheduling
     description: Manage bookings, event types and schedules.
     url: https://mcp.cal.com/mcp
     auth: oauth
+    logo: calcom.svg
+    # https://cal.com/docs/mcp-server#toolsets, opened October 5, 2026. get_app_link and
+    # search_docs are offered whichever are picked.
+    toolsets:
+      - profile
+      - event-types
+      - bookings
+      - availability
+      - schedules
+      - calendars
+      - teams
+      - organizations
+      - routing-forms
+      - catalog
   - id: shopify
     name: Shopify
     category: Commerce
     description: Orders, products and inventory on a shop.
     url: https://{instance}/api/mcp
     auth: oauth
+    logo: shopify.svg
     instance_required: true
     instance_hint: The shop hostname, such as mystore.myshopify.com
+  # https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/sobject-reads.html,
+  # opened October 5, 2026. One host for every production org, read-only: sobject-mutations,
+  # sobject-deletes and sobject-all are the servers that write. login.salesforce.com
+  # publishes only OpenID Connect discovery, and its registration endpoint refuses a client
+  # without credentials, so an External Client App's SALESFORCE_MCP_CLIENT_ID and _SECRET
+  # log in. The org must activate sobject-reads under Setup, MCP Servers.
   - id: salesforce
     name: Salesforce
     category: Customers
-    description: Accounts, contacts and opportunities in an org.
-    url: https://{instance}/mcp
+    description: Query accounts, contacts, opportunities and cases in an org.
+    url: https://api.salesforce.com/platform/mcp/v1/platform/sobject-reads
     auth: oauth
-    instance_required: true
-    instance_hint: The org my-domain, such as mycompany.my.salesforce.com
+    logo: salesforce.svg
+    scopes: [mcp_api, refresh_token]
+    scopes_supported: [mcp_api, refresh_token]
+  # https://mcp.sentry.dev, opened October 3, 2026. OAuth with dynamic client registration,
+  # advertised at /.well-known/oauth-protected-resource/mcp.
+  - id: sentry
+    name: Sentry
+    category: Engineering
+    description: Search issues and errors, read their events, and triage them.
+    url: https://mcp.sentry.dev/mcp
+    auth: oauth
+    logo: sentry.svg
+    # scopes_supported in its protected-resource metadata, read October 5, 2026.
+    scopes_supported:
+      - org:read
+      - project:write
+      - team:write
+      - event:write
+      - alerts:write
+  # https://mcp.linear.app/.well-known/oauth-authorization-server, opened October 5, 2026.
+  # OAuth with dynamic client registration, advertised at
+  # /.well-known/oauth-protected-resource/mcp. /mcp/readonly is its own resource, offering
+  # no tool that writes, and accepts only the read scope.
+  - id: linear
+    name: Linear
+    category: Engineering
+    description: Search issues and projects, file new issues, and comment on them.
+    url: https://mcp.linear.app/mcp
+    auth: oauth
+    logo: linear.svg
+    # scopes_supported in its protected-resource metadata, read October 5, 2026.
+    scopes_supported:
+      - read
+      - write
+    scopes:
+      - read
+      - write
+    readonly_url: https://mcp.linear.app/mcp/readonly
+    readonly_scopes:
+      - read
+  # https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp, opened
+  # October 5, 2026. The authorization server is github.com/login/oauth, which publishes
+  # only OpenID Connect discovery and no registration_endpoint, so the deployment sets
+  # GITHUB_MCP_CLIENT_ID and GITHUB_MCP_CLIENT_SECRET from a GitHub OAuth app of its own,
+  # with https://<public_url>/v1/agents/plugins/callback as the callback URL.
+  - id: github
+    name: GitHub
+    category: Engineering
+    description: Read repositories, issues and pull requests, and file or comment on them.
+    url: https://api.githubcopilot.com/mcp
+    auth: oauth
+    logo: github.svg
+    # scopes_supported in its protected-resource metadata, read October 5, 2026.
+    scopes_supported:
+      - repo
+      - read:org
+      - read:user
+      - user:email
+      - read:packages
+      - write:packages
+      - read:project
+      - project
+      - gist
+      - notifications
+    # The least the issue and pull request tools need. repo covers private repositories.
+    scopes:
+      - repo
+      - read:org
+      - read:user
+  # https://mcp.hubspot.com/.well-known/oauth-authorization-server, opened October 5, 2026.
+  # The MCP endpoint is the origin itself. No registration_endpoint, so the deployment sets
+  # HUBSPOT_MCP_CLIENT_ID and HUBSPOT_MCP_CLIENT_SECRET from a HubSpot app of its own
+  # (client_secret_post).
+  - id: hubspot
+    name: HubSpot
+    category: Customers
+    description: Contacts, companies and deals in the CRM.
+    url: https://mcp.hubspot.com
+    auth: oauth
+    logo: hubspot.svg
+  # https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server, opened
+  # October 3, 2026. Google registers no client on the fly, so the deployment sets
+  # GOOGLE_CALENDAR_MCP_CLIENT_ID and GOOGLE_CALENDAR_MCP_CLIENT_SECRET from a web client in
+  # its own Cloud project, with calendarmcp.googleapis.com enabled.
+  - id: google_calendar
+    name: Google Calendar
+    category: Scheduling
+    description: Read calendars, events and free time.
+    url: https://calendarmcp.googleapis.com/mcp/v1
+    auth: oauth
+    logo: google_calendar.svg
+    # scopes_supported in its protected-resource metadata, read October 5, 2026.
+    scopes_supported:
+      - https://www.googleapis.com/auth/calendar
+      - https://www.googleapis.com/auth/calendar.acls
+      - https://www.googleapis.com/auth/calendar.calendarlist
+      - https://www.googleapis.com/auth/calendar.calendarlist.readonly
+      - https://www.googleapis.com/auth/calendar.calendars
+      - https://www.googleapis.com/auth/calendar.calendars.readonly
+      - https://www.googleapis.com/auth/calendar.events
+      - https://www.googleapis.com/auth/calendar.events.freebusy
+      - https://www.googleapis.com/auth/calendar.events.readonly
+      - https://www.googleapis.com/auth/calendar.freebusy
+      - https://www.googleapis.com/auth/calendar.readonly
+      - https://www.googleapis.com/auth/calendar.settings.readonly
+    # Read only: one of the four scopes every Calendar MCP tool accepts.
+    scopes:
+      - https://www.googleapis.com/auth/calendar.readonly
+    # Google returns a refresh token only for offline access, and again only on consent.
+    authorize_params:
+      access_type: offline
+      prompt: consent
+  # https://drivemcp.googleapis.com/.well-known/oauth-protected-resource/mcp/v1, opened
+  # October 5, 2026. Same Cloud-project client as Calendar, under its own env pair:
+  # GOOGLE_DRIVE_MCP_CLIENT_ID and GOOGLE_DRIVE_MCP_CLIENT_SECRET, with
+  # drivemcp.googleapis.com enabled.
+  - id: google_drive
+    name: Google Drive
+    category: Documents
+    description: Search files and folders, and read what is in them.
+    url: https://drivemcp.googleapis.com/mcp/v1
+    auth: oauth
+    logo: google_drive.svg
+    # scopes_supported in its protected-resource metadata, read October 5, 2026.
+    scopes_supported:
+      - https://www.googleapis.com/auth/drive
+      - https://www.googleapis.com/auth/drive.readonly
+      - https://www.googleapis.com/auth/drive.file
+    # Read only by default. create_file and copy_file need drive.file as well, which is
+    # the pair Google's own setup guide asks for; an agent adds it with plugin_options.
+    scopes:
+      - https://www.googleapis.com/auth/drive.readonly
+    authorize_params:
+      access_type: offline
+      prompt: consent
+  # https://docsmcp.googleapis.com/.well-known/oauth-protected-resource/mcp/v1, opened
+  # October 5, 2026. Needs GOOGLE_DOCS_MCP_CLIENT_ID and GOOGLE_DOCS_MCP_CLIENT_SECRET and
+  # docsmcp.googleapis.com enabled. Docs is its own server rather than part of Drive's, and
+  # it asks for Drive read as well, because a document is found before it is read.
+  - id: google_docs
+    name: Google Docs
+    category: Documents
+    description: Read documents and their contents.
+    url: https://docsmcp.googleapis.com/mcp/v1
+    auth: oauth
+    logo: google_docs.svg
+    # scopes_supported in its protected-resource metadata, read October 5, 2026.
+    scopes_supported:
+      - https://www.googleapis.com/auth/drive.readonly
+      - https://www.googleapis.com/auth/documents.readonly
+      - https://www.googleapis.com/auth/drive
+      - https://www.googleapis.com/auth/documents
+    scopes:
+      - https://www.googleapis.com/auth/documents.readonly
+      - https://www.googleapis.com/auth/drive.readonly
+    authorize_params:
+      access_type: offline
+      prompt: consent

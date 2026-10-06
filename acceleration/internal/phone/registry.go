@@ -10,6 +10,8 @@ import (
 	"sync"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // defaultConfigFS carries the built-in vendor list so the registry works without an
@@ -224,7 +226,7 @@ func (r *Registry) Lookup(name string) (Vendor, bool) { return r.config.Lookup(n
 func (r *Registry) Open(name string) (Provider, error) {
 	vendor, declared := r.Lookup(name)
 	if !declared {
-		return nil, fmt.Errorf("phone: %q is not a known vendor", name)
+		return nil, stack.Wrap(fmt.Errorf("phone: %q is not a known vendor", name))
 	}
 
 	r.mu.RLock()
@@ -239,12 +241,12 @@ func (r *Registry) Open(name string) (Provider, error) {
 		return NotImplemented(name), nil
 	}
 	if missing := vendor.Missing(); len(missing) > 0 {
-		return nil, fmt.Errorf("phone: %s needs %s", name, strings.Join(missing, " and "))
+		return nil, stack.Wrap(fmt.Errorf("phone: %s needs %s", name, strings.Join(missing, " and ")))
 	}
 
 	provider, err := factory()
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	r.mu.Lock()

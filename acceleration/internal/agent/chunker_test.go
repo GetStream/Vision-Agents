@@ -68,6 +68,36 @@ func (s *ChunkerSuite) TestFullWidthPunctuationEndsASentence() {
 	s.Equal([]string{"今天天气很好，我们去散步吧。"}, s.stream("今天天气很好，我们去散步吧。"))
 }
 
+func (s *ChunkerSuite) TestAReplyOpensWithItsFirstClause() {
+	// The first words are what the caller waits for, so they go to the voice at the first
+	// clause rather than waiting for the sentence to end.
+	var chunker chunker
+
+	s.Equal([]string{"Of course, a table for four on Saturday,"},
+		chunker.Add("Of course, a table for four on Saturday, "))
+	s.Equal([]string{"at 7:30, on the patio."}, chunker.Add("at 7:30, on the patio."),
+		"after the opening clause the rest of the reply goes by the sentence")
+}
+
+func (s *ChunkerSuite) TestAShortLeadInWaitsForTheSentence() {
+	s.Equal([]string{"Sure, I can help."}, s.stream("Sure, I can help."))
+}
+
+func (s *ChunkerSuite) TestANumberIsNotSplitAtItsSeparator() {
+	s.Equal([]string{"The total comes to 1,250 dollars."}, s.stream("The total comes to 1,250 dollars."))
+	s.Equal([]string{"Your table is booked at 7:30 on Saturday."}, s.stream("Your table is booked at 7:30 on Saturday."))
+}
+
+func (s *ChunkerSuite) TestEachReplyOpensWithItsOwnClause() {
+	var chunker chunker
+	chunker.Add("Of course, a table for four on Saturday, at 7:30.")
+	chunker.Flush()
+
+	s.Equal([]string{"Let me check the calendar,", "one moment."},
+		chunker.Add("Let me check the calendar, one moment."),
+		"a new reply may open on a clause again")
+}
+
 func (s *ChunkerSuite) TestWhitespaceIsNotWorthSaying() {
 	s.Empty(s.stream("   \n  "))
 }

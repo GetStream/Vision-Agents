@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Capabilities is what one model accepts.
@@ -50,33 +52,33 @@ type Capabilities struct {
 func (c Capabilities) Validate(params ResponseParams) error {
 	if effort := params.Reasoning.Effort; effort != "" {
 		if len(c.ReasoningEfforts) == 0 {
-			return fmt.Errorf("llm: this model does not reason, so it takes no reasoning effort, and %q was asked for", effort)
+			return stack.Wrap(fmt.Errorf("llm: this model does not reason, so it takes no reasoning effort, and %q was asked for", effort))
 		}
 		if !slices.Contains(c.ReasoningEfforts, effort) {
-			return fmt.Errorf("llm: reasoning effort %q is not one of %s",
-				effort, strings.Join(c.ReasoningEfforts, ", "))
+			return stack.Wrap(fmt.Errorf("llm: reasoning effort %q is not one of %s",
+				effort, strings.Join(c.ReasoningEfforts, ", ")))
 		}
 	}
 	if verbosity := params.Text.Verbosity; verbosity != "" && len(c.Verbosities) > 0 {
 		if !slices.Contains(c.Verbosities, verbosity) {
-			return fmt.Errorf("llm: text verbosity %q is not one of %s",
-				verbosity, strings.Join(c.Verbosities, ", "))
+			return stack.Wrap(fmt.Errorf("llm: text verbosity %q is not one of %s",
+				verbosity, strings.Join(c.Verbosities, ", ")))
 		}
 	}
 	if params.Conversation != "" && params.PreviousResponseID != "" {
-		return fmt.Errorf("llm: a response continues from a conversation or from a previous response, not both")
+		return stack.Wrap(fmt.Errorf("llm: a response continues from a conversation or from a previous response, not both"))
 	}
 	for _, message := range params.Input {
 		if message.Content != "" && len(message.Parts) > 0 {
-			return fmt.Errorf("llm: content and parts are mutually exclusive")
+			return stack.Wrap(fmt.Errorf("llm: content and parts are mutually exclusive"))
 		}
 		if message.HasImage() && message.Role != User && message.Role != ToolResult {
-			return fmt.Errorf("llm: images are supported only in user and tool messages")
+			return stack.Wrap(fmt.Errorf("llm: images are supported only in user and tool messages"))
 		}
 		for _, part := range message.Parts {
 			if part.Image != nil {
 				if part.Text != "" {
-					return fmt.Errorf("llm: a part cannot contain both text and image")
+					return stack.Wrap(fmt.Errorf("llm: a part cannot contain both text and image"))
 				}
 				if err := part.Image.Validate(); err != nil {
 					return err
@@ -85,7 +87,7 @@ func (c Capabilities) Validate(params ResponseParams) error {
 		}
 	}
 	if params.HasImage() && !c.Accepts(ModalityImage) {
-		return fmt.Errorf("llm: this model does not accept %s input", ModalityImage)
+		return stack.Wrap(fmt.Errorf("llm: this model does not accept %s input", ModalityImage))
 	}
 	return nil
 }

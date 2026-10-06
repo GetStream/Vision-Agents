@@ -250,6 +250,9 @@ keyterms: [Vision Agents]
 speed: 0.9
 video:
   source: camera
+dispatch:
+  incoming_call: enabled
+  text: enabled
 `)
 
 	folder, err := Load(root)
@@ -269,13 +272,82 @@ video:
 	if settings.Video.Source != "camera" || settings.Video.MaxFrames != 1 {
 		t.Errorf("the video read as %+v", settings.Video)
 	}
+	if settings.Dispatch == nil || settings.Dispatch.IncomingCall != "enabled" || settings.Dispatch.Text != "enabled" {
+		t.Errorf("what is left to dispatch read as %+v", settings.Dispatch)
+	}
+}
+
+func TestTheDeclarationSaysWhoConnectsEachPlugin(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", "name: triage\nagent_plugins: [sentry]\nuser_plugins:\n"+
+		"  - name: linear\n    readonly: true\n    tools: [list_issues]\n  - google_calendar\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := folder.Settings.AgentPlugins; len(got) != 1 || got[0].Name != "sentry" {
+		t.Errorf("the app's plugins read as %+v", got)
+	}
+	got := folder.Settings.UserPlugins
+	if len(got) != 2 || got[0].Name != "linear" || !got[0].Readonly ||
+		strings.Join(got[0].Tools, ",") != "list_issues" || got[1].Name != "google_calendar" {
+		t.Errorf("each user's plugins read as %+v", got)
+	}
+}
+
+func TestAPluginEntryWithAKeyNobodyKnowsIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", "name: triage\nuser_plugins:\n  - name: linear\n    read_only: true\n")
+
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "read_only") {
+		t.Errorf("an entry with a misspelt key loaded: %v", err)
+	}
+}
+
+func TestTheOldPluginKeysAreRefused(t *testing.T) {
+	for _, declared := range []string{
+		"plugins: [sentry]\n",
+		"plugin_options:\n  - plugin: linear\n    readonly: true\n",
+	} {
+		root := filepath.Join(t.TempDir(), "triage")
+		write(t, root, "agent.yaml", "name: triage\n"+declared)
+
+		if _, err := Load(root); err == nil {
+			t.Errorf("%q loaded", declared)
+		}
+	}
+}
+
+func TestTheDeclarationSaysWhichPluginEventsTheAgentTakes(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", "name: triage\nagent_plugins: [sentry]\nplugin_events:\n"+
+		"  - plugin: sentry\n    event: issue.created\n    arguments:\n      project: web\n"+
+		"    instructions: Triage it.\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := folder.Settings.PluginEvents
+	if len(events) != 1 {
+		t.Fatalf("the plugin events read as %+v", events)
+	}
+	if events[0].Plugin != "sentry" || events[0].Event != "issue.created" ||
+		events[0].Arguments["project"] != "web" || events[0].Instructions != "Triage it." {
+		t.Errorf("the plugin event read as %+v", events[0])
+	}
 }
 
 func TestADeclarationKeyNobodyKnowsIsRefused(t *testing.T) {
 	for _, declaration := range []string{
 		"name: jean\nlmm: openai/gpt-5.6\n",
 		"video:\n  max_frames: 9\n",
+		"sandbox_options:\n  timeout: 2h\n",
+		"sandbox_options:\n  timeout: soon\n",
+		"sandbox_options:\n  memory: 4\n",
 		"keyterms: Vision Agents\n",
+		"plugin_events:\n  - plugin: sentry\n    name: issue.created\n",
 	} {
 		root := filepath.Join(t.TempDir(), "jean")
 		write(t, root, "agent.yaml", declaration)

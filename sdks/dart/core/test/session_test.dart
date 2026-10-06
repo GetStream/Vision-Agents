@@ -33,14 +33,36 @@ void main() {
       await chat.close();
     });
 
-    test('shows what was typed at once and sends it as a respond', () async {
+    test('shows what was asked at once, and asks with a request rather than a frame', () async {
+      router.answer(
+        'POST /v1/agents/sessions/s1/responses',
+        Answer(202, responseJson('r1', status: 'running')),
+      );
       final chat = await agents.chat();
-      final socket = await router.socket();
 
-      chat.send('  What are your hours?  ');
+      final asked = chat.responses.create('What are your hours?');
 
       expect(chat.turns.single.text, 'What are your hours?');
-      expect(await socket.next(), {'type': 'respond', 'text': 'What are your hours?'});
+      expect((await asked).id, 'r1');
+      expect(router.last('POST /v1/agents/sessions/s1/responses').json, {
+        'text': 'What are your hours?',
+      });
+      await chat.close();
+    });
+
+    test('a conversation kept in chat names each question, unless it shows an image', () async {
+      router
+        ..answer('POST /v1/agents/sessions', Answer(201, sessionJson(conversationId: 'agent:c1')))
+        ..answer('POST /v1/agents/sessions/s1/responses', Answer(202, responseJson('r1')));
+      final chat = await agents.chat();
+
+      await chat.responses.create('Hello');
+      final named = router.last('POST /v1/agents/sessions/s1/responses').json as Map;
+      await chat.responses.create('Look', images: [const AgentImage('https://x/cat.png')]);
+      final shown = router.last('POST /v1/agents/sessions/s1/responses').json as Map;
+
+      expect(named['command_id'], matches(RegExp(r'^[0-9a-f]{32}$')));
+      expect(shown.containsKey('command_id'), isFalse);
       await chat.close();
     });
 
@@ -283,7 +305,7 @@ void main() {
             .having((e) => e.code, 'code', 4000)
             .having((e) => e.reason, 'reason', 'draining'),
       );
-      expect(() => chat.send('anyone?'), throwsA(isA<SocketClosedException>()));
+      expect(() => chat.say('anyone?'), throwsA(isA<SocketClosedException>()));
     });
 
     test('closing says so over the socket and is safe to repeat', () async {
@@ -300,16 +322,49 @@ void main() {
     });
 
     test(
-      'a session whose socket cannot open is ended rather than left holding the agent',
+      'a session whose socket cannot open is stopped rather than left holding the agent',
       () async {
         router
-          ..answer('DELETE /v1/agents/sessions/s1', const Answer(204))
+          ..answer('POST /v1/agents/sessions/s1/stop', const Answer(204))
           ..refuseSockets = true;
 
         await expectLater(agents.chat(), throwsA(isA<TransportException>()));
-        expect(router.last('DELETE /v1/agents/sessions/s1').method, 'DELETE');
+        expect(router.last('POST /v1/agents/sessions/s1/stop').method, 'POST');
+        expect(router.arrived.where((request) => request.method == 'DELETE'), isEmpty);
       },
     );
+
+    test('deleting takes the conversation away and ends it here', () async {
+      router.answer('DELETE /v1/agents/sessions/s1', const Answer(204));
+      final chat = await agents.chat();
+      final socket = await router.socket();
+
+      await chat.delete();
+
+      expect(router.last('DELETE /v1/agents/sessions/s1').method, 'DELETE');
+      await socket.done;
+      expect(chat.connection.value, const Disconnected());
+    });
+
+    test('renaming refreshes the session and keeps the conversation open', () async {
+      router.answer(
+        'PATCH /v1/agents/sessions/s1',
+        Answer(200, {...sessionJson(), 'title': 'Billing', 'description': 'Refund'}),
+      );
+      final chat = await agents.chat();
+
+      final renamed = await chat.update(title: 'Billing', description: 'Refund');
+
+      expect(router.last('PATCH /v1/agents/sessions/s1').json, {
+        'title': 'Billing',
+        'description': 'Refund',
+      });
+      expect(renamed.title, 'Billing');
+      expect(chat.session.title, 'Billing');
+      expect(chat.session.description, 'Refund');
+      expect(chat.isConnected, isTrue);
+      await chat.close();
+    });
 
     test('a fork keeps the tools, since they are here in this process', () async {
       router.answer('POST /v1/agents/sessions/s1/fork', Answer(201, sessionJson(id: 's2')));

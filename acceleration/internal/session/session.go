@@ -24,6 +24,7 @@ import (
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -119,7 +120,10 @@ type Session struct {
 
 	// Serializes persistent command acceptance/start with command-targeted interruption.
 	commandMu sync.Mutex
-	mu        sync.Mutex
+	// awaiting are the commands accepted for a dispatch worker and not yet answered, which
+	// the server may still have the model answer. Guarded by commandMu.
+	awaiting map[string]struct{}
+	mu       sync.Mutex
 	// watchers are the connections being fanned out to, keyed so one can detach without
 	// disturbing the others.
 	watchers    map[uint64]*watcher
@@ -385,10 +389,10 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	defer s.commandMu.Unlock()
 	if s.persisted != nil {
 		if s.spec.Caller.UserID != "" {
-			return "", errors.New("personal conversations require a command ID")
+			return "", stack.Wrap(errors.New("personal conversations require a command ID"))
 		}
 		if err := s.persisted.Begin(text); err != nil {
-			return "", err
+			return "", stack.Wrap(err)
 		}
 	}
 	turnID, err := s.voiceAgent.RespondTo(ctx, text, images)
@@ -396,7 +400,7 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 		if s.persisted != nil {
 			s.persisted.Cancel()
 		}
-		return "", err
+		return "", stack.Wrap(err)
 	}
 	if turnID == "" {
 		return "", nil
@@ -414,29 +418,61 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string)
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
 	if s.persisted == nil {
-		return persistent.CommandReceipt{}, "", errors.New("command IDs require a persistent text conversation")
+		return persistent.CommandReceipt{}, "", stack.Wrap(errors.New("command IDs require a persistent text conversation"))
 	}
 	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
-		return persistent.CommandReceipt{}, "", err
+		return persistent.CommandReceipt{}, "", stack.Wrap(err)
 	}
 	receipt, err := s.persisted.BeginCommand(id, text, clientID)
 	if err != nil {
-		return receipt, "", err
+		return receipt, "", stack.Wrap(err)
 	}
 	s.broadcast(receipt)
 	if receipt.Duplicate {
-		return receipt, "", nil
+		// A command handed to a dispatch worker was accepted without being answered, so
+		// the server asking about it again is the one time a repeat reaches the model.
+		if _, waiting := s.awaiting[id]; !waiting {
+			return receipt, "", nil
+		}
+		delete(s.awaiting, id)
 	}
 	turnID, err := s.voiceAgent.RespondTo(ctx, text, nil)
 	if err != nil {
 		s.persisted.Cancel()
-		return receipt, "", err
+		return receipt, "", stack.Wrap(err)
 	}
 	s.persisted.BindTurn(receipt.CommandID, turnID)
 	if turnID == "" {
 		return receipt, "", nil
 	}
 	return receipt, s.openTurn(turnID, text), nil
+}
+
+// AwaitCommand accepts a durable submission the way RespondCommand does without answering
+// it. It is for an agent that leaves text to dispatch: the end user's message is recorded
+// and shown as being answered, and the model answers once the server calls RespondCommand
+// with the same id and text.
+func (s *Session) AwaitCommand(ctx context.Context, id, text, clientID string) (persistent.CommandReceipt, error) {
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
+	if s.persisted == nil {
+		return persistent.CommandReceipt{}, errors.New("command IDs require a persistent text conversation")
+	}
+	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
+		return persistent.CommandReceipt{}, err
+	}
+	receipt, err := s.persisted.BeginCommand(id, text, clientID)
+	if err != nil {
+		return receipt, err
+	}
+	s.broadcast(receipt)
+	if !receipt.Duplicate {
+		if s.awaiting == nil {
+			s.awaiting = map[string]struct{}{}
+		}
+		s.awaiting[id] = struct{}{}
+	}
+	return receipt, nil
 }
 
 // Report publishes a failure the watcher should see, without ending the session.
@@ -495,23 +531,23 @@ func (s *Session) Rewind(ctx context.Context, recorded Recorded, responseID stri
 	defer s.commandMu.Unlock()
 	switch {
 	case s.records == nil:
-		return fmt.Errorf("%w: nothing was recorded to go back to", ErrCannotRewind)
+		return stack.Wrap(fmt.Errorf("%w: nothing was recorded to go back to", ErrCannotRewind))
 	case s.spec.Native():
-		return fmt.Errorf("%w: a speech-to-speech model keeps its own context", ErrCannotRewind)
+		return stack.Wrap(fmt.Errorf("%w: a speech-to-speech model keeps its own context", ErrCannotRewind))
 	case s.persisted != nil:
-		return fmt.Errorf("%w: a persistent conversation keeps its transcript in Chat; fork it at the response instead", ErrCannotRewind)
+		return stack.Wrap(fmt.Errorf("%w: a persistent conversation keeps its transcript in Chat; fork it at the response instead", ErrCannotRewind))
 	}
 
 	s.voiceAgent.Interrupt()
 	if err := s.records.Flush(ctx); err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	exchanges, err := recorded.Exchanges(ctx, s.spec.CustomerID, s.id, responseID)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	if err := recorded.RewindResponses(ctx, s.spec.CustomerID, s.id, responseID, time.Now().UTC()); err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	s.voiceAgent.RestoreHistory(HistoryOf(exchanges))
 	return nil
@@ -544,7 +580,7 @@ func HistoryOf(exchanges []store.Exchange) []llm.Message {
 // stopping anything. The caller must already be authorized for this session.
 func (s *Session) Command(id string) (persistent.CommandReceipt, error) {
 	if s.persisted == nil {
-		return persistent.CommandReceipt{}, persistent.ErrCommandNotFound
+		return persistent.CommandReceipt{}, stack.Wrap(persistent.ErrCommandNotFound)
 	}
 	if err := s.persisted.CheckCaller(context.Background(), s.spec.Caller.UserID); err != nil {
 		return persistent.CommandReceipt{}, err
@@ -559,15 +595,16 @@ func (s *Session) InterruptCommand(id string) (persistent.CommandReceipt, error)
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
 	if s.persisted == nil {
-		return persistent.CommandReceipt{}, persistent.ErrCommandNotFound
+		return persistent.CommandReceipt{}, stack.Wrap(persistent.ErrCommandNotFound)
 	}
 	if err := s.persisted.CheckCaller(context.Background(), s.spec.Caller.UserID); err != nil {
-		return persistent.CommandReceipt{}, err
+		return persistent.CommandReceipt{}, stack.Wrap(err)
 	}
 	receipt, err := s.persisted.Command(id)
 	if err != nil {
-		return persistent.CommandReceipt{}, err
+		return persistent.CommandReceipt{}, stack.Wrap(err)
 	}
+	delete(s.awaiting, id)
 	switch receipt.State {
 	case "completed", "cancelled", "interrupted", "failed":
 		return s.stopped(s.persisted.CancelCommand(id))
@@ -582,7 +619,7 @@ func (s *Session) stopped(receipt persistent.CommandReceipt, err error) (persist
 	if err == nil {
 		s.broadcast(CommandStopped{CommandReceipt: receipt})
 	}
-	return receipt, err
+	return receipt, stack.Wrap(err)
 }
 
 // Busy reports whether the agent still has something to finish, which is how anything
@@ -618,7 +655,7 @@ type Settings struct {
 func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 	next := s.spec
 	if next.Text && (settings.STT != nil || settings.TTS != nil || settings.STS != nil || settings.Voice != nil) {
-		return errors.New("session: a text session has no voice, so it has no speech models to change")
+		return stack.Wrap(errors.New("session: a text session has no voice, so it has no speech models to change"))
 	}
 	set := func(target *string, value *string) {
 		if value != nil {
@@ -626,6 +663,9 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 		}
 	}
 	set(&next.LLMTarget, settings.LLM)
+	if next.Text {
+		next.SubagentTarget = next.LLMTarget
+	}
 	set(&next.STTTarget, settings.STT)
 	set(&next.TTSTarget, settings.TTS)
 	set(&next.STSTarget, settings.STS)
@@ -639,8 +679,8 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 		next.ModelOverwrites.MaxOutputTokens = settings.MaxOutputTokens
 	}
 	if next.Native() && strings.TrimSpace(next.Guardrail) != "" {
-		return errors.New(
-			"session: a speech-to-speech agent answers the caller directly, so a guardrail cannot screen its turns")
+		return stack.Wrap(errors.New(
+			"session: a speech-to-speech agent answers the caller directly, so a guardrail cannot screen its turns"))
 	}
 	if next.ControllerTarget == "" && !next.Native() {
 		next.ControllerTarget = defaultControllerTarget
@@ -737,6 +777,21 @@ func (s *Session) ResolveCommandTool(id, commandID, turnID string, parts []llm.C
 	return s.tools.Resolve(id, turnID, parts, failure)
 }
 
+// DecideCommandTool records a person's answer to a call of a durable command that waited
+// for their approval, reporting whether the call's command and turn match. The call still
+// needs its result.
+func (s *Session) DecideCommandTool(id, commandID, turnID string, allowed bool, summary string) bool {
+	if s.persisted == nil || id == "" || commandID == "" || turnID == "" {
+		return false
+	}
+	expected, bound := s.persisted.CommandForTurn(turnID)
+	if !bound || expected != commandID {
+		return false
+	}
+	s.persisted.Observe(agent.ToolApprovalDecided{ID: id, TurnID: turnID, Allowed: allowed, Summary: summary})
+	return true
+}
+
 // Close leaves the call and releases everything the session opened. It is safe to call
 // more than once.
 func (s *Session) Close() error {
@@ -820,7 +875,9 @@ func (s *Session) record(event Event) {
 
 	switch typed := event.(type) {
 	case agent.Responding:
-		s.openTurn(typed.TurnID, typed.Prompt)
+		if !s.continueTurn(typed.TurnID, typed.Continues) {
+			s.openTurn(typed.TurnID, typed.Prompt)
+		}
 	case agent.ToolStarted:
 		s.item(typed.TurnID, store.ItemToolCall, "", typed.Tool, map[string]any{
 			"call_id": typed.ID, "product": typed.Product, "sdk": typed.SDK,
@@ -901,6 +958,21 @@ func (s *Session) openTurn(turnID, said string) string {
 		s.item(turnID, store.ItemSaid, said, "", nil)
 	}
 	return turn.id
+}
+
+// continueTurn records a reply delivering an earlier turn's tools or delegated work as more
+// of that turn's response, reporting whether the earlier turn was still open to continue.
+func (s *Session) continueTurn(turnID, continues string) bool {
+	if continues == "" {
+		return false
+	}
+	s.turnsMu.Lock()
+	defer s.turnsMu.Unlock()
+	held, open := s.turns[continues]
+	if open {
+		s.turns[turnID] = held
+	}
+	return open
 }
 
 // item queues one thing that happened, against whichever response the turn is being
@@ -985,8 +1057,11 @@ func (s *Session) failTurns(where string, cause error) {
 func (s *Session) endTurn(turnID, status, failure string) {
 	s.turnsMu.Lock()
 	turn, open := s.turns[turnID]
-	if open {
-		delete(s.turns, turnID)
+	// A continued turn is held under the id of every reply that continued it.
+	for id, held := range s.turns {
+		if held == turn {
+			delete(s.turns, id)
+		}
 	}
 	s.turnsMu.Unlock()
 
@@ -1136,7 +1211,7 @@ func (m *Manager) namedSkills(ctx context.Context, customerID, configID string, 
 
 	defined := map[string]harness.Skill{}
 	if m.options.Store != nil {
-		stored, err := m.options.Store.SkillsNamed(ctx, customerID, configID, names)
+		stored, err := m.options.Configs.SkillsNamed(ctx, customerID, configID, names)
 		if err != nil {
 			return harness.Skills{}, err
 		}
@@ -1156,7 +1231,7 @@ func (m *Manager) namedSkills(ctx context.Context, customerID, configID string, 
 	resolved := harness.Skills{Skills: make([]harness.Skill, 0, len(names))}
 	if m.options.Store != nil {
 		resolved.Load = func(ctx context.Context, name string) (string, error) {
-			found, err := m.options.Store.SkillsNamed(ctx, customerID, configID, []string{name})
+			found, err := m.options.Configs.SkillsNamed(ctx, customerID, configID, []string{name})
 			if err != nil {
 				return "", err
 			}
@@ -1172,7 +1247,7 @@ func (m *Manager) namedSkills(ctx context.Context, customerID, configID string, 
 			skill, known = builtin.Lookup(name)
 		}
 		if !known {
-			return harness.Skills{}, fmt.Errorf("session: there is no skill called %q", name)
+			return harness.Skills{}, stack.Wrap(fmt.Errorf("session: there is no skill called %q", name))
 		}
 		resolved.Skills = append(resolved.Skills, skill)
 	}

@@ -11,13 +11,13 @@ use GetStream\VisionAgents\Json;
 final readonly class AgentLogPage
 {
     public function __construct(
+        public string $coverage,
+        public int $droppedLogs,
+        public bool $hasMore,
         /** @var list<AgentLog> */
         public array $items,
-        public bool $hasMore,
         public string $nextCursor,
         public string $resumeCursor,
-        public int $droppedLogs,
-        public string $coverage,
     ) {
     }
 
@@ -27,12 +27,12 @@ final readonly class AgentLogPage
     public static function fromArray(array $data): self
     {
         return new self(
-            items: array_map(AgentLog::fromArray(...), Json::objects($data, 'items')),
+            coverage: Json::string($data, 'coverage'),
+            droppedLogs: Json::int($data, 'dropped_logs'),
             hasMore: Json::bool($data, 'has_more'),
+            items: array_map(AgentLog::fromArray(...), Json::objects($data, 'items')),
             nextCursor: Json::string($data, 'next_cursor'),
             resumeCursor: Json::string($data, 'resume_cursor'),
-            droppedLogs: Json::int($data, 'dropped_logs'),
-            coverage: Json::string($data, 'coverage'),
         );
     }
 
@@ -44,12 +44,12 @@ final readonly class AgentLogPage
     public function toArray(): array
     {
         $out = [];
-        $out['items'] = array_map(static fn (AgentLog $each): array => $each->toArray(), $this->items);
+        $out['coverage'] = $this->coverage;
+        $out['dropped_logs'] = $this->droppedLogs;
         $out['has_more'] = $this->hasMore;
+        $out['items'] = array_map(static fn (AgentLog $each): array => $each->toArray(), $this->items);
         $out['next_cursor'] = $this->nextCursor;
         $out['resume_cursor'] = $this->resumeCursor;
-        $out['dropped_logs'] = $this->droppedLogs;
-        $out['coverage'] = $this->coverage;
         return $out;
     }
 }

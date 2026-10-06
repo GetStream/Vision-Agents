@@ -6,7 +6,9 @@ namespace GetStream\VisionAgents\Tests\Unit;
 
 use GetStream\VisionAgents\Agent;
 use GetStream\VisionAgents\Edge;
+use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Folder;
+use GetStream\VisionAgents\Generated\AgentConfigPatch;
 use GetStream\VisionAgents\Generated\Sandbox;
 use GetStream\VisionAgents\Harness;
 use GetStream\VisionAgents\Inbound\InboundCall;
@@ -62,14 +64,57 @@ final class AgentTest extends TestCase
         self::assertSame('Be brief.', $sent['instructions']);
         self::assertSame('openai/gpt-5.6', $sent['llm']);
         self::assertSame(['fr'], $sent['languages']);
-        self::assertSame('daytona', $sent['sandbox']);
         self::assertSame(['env' => 'production'], $sent['tags']);
-        self::assertSame(['user_id' => '123', 'filter' => ['topic' => 'billing']], $sent['memory']);
-        self::assertSame([['name' => 'think', 'description' => 'Work it out', 'instructions' => 'Reason it through.', 'deadline_ms' => 30000]], array_map(
-            static fn (mixed $skill): array => array_intersect_key(Json::asObject($skill), array_flip(['name', 'description', 'instructions', 'deadline_ms'])),
-            Json::list($sent, 'skills'),
-        ));
+        self::assertSame(['filter' => ['topic' => 'billing'], 'user_id' => '123'], $sent['memory']);
+        foreach (['sandbox', 'skills', 'subagent', 'tasks'] as $harness) {
+            self::assertArrayNotHasKey($harness, $sent, 'the harness is the config\'s, written by sync');
+        }
         self::assertArrayNotHasKey('stt', $sent, 'what was not set is left to the config');
+    }
+
+    public function testSyncWritesTheHarnessOntoTheConfig(): void
+    {
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+        $agent = new Agent(
+            name: 'jean',
+            harness: new Harness(name: 'default', subagent: 'openai/gpt-5.6', skills: [new Skill('think', 'Work it out', 'Reason it through.', deadline: 30.0)]),
+            sandbox: Sandbox::Daytona,
+            client: $this->router->client(),
+        );
+
+        $agent->sync();
+
+        $sent = $this->router->to('POST', '/v1/agents/sync')[0]->json();
+        self::assertSame('default', $sent['harness']);
+        self::assertSame('openai/gpt-5.6', $sent['subagent']);
+        self::assertSame('daytona', $sent['sandbox']);
+        self::assertSame(
+            [['config_id' => '', 'description' => 'Work it out', 'instructions' => 'Reason it through.', 'name' => 'think', 'deadline_ms' => 30000]],
+            array_map(static fn (mixed $skill): array => array_intersect_key(Json::asObject($skill), array_flip(['config_id', 'name', 'description', 'instructions', 'deadline_ms'])), Json::list($sent, 'skills')),
+        );
+    }
+
+    public function testUpdateConfigPatchesTheConfigFoundByName(): void
+    {
+        $this->router->answer('GET', '/v1/agents/configs', 200, [Rows::config('cfg_9', 'support')]);
+        $this->router->answer('PATCH', '/v1/agents/configs/cfg_9', 200, Rows::config('cfg_9', 'support') + ['guardrail' => 'No refunds.']);
+
+        $config = $this->router->client()->agent('support')->updateConfig(new AgentConfigPatch(guardrail: 'No refunds.', speed: 1.1, visibleTools: ['athena_*']));
+
+        self::assertSame('No refunds.', $config->guardrail);
+        self::assertSame('support', $this->router->to('GET', '/v1/agents/configs')[0]->params()['name']);
+        self::assertSame(
+            ['guardrail' => 'No refunds.', 'speed' => 1.1, 'visible_tools' => ['athena_*']],
+            $this->router->to('PATCH', '/v1/agents/configs/cfg_9')[0]->json(),
+        );
+    }
+
+    public function testUpdateConfigOfAnAgentNothingIsStoredUnderIsRefused(): void
+    {
+        $this->router->answer('GET', '/v1/agents/configs', 200, []);
+
+        $this->expectException(ConfigurationException::class);
+        $this->router->client()->agent('nobody')->updateConfig(new AgentConfigPatch(guardrail: 'No refunds.'));
     }
 
     public function testAConfigNameMatchingNothingIsPassedThrough(): void
@@ -91,7 +136,20 @@ final class AgentTest extends TestCase
 
         $sent = $this->router->to('POST', '/v1/agents/sessions')[0]->json();
         self::assertSame('jean-luc', $sent['user_id']);
-        self::assertSame([['name' => 'get_weather', 'description' => 'The weather somewhere', 'parameters' => ['type' => 'object']]], $sent['tools']);
+        self::assertSame([['description' => 'The weather somewhere', 'name' => 'get_weather', 'parameters' => ['type' => 'object']]], $sent['tools']);
+    }
+
+    public function testAToolSaysWhoRunsItAndWhatItIsShownAs(): void
+    {
+        $agent = new Agent(name: 'jean', client: $this->router->client());
+        $agent->tools->register('take_photo', 'Takes a photo on the device', [], static fn (array $args): string => '', displayTitle: 'Taking a photo', executor: 'client');
+
+        $agent->chat();
+
+        self::assertSame(
+            [['description' => 'Takes a photo on the device', 'name' => 'take_photo', 'display_title' => 'Taking a photo', 'executor' => 'client']],
+            $this->router->to('POST', '/v1/agents/sessions')[0]->json()['tools'],
+        );
     }
 
     public function testJoinCreatesTheStreamCallFirst(): void
@@ -202,6 +260,60 @@ final class AgentTest extends TestCase
 
         $expected = Folder::fingerprint('02a7b2c8428f31e3a2b93ca2f5a6ec70', '', 'map[env:b team:a]');
         self::assertSame($expected, $this->router->to('POST', '/v1/agents/sync')[0]->json()['hash']);
+    }
+
+    public function testSyncSendsOnlyTheDispatchSettingsWritten(): void
+    {
+        $this->folder();
+        file_put_contents($this->dir . '/agent.yaml', "name: jean\ndispatch:\n  text: enabled\n");
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+
+        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
+
+        self::assertSame(['text' => 'enabled'], $this->router->to('POST', '/v1/agents/sync')[0]->json()['dispatch']);
+    }
+
+    public function testSyncLeavesOutWhatAgentYamlSaysNothingAbout(): void
+    {
+        $this->folder();
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+
+        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
+
+        $sent = $this->router->to('POST', '/v1/agents/sync')[0]->json();
+        foreach (['dispatch', 'speed', 'harness', 'simulations'] as $absent) {
+            self::assertArrayNotHasKey($absent, $sent);
+        }
+    }
+
+    public function testSyncSendsSpeedHarnessAndSchedules(): void
+    {
+        $this->folder();
+        file_put_contents($this->dir . '/agent.yaml', "name: jean\nspeed: 1.1\nharness: default\n");
+        file_put_contents($this->dir . '/knowledge/urls.yaml', "- url: https://example.com/plans\n  refresh_hours: 24\n");
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+
+        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
+
+        $sent = $this->router->to('POST', '/v1/agents/sync')[0]->json();
+        self::assertSame(1.1, $sent['speed']);
+        self::assertSame('default', $sent['harness']);
+        self::assertSame([['url' => 'https://example.com/plans', 'refresh_hours' => 24]], $sent['knowledge_urls']);
+    }
+
+    public function testSyncSendsTheSimulationsDirectoryEvenWhenEmpty(): void
+    {
+        $this->folder();
+        mkdir($this->dir . '/simulations');
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+
+        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
+        file_put_contents($this->dir . '/simulations/lunch.yaml', "- name: lunch\n  scenario: Order a club.\n  assertion: One club.\n  variations: 3\n");
+        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
+
+        [$empty, $declared] = $this->router->to('POST', '/v1/agents/sync');
+        self::assertSame([], $empty->json()['simulations'], 'an empty directory deletes the stored simulations');
+        self::assertSame([['assertion' => 'One club.', 'name' => 'lunch', 'scenario' => 'Order a club.', 'variations' => 3]], $declared->json()['simulations']);
     }
 
     private function edge(): Edge

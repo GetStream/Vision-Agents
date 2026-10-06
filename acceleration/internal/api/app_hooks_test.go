@@ -86,7 +86,7 @@ func (s *AppHooksSuite) reaches(messages <-chan dispatch.Message) bool {
 }
 
 func (s *AppHooksSuite) TestAMessageHookIsVerifiedWithTheSendingAppsSecret() {
-	worker, release := s.dispatch.Register(s.customerID(), 1)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
 	s.Equal(http.StatusOK, s.hook(s.appPath("/v1/chat/hooks/stream"), s.message(s.config(s.customerID())), s.secret, s.apiKey))
@@ -98,7 +98,7 @@ func (s *AppHooksSuite) TestAMessageHookIsVerifiedWithTheSendingAppsSecret() {
 }
 
 func (s *AppHooksSuite) TestAHookWithAnAppSegmentAndNoKeyTriesThatAppsKeys() {
-	worker, release := s.dispatch.Register(s.customerID(), 1)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
 	s.Equal(http.StatusOK, s.hook(s.appPath("/v1/chat/hooks/stream"), s.message(s.config(s.customerID())), s.secret, ""))
@@ -128,7 +128,7 @@ func (s *AppHooksSuite) TestANamedKeyNeverWidensTheKeysTried() {
 func (s *AppHooksSuite) TestAHookSignedWithASecondaryKeyIsAccepted() {
 	second, secondSecret := "second-key-"+s.utils.uuid(), "second-secret-"+s.utils.uuid()
 	s.registered(1, key(s.apiKey, s.secret), key(second, secondSecret))
-	worker, release := s.dispatch.Register(s.customerID(), 1)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
 	s.Equal(http.StatusOK, s.hook(s.appPath("/v1/chat/hooks/stream"), s.message(s.config(s.customerID())), secondSecret, second))
@@ -148,7 +148,7 @@ func (s *AppHooksSuite) TestAKnownKeyOnTheOldPathIsCheckedOnlyWithItsSecret() {
 func (s *AppHooksSuite) TestAChannelConfigIsHonouredOnlyForTheHooksApp() {
 	// A channel in this app naming another customer's config starts nobody's agent.
 	other := "someone-" + s.utils.uuid()
-	somebodyElse, release := s.dispatch.Register(other, 1)
+	somebodyElse, release := s.dispatch.Register(other, dispatch.Registration{Capacity: 1})
 	defer release()
 
 	s.Equal(http.StatusOK, s.hook(s.appPath("/v1/chat/hooks/stream"), s.message(s.config(other)), s.secret, s.apiKey))
@@ -159,7 +159,7 @@ func (s *AppHooksSuite) TestAChannelConfigIsHonouredOnlyForTheHooksApp() {
 func (s *AppHooksSuite) TestAMessageInTheDeploymentAppIsNotDispatchedToACustomerNowElsewhere() {
 	// A channel in the router's own app names this customer's config, but the customer
 	// now acts in its own app, so a deployment-signed hook starts nothing of theirs.
-	worker, release := s.dispatch.Register(s.customerID(), 1)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
 	s.Equal(http.StatusOK, s.hook("/v1/chat/hooks/stream", s.message(s.config(s.customerID())), suiteStreamSecret, ""))
@@ -168,7 +168,7 @@ func (s *AppHooksSuite) TestAMessageInTheDeploymentAppIsNotDispatchedToACustomer
 }
 
 func (s *AppHooksSuite) TestAReplayedMessageIsAnsweredOnce() {
-	worker, release := s.dispatch.Register(s.customerID(), 2)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 2})
 	defer release()
 	body := s.message(s.config(s.customerID()))
 
@@ -183,7 +183,7 @@ func (s *AppHooksSuite) TestAStaleCallEventIsIgnored() {
 	e164 := s.utils.number()
 	call := "phone-" + e164
 	s.attach(e164, call, s.appID())
-	worker, release := s.dispatch.Register(s.customerID(), 1)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
 	s.Equal(http.StatusOK, s.hook(s.appPath("/v1/phone/hooks/stream"),
@@ -200,7 +200,7 @@ func (s *AppHooksSuite) TestAnArrivingCallIsDispatchedToTheNumbersOwnerInThatApp
 	e164 := s.utils.number()
 	call := "phone-" + e164
 	s.attach(e164, call, s.appID())
-	worker, release := s.dispatch.Register(s.customerID(), 2)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 2})
 	defer release()
 
 	s.Equal(http.StatusOK, s.hook("/v1/phone/hooks/stream", s.ringing(call, time.Now()), suiteStreamSecret, ""))
@@ -251,7 +251,7 @@ func (s *AppHooksSuite) TestACallOfTheSameNameInAnotherAppDoesNotHideThisOne() {
 		TrunkID: "trunk-" + s.utils.uuid(), StreamAppPK: 7, CallType: "default", CallID: line,
 	}))
 	s.attach(s.utils.number(), line, s.appID())
-	worker, release := s.dispatch.Register(s.customerID(), 1)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
 	s.Equal(http.StatusOK, s.hook(s.appPath("/v1/phone/hooks/stream"), s.ringing(line, time.Now()), s.secret, s.apiKey))

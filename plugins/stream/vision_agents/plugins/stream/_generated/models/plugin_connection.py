@@ -15,33 +15,39 @@ T = TypeVar("T", bound="PluginConnection")
 
 @_attrs_define
 class PluginConnection:
-    """A catalog plugin as this agent has it, including whether it is logged in.
+    """A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has
+    logged into yet is not_connected, which is what a dashboard reminds the app to finish.
 
-    Attributes:
-        plugin_id (str):
-        name (str):
-        status (PluginConnectionStatus):
-        category (str | Unset):
-        description (str | Unset):
-        instance_required (bool | Unset):
-        instance_hint (str | Unset):
-        instance_url (str | Unset):
+        Attributes:
+            logo_url (str): Where this deployment serves the plugin's logo, as an SVG needing no credential. Empty for an
+                MCP server named by URL.
+            name (str):
+            plugin_id (str):
+            status (PluginConnectionStatus):
+            category (str | Unset):
+            description (str | Unset):
+            instance_hint (str | Unset):
+            instance_required (bool | Unset):
+            instance_url (str | Unset):
     """
 
-    plugin_id: str
+    logo_url: str
     name: str
+    plugin_id: str
     status: PluginConnectionStatus
     category: str | Unset = UNSET
     description: str | Unset = UNSET
-    instance_required: bool | Unset = UNSET
     instance_hint: str | Unset = UNSET
+    instance_required: bool | Unset = UNSET
     instance_url: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        plugin_id = self.plugin_id
+        logo_url = self.logo_url
 
         name = self.name
+
+        plugin_id = self.plugin_id
 
         status = self.status.value
 
@@ -49,9 +55,9 @@ class PluginConnection:
 
         description = self.description
 
-        instance_required = self.instance_required
-
         instance_hint = self.instance_hint
+
+        instance_required = self.instance_required
 
         instance_url = self.instance_url
 
@@ -59,8 +65,9 @@ class PluginConnection:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "plugin_id": plugin_id,
+                "logo_url": logo_url,
                 "name": name,
+                "plugin_id": plugin_id,
                 "status": status,
             }
         )
@@ -68,10 +75,10 @@ class PluginConnection:
             field_dict["category"] = category
         if description is not UNSET:
             field_dict["description"] = description
-        if instance_required is not UNSET:
-            field_dict["instance_required"] = instance_required
         if instance_hint is not UNSET:
             field_dict["instance_hint"] = instance_hint
+        if instance_required is not UNSET:
+            field_dict["instance_required"] = instance_required
         if instance_url is not UNSET:
             field_dict["instance_url"] = instance_url
 
@@ -80,9 +87,11 @@ class PluginConnection:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        plugin_id = d.pop("plugin_id")
+        logo_url = d.pop("logo_url")
 
         name = d.pop("name")
+
+        plugin_id = d.pop("plugin_id")
 
         status = PluginConnectionStatus(d.pop("status"))
 
@@ -90,20 +99,21 @@ class PluginConnection:
 
         description = d.pop("description", UNSET)
 
-        instance_required = d.pop("instance_required", UNSET)
-
         instance_hint = d.pop("instance_hint", UNSET)
+
+        instance_required = d.pop("instance_required", UNSET)
 
         instance_url = d.pop("instance_url", UNSET)
 
         plugin_connection = cls(
-            plugin_id=plugin_id,
+            logo_url=logo_url,
             name=name,
+            plugin_id=plugin_id,
             status=status,
             category=category,
             description=description,
-            instance_required=instance_required,
             instance_hint=instance_hint,
+            instance_required=instance_required,
             instance_url=instance_url,
         )
 

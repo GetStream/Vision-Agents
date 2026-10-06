@@ -152,7 +152,7 @@ func (s *CallsSuite) TestAFinishedNativeCallNamesTheConversationAndSubagentModel
 	s.Require().Equal(http.StatusOK,
 		s.serverClient.do(http.MethodGet, "/v1/agents/calls/"+call.ID, nil, &rendered))
 	s.Equal("stub/stub-sts", value(rendered.StsUsed))
-	s.Equal("stub/stub-llm", value(rendered.SubagentUsed))
+	s.Equal("stub/stub-llm", value(rendered.ThinkingLlmUsed))
 	s.Nil(rendered.SttUsed)
 	s.Nil(rendered.LlmUsed)
 	s.Nil(rendered.TtsUsed)

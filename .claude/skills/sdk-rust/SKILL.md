@@ -101,8 +101,10 @@ returned. `close()` is idempotent.
   `name`, walking up), the same strict `agent.yaml` keys, and the same MD5 fingerprint, pinned
   by a test against the Go value. Changing the hash means changing it in every SDK at once.
 - `sync` on a folder is one `POST /v1/agents/sync` with the fingerprint, then `.agent_sync`.
-- `Dispatch` runs handlers in a `JoinSet` and drains it on the way out; a panicking handler is
-  reported as rejected. `load` and `ping` every 15s. `get_or_create_agent` keeps one session
+- `Dispatch` runs handlers in a `JoinSet` and drains it on the way out; every call and message
+  ends in `done` with its `work_id`, carrying an `error` when the handler failed or panicked
+  (or there was none). `active` and `handles` go on the handshake. A message with a
+  `session_id` is answered with `answer`, as the server acting for the writer. `load` and `ping` every 15s. `get_or_create_agent` keeps one session
   per channel and closes them all when `run` ends.
 - `Dispatch::host` declares tools (`host_tools`) after every `ready`, runs each `tool_call` in
   the same `JoinSet`, and ends `run` with `Error::Failed` on `hosting_refused`. Unlike Go, it
@@ -143,16 +145,3 @@ Reject it if it:
 - handles a tool call anywhere a caller must be reading events for it to run;
 - treats an unknown frame as fatal, or adds reconnection;
 - replaces the axum server with a mock, or asserts on calls rather than on the wire.
-
-## Pending: cursor pagination
-
-Go has moved; this SDK still needs to. `listSessions`, `searchSessions`, `listResponses` and
-`listResponseItems` take `cursor` instead of `offset` and return `{items, has_more,
-next_cursor}` instead of an array. See the `pagination` skill and `sdks/go/client`.
-
-## Pending: session update (Go is done)
-
-The Go SDK moved to `PATCH /v1/agents/sessions/{id}` (`updateSession`), which changes title,
-description, custom, instructions, models and voice in one call. Regenerate, then expose
-`session.update(...)` and `agent.sessions().update(id, ...)`; drop `update_settings`. See "Updating a session" in the `sdk` skill. The `/settings` and
-`/instructions` endpoints are deprecated.

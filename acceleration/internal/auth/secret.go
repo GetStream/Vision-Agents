@@ -7,11 +7,18 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // KEKVersion names which key encryption key sealed a row, so that key can be rotated by
 // re-wrapping rows rather than by reissuing every secret.
 const KEKVersion = 1
+
+// ErrKeyVersionUnavailable says a record names a key version the keyring does not hold. It
+// is the keyring's configuration that is wrong, not the record, so a caller can tell it from
+// a record that does not open.
+var ErrKeyVersionUnavailable = errors.New("auth: key encryption key version is unavailable")
 
 // Sealer wraps and unwraps the secrets held in the database.
 //
@@ -79,7 +86,7 @@ func (s *Sealer) SealWithAAD(secret string, additional []byte) ([]byte, error) {
 	aead := s.aeads[s.currentVersion]
 	nonce := make([]byte, aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
-		return nil, fmt.Errorf("auth: read random: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("auth: read random: %w", err))
 	}
 	return aead.Seal(nonce, nonce, []byte(secret), additional), nil
 }
@@ -94,15 +101,15 @@ func (s *Sealer) Open(sealed []byte) (string, error) {
 func (s *Sealer) OpenWithAADVersion(sealed, additional []byte, version int) (string, error) {
 	aead, ok := s.aeads[version]
 	if !ok {
-		return "", fmt.Errorf("auth: key encryption key version %d is unavailable", version)
+		return "", stack.Wrap(fmt.Errorf("%w: version %d", ErrKeyVersionUnavailable, version))
 	}
 	if len(sealed) < aead.NonceSize() {
-		return "", errors.New("auth: sealed secret is too short")
+		return "", stack.Wrap(errors.New("auth: sealed secret is too short"))
 	}
 	nonce, body := sealed[:aead.NonceSize()], sealed[aead.NonceSize():]
 	plain, err := aead.Open(nil, nonce, body, additional)
 	if err != nil {
-		return "", fmt.Errorf("auth: open secret: %w", err)
+		return "", stack.Wrap(fmt.Errorf("auth: open secret: %w", err))
 	}
 	return string(plain), nil
 }

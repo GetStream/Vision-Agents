@@ -78,15 +78,20 @@ async fn joining_creates_the_call_and_carries_the_agents_configuration() {
     );
 }
 
-#[tokio::test]
-async fn an_agent_spelled_out_in_code_sends_its_instructions_harness_and_pipeline() {
-    let server = Server::start().await;
-    server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));
+fn subagent_and_sandbox() -> Harness {
     let mut harness = Harness::standard();
     harness
         .subagents
         .insert("default".into(), "openai/gpt-5.6".into());
     harness.vm = Some(vision_agents::daytona());
+    harness
+}
+
+#[tokio::test]
+async fn an_agent_spelled_out_in_code_sends_its_instructions_and_pipeline_but_never_its_harness() {
+    let server = Server::start().await;
+    server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));
+    let mut harness = subagent_and_sandbox();
     harness.skills.push(Skill {
         deadline: Duration::from_secs(30),
         ..Skill::new("think", "Work it out", "Reason.")
@@ -104,29 +109,74 @@ async fn an_agent_spelled_out_in_code_sends_its_instructions_harness_and_pipelin
     assert_eq!(sent["instructions"], "You are Jean.");
     assert_eq!(sent["llm"], "llm-fast");
     assert_eq!(sent["text"], true);
-    assert_eq!(sent["subagent"], "openai/gpt-5.6");
-    assert_eq!(sent["sandbox"], "daytona");
-    assert_eq!(
-        sent["skills"],
-        json!([{"name": "think", "description": "Work it out", "instructions": "Reason.", "capture_video": false, "deadline_ms": 30000}])
-    );
-    assert!(sent.get("agent").is_none());
+    for harnessed in ["subagent", "sandbox", "skills", "tasks", "agent"] {
+        assert!(sent.get(harnessed).is_none(), "{harnessed} was sent");
+    }
 }
 
 #[tokio::test]
-async fn an_empty_skill_list_turns_delegation_off() {
+async fn agent_yaml_names_the_harness_and_the_code_its_subagent_and_sandbox() {
     let server = Server::start().await;
-    server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));
-    let quiet = Agent::named("quiet")
-        .client(server.client())
-        .harness(Harness::default());
-
-    let (_session, _socket) = opened(&server, async move { quiet.chat().await }).await;
-
-    assert_eq!(
-        server.request(Method::POST, "/v1/agents/sessions").body["skills"],
-        json!([])
+    synced(&server);
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "agent.yaml",
+        "name: jean\nharness: default\nspeed: 1.1\nsandbox: daytona\n",
     );
+    let agent = Agent::from_folder(root.path())
+        .unwrap()
+        .client(server.client())
+        .harness(subagent_and_sandbox());
+
+    agent.sync().await.unwrap();
+
+    let body = server.request(Method::POST, "/v1/agents/sync").body;
+    assert_eq!(body["harness"], "default");
+    assert_eq!(body["subagent"], "openai/gpt-5.6");
+    assert_eq!(body["sandbox"], "daytona");
+    assert_eq!(body["speed"], 1.1);
+    assert_ne!(body["hash"], agent.folder().unwrap().hash().as_str());
+}
+
+#[tokio::test]
+async fn an_agents_config_is_patched_with_only_what_was_set() {
+    let server = Server::start().await;
+    server.route(
+        Method::GET,
+        "/v1/agents/configs",
+        200,
+        json!([config("cfg-1", "docs")]),
+    );
+    server.route(
+        Method::PATCH,
+        "/v1/agents/configs/cfg-1",
+        200,
+        config("cfg-1", "docs"),
+    );
+    let docs = server.client().agent("docs");
+
+    let patched = docs
+        .update_config(&types::AgentConfigPatch {
+            guardrail: Some("Be kind.".into()),
+            visible_tools: Some(vec!["athena_*".into()]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let missing = server.client().agent("nobody");
+
+    assert_eq!(patched.id, "cfg-1");
+    assert_eq!(
+        server
+            .request(Method::PATCH, "/v1/agents/configs/cfg-1")
+            .body,
+        json!({"guardrail": "Be kind.", "visible_tools": ["athena_*"]})
+    );
+    assert!(matches!(
+        missing.update_config(&Default::default()).await,
+        Err(vision_agents::Error::Configuration(_))
+    ));
 }
 
 #[tokio::test]
@@ -328,6 +378,80 @@ async fn a_directory_is_synced_once_and_then_only_read_back() {
 }
 
 #[tokio::test]
+async fn what_a_directory_leaves_to_dispatch_is_synced_as_written() {
+    let server = Server::start().await;
+    synced(&server);
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "agent.yaml",
+        "name: jean\ndispatch:\n  text: enabled\n",
+    );
+    let agent = Agent::from_folder(root.path())
+        .unwrap()
+        .client(server.client());
+
+    agent.sync().await.unwrap();
+
+    let body = server.request(Method::POST, "/v1/agents/sync").body;
+    assert_eq!(body["dispatch"], json!({"text": "enabled"}));
+    assert!(body.get("simulations").is_none());
+    assert!(body.get("speed").is_none());
+}
+
+#[tokio::test]
+async fn a_directorys_simulations_and_page_schedules_are_synced_as_declared() {
+    let server = Server::start().await;
+    synced(&server);
+    let root = tempfile::tempdir().unwrap();
+    write(root.path(), "agent.yaml", "name: jean\n");
+    write(
+        root.path(),
+        "knowledge/urls.yaml",
+        "- url: https://example.com/plans\n  refresh_hours: 24\n",
+    );
+    write(
+        root.path(),
+        "simulations/lunch.yaml",
+        "- name: lunch\n  scenario: Order a club.\n  assertion: One club.\n  variations: 3\n",
+    );
+    let agent = Agent::from_folder(root.path())
+        .unwrap()
+        .client(server.client());
+
+    agent.sync().await.unwrap();
+
+    let body = server.request(Method::POST, "/v1/agents/sync").body;
+    assert_eq!(
+        body["knowledge_urls"],
+        json!([{"url": "https://example.com/plans", "refresh_hours": 24}])
+    );
+    assert_eq!(
+        body["simulations"],
+        json!([{"name": "lunch", "scenario": "Order a club.", "assertion": "One club.", "variations": 3}])
+    );
+}
+
+#[tokio::test]
+async fn an_empty_simulations_directory_is_synced_as_none_declared() {
+    let server = Server::start().await;
+    synced(&server);
+    let root = tempfile::tempdir().unwrap();
+    write(root.path(), "agent.yaml", "name: jean\n");
+    std::fs::create_dir(root.path().join("simulations")).unwrap();
+    let agent = Agent::from_folder(root.path())
+        .unwrap()
+        .client(server.client());
+
+    agent.sync().await.unwrap();
+
+    assert_eq!(
+        server.request(Method::POST, "/v1/agents/sync").body["simulations"],
+        json!([])
+    );
+}
+
+#[tokio::test]
 async fn cost_tracking_is_part_of_what_a_directory_is_synced_under() {
     let server = Server::start().await;
     synced(&server);
@@ -390,7 +514,8 @@ async fn an_agent_spelled_out_in_code_is_stored_by_name() {
         201,
         config("cfg-2", "Ada"),
     );
-    let mut harness = Harness::standard();
+    let mut harness = subagent_and_sandbox();
+    harness.name = Some(types::Harness::Default);
     harness
         .skills
         .push(Skill::new("think", "Work it out", "Reason."));
@@ -408,7 +533,8 @@ async fn an_agent_spelled_out_in_code_is_stored_by_name() {
     );
     assert_eq!(
         server.request(Method::POST, "/v1/agents/configs").body,
-        json!({"name": "Ada", "instructions": "You are Ada.", "skills": ["think"]})
+        json!({"name": "Ada", "instructions": "You are Ada.", "skills": ["think"], "harness": "default",
+               "subagent": "openai/gpt-5.6", "sandbox": "daytona"})
     );
 }
 
@@ -441,7 +567,7 @@ async fn a_page_is_added_to_the_agents_knowledge_and_waited_for() {
 
     let knowledge = agent(&server, "jean").knowledge().unwrap();
     let read = knowledge
-        .add_url("https://example.com/plans", "Plans", "")
+        .add_url("https://example.com/plans", "Plans", "", Some(24))
         .await
         .unwrap();
 
@@ -451,7 +577,7 @@ async fn a_page_is_added_to_the_agents_knowledge_and_waited_for() {
         server
             .request(Method::POST, "/v1/agents/knowledge/urls")
             .body,
-        json!({"namespace": "jean", "url": "https://example.com/plans", "title": "Plans"})
+        json!({"namespace": "jean", "url": "https://example.com/plans", "title": "Plans", "refresh_hours": 24})
     );
     assert_eq!(
         server

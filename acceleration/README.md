@@ -83,7 +83,7 @@ go run ./cmd/router --config /etc/router.yaml
 
 Its keys are `addr`, `public_url`, `log_level`, `dashboard_url`, `cors_origins`,
 `trusted_proxies`, `routing_config`, `phone_config`, `voices_bucket_url`, and the nested
-`postgres.dsn`, `redis.{addr,username,password}`, `auth.{mode,kek}`,
+`postgres.dsn`, `redis.{addr,username,password}`, `node.advertise`, `auth.{mode,kek}`,
 `rate_limit.{messages_per_day,tokens_per_day}`, `data_move.retention`, `connectors.enabled` and
 `stream.{api_key,api_secret}`. Naming no file loads one of the three embedded in the
 binary, by `ROUTER_ENV`.
@@ -98,7 +98,8 @@ the other commands that read them there.
 | `ROUTER_ENV`            | `local` (default), `staging` or `testing`. Loads `internal/config/<env>.yaml` when no file of your own is named. The integration suites always use `testing`, which has its own `model_router_test` database and is the one file that wins over the environment |
 | `ROUTER_ADDR`           | HTTP listen address, defaults to `:8080`                   |
 | `ROUTER_POSTGRES_DSN`   | Postgres DSN. Without it, nothing is recorded              |
-| `ROUTER_REDIS_ADDR`     | Redis `host:port`. Without it, routing ignores health      |
+| `ROUTER_REDIS_ADDR`     | Redis `host:port`. Without it, routing ignores health, and a session is only reachable on the node running it |
+| `ROUTER_NODE_ADVERTISE` | `host:port` this node's peers reach it at. Unset works it out from this host's own address and `ROUTER_ADDR`'s port, which is right wherever a pod is reachable from its peers. See [More than one node](#more-than-one-node) |
 | `ROUTER_VOICES_BUCKET_URL` | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
@@ -427,7 +428,7 @@ Speech-to-text also keeps its sprint-1 names (`en-realtime-best` and friends) as
 LLM adds two of its own. `llm-fast` is a fast answer, in whatever language, and `llm-thinking`
 is what the skills run on: the part of a turn the talking model could not answer itself, which
 the conversation carries on without. Both name the model this deployment wants rather than
-leaving the choice to the ranking — `gemini/gemini-3.8-flash` and `openai/gpt-6-sol` — and
+leaving the choice to the ranking — `gemini/gemini-3.8-flash` and `openai/gpt-6.1-sol` — and
 only reach the rest of their tier when that model is unavailable or fails to start.
 
 Which models those shortcuts reach for LLM, and what each is billed at per million tokens:
@@ -443,6 +444,7 @@ Which models those shortcuts reach for LLM, and what each is billed at per milli
 | `openai/gpt-5.6-terra`            | high-quality | $2.00  | $0.20   | $12.00  |
 | `openai/gpt-5.6-sol`              | high-quality | $5.00  | $0.50   | $30.00  |
 | `openai/gpt-6-sol`                | high-quality | $2.00  | $0.20   | $10.00  |
+| `openai/gpt-6.1-sol`              | high-quality | $2.00  | $0.10   | $10.00  |
 | `openai/gpt-6-astra`              | high-quality | $10.00 | $1.00   | $50.00  |
 
 Gemma is self-hosted, so its rates are an estimate of what the deployment costs rather than
@@ -732,8 +734,10 @@ skills are offered by name and description only, and their instructions are read
 when one is used, so an edit reaches the next use rather than the next session.
 
 The harness is agent config, never session config: `harness` (only `default` today),
-`subagent`, `sandbox` and `skills` are set on the config or in `agent.yaml`, and
-`createSession` does not take them. A client that wants a sandbox of its own declares it as a
+`thinking_llm`, `sandbox` and `skills` are set on the config or in `agent.yaml`, and
+`createSession` does not take them. Only a voice agent names a `thinking_llm`: a text agent
+runs everything, skills included, on its `llm`, and a config that gives one a thinking model
+is refused. A client that wants a sandbox of its own declares it as a
 tool instead.
 
 - **The model asks for help mid-sentence.** It writes `<ask skill="think">…</ask>` into its
@@ -761,6 +765,20 @@ have, and the subagent has already left the live path. Code the subagent writes 
 Daytona, its output comes back as a tool result, and the same task is put again, up to four
 rounds and always inside the skill's own deadline. One sandbox is created the first time
 code actually runs and released when the session ends.
+
+`sandbox_options` on the config, or in `agent.yaml`, says how that sandbox is built and how
+long code may run in it: an `image` with Python to start from, `setup` commands run on top of
+it once, `timeout_ms` for one run (30 seconds by default, at most 30 minutes), and `cpu`,
+`memory_gb` and `disk_gb`. Any of them builds an image, which Daytona keeps, so only the
+first sandbox from a given setup waits for the build. A run is still bounded by its skill's
+deadline, so a skill that renders for minutes says so in its own.
+
+`run_code` takes `files` as well as `code`: paths the program writes that the person should
+get, at most four of up to 20 MiB each. On a persistent text conversation each file is
+uploaded to the channel as the agent, `task_settled` lists them (`name`, `mime_type`, `url`,
+`size`), and the reply that settles the work carries them as Chat attachments, an image
+inline and anything else as a file, so they are there when the conversation is reopened.
+Without a channel the subagent is told there is nowhere to show them.
 
 Long histories are compacted privately on the thinking session when the prompt is large and
 either it has filled 80% of the conversation model's `context_window` in `router.yaml`, or the
@@ -839,6 +857,7 @@ started per call becomes a session in a process that is already running.
 | `POST /v1/agents/sessions/{id}/instructions` | Change what the agent is, from the next turn |
 | `GET  /v1/agents/sessions/{id}/events`  | WebSocket: everything the agent does             |
 | `GET  /v1/{modality}/stream`            | WebSocket: one modality, for a pipeline elsewhere |
+| `GET  /v1/agents/socket`               | WebSocket: a voice session with no call, its audio on the socket |
 
 ```bash
 curl -s localhost:8080/v1/agents/sessions -H 'X-Customer-Id: acme' \
@@ -880,6 +899,55 @@ It is driven over the session's own socket: `respond` goes in, `response_delta` 
 `responded` come back, along with `looked_up`, `delegated` and `task_settled` as the agent
 works. `say` and `interrupt` do nothing useful here, since there is nothing being spoken to
 interrupt.
+
+### Conversations held over a socket
+
+`GET /v1/agents/socket` holds a voice conversation with no call to join: the audio travels
+on the socket itself. It is for callers that are neither a browser nor a phone, such as a
+benchmark's simulated caller, and everything between hearing and answering is the agent's
+own, the cadence, the flow controller, speculation and barge-in included.
+
+The first frame is `{"type": "start", "sample_rate": 16000, "session": {...}}`, where
+`session` is what `POST /v1/agents/sessions` takes and `call_id` may be left out. The
+answer is `{"type": "session", "session": {...}, "sample_rate": 16000}`. From then on
+binary frames are PCM16 mono at that rate both ways: the caller's audio in, and the agent's
+speech out in 20 ms frames at the pace it is heard on a call, so a reply the caller cuts
+into stops within a frame. `{"type": "cleared"}` says speech already sent was thrown away
+because the caller cut in. Tool calls and everything else the conversation does go over the
+session's events socket as they would for a call.
+
+The session lasts as long as the socket. Closing it, or sending `{"type": "stop"}`, ends
+the conversation, and a conversation that ends closes the socket. Unlike the events socket
+it cannot be relayed, because the audio travels on the connection itself: the session is
+the node the socket opened on, and that is where it stays.
+
+### More than one node
+
+A session lives in one process's memory, and a load balancer has no reason to send a
+caller to the process holding theirs. Two things make the deployment answer anyway, and
+both need `redis.addr`:
+
+- The events socket is relayed. `internal/relay` publishes a session's frames on one
+  Redis pub/sub channel and the watcher's commands on another, and the node holding the
+  socket attaches a real watcher on the node holding the conversation. Every node is sent
+  every session's events, so each keeps a cuckoo filter of the owners it holds sockets for
+  and drops the rest before they cost anything.
+- Everything else is carried to the node that can answer it. `internal/node` keeps a
+  register in Redis of which node is running which session, renewed while it runs, and a
+  request naming a session that is not here is handed to the node that is by gRPC. Peers
+  are reached over h2c on the API's own port, so there is no second port to open between
+  them, and the node answering runs its own handler: it authenticates and authorizes the
+  caller itself rather than taking a peer's word for either.
+
+That register also answers who is writing as an agent, which is what an arriving chat
+message names. Without it a message landing on the wrong node finds nothing running and
+is handed to a worker, which is a second agent writing into a conversation the first is
+already answering in.
+
+A node that dies leaves its claims behind until they expire, during which a request for
+one of its sessions is answered with a 502 rather than a 404: the conversation existed and
+the node holding it has gone, which is a different thing from a session that was never
+there.
 
 ## Agents that are configured rather than spelled out
 
@@ -1310,13 +1378,10 @@ docker run -d --name va-redis -p 56379:6379 redis:7-alpine
 ## Regenerate the HTTP layer
 
 Operations are declared in Go with Huma, on a chi router, and the structs are the source
-of truth. `api/openapi.yaml` is rendered from them and read by every client generator, so it
-is never edited by hand. The operations not yet moved to Go are still described in
-`api/legacy.yaml` and generated into `internal/api/generated.go` by oapi-codegen, and
-`cmd/openapi` merges both halves into one document. After changing an operation:
+of truth. `api/openapi.yaml` is rendered from them by `cmd/openapi` and read by every client
+generator, so it is never edited by hand. After changing an operation:
 
 ```bash
-go tool oapi-codegen -config api/oapi-codegen.yaml api/legacy.yaml   # only if legacy.yaml changed
 go run ./cmd/openapi
 uv run ../plugins/stream/generate.py
 uv run ../sdks/swift/generate.py
@@ -1333,15 +1398,24 @@ browser and on a server and the runtime is the part that differs between them. I
 code is hand-written in `sdks/js/src/client.ts` and typed against the generated `paths`, so
 a new operation is reachable there as soon as the types are regenerated.
 
-The three sockets are declared in `api/legacy.yaml` with a `101` response so a reader and a client
-generator know they exist, and excluded from generation: a strict server cannot express an
-upgrade. Their handlers are hand-written in `internal/api/sessionws.go`, `streamws.go` and
-`dispatchws.go`, and the Python side of them in `plugins/stream/.../_socket.py`. Excluding
-an operation also drops it from the embedded spec, so the middleware cannot read their marks
-off it. Those, and the three agent-log handlers excluded for the same reason, are listed in
-`unspecifiedRoutes` in `server.go` instead. A test reads `exclude-operation-ids` and fails if
-that list and this map disagree, because an operation the spec cannot see is the one place a
-default that refuses by default could fail open.
+The three sockets cannot be Huma operations, since an upgrade returns a connection rather than
+a response, and neither can the log stream, the data export and import, which stream, or the
+plugin callback and the connector consent's launch page, handoff and callback, which a browser
+reaches. Their handlers are written by hand in `internal/api/sessionws.go`, `streamws.go`,
+`dispatchws.go`, `logs.go`, `datamove.go`, `plugins.go` and `authorizations.go`, and the Python side of the sockets in `plugins/stream/.../_socket.py`. Each is
+still declared, with its `101` or streamed response, in `internal/api/handwritten.go`, so a
+reader and a client generator know it exists and the server-side check reads its marks like
+any other operation's: an operation the spec cannot see is the one place a default that
+refuses could fail open.
+
+What one node asks another is not part of this API and is not in the spec. It is the
+`Node` gRPC service in `internal/node/node.proto`, generated by buf. Both buf and the
+protobuf plugins are pinned `go run` commands rather than tool directives, so nothing has
+to be installed and a code generator's dependencies stay out of the router's:
+
+```bash
+go run github.com/bufbuild/buf/cmd/buf@v1.73.0 generate
+```
 
 ## Design notes
 
@@ -1433,14 +1507,16 @@ question so a late interruption cannot cancel its successor.
 
 The backend owns all Chat writes. Initial messages, tool starts/completions and
 final results use durable writes; intermediate cumulative snapshots use
-`EphemeralMessageUpdate`, throttled to 200 ms when changed. A local write-ahead
-outbox retains retries with stable message IDs. Set `CHAT_OUTBOX_DIR` to a private
-persistent local directory; setting it also enables eager restart reconciliation.
-Pending data stays visibly unsaved and is overlaid on resumed history. Abandoned
-work is marked interrupted on restart. Stream credentials are required; Postgres
-and Redis are not. This implementation assumes one backend process owns the local
-outbox. Closing the last client of a persisted text session ends that session;
-the saved channel remains available.
+`EphemeralMessageUpdate`, throttled to 200 ms when changed. Nothing is written to
+local disk: a held conversation retries its pending writes in memory with stable
+message IDs, and Stream Chat is the durable copy. Pending data stays visibly
+unsaved and is overlaid on resumed history. A conversation nobody holds is rebuilt
+from its channel: a user message is stored under its command ID, so a command in
+the last 100 messages is never run twice, and a reply still running there when it
+is reopened is marked interrupted. Writes not yet in Stream when the process stops
+are lost. Stream credentials are required; Postgres and Redis are not. Closing the
+last client of a persisted text session ends that session; the saved channel
+remains available.
 
 The Go SDK exposes `agents.ChatOptions{ConversationID: cid}`,
 `Session.ConversationID()`, `Session.ContextTruncated()`,

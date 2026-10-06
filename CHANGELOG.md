@@ -2,6 +2,40 @@
 
 ## Breaking Changes
 
+### `plugins` is `agent_plugins`, and `plugin_options` moved onto each entry
+
+An agent config's `plugins` is now `agent_plugins`, in `agent.yaml` and on `AgentConfig`,
+`AgentConfigRequest`, `AgentConfigPatch` and `SyncAgentRequest`. `plugin_options` is gone:
+each entry of `agent_plugins` and `user_plugins` is either a catalog id or an object
+`{name, readonly, scopes, toolsets, tools}` (`PluginEntry`, a `oneOf` of a string and a
+`PluginWithOptions`), and an entry with no options is answered as its id. The old keys are
+refused as unknown in `agent.yaml` and dropped by the API. A config now gets a 400 for an id
+the catalog does not have and for a plugin named twice in one list. A migration renames the
+column and folds the stored options into their entries; an option for a plugin named in
+neither list adds that plugin to `agent_plugins`.
+
+```yaml
+agent_plugins:
+  - sentry
+user_plugins:
+  - name: linear
+    readonly: true
+    scopes: [read]
+  - google_calendar
+```
+
+The Go SDK (`agents.PluginSettings`) and the Python folder reader (`PluginSettings` in
+`plugins/stream`) have moved, and the Python reader now accepts `scopes` and `user` on
+`mcp_servers`. Other SDKs follow.
+
+### The connector catalog answers `Connector` and `ConnectorPage`
+
+`listConnectors`, `getConnector` and `createConnector` (`/v1/agents/connectors`) answered schemas named `ConnectorDefinition` and `ConnectorDefinitionPage`. They are `Connector` and `ConnectorPage` now; the JSON is unchanged. Go, JavaScript and Python clients use the new type names.
+
+### Connections are `Connection` in the API, and a connector's client says `registration`
+
+The connection operations are renamed: `createConnectorConnection`, `listConnectorConnections`, `getConnectorConnection` and `deleteConnectorConnection` (`/v1/agents/connections`) are `createConnection`, `listConnections`, `getConnection` and `deleteConnection`. Their schemas follow: `ConnectorConnection`, `ConnectorConnectionPage`, `ConnectorConnectionRequest`, `ConnectorConnectionOwner`, `ConnectorConnectionOwnerType` and `ConnectorConnectionStatus` are `Connection`, `ConnectionPage`, `ConnectionRequest`, `ConnectionOwner`, `ConnectionOwnerType` and `ConnectionStatus`. Paths and JSON are unchanged. The connector client's `policy` field is `registration` on the wire, on `Connector.client` and `CustomConnectorRequest.client`, and its enum `ConnectorClientOwner` is `ConnectorClientRegistrationMethod`; the values are unchanged. In a manifest, `client.policy` is `client.registration` and `rate_limit.leak` is `rate_limit.leak_per_second`, and every built-in connector has a new revision. Go, JavaScript and Python clients use the new names.
+
 ### Deleting a session deletes it; stopping one is `POST .../stop`
 
 `DELETE /v1/agents/sessions/{id}` used to end a session and keep everything. It now deletes
@@ -20,13 +54,16 @@ still close with `DELETE` now delete the conversation until they move to `stop`.
 It answers three queries: every session, most recently updated first; a text search
 (`{"text": {"$q": "..."}}`), best match first; and one project's sessions
 (`{"project_id": "..."}`), most recently updated first. `agent` and `user_id` narrow any of
-them. The `config_id`, `state`, `custom`, `created_after` and `created_before` filters are
-gone, and a field or operator outside these is a 400. `project` is now `project_id` on
-session create, fork and the session itself.
+them, as do `config_id`, `state`, and `custom`, which holds the pairs a session must carry.
+`created_after` and `created_before` are now one `created_at` range,
+`{"$gte": "...", "$lt": "..."}`, half open so two windows that meet share no session. A field
+or operator outside these is a 400. `project` is now `project_id` on session create, fork and
+the session itself.
 
-In Go, `Sessions.Query` and `Sessions.Search` call the new endpoint, and `Query` keeps only
-`ProjectID`, `UserID`, `Limit` and `Cursor`. `SessionOptions.Project`, `ForkOptions.Project`
-and `stream.Call.Project` are now `ProjectID`. Other SDKs follow.
+In Go, `Sessions.Query` and `Sessions.Search` call the new endpoint, and `Query` takes
+`ProjectID`, `UserID`, `ConfigID`, `Custom`, `CreatedAfter`, `CreatedBefore`, `Limit` and
+`Cursor`. `SessionOptions.Project`, `ForkOptions.Project` and `stream.Call.Project` are now
+`ProjectID`. Other SDKs follow.
 
 ### Session, response and item lists page by cursor instead of offset
 
@@ -419,6 +456,177 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 `deepgram.TTS` now streams Flux TTS on `wss://api.deepgram.com/v2/speak` and defaults to `flux-haley-en`. Aura model strings (`aura-*`) are rejected with `ValueError`. Call sites that passed an Aura voice must switch to a Flux model (`flux-{voice}-en`). See the [Flux voice catalog](https://developers.deepgram.com/docs/flux-tts/voices).
 
 ## New Features
+
+### Every router response carries an `X-Request-Id`, and a 500 is logged with its stack
+
+The router answers every request with `X-Request-Id`, keeping one a proxy sent (printable
+ASCII, up to 128 characters) and minting a UUID otherwise; browsers can read it through
+`Access-Control-Expose-Headers`. The access log line carries the same `request_id`, the
+error a request failed with and, for a 5xx, the stack where that error entered the router.
+A 5xx body is now `{"error": "internal error"}` rather than the error's text: quote the
+request id to find the rest in the logs.
+
+### A connection is connected through the provider's consent
+
+`POST /v1/agents/connections/{id}/authorizations` (`createAuthorization`, server-side only) starts the OAuth consent for a connection and answers a `launch_url` and a `handoff_token`. The dashboard opens the launch page in a popup and posts it the token; the browser goes to the provider and comes back to `/v1/agents/connectors/oauth/callback`, which stores the grant and sends the browser to the dashboard with `connection_id` and `status`. The consent must finish in the browser that started it, within 10 minutes, once, and its handoff token works once. A reconnect that comes back with another provider account keeps the old grant and ends as `account_mismatch`. The router needs `ROUTER_PUBLIC_URL` for it, and with an https one it serves its OAuth Client ID Metadata Document at `/.well-known/oauth-client-metadata`. The Go client and the JavaScript types are regenerated; other SDKs follow.
+
+### An MCP server named by URL can log in, for the app or for each user
+
+The server decides whether it needs a login: saving a config asks each of its `mcp_servers`
+(its protected-resource metadata, or a 401 that says how to authenticate) and stores the
+answer as the read-only `needs_login` on `McpServer`; a session asks again for one that could
+not be reached. A server that needs a login is the app's to connect once: it is listed by
+`GET /v1/agents/configs/{id}/plugins` and connected with the same
+`.../plugins/{name}/authorize` as a catalog plugin, and until then its tools fail with
+"connect <name> on the dashboard". With `user: true`, each end user logs in in the
+conversation instead, the first time the agent needs the server. `scopes` is optional and,
+left out, asks for the `scopes_supported` the server advertises. The login follows the MCP
+authorization spec: the authorization server's metadata, a client registered on the fly,
+PKCE and `resource`. A login is only good at the URL it was made at, so changing a server's
+URL needs a new one, and a login made before its scopes change keeps what it was granted.
+Saving a server whose login the router cannot make, or that sets `scopes` or `user` but
+needs no login, is a 400. `McpServer` gains `scopes` and `user` on `AgentConfig`,
+`AgentConfigRequest`, `AgentConfigPatch` and `SyncAgentRequest`, and the Go folder reader
+reads them (`agents.MCPServerSettings.Scopes` and `.User`).
+
+```yaml
+mcp_servers:
+  - name: crm                  # needs a login: the app connects it on the dashboard
+    url: https://crm.example.com/mcp
+  - name: notes
+    url: https://notes.example.com/mcp
+    user: true
+```
+
+### An MCP server says what it is
+
+Saving a config asks each of its `mcp_servers` for the `serverInfo` it answers `initialize`
+with, and keeps it as a read-only `branding` on the server: `title` (its name when it gives
+none), `description`, `version`, `icon_url` (its first https icon) and `website_url`. Any
+of them may be missing, and many servers send only a name and version. A server that does
+not answer within 5 seconds keeps what it said before, and the config is saved either way.
+The request goes through the router's egress client, so it only reaches public hosts.
+
+### A plugin can be reached read-only, limited to some tools, and its scopes chosen
+
+`plugin_options` says how an agent reaches a catalog plugin and what its login asks for.
+`readonly: true` reaches the vendor's read-only MCP server, which for Linear is
+`https://mcp.linear.app/mcp/readonly` asking only for `read`; `scopes` replaces the scopes
+asked for at consent; `toolsets` limits the server to some groups of tools, which for
+Cal.com go on its URL as `?toolsets=`. Left out, the plugin is the catalog's. It is on
+`AgentConfig`, `AgentConfigRequest`, `AgentConfigPatch` and `SyncAgentRequest`, and the Go
+and Python folder readers read it. `readonly` on a plugin without a read-only server, or a
+toolset its catalog entry does not list, is a 400. `Plugin` in the catalog says which a
+plugin accepts, as `readonly`, `toolsets` and `scopes_supported`; a scope outside
+`scopes_supported` is a 400. Google Drive takes `drive.file` beside its default
+`drive.readonly`, for `create_file` and `copy_file`.
+
+`tools`, on `plugin_options` and on `mcp_servers`, offers the model only the tools named or
+matching a pattern such as `get_*`; the router refuses to run any other. Left out, every
+tool is offered.
+
+```yaml
+user_plugins: [linear, calcom]
+plugin_options:
+  - plugin: linear
+    readonly: true
+    tools: [list_issues, get_issue]
+  - plugin: calcom
+    toolsets: [bookings, availability]
+```
+
+### AssemblyAI's Universal-3.6 Pro Realtime as a transcription model
+
+The router now streams to `assemblyai/universal-3-6-pro`, reachable by name or by any
+shortcut whose terms it satisfies. It needs `ASSEMBLYAI_API_KEY`, covers 32 languages with
+code-switching, and declares `keyterms` and `endpointing`; `silence_ms` is its
+`max_turn_silence`. A call runs on the `max_accuracy` preset, because the server's own
+`balanced` one ends a turn at a short pause mid-sentence. `overwrites` takes `mode`
+(`min_latency`, `balanced`, `max_accuracy`), `min_turn_silence` and `max_turn_silence`.
+
+### OpenAI's GPT-6.1 Sol
+
+The router now reaches `openai/gpt-6.1-sol`, and `llm-thinking` prefers it in place of
+GPT-6 Sol, which stays declared for configs that name it. Like Astra, GPT-6.1 Sol rejects a
+reasoning effort of `none`, so a request naming no effort is sent `low` and one naming
+`none` is refused.
+
+### Linear, GitHub, HubSpot, Google Drive and Google Docs plugins, and a logo on every login
+
+The plugin catalog is twelve entries: `slack`, `calendly`, `calcom`, `shopify`, `salesforce`,
+`sentry`, `linear`, `github`, `hubspot`, `google_calendar`, `google_drive` and `google_docs`.
+Linear registers its own client; GitHub, HubSpot, Slack, Salesforce and the three Google
+plugins each need a `<ID>_MCP_CLIENT_ID` and `<ID>_MCP_CLIENT_SECRET` on the router. Drive
+and Docs are separate servers with separate scopes, so they are separate plugins. There is no
+`teams` plugin: as of October 2026 a Teams app hosts its own MCP server at its own URL, and
+Microsoft publishes nothing hosted to point at.
+
+Every plugin now has a logo, served as an SVG needing no credential from the new
+`GET /v1/agents/plugins/{plugin_id}/logo`, and both `Plugin` and `PluginConnection` carry a
+`logo_url` for a dashboard to draw a card with. The logos are our own plain marks rather than
+the vendors' artwork, so a deployment that has licensed the real thing replaces a file.
+
+The `plugin_authorization` attachment has three more fields, so a Chat client with no
+renderer for the type still shows a card with a logo and a working link: `text` (the
+catalog description), `thumb_url` (that logo URL) and `title_link` (the authorize URL). Each
+is derived and checked against the catalog, so an MCP server cannot put an arbitrary image
+into somebody's conversation. In Python, `RemoteEvent.image_url` carries the logo on an
+`authorization_required` event.
+
+### A conversation can move to Slack, Teams or RCS
+
+`omni` has a `teams` provider, reading Bot Framework `message` activities and answering with
+markdown and hero cards, so Teams joins Slack, WhatsApp, RCS, SMS and iMessage as a channel
+a conversation can be carried over to. `examples/text_agents/mcp_plugins` now runs webhooks
+for Slack, Teams and Google RBM beside the ones it had, each with a login button a plugin's
+authorization attachment is drawn into: Block Kit for Slack, a hero card for Teams and an
+`openUrlAction` suggestion for RCS. Note that a plugin and a channel are different things:
+`slack` under `user_plugins` is an account the agent reads, and the Slack channel is a person
+talking to the agent in Slack.
+
+### Sentry and Google Calendar plugins, and plugins each user connects in the chat
+
+The plugin catalog has `sentry` and `google_calendar`. `agent.yaml` names `user_plugins`
+beside `plugins`: a plugin under `plugins` is connected once by the app, and one under
+`user_plugins` by each end user with their own account. The agent gets `<id>__list_tools`
+and `<id>__call_tool` for those, and the first call for somebody who has not connected asks
+them to, as a `plugin_authorization` attachment on the reply (an `authorization_required`
+event in Python). `GET /v1/agents/configs/{id}/plugins` now lists a plugin the config names
+that the app has not connected as `not_connected`, for the dashboard to remind about. Google
+Calendar needs `GOOGLE_CALENDAR_MCP_CLIENT_ID` and `GOOGLE_CALENDAR_MCP_CLIENT_SECRET` on the
+router. See `examples/text_agents/on_call`.
+
+### The sandbox can be built, run for minutes, and hand files back to chat
+
+`sandbox_options` on an agent config, or in `agent.yaml`, says how the subagent's Daytona
+sandbox is built and how long code may run in it (#737):
+
+```yaml
+sandbox: daytona
+sandbox_options:
+  setup: [pip install --no-cache-dir bpy==5.2.2]
+  timeout: 5m      # timeout_ms on the API, at most 30 minutes
+  cpu: 2
+  memory_gb: 4
+```
+
+`image` is the base to build on (a slim Python 3.13 when left out). Daytona keeps the built
+image, so only the first sandbox from a setup waits for it.
+
+`run_code` takes `files`, paths the program wrote. On a persistent text conversation each one
+is uploaded to the channel and attached to the reply that settles the work (an image inline,
+anything else as a file), so it is still there when the conversation is reopened, and history
+returns it as the message's `files`. `task_settled` lists them as `files`, which the Go SDK
+reads into `Event.Files` and Python into `RemoteEvent.files`. `examples/text_agents/blender_artist`
+uses this to render with Blender.
+
+### A reply starts speaking sooner
+
+The first chunk of a reply now goes to the voice at its first clause, once it has 20
+characters, rather than waiting for the first full stop; the rest still goes by the
+sentence. A transcript the speech-to-text provider has finalized is put to the flow
+controller after 60 ms instead of the 350 ms a revision waits, except when it ends in digits
+that may still be growing.
 
 ### A reply can start before the flow controller rules: `ROUTER_SPECULATIVE_REPLIES`
 
@@ -1313,6 +1521,32 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A login card in a tool result is attached to the reply only when it comes from a server
+  each end user logs into: a plugin under `user_plugins`, or an `mcp_servers` entry with
+  `user: true`. A server the app logs into, or one with no login, can no longer put one in
+  the conversation.
+- MCP traffic only reaches public hosts. A session opening a config's `mcp_servers` or its
+  plugins, a plugin login, a token refresh and plugin events used Go's default HTTP client,
+  so a config could point the router at a private address or the cloud metadata server.
+  They now go through the router's egress client, which refuses those and redirects that
+  leave the server's origin.
+- The `slack` plugin asks for `search:read.public` instead of `search:read`, which Slack's MCP
+  server does not offer, so a login with the default scopes is no longer refused.
+- The `salesforce` plugin reaches Salesforce's hosted `sobject-reads` server at
+  `https://api.salesforce.com/platform/mcp/v1/platform/sobject-reads`, asking for `mcp_api`
+  and `refresh_token`. It pointed at `https://{instance}/mcp`, which no org serves, and
+  needed an org host to connect; it now needs none.
+- `Agent.ask()` follows a reply until the tools it called have answered. It stopped at
+  the first `agent_speech`, which is the model saying it is about to call a tool, because
+  the Python SDK dropped `pending_work`. `RemoteEvent` now carries it, as the Go SDK's
+  event does. (#737)
+- An agent with an `MCPServerLocal` no longer ends in a `CancelledError` when it closes.
+  The stdio session was entered on the connecting task and exited on the closing one, which
+  anyio's cancel scopes refuse. It is now held on a task of its own, as `MCPServerRemote`
+  already was. (#737)
+- A caller who kept talking after the first part of their turn was queued is no longer
+  answered twice. The whole turn was answered, and then the queued part again once the
+  agent stopped, in one Voicebench call 17.9 s later.
 - The Python client now adds a `command_id` when it asks a stored text conversation
   something, as the JavaScript SDK does, so a user's question is no longer refused.
 - An incognito voice call is no longer written into Stream Chat. The transcript writer was

@@ -28,6 +28,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -280,7 +281,7 @@ func (r *Router[P]) Providers(ctx context.Context) []Candidate {
 // puts that one first instead, for as long as it is available.
 func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []string) ([]Candidate, error) {
 	if target == "" {
-		return nil, errors.New("routing: target is required")
+		return nil, stack.Wrap(errors.New("routing: target is required"))
 	}
 
 	if provider, ok := r.config.Provider(target); ok {
@@ -289,7 +290,7 @@ func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []
 
 	alias, ok := r.config.Aliases[target]
 	if !ok {
-		return nil, fmt.Errorf("routing: unknown target %q", target)
+		return nil, stack.Wrap(fmt.Errorf("routing: unknown target %q", target))
 	}
 
 	var candidates []Candidate
@@ -305,7 +306,7 @@ func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []
 	}
 
 	if len(candidates) == 0 {
-		return nil, fmt.Errorf("routing: no provider satisfies %q for languages %s", target, strings.Join(languageHints, ","))
+		return nil, stack.Wrap(fmt.Errorf("routing: no provider satisfies %q for languages %s", target, strings.Join(languageHints, ",")))
 	}
 
 	rank(candidates)
@@ -320,7 +321,7 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 	var zero P
 
 	if request.CustomerID == "" {
-		return zero, ProviderConfig{}, errors.New("routing: customer id is required")
+		return zero, ProviderConfig{}, stack.Wrap(errors.New("routing: customer id is required"))
 	}
 	if err := request.Tags.Validate(); err != nil {
 		return zero, ProviderConfig{}, err
@@ -374,8 +375,8 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 		failures = append(failures, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
 	}
 
-	return zero, ProviderConfig{}, fmt.Errorf("routing: every candidate for %q failed: %w",
-		request.Target, errors.Join(failures...))
+	return zero, ProviderConfig{}, stack.Wrap(fmt.Errorf("routing: every candidate for %q failed: %w",
+		request.Target, errors.Join(failures...)))
 }
 
 // Admit asks the customer's policies whether they may spend anything, and what their
@@ -434,8 +435,8 @@ func (r *Router[P]) resolveChain(ctx context.Context, request Request) ([]Candid
 	}
 
 	if len(chain) == 0 {
-		return nil, fmt.Errorf("routing: nothing in the priority list %s can serve this request: %w",
-			strings.Join(request.Providers, ", "), errors.Join(refusals...))
+		return nil, stack.Wrap(fmt.Errorf("routing: nothing in the priority list %s can serve this request: %w",
+			strings.Join(request.Providers, ", "), errors.Join(refusals...)))
 	}
 
 	demote(chain)
@@ -505,7 +506,7 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 	if r.validate != nil {
 		if err := r.validate(provider, candidate.Config); err != nil {
 			provider.Close()
-			return zero, err
+			return zero, stack.Wrap(err)
 		}
 	}
 	if err := provider.Start(ctx); err != nil {
@@ -551,7 +552,7 @@ func (r *Router[P]) voice(ctx context.Context, request Request, provider string)
 		// A deployment with no resolver has no voices of its own, so a name asked for as
 		// one is a mistake, and passing it on would send the prefix to the provider.
 		if strings.HasPrefix(request.Voice, options.OwnVoicePrefix) {
-			return "", fmt.Errorf("routing: %q was asked for, and this deployment has no voices of its own", request.Voice)
+			return "", stack.Wrap(fmt.Errorf("routing: %q was asked for, and this deployment has no voices of its own", request.Voice))
 		}
 		return request.Voice, nil
 	}
@@ -607,7 +608,7 @@ func serving(candidates []Candidate, terms []options.Term) ([]Candidate, error) 
 	if len(unserved) == 0 {
 		unserved = []string{"that combination of terms"}
 	}
-	return nil, fmt.Errorf("routing: no provider can express %s", strings.Join(unserved, ", "))
+	return nil, stack.Wrap(fmt.Errorf("routing: no provider can express %s", strings.Join(unserved, ", ")))
 }
 
 // allowed narrows candidates to the models the customer's policies allow. A request none of
@@ -627,7 +628,7 @@ func allowed(candidates []Candidate, models []string) ([]Candidate, error) {
 		}
 	}
 	if len(kept) == 0 {
-		return nil, fmt.Errorf("%w: it allows none of %s", ErrModelNotAllowed, strings.Join(asked, ", "))
+		return nil, stack.Wrap(fmt.Errorf("%w: it allows none of %s", ErrModelNotAllowed, strings.Join(asked, ", ")))
 	}
 	return kept, nil
 }
@@ -675,8 +676,8 @@ func permitted(candidates []Candidate, policy options.DataPolicy) ([]Candidate, 
 	if len(unmet) == 0 {
 		unmet = []string{"that combination of data policy requirements"}
 	}
-	return nil, fmt.Errorf("routing: no provider meets your data policy: none offers %s",
-		strings.Join(unmet, " and "))
+	return nil, stack.Wrap(fmt.Errorf("routing: no provider meets your data policy: none offers %s",
+		strings.Join(unmet, " and ")))
 }
 
 // seeing narrows candidates to the ones that accept every extra input kind the request
@@ -711,7 +712,7 @@ func seeing(candidates []Candidate, modalities []string) ([]Candidate, error) {
 	if len(unmet) == 0 {
 		unmet = []string{"that combination of input modalities"}
 	}
-	return nil, fmt.Errorf("routing: no provider accepts %s input", strings.Join(unmet, ", "))
+	return nil, stack.Wrap(fmt.Errorf("routing: no provider accepts %s input", strings.Join(unmet, ", ")))
 }
 
 // retentionUnmet names a retention requirement nothing offered, in the words it was asked

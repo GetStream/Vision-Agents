@@ -18,7 +18,7 @@ The agents quickstart's Agent UI step (`session.chat()`) cannot work on a shared
 
 ## What it does
 
-Every Stream call the router makes for a customer is made in that customer's own Stream app, with that app's own key, resolved from the customer id alone. That includes the background work no request carries: the outbox, restart recovery, titles, campaigns, transfers and hooks. Work already written stays in the app it was written in, and is read back from there.
+Every Stream call the router makes for a customer is made in that customer's own Stream app, with that app's own key, resolved from the customer id alone. That includes the background work no request carries: pending writes, titles, campaigns, transfers and hooks. Work already written stays in the app it was written in, and is read back from there.
 
 Two modes, chosen per deployment:
 
@@ -48,7 +48,7 @@ The deployment's own app is never registered: its customer keeps the env pair's 
   - `-1` is an imported row whose app this deployment cannot place;
   - anything else is a registered app.
   - Reads and later writes follow the pin, never the caller's current app. A pin that can no longer be written parks, and is never delivered elsewhere.
-- **Conversations.** Records for registered apps live under `CHAT_OUTBOX_DIR/apps/<hex customer>/`. The deployment's app keeps the old layout, so an older binary still finds its own records and never sees another app's.
+- **Conversations.** Held in memory by customer and channel id, since a channel id is unique only within one app. One nobody holds finds its app from its session's pin.
 - **Registration.**
   - `PUT /v1/settings/app/stream/credentials` takes every key the app holds.
   - The router asks Stream which app each key belongs to. It refuses:
@@ -72,7 +72,7 @@ The deployment's own app is never registered: its customer keeps the env pair's 
 
 ## With nothing set
 
-A deployment that takes this build with no new setting stays in deployment mode. It keeps its Stream app, auth, token keys and outbox layout. New:
+A deployment that takes this build with no new setting stays in deployment mode. It keeps its Stream app, auth and token keys. New:
 - one background `GET /app` at startup to learn the app id (logged; never blocks or fails startup);
 - six additive migrations, run automatically.
 
@@ -134,7 +134,7 @@ export ROUTER_AUTH_MODE=api_key ROUTER_AUTH_KEK=<any local string> \
 ROUTER_POSTGRES_DSN=postgres://postgres:postgres@localhost:55432/<scratch>?sslmode=disable \
 ROUTER_REDIS_ADDR=localhost:56379
 ./router keys create --app-id <Stream app id>
-ROUTER_ADDR=:18181 ROUTER_STREAM_TENANCY=app ROUTER_STREAM_FALLBACK=refuse CHAT_OUTBOX_DIR=<scratch dir> \
+ROUTER_ADDR=:18181 ROUTER_STREAM_TENANCY=app ROUTER_STREAM_FALLBACK=refuse \
 BASETEN_API_KEY=<any value; session start needs an LLM route> ./router
 ```
 
@@ -150,20 +150,19 @@ Then, with the printed key in `X-Api-Key`, `Stream-Auth-Type: server`, and a bea
 Delete the channels and users the run made.
 
 **Before this reaches `accelerate`**, in order:
-1. Rebase onto `accelerate` and renumber the six migrations after its newest. Today they sit between migrations already there, and goose refuses either order.
-2. CI on the pushed branch: `ci.yml` runs on every branch.
-3. Make the end-to-end run above into committed, env-gated tests over three apps:
+1. CI on the pushed branch: `ci.yml` runs on every branch.
+2. Make the end-to-end run above into committed, env-gated tests over three apps:
    - A, the deployment's app;
    - B, registered;
    - C, unregistered.
-   - They also cover restart recovery into B, key rotation, revocation, and same-binary rollback.
-4. Run the real clients against a local router: the getstream CLI quickstart, the dashboard's Join call and transcript, and the docs panel.
-5. A release candidate on the hosted environment, built from the branch with the launch tooling:
+   - They also cover key rotation, revocation, and same-binary rollback.
+3. Run the real clients against a local router: the getstream CLI quickstart, the dashboard's Join call and transcript, and the docs panel.
+4. A release candidate on the hosted environment, built from the branch with the launch tooling:
    - back up the database first;
    - deploy once with nothing set, then switch to app mode;
-   - run the suite from step 3;
+   - run the suite from step 2;
    - drill the rollback.
-6. Merge the same commits, release, and deploy the release.
+5. Merge the same commits, release, and deploy the release.
 
 ## Deploying
 
@@ -175,7 +174,6 @@ What app mode on a hosted router needs:
   - never `server` for an app whose tokens are not checked.
   - Without it, app mode refuses to start behind a proxy.
 - **Anything that calls the router directly,** without the gateway, names its app with `X-Stream-App-Id`. With the setting above, proxy mode no longer reads `X-Customer-Id`.
-- **A durable `CHAT_OUTBOX_DIR`** (recommended). On an emptyDir every restart loses each conversation's command ledger.
 - **The `agent` channel and call types in each registered app.**
 
 Settings:

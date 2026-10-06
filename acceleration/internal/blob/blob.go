@@ -17,6 +17,8 @@ import (
 	_ "gocloud.dev/blob/gcsblob"
 	_ "gocloud.dev/blob/s3blob"
 	"gocloud.dev/gcerrors"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Bucket is somewhere to put files.
@@ -42,7 +44,7 @@ func Open(ctx context.Context, url string) (*Bucket, error) {
 func (b *Bucket) Write(ctx context.Context, key, contentType string, content io.Reader) (int64, error) {
 	writer, err := b.bucket.NewWriter(ctx, key, &gcblob.WriterOptions{ContentType: contentType})
 	if err != nil {
-		return 0, fmt.Errorf("blob: write %s: %w", key, err)
+		return 0, stack.Wrap(fmt.Errorf("blob: write %s: %w", key, err))
 	}
 
 	written, err := io.Copy(writer, content)
@@ -51,12 +53,12 @@ func (b *Bucket) Write(ctx context.Context, key, contentType string, content io.
 		// left behind for something later to read as if it were whole.
 		writer.Close()
 		if err := b.bucket.Delete(ctx, key); err != nil {
-			return 0, fmt.Errorf("blob: write %s: %w", key, err)
+			return 0, stack.Wrap(fmt.Errorf("blob: write %s: %w", key, err))
 		}
-		return 0, fmt.Errorf("blob: write %s: %w", key, err)
+		return 0, stack.Wrap(fmt.Errorf("blob: write %s: %w", key, err))
 	}
 	if err := writer.Close(); err != nil {
-		return 0, fmt.Errorf("blob: write %s: %w", key, err)
+		return 0, stack.Wrap(fmt.Errorf("blob: write %s: %w", key, err))
 	}
 	return written, nil
 }
@@ -66,7 +68,7 @@ func (b *Bucket) Write(ctx context.Context, key, contentType string, content io.
 func (b *Bucket) Read(ctx context.Context, key string) ([]byte, error) {
 	content, err := b.bucket.ReadAll(ctx, key)
 	if err != nil {
-		return nil, fmt.Errorf("blob: read %s: %w", key, err)
+		return nil, stack.Wrap(fmt.Errorf("blob: read %s: %w", key, err))
 	}
 	return content, nil
 }
@@ -78,7 +80,7 @@ func (b *Bucket) Delete(ctx context.Context, key string) error {
 	if err == nil || gcerrors.Code(err) == gcerrors.NotFound {
 		return nil
 	}
-	return fmt.Errorf("blob: delete %s: %w", key, err)
+	return stack.Wrap(fmt.Errorf("blob: delete %s: %w", key, err))
 }
 
 // Close releases the bucket.

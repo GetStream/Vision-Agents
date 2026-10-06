@@ -3,8 +3,11 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"testing"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 )
 
 type SyncSuite struct {
@@ -13,6 +16,13 @@ type SyncSuite struct {
 
 func TestSyncSuite(t *testing.T) {
 	runSuite(t, new(SyncSuite))
+}
+
+// SetupSuite seeds the built-in connectors as a router start does, so a directory can bind
+// one. Seeding is idempotent, so suites running beside this one see the same rows.
+func (s *SyncSuite) SetupSuite() {
+	s.RouterSuite.SetupSuite()
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
 
 // SetupTest gives every test an app of its own, because a sync is named by what the agent
@@ -50,19 +60,74 @@ func (s *SyncSuite) TestSyncingAnAgentStoresItsInstructionsAndSkills() {
 func (s *SyncSuite) TestSyncingAnAgentStoresWhatItsDeclarationRunsItOn() {
 	result := s.sync(map[string]any{
 		"name": "analyst", "hash": "v1", "mode": "text",
-		"llm": "llm-flow", "subagent": "llm-flow", "tts": "en-low-latency", "voice": "aurora",
+		"llm": "llm-flow", "tts": "en-low-latency", "voice": "aurora",
 		"greeting": "Hello.", "keyterms": []string{"Vision Agents"}, "sandbox": "daytona",
 		"tags": map[string]string{"project": "analyst"},
 	})
 
 	s.Equal(AgentModeText, result.Config.Mode)
 	s.Equal("llm-flow", value(result.Config.Llm))
-	s.Equal("llm-flow", value(result.Config.Subagent))
 	s.Equal("aurora", value(result.Config.Voice))
 	s.Equal("Hello.", value(result.Config.Greeting))
 	s.Equal([]string{"Vision Agents"}, value(result.Config.Keyterms))
 	s.Equal(Daytona, value(result.Config.Sandbox))
 	s.Equal("analyst", value(result.Config.Tags)["project"])
+}
+
+func (s *SyncSuite) TestSyncingAnAgentStoresWhatItLeavesToDispatch() {
+	result := s.sync(map[string]any{
+		"name": "stream-product", "hash": "v1", "mode": "text",
+		"dispatch": map[string]string{"incoming_call": "enabled", "text": "enabled"},
+	})
+
+	s.Equal(Enabled, value(value(result.Config.Dispatch).IncomingCall))
+	s.Equal(Enabled, value(value(result.Config.Dispatch).Text))
+}
+
+func (s *SyncSuite) TestSyncingAnAgentStoresHowItsSandboxIsBuilt() {
+	result := s.sync(map[string]any{
+		"name": "artist", "hash": "v1", "sandbox": "daytona",
+		"sandbox_options": map[string]any{"setup": []string{"pip install bpy==5.2.2"}, "timeout_ms": 300000},
+	})
+	s.Equal([]string{"pip install bpy==5.2.2"}, value(value(result.Config.SandboxOptions).Setup))
+
+	// A directory that stops saying how is not one that wants the build thrown away.
+	again := s.sync(map[string]any{"name": "artist", "hash": "v2", "sandbox": "daytona"})
+	s.Equal(300000, value(value(again.Config.SandboxOptions).TimeoutMs))
+}
+
+func (s *SyncSuite) TestSyncingAnAgentStoresTheMCPServersItNamesByURL() {
+	result := s.sync(map[string]any{
+		"name": "concierge", "hash": "v1",
+		"mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}},
+	})
+
+	s.Equal([]McpServer{{Name: "tablejourney", Url: "https://tablejourney.com/mcp"}}, value(result.Config.McpServers))
+}
+
+func (s *SyncSuite) TestSyncingAVoiceAgentStoresItsThinkingLlm() {
+	result := s.sync(map[string]any{
+		"name": "support", "hash": "v1", "mode": "voice", "thinking_llm": "llm-flow",
+	})
+
+	s.Equal("llm-flow", value(result.Config.ThinkingLlm))
+}
+
+func (s *SyncSuite) TestASyncGivingATextAgentAThinkingLlmIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "analyst", "hash": "v1", "mode": "text", "thinking_llm": "llm-flow"})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "thinking_llm")
+}
+
+func (s *SyncSuite) TestASyncAskingForTooMuchMemoryIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "artist", "hash": "v1", "sandbox": "daytona",
+			"sandbox_options": map[string]any{"memory_gb": 1024}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "memory_gb")
 }
 
 func (s *SyncSuite) TestASyncThatNamesNoModelLeavesTheOneStored() {
@@ -239,4 +304,64 @@ func (s *SyncSuite) documents(namespace string) []IndexedKnowledgeDocument {
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
 		"/v1/agents/knowledge/documents?namespace="+namespace, nil, &listed))
 	return listed
+}
+
+func (s *SyncSuite) TestASyncReplacesTheBindingsStored() {
+	s.sync(map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("inbox")}})
+
+	second := s.sync(map[string]any{"name": "support", "hash": "v2", "connectors": []map[string]any{sessionSlack("crm")}})
+
+	bindings := value(second.Config.Connectors)
+	s.Require().Len(bindings, 1)
+	s.Equal("crm", bindings[0].Name)
+	s.Equal(second.Config.Connectors, s.configsNamed("support")[0].Connectors)
+}
+
+func (s *SyncSuite) TestASyncThatDeclaresNoBindingsLeavesTheOnesStored() {
+	first := s.sync(map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("inbox")}})
+
+	second := s.sync(map[string]any{"name": "support", "hash": "v2", "instructions": "Be brief."})
+
+	s.Equal(first.Config.Connectors, second.Config.Connectors)
+}
+
+func (s *SyncSuite) TestASyncWithNoBindingsClearsThem() {
+	s.sync(map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("inbox")}})
+
+	second := s.sync(map[string]any{"name": "support", "hash": "v2", "connectors": []map[string]any{}})
+
+	s.Nil(second.Config.Connectors)
+	s.Nil(s.configsNamed("support")[0].Connectors)
+}
+
+func (s *SyncSuite) TestASyncBindingAConnectorThatDoesNotExistIsRefusedAndStoresNothing() {
+	binding := sessionSlack("crm")
+	binding["connector_id"] = "custom_nothing_here"
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{binding}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "custom_nothing_here")
+	s.Empty(s.configsNamed("support"))
+}
+
+func (s *SyncSuite) TestASyncWithAnAliasHoldingTheToolSeparatorIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("team__inbox")}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "__")
+	s.Empty(s.configsNamed("support"))
+}
+
+func (s *SyncSuite) TestASyncAddingAPluginABindingIsCalledIsRefused() {
+	s.sync(map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("slack")}})
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "support", "hash": "v2", "plugins": []string{"slack"}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "plugin")
+	s.Equal("v1", value(s.configsNamed("support")[0].SyncHash))
 }

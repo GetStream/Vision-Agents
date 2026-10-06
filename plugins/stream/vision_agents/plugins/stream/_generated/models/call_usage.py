@@ -17,28 +17,28 @@ class CallUsage:
     for it.
 
         Attributes:
-            input_tokens (int): Every prompt the models read, the cached part included.
             cached_input_tokens (int): The part of those prompts a provider served from its own cache.
-            output_tokens (int): Everything the models generated, reasoning included.
             cost_micros (int): Millionths of a dollar, priced from the providers' configured rates.
+            input_tokens (int): Every prompt the models read, the cached part included.
+            output_tokens (int): Everything the models generated, reasoning included.
             requests (int): How many calls to a model it took, transcription and speech included.
     """
 
-    input_tokens: int
     cached_input_tokens: int
-    output_tokens: int
     cost_micros: int
+    input_tokens: int
+    output_tokens: int
     requests: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        input_tokens = self.input_tokens
-
         cached_input_tokens = self.cached_input_tokens
 
-        output_tokens = self.output_tokens
-
         cost_micros = self.cost_micros
+
+        input_tokens = self.input_tokens
+
+        output_tokens = self.output_tokens
 
         requests = self.requests
 
@@ -46,10 +46,10 @@ class CallUsage:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "input_tokens": input_tokens,
                 "cached_input_tokens": cached_input_tokens,
-                "output_tokens": output_tokens,
                 "cost_micros": cost_micros,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
                 "requests": requests,
             }
         )
@@ -59,21 +59,21 @@ class CallUsage:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        input_tokens = d.pop("input_tokens")
-
         cached_input_tokens = d.pop("cached_input_tokens")
 
-        output_tokens = d.pop("output_tokens")
-
         cost_micros = d.pop("cost_micros")
+
+        input_tokens = d.pop("input_tokens")
+
+        output_tokens = d.pop("output_tokens")
 
         requests = d.pop("requests")
 
         call_usage = cls(
-            input_tokens=input_tokens,
             cached_input_tokens=cached_input_tokens,
-            output_tokens=output_tokens,
             cost_micros=cost_micros,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             requests=requests,
         )
 

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -64,11 +66,12 @@ type InboundCall struct {
 	At time.Time
 }
 
-// InboundMessage is something written to an agent that no session is running for.
+// InboundMessage is something written to an agent that no session is running for, or to a
+// running session whose agent leaves text to dispatch.
 //
-// A message written to an agent that *is* running never arrives here. The router answers
-// that one from the session itself, because that agent is the one that knows what has been
-// said so far.
+// Otherwise a message written to an agent that *is* running never arrives here. The router
+// answers that one from the session itself, because that agent is the one that knows what
+// has been said so far.
 type InboundMessage struct {
 	// ChannelType and ChannelID name where it was written. Answering anywhere else would
 	// be a reply nobody asked for in a conversation nobody is reading.
@@ -80,6 +83,13 @@ type InboundMessage struct {
 	// ConfigID names the stored agent config the last conversation here ran under, so a
 	// worker serving several agents knows which one is being written to.
 	ConfigID string
+	// SessionID is the running session the message was written to, set when its agent
+	// leaves text to dispatch. Nothing has answered it: create a response on this session
+	// to have the model do so.
+	SessionID string
+	// CommandID is the durable command the message was sent as. Pass it, with Text, when
+	// creating that response so the reply lands on the command it answers.
+	CommandID string
 	// Custom is whatever the channel was created with, carried through unread the way a
 	// call's is. It is where a worker finds what the conversation is for and the router
 	// has no opinion about: the organization to scope memory to, the locale to answer in,
@@ -153,6 +163,10 @@ type Dispatch struct {
 	// not hang up on whoever is talking.
 	running sync.WaitGroup
 	active  atomic.Int64
+	// handling is the calls and messages alone, which is what the router counts against
+	// this worker's capacity. A hosted tool call is not one of them: the router tracks
+	// those by the answer it is waiting for.
+	handling atomic.Int64
 
 	pong chan struct{}
 
@@ -298,8 +312,7 @@ func (d *Dispatch) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	address := backend.SocketURL(DispatchPath) + "?capacity=" + strconv.Itoa(d.capacity)
-	socket, err := d.connect(ctx, backend, address)
+	socket, err := d.connect(ctx, backend)
 	if err != nil {
 		return err
 	}
@@ -331,7 +344,7 @@ func (d *Dispatch) Run(ctx context.Context) error {
 			case <-time.After(retry):
 			}
 			retry = min(retry*2, lastRetry)
-			socket, err = d.connect(ctx, backend, address)
+			socket, err = d.connect(ctx, backend)
 			if err == nil {
 				break
 			}
@@ -345,16 +358,43 @@ func (d *Dispatch) Run(ctx context.Context) error {
 
 // connect opens one dispatch socket, with credentials minted for it: a token signed when
 // the worker started would have expired by the time a long-running one reconnects.
-func (d *Dispatch) connect(ctx context.Context, backend Backend, address string) (*Socket, error) {
+func (d *Dispatch) connect(ctx context.Context, backend Backend) (*Socket, error) {
 	credentials, err := backend.Credentials()
 	if err != nil {
 		return nil, err
 	}
-	socket := NewSocket(address, credentials, backend.HTTPClient, d.logger)
+	socket := NewSocket(backend.SocketURL(DispatchPath)+"?"+d.waiting().Encode(),
+		credentials, backend.HTTPClient, d.logger)
 	if err := socket.Open(ctx); err != nil {
 		return nil, err
 	}
 	return socket, nil
+}
+
+// waiting is what this worker says about itself on the way in: how much it can hold, how
+// much it is already holding, and which kinds of work it answers.
+//
+// On the handshake rather than in a frame because the router may hand this worker something
+// before it has read anything, and a worker that looks idle and takes nothing is worse than
+// one that never connected.
+func (d *Dispatch) waiting() url.Values {
+	asked := url.Values{}
+	asked.Set("capacity", strconv.Itoa(d.capacity))
+	// What is still being handled from before a reconnect. The pool that handed it out has
+	// gone, so without this the one taking over fills this worker up on top of it.
+	asked.Set("active", strconv.FormatInt(d.handling.Load(), 10))
+
+	kinds := []string{}
+	if d.call != nil {
+		kinds = append(kinds, "call")
+	}
+	if d.message != nil {
+		kinds = append(kinds, "message")
+	}
+	// Always said, even when it is nothing: a worker that only hosts tools answers neither,
+	// and one handed a call it has no handler for leaves a caller listening to a phone.
+	asked.Set("handles", strings.Join(kinds, ","))
+	return asked
 }
 
 // serve waits for work on one connection until it ends.
@@ -406,9 +446,9 @@ func (d *Dispatch) read(ctx context.Context, socket *Socket) error {
 
 		switch frame.Type() {
 		case "call":
-			d.answer(ctx, callOf(frame))
+			d.answer(ctx, frame.String("work_id"), callOf(frame))
 		case "message":
-			d.reply(ctx, messageOf(frame))
+			d.reply(ctx, frame.String("work_id"), messageOf(frame))
 		case "ready":
 			d.mu.Lock()
 			d.workerID = frame.String("worker_id")
@@ -440,60 +480,79 @@ func (d *Dispatch) read(ctx context.Context, socket *Socket) error {
 // On its own goroutine rather than inline, because reading the socket is also what delivers
 // the next call: answering one caller in line would leave the next listening to a ringing
 // phone.
-func (d *Dispatch) answer(ctx context.Context, call InboundCall) {
+func (d *Dispatch) answer(ctx context.Context, workID string, call InboundCall) {
 	if d.call == nil {
 		d.logger.Debug("ignoring a call: no handler is registered for one", "call", call.CallID)
+		d.finished(workID, errors.New("stream: this worker answers no calls"))
 		return
 	}
 
 	d.logger.Info("answering a call", "from", call.CallerNumber, "on", call.CalledNumber)
 	d.running.Add(1)
 	d.active.Add(1)
+	d.handling.Add(1)
 	go func() {
 		defer d.running.Done()
 		defer d.active.Add(-1)
+		defer d.handling.Add(-1)
 
-		if err := d.call(ctx, call); err != nil {
+		err := d.call(ctx, call)
+		if err != nil {
 			d.logger.Error("a call could not be answered", "call", call.CallID, "error", err)
-			d.tell(Frame{"type": "rejected", "call_id": call.CallID, "reason": err.Error()})
-			return
 		}
-		d.tell(Frame{"type": "accepted", "call_id": call.CallID})
+		d.finished(workID, err)
 	}()
 }
 
 // reply starts handling one message, on its own goroutine for the same reason a call is.
-//
-// Nothing is reported back to the router. Accepting and rejecting are about a caller waiting
-// on a line, and there is no line here: a message nobody answered is a log line, not a
-// silence somebody is sitting in.
-func (d *Dispatch) reply(ctx context.Context, message InboundMessage) {
+func (d *Dispatch) reply(ctx context.Context, workID string, message InboundMessage) {
 	if d.message == nil {
 		d.logger.Debug("ignoring a message: no handler is registered for one", "channel", message.ChannelID)
+		d.finished(workID, errors.New("stream: this worker answers no messages"))
 		return
 	}
 
 	d.logger.Info("answering a message", "from", message.UserID, "channel", message.ChannelID)
 	d.running.Add(1)
 	d.active.Add(1)
+	d.handling.Add(1)
 	go func() {
 		defer d.running.Done()
 		defer d.active.Add(-1)
+		defer d.handling.Add(-1)
 
-		if err := d.message(ctx, message); err != nil {
+		err := d.message(ctx, message)
+		if err != nil {
 			d.logger.Error("a message could not be answered", "channel", message.ChannelID, "error", err)
 		}
+		d.finished(workID, err)
 	}()
+}
+
+// finished tells the router one piece of work is over, which is what gives this worker its
+// room for the next back.
+//
+// What went wrong goes with it rather than staying here. The router is where somebody is
+// looking when a caller says nobody picked up, and a traceback in this process's log is no
+// use to them. It is said even for work this worker had no handler for, because the room it
+// took is held until something says it is free.
+func (d *Dispatch) finished(workID string, failure error) {
+	done := Frame{"type": "done", "work_id": workID}
+	if failure != nil {
+		done["error"] = failure.Error()
+	}
+	d.tell(done)
 }
 
 // report tells the router how this process is doing, on a timer.
 //
-// The router does not use any of it to choose a worker yet. It is sent so that a policy
-// which does has numbers to read, and so an operator can see which worker is under load
-// without logging into it.
+// None of it decides where work goes. What this worker is holding is counted at the router
+// from what it has handed out and what has been reported done, which is exact and current;
+// this is so an operator can see which worker is under load without logging into it.
 //
-// Host CPU and memory are not sent. Go has no portable way to read either, and a figure
-// invented here would be read there as a real one.
+// Host CPU and memory are not sent, which is why the router's backstop for a host in
+// trouble never fires for a Go worker. There is no portable way to read either here, and a
+// figure invented in this process would be read there as a real one.
 func (d *Dispatch) report(ctx context.Context) {
 	ticker := time.NewTicker(d.reportEvery)
 	defer ticker.Stop()
@@ -602,6 +661,8 @@ func messageOf(frame Frame) InboundMessage {
 		ChannelID:   frame.String("channel_id"),
 		AgentID:     agentID,
 		ConfigID:    frame.String("config_id"),
+		SessionID:   frame.String("session_id"),
+		CommandID:   frame.String("command_id"),
 		Custom:      customOf(frame, "custom"),
 		Text:        frame.String("text"),
 		MessageID:   frame.String("message_id"),

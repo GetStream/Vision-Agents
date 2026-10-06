@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
+
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.agent_config import AgentConfig
@@ -18,27 +20,41 @@ T = TypeVar("T", bound="SyncAgentResult")
 class SyncAgentResult:
     """
     Attributes:
-        unchanged (bool): True when the hash matched and nothing was written.
         config (AgentConfig):
+        unchanged (bool): True when the hash matched and nothing was written.
+        warnings (list[str] | None | Unset): What was stored but will not work yet, such as a channel line the app has
+            not connected.
     """
 
-    unchanged: bool
     config: AgentConfig
+    unchanged: bool
+    warnings: list[str] | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        config = self.config.to_dict()
+
         unchanged = self.unchanged
 
-        config = self.config.to_dict()
+        warnings: list[str] | None | Unset
+        if isinstance(self.warnings, Unset):
+            warnings = UNSET
+        elif isinstance(self.warnings, list):
+            warnings = self.warnings
+
+        else:
+            warnings = self.warnings
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "unchanged": unchanged,
                 "config": config,
+                "unchanged": unchanged,
             }
         )
+        if warnings is not UNSET:
+            field_dict["warnings"] = warnings
 
         return field_dict
 
@@ -47,13 +63,31 @@ class SyncAgentResult:
         from ..models.agent_config import AgentConfig
 
         d = dict(src_dict)
-        unchanged = d.pop("unchanged")
-
         config = AgentConfig.from_dict(d.pop("config"))
 
+        unchanged = d.pop("unchanged")
+
+        def _parse_warnings(data: object) -> list[str] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                warnings_type_0 = cast(list[str], data)
+
+                return warnings_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[str] | None | Unset, data)
+
+        warnings = _parse_warnings(d.pop("warnings", UNSET))
+
         sync_agent_result = cls(
-            unchanged=unchanged,
             config=config,
+            unchanged=unchanged,
+            warnings=warnings,
         )
 
         sync_agent_result.additional_properties = d

@@ -97,7 +97,7 @@ func (s *AppModeSessionsSuite) TestAVoiceCallOnAConversationKeptInAnotherAppIsRe
 	call := s.attachedIn(0)
 
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions",
-		CreateSessionRequest{CallId: &call, ConversationId: created.ConversationId})
+		CreateSessionRequest{CallId: &call, CallType: pointerTo("agent"), ConversationId: created.ConversationId})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "kept in another Stream app")

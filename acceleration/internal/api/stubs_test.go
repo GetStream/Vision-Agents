@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -758,4 +760,33 @@ func (m *keptMemories) remaining() []memory.Scope {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return append([]memory.Scope(nil), m.kept...)
+}
+
+// namedScheme is a scheme registered by its name alone, which is all a connector definition
+// reads of one: whether a custom definition may name it. Nothing in these suites connects
+// through it, so it acquires, issues and applies nothing.
+type namedScheme string
+
+func (n namedScheme) Name() string { return string(n) }
+
+func (namedScheme) Begin(context.Context, core.BeginInput) (core.BeginOutput, error) {
+	return core.BeginOutput{}, errors.New("a named scheme does not connect")
+}
+
+func (namedScheme) Complete(context.Context, core.CompleteInput) (core.StoredCredentials, core.AccountInfo, error) {
+	return core.StoredCredentials{}, core.AccountInfo{}, errors.New("a named scheme does not connect")
+}
+
+func (namedScheme) Retrieve(context.Context, core.StoredCredentials, core.ResolvedManifest) (core.AccessCredential, core.StoredCredentials, error) {
+	return core.AccessCredential{}, core.StoredCredentials{}, errors.New("a named scheme does not connect")
+}
+
+func (namedScheme) Wrap(base http.RoundTripper, _ core.AccessCredential) http.RoundTripper {
+	return base
+}
+
+func (namedScheme) Classify(*http.Response, []byte, error) core.Outcome { return core.Outcome{} }
+
+func (namedScheme) Revoke(context.Context, core.StoredCredentials, core.ResolvedManifest) error {
+	return nil
 }

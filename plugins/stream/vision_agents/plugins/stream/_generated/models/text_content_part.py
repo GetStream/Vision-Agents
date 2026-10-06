@@ -16,25 +16,25 @@ T = TypeVar("T", bound="TextContentPart")
 class TextContentPart:
     """
     Attributes:
-        type_ (TextContentPartType):
         text (str):
+        type_ (TextContentPartType):
     """
 
-    type_: TextContentPartType
     text: str
+    type_: TextContentPartType
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        type_ = self.type_.value
-
         text = self.text
+
+        type_ = self.type_.value
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "type": type_,
                 "text": text,
+                "type": type_,
             }
         )
 
@@ -43,13 +43,13 @@ class TextContentPart:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        type_ = TextContentPartType(d.pop("type"))
-
         text = d.pop("text")
 
+        type_ = TextContentPartType(d.pop("type"))
+
         text_content_part = cls(
-            type_=type_,
             text=text,
+            type_=type_,
         )
 
         text_content_part.additional_properties = d

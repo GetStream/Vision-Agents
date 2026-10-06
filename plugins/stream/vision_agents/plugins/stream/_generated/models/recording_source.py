@@ -18,39 +18,39 @@ class RecordingSource:
     clip should use; inline bytes save a caller with a short local file from having to host it somewhere first.
 
         Attributes:
-            url (str | Unset): A fetchable audio or video file.
             audio (str | Unset): The file itself, base64. For clips - a long recording belongs behind a URL.
+            url (str | Unset): A fetchable audio or video file.
     """
 
-    url: str | Unset = UNSET
     audio: str | Unset = UNSET
+    url: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        url = self.url
-
         audio = self.audio
+
+        url = self.url
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
-        if url is not UNSET:
-            field_dict["url"] = url
         if audio is not UNSET:
             field_dict["audio"] = audio
+        if url is not UNSET:
+            field_dict["url"] = url
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        url = d.pop("url", UNSET)
-
         audio = d.pop("audio", UNSET)
 
+        url = d.pop("url", UNSET)
+
         recording_source = cls(
-            url=url,
             audio=audio,
+            url=url,
         )
 
         recording_source.additional_properties = d

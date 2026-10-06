@@ -11,12 +11,12 @@ use GetStream\VisionAgents\Json;
 final readonly class Skill
 {
     public function __construct(
-        public string $id,
         public string $configId,
-        public string $name,
-        public string $description,
-        public string $instructions,
         public \DateTimeImmutable $createdAt,
+        public string $description,
+        public string $id,
+        public string $instructions,
+        public string $name,
         public \DateTimeImmutable $updatedAt,
         // Capture task-scoped visual evidence before reasoning.
         public ?bool $captureVideo = null,
@@ -30,12 +30,12 @@ final readonly class Skill
     public static function fromArray(array $data): self
     {
         return new self(
-            id: Json::string($data, 'id'),
             configId: Json::string($data, 'config_id'),
-            name: Json::string($data, 'name'),
-            description: Json::string($data, 'description'),
-            instructions: Json::string($data, 'instructions'),
             createdAt: Json::date($data, 'created_at'),
+            description: Json::string($data, 'description'),
+            id: Json::string($data, 'id'),
+            instructions: Json::string($data, 'instructions'),
+            name: Json::string($data, 'name'),
             updatedAt: Json::date($data, 'updated_at'),
             captureVideo: array_key_exists('capture_video', $data) && $data['capture_video'] !== null ? Json::bool($data, 'capture_video') : null,
             deadlineMs: array_key_exists('deadline_ms', $data) && $data['deadline_ms'] !== null ? Json::int($data, 'deadline_ms') : null,
@@ -50,12 +50,12 @@ final readonly class Skill
     public function toArray(): array
     {
         $out = [];
-        $out['id'] = $this->id;
         $out['config_id'] = $this->configId;
-        $out['name'] = $this->name;
-        $out['description'] = $this->description;
-        $out['instructions'] = $this->instructions;
         $out['created_at'] = Json::dateValue($this->createdAt);
+        $out['description'] = $this->description;
+        $out['id'] = $this->id;
+        $out['instructions'] = $this->instructions;
+        $out['name'] = $this->name;
         $out['updated_at'] = Json::dateValue($this->updatedAt);
         if ($this->captureVideo !== null) {
             $out['capture_video'] = $this->captureVideo;

@@ -61,6 +61,9 @@ pub(crate) struct Backend {
     pub api_secret: String,
     pub token: String,
     pub user_id: String,
+    /// The end user a server credential speaks for. Unlike `user_id` it never becomes a user
+    /// token, so what is written is still the server's and the model answers it.
+    pub acting_for: String,
     pub authenticate: bool,
 }
 
@@ -124,6 +127,7 @@ impl Backend {
             api_secret,
             token,
             user_id: options.user_id.clone().unwrap_or_default(),
+            acting_for: String::new(),
             authenticate,
         })
     }
@@ -139,6 +143,14 @@ impl Backend {
     /// holding an expired one. A server socket sends headers rather than the query string a
     /// browser has to use.
     pub fn headers(&self) -> Result<Vec<(&'static str, String)>> {
+        let mut headers = self.credentials()?;
+        if !self.acting_for.is_empty() {
+            headers.push(("X-Stream-User-Id", self.acting_for.clone()));
+        }
+        Ok(headers)
+    }
+
+    fn credentials(&self) -> Result<Vec<(&'static str, String)>> {
         if self.api_key.is_empty() {
             return Ok(vec![("X-Customer-Id", self.customer_id.clone())]);
         }

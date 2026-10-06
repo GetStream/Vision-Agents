@@ -273,10 +273,12 @@ func TestAMessageNamingNoAgentFallsBackToItsChannel(t *testing.T) {
 	}
 }
 
-func TestACallThatWasAnsweredIsAcceptedAtTheRouter(t *testing.T) {
+func TestACallThatWasAnsweredIsReportedFinished(t *testing.T) {
+	// The router counts the call against this worker until it hears back, so a worker
+	// that never reported would shrink by one call every time it answered one.
 	router := newPool(t, func(connection *websocket.Conn) {
 		_ = connection.WriteJSON(Frame{
-			"type": "call", "call_id": "call-1", "call_type": "default",
+			"type": "call", "work_id": "work-1", "call_id": "call-1", "call_type": "default",
 			"called_number": "+13035550100", "caller_number": "+13035550111",
 			"custom": map[string]any{"campaign": "spring"},
 		})
@@ -293,12 +295,15 @@ func TestACallThatWasAnsweredIsAcceptedAtTheRouter(t *testing.T) {
 	defer stop()
 	stopped := run(t, ctx, worker)
 
-	accepted := router.told(t, "accepted")
+	done := router.told(t, "done")
 	stop()
 	_ = stopped()
 
-	if accepted.String("call_id") != "call-1" {
-		t.Errorf("the router was told about %q, want call-1", accepted.String("call_id"))
+	if done.String("work_id") != "work-1" {
+		t.Errorf("the router was told about %q, want work-1", done.String("work_id"))
+	}
+	if done.String("error") != "" {
+		t.Errorf("the call was answered, so nothing should be wrong: %q", done.String("error"))
 	}
 	if answered.CallerNumber != "+13035550111" {
 		t.Errorf("the caller is %q", answered.CallerNumber)
@@ -308,12 +313,12 @@ func TestACallThatWasAnsweredIsAcceptedAtTheRouter(t *testing.T) {
 	}
 }
 
-func TestACallThatCouldNotBeAnsweredIsRejectedWithTheReason(t *testing.T) {
+func TestACallThatCouldNotBeAnsweredIsReportedWithTheReason(t *testing.T) {
 	// A call nobody answered has to show up at the router rather than only in this
 	// process's log, because the router is where somebody is looking when a caller says
 	// nobody picked up.
 	router := newPool(t, func(connection *websocket.Conn) {
-		_ = connection.WriteJSON(Frame{"type": "call", "call_id": "call-1"})
+		_ = connection.WriteJSON(Frame{"type": "call", "work_id": "work-1", "call_id": "call-1"})
 	})
 
 	worker := waiting(t, router, DispatchOptions{})
@@ -325,30 +330,29 @@ func TestACallThatCouldNotBeAnsweredIsRejectedWithTheReason(t *testing.T) {
 	defer stop()
 	stopped := run(t, ctx, worker)
 
-	rejected := router.told(t, "rejected")
+	done := router.told(t, "done")
 	stop()
 	_ = stopped()
 
-	if rejected.String("call_id") != "call-1" {
-		t.Errorf("the router was told about %q, want call-1", rejected.String("call_id"))
+	if done.String("work_id") != "work-1" {
+		t.Errorf("the router was told about %q, want work-1", done.String("work_id"))
 	}
-	if rejected.String("reason") != context.DeadlineExceeded.Error() {
-		t.Errorf("the reason given was %q", rejected.String("reason"))
+	if done.String("error") != context.DeadlineExceeded.Error() {
+		t.Errorf("the reason given was %q", done.String("error"))
 	}
 }
 
-func TestAMessageThatCouldNotBeAnsweredIsNotReportedToTheRouter(t *testing.T) {
-	// Accepting and rejecting are about a caller waiting on a line, and there is no line
-	// here. Reporting one would have the router treat a failed answer as a failed
-	// hand-over and say a worker refused work it took.
+func TestAMessageThatCouldNotBeAnsweredStillGivesTheWorkerItsRoomBack(t *testing.T) {
+	// Failing is as finished as succeeding. A failure the router never hears about is a
+	// worker that can hold one message less for as long as it stays connected.
 	router := newPool(t, func(connection *websocket.Conn) {
-		_ = connection.WriteJSON(Frame{"type": "message", "channel_id": "support-42", "text": "hello"})
+		_ = connection.WriteJSON(Frame{
+			"type": "message", "work_id": "work-1", "channel_id": "support-42", "text": "hello",
+		})
 	})
 
-	failed := make(chan struct{})
 	worker := waiting(t, router, DispatchOptions{})
 	worker.OnMessage(func(_ context.Context, _ InboundMessage) error {
-		close(failed)
 		return context.DeadlineExceeded
 	})
 
@@ -356,24 +360,21 @@ func TestAMessageThatCouldNotBeAnsweredIsNotReportedToTheRouter(t *testing.T) {
 	defer stop()
 	stopped := run(t, ctx, worker)
 
-	<-failed
-	// Long enough that a frame on its way would have arrived.
-	time.Sleep(100 * time.Millisecond)
+	done := router.told(t, "done")
 	stop()
 	_ = stopped()
 
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	for _, frame := range router.received {
-		if frame.Type() == "rejected" || frame.Type() == "accepted" {
-			t.Errorf("the router was told %q about a message", frame.Type())
-		}
+	if done.String("work_id") != "work-1" {
+		t.Errorf("the router was told about %q, want work-1", done.String("work_id"))
+	}
+	if done.String("error") != context.DeadlineExceeded.Error() {
+		t.Errorf("the reason given was %q", done.String("error"))
 	}
 }
 
-func TestTheWorkerTellsTheRouterWhatItCanHold(t *testing.T) {
-	// The router passes over a full worker rather than queueing behind it, so this is a
-	// promise about what this process can answer and it has to be on the handshake.
+func TestTheWorkerTellsTheRouterWhatItCanHoldAndWhatItAnswers(t *testing.T) {
+	// The router passes over a full worker rather than queueing behind it, and hands
+	// nothing to a worker that has no handler for it, so both are on the handshake.
 	router := newPool(t, nil)
 	worker := waiting(t, router, DispatchOptions{Capacity: 9})
 	worker.OnMessage(func(context.Context, InboundMessage) error { return nil })
@@ -395,8 +396,46 @@ func TestTheWorkerTellsTheRouterWhatItCanHold(t *testing.T) {
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
-	if router.query != "capacity=9" {
-		t.Errorf("the worker waited with %q, want capacity=9", router.query)
+	if router.query != "active=0&capacity=9&handles=message" {
+		t.Errorf("the worker waited with %q", router.query)
+	}
+}
+
+func TestAHostedToolCallIsNotCountedAsWorkTheRouterHandedOut(t *testing.T) {
+	// Capacity is about agents, and answering a tool call for one is not running another.
+	// Counting them would have a busy agent's own tools crowd out the next caller.
+	router := newPool(t, func(connection *websocket.Conn) {
+		_ = connection.WriteJSON(Frame{
+			"type": "tool_call", "id": "tool-1", "session_id": "s",
+			"name": "lookup_order", "arguments": `{}`,
+		})
+	})
+
+	functions := tools.NewRegistry()
+	if err := tools.Register(functions, "lookup_order", "Look an order up",
+		func(context.Context, struct{}) (any, error) { return "shipped", nil }); err != nil {
+		t.Fatal(err)
+	}
+	worker := waiting(t, router, DispatchOptions{})
+	worker.Host("stream-support", functions, time.Minute)
+
+	ctx, stop := context.WithCancel(t.Context())
+	defer stop()
+	stopped := run(t, ctx, worker)
+
+	router.told(t, "tool_result")
+	stop()
+	_ = stopped()
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	for _, frame := range router.received {
+		if frame.Type() == "done" {
+			t.Error("the router was told a tool call was work it had handed out")
+		}
+	}
+	if router.query != "active=0&capacity=4&handles=" {
+		t.Errorf("a worker that only hosts tools waited with %q, want no kinds of work", router.query)
 	}
 }
 

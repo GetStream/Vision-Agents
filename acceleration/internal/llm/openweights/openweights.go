@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Host is everything one host of open-weight models differs by. The weights are the
@@ -58,10 +59,10 @@ func (h Host) New(options Options) (*openaicompat.LLM, error) {
 		options.APIKey = os.Getenv(h.APIKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, errors.New(h.Provider + ": " + h.APIKeyEnvVar + " is required")
+		return nil, stack.Wrap(errors.New(h.Provider + ": " + h.APIKeyEnvVar + " is required"))
 	}
 	if options.Model == "" {
-		return nil, errors.New(h.Provider + ": model is required")
+		return nil, stack.Wrap(errors.New(h.Provider + ": model is required"))
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = os.Getenv(h.BaseURLEnvVar)

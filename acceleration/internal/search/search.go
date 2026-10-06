@@ -16,6 +16,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Query is a question to answer out of what is true now.
@@ -47,7 +49,7 @@ type Query struct {
 // Validate reports whether the query names something to find out.
 func (q Query) Validate() error {
 	if strings.TrimSpace(q.Text) == "" {
-		return errors.New("search: there is nothing to look for")
+		return stack.Wrap(errors.New("search: there is nothing to look for"))
 	}
 	return nil
 }

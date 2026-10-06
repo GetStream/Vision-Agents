@@ -49,6 +49,8 @@ type stubLLM struct {
 	// abandoned. order remembers which came first.
 	scripts map[string]*llmtest.Script
 	order   []string
+	// capabilities is what the model says it accepts, which is nothing unless a test says.
+	capabilities llm.Capabilities
 }
 
 func newStubLLM() *stubLLM {
@@ -131,7 +133,7 @@ func (s *stubLLM) Close() error {
 
 func (s *stubLLM) Provider() string               { return "stub" }
 func (s *stubLLM) Model() string                  { return "stub-model" }
-func (s *stubLLM) Capabilities() llm.Capabilities { return llm.Capabilities{} }
+func (s *stubLLM) Capabilities() llm.Capabilities { return s.capabilities }
 
 func (s *stubLLM) requests() []llm.ResponseParams {
 	s.mu.Lock()
@@ -189,6 +191,8 @@ type HarnessSuite struct {
 	tools Tools
 	// box is where the next harness's subagent may run code. Nil is the usual case.
 	box *stubSandbox
+	// shelf, when set, is where files the subagent's code hands back are published.
+	shelf *shelf
 	// skills are what the next harness offers.
 	skills Skills
 
@@ -204,6 +208,7 @@ func (s *HarnessSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.tools = Tools{}
 	s.box = nil
+	s.shelf = nil
 	s.skills = testSkills()
 }
 
@@ -272,6 +277,9 @@ func (s *HarnessSuite) build(delegating bool) {
 	}
 	if s.box != nil {
 		options.Sandbox = s.box
+	}
+	if s.shelf != nil {
+		options.Publish = s.shelf.publish
 	}
 
 	harness, err := New(options)
@@ -425,6 +433,23 @@ func (s *HarnessSuite) TestTheModelIsToldWhatItMayHandOver() {
 	s.Contains(instructions, "be brief", "the agent's own instructions come first")
 	s.Contains(instructions, "think: hard questions")
 	s.Contains(instructions, "<ask skill=", "and how to ask for it")
+}
+
+func (s *HarnessSuite) TestAReplyToAToolResultThinksAndACallerTurnDoesNot() {
+	s.build(false)
+	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"none", "low", "medium"}}
+
+	s.respond("turn-1", "a table for four at 7:30")
+	s.answer(Turn{
+		ID:        "tool-1",
+		History:   []llm.Message{{Role: llm.User, Content: "a table for four at 7:30"}},
+		AfterTool: true,
+	})
+
+	s.Require().Len(s.fast.requests(), 2)
+	s.Empty(s.fast.requests()[0].Reasoning.Effort, "the caller is waiting on every word")
+	s.Equal("low", s.fast.requests()[1].Reasoning.Effort,
+		"at none the model asks to book a free table instead of booking it")
 }
 
 func (s *HarnessSuite) TestToolsAreOfferedToTheFastModel() {

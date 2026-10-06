@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ProviderName is how this provider is named in stats.
@@ -96,13 +97,13 @@ func New(options Options) (*Provider, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("exa: " + apiKeyEnvVar + " is required")
+		return nil, stack.Wrap(errors.New("exa: " + apiKeyEnvVar + " is required"))
 	}
 	if options.Model == "" {
 		options.Model = ModelFast
 	}
 	if _, ok := models[options.Model]; !ok {
-		return nil, fmt.Errorf("exa: %q is not a way this searches", options.Model)
+		return nil, stack.Wrap(fmt.Errorf("exa: %q is not a way this searches", options.Model))
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
@@ -330,13 +331,13 @@ func (p *Provider) Read(ctx context.Context, url string) (search.Page, error) {
 func (p *Provider) call(ctx context.Context, path string, body, into any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return fmt.Errorf("exa: encode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("exa: encode %s: %w", path, err))
 	}
 
 	request, err := http.NewRequestWithContext(
 		ctx, http.MethodPost, p.baseURL+path, bytes.NewReader(payload))
 	if err != nil {
-		return fmt.Errorf("exa: build %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("exa: build %s: %w", path, err))
 	}
 	request.Header.Set("x-api-key", p.apiKey)
 	request.Header.Set("Content-Type", "application/json")
@@ -344,17 +345,17 @@ func (p *Provider) call(ctx context.Context, path string, body, into any) error 
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("exa: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("exa: %s: %w", path, err))
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusOK {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return fmt.Errorf("exa: %s returned %d: %s",
-			path, response.StatusCode, strings.TrimSpace(string(detail)))
+		return stack.Wrap(fmt.Errorf("exa: %s returned %d: %s",
+			path, response.StatusCode, strings.TrimSpace(string(detail))))
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return fmt.Errorf("exa: decode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("exa: decode %s: %w", path, err))
 	}
 	return nil
 }

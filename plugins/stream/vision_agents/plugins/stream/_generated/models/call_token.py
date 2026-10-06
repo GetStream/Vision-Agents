@@ -16,31 +16,25 @@ class CallToken:
     """
     Attributes:
         api_key (str): The Stream app the call is in, which the browser SDK joins against.
-        token (str):
-        user_id (str):
-        user_name (str):
         call_id (str): The Stream call to join, which is not the id this call is held by here.
         call_type (str):
         expires_at (datetime.datetime):
+        token (str):
+        user_id (str):
+        user_name (str):
     """
 
     api_key: str
-    token: str
-    user_id: str
-    user_name: str
     call_id: str
     call_type: str
     expires_at: datetime.datetime
+    token: str
+    user_id: str
+    user_name: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         api_key = self.api_key
-
-        token = self.token
-
-        user_id = self.user_id
-
-        user_name = self.user_name
 
         call_id = self.call_id
 
@@ -48,17 +42,23 @@ class CallToken:
 
         expires_at = self.expires_at.isoformat()
 
+        token = self.token
+
+        user_id = self.user_id
+
+        user_name = self.user_name
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "api_key": api_key,
-                "token": token,
-                "user_id": user_id,
-                "user_name": user_name,
                 "call_id": call_id,
                 "call_type": call_type,
                 "expires_at": expires_at,
+                "token": token,
+                "user_id": user_id,
+                "user_name": user_name,
             }
         )
 
@@ -69,26 +69,26 @@ class CallToken:
         d = dict(src_dict)
         api_key = d.pop("api_key")
 
-        token = d.pop("token")
-
-        user_id = d.pop("user_id")
-
-        user_name = d.pop("user_name")
-
         call_id = d.pop("call_id")
 
         call_type = d.pop("call_type")
 
         expires_at = datetime.datetime.fromisoformat(d.pop("expires_at"))
 
+        token = d.pop("token")
+
+        user_id = d.pop("user_id")
+
+        user_name = d.pop("user_name")
+
         call_token = cls(
             api_key=api_key,
-            token=token,
-            user_id=user_id,
-            user_name=user_name,
             call_id=call_id,
             call_type=call_type,
             expires_at=expires_at,
+            token=token,
+            user_id=user_id,
+            user_name=user_name,
         )
 
         call_token.additional_properties = d

@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 const (
@@ -79,25 +80,25 @@ func (r Request) Count() int {
 // sizes and shapes a model accepts is the model's business, and is refused by it.
 func (r Request) Validate() error {
 	if strings.TrimSpace(r.Prompt) == "" {
-		return errors.New("imagegen: there is nothing to draw")
+		return stack.Wrap(errors.New("imagegen: there is nothing to draw"))
 	}
 	if r.N < 0 || r.N > MaxImages {
-		return fmt.Errorf("imagegen: n must be between 1 and %d", MaxImages)
+		return stack.Wrap(fmt.Errorf("imagegen: n must be between 1 and %d", MaxImages))
 	}
 	if (r.Width == 0) != (r.Height == 0) || r.Width < 0 || r.Height < 0 {
-		return errors.New("imagegen: a size needs a width and a height")
+		return stack.Wrap(errors.New("imagegen: a size needs a width and a height"))
 	}
 	if r.Width > MaxSide || r.Height > MaxSide {
-		return fmt.Errorf("imagegen: neither side may be larger than %d pixels", MaxSide)
+		return stack.Wrap(fmt.Errorf("imagegen: neither side may be larger than %d pixels", MaxSide))
 	}
 	if r.AspectRatio != "" && !aspectRatioPattern.MatchString(r.AspectRatio) {
-		return fmt.Errorf("imagegen: aspect ratio %q is not two numbers such as 16:9", r.AspectRatio)
+		return stack.Wrap(fmt.Errorf("imagegen: aspect ratio %q is not two numbers such as 16:9", r.AspectRatio))
 	}
 	if r.Format != "" && r.Format != FormatPNG && r.Format != FormatJPEG {
-		return fmt.Errorf("imagegen: format %q is not png or jpeg", r.Format)
+		return stack.Wrap(fmt.Errorf("imagegen: format %q is not png or jpeg", r.Format))
 	}
 	if r.Seed != nil && *r.Seed < 0 {
-		return errors.New("imagegen: a seed cannot be negative")
+		return stack.Wrap(errors.New("imagegen: a seed cannot be negative"))
 	}
 	return nil
 }
@@ -140,23 +141,23 @@ type Image struct {
 // Verify decodes a picture a provider returned and says what it is.
 func Verify(data []byte) (Image, error) {
 	if len(data) == 0 {
-		return Image{}, errors.New("imagegen: the picture is empty")
+		return Image{}, stack.Wrap(errors.New("imagegen: the picture is empty"))
 	}
 	if len(data) > MaxBytes {
-		return Image{}, fmt.Errorf("imagegen: the picture is larger than %d bytes", MaxBytes)
+		return Image{}, stack.Wrap(fmt.Errorf("imagegen: the picture is larger than %d bytes", MaxBytes))
 	}
 	config, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return Image{}, fmt.Errorf("imagegen: the picture does not decode: %w", err)
+		return Image{}, stack.Wrap(fmt.Errorf("imagegen: the picture does not decode: %w", err))
 	}
 	if format != FormatPNG && format != FormatJPEG {
-		return Image{}, fmt.Errorf("imagegen: the picture is %s, not png or jpeg", format)
+		return Image{}, stack.Wrap(fmt.Errorf("imagegen: the picture is %s, not png or jpeg", format))
 	}
 	if config.Width < 1 || config.Height < 1 || config.Width > MaxSide || config.Height > MaxSide {
-		return Image{}, fmt.Errorf("imagegen: the picture is %dx%d", config.Width, config.Height)
+		return Image{}, stack.Wrap(fmt.Errorf("imagegen: the picture is %dx%d", config.Width, config.Height))
 	}
 	if _, _, err := image.Decode(bytes.NewReader(data)); err != nil {
-		return Image{}, fmt.Errorf("imagegen: the picture does not decode: %w", err)
+		return Image{}, stack.Wrap(fmt.Errorf("imagegen: the picture does not decode: %w", err))
 	}
 	return Image{Data: data, MediaType: "image/" + format, Width: config.Width, Height: config.Height}, nil
 }

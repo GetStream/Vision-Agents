@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -158,13 +159,13 @@ func (r *sessionRecorder) Flush(ctx context.Context) error {
 	select {
 	case r.queue <- recordWrite{flushed: flushed}:
 	case <-ctx.Done():
-		return ctx.Err()
+		return stack.Wrap(ctx.Err())
 	}
 	select {
 	case <-flushed:
 		return nil
 	case <-ctx.Done():
-		return ctx.Err()
+		return stack.Wrap(ctx.Err())
 	}
 }
 

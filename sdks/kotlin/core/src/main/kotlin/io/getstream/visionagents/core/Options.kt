@@ -1,6 +1,9 @@
 package io.getstream.visionagents.core
 
-import kotlin.time.Instant
+import io.getstream.visionagents.core.generated.Equals
+import io.getstream.visionagents.core.generated.SessionFilter
+import io.getstream.visionagents.core.generated.SessionQuery as QuerySchema
+import io.getstream.visionagents.core.generated.TextMatch
 import kotlinx.serialization.json.JsonObject
 
 /**
@@ -11,6 +14,11 @@ import kotlinx.serialization.json.JsonObject
  * it off the request", never "send a copy of the server's default".
  */
 public data class SessionOptions(
+    /**
+     * A UUID to hold the session by, for a caller that wants to know it before the session
+     * exists. One already taken is refused with a 409. Null lets the router generate one.
+     */
+    val id: String? = null,
     /** An agent config to start from, by the name it was synced under. */
     val agent: String? = null,
     /** An agent config to start from, by id. Naming both this and [agent] is refused. */
@@ -20,7 +28,7 @@ public data class SessionOptions(
     /** A longer note about the conversation, searched alongside the title. */
     val description: String? = null,
     /** What the conversation belongs to. Also recorded as its "project" cost tag. */
-    val project: String? = null,
+    val projectId: String? = null,
     /** Anything of yours to remember about the session. Sessions can be queried by it. */
     val custom: JsonObject? = null,
     /** Record nothing about this conversation: it cannot be found, rewound or forked afterwards. */
@@ -58,7 +66,7 @@ public data class ForkOptions(
     val configId: String? = null,
     val title: String? = null,
     val description: String? = null,
-    val project: String? = null,
+    val projectId: String? = null,
     val custom: JsonObject? = null,
     val modelOverwrites: ModelOverwrites? = null,
     val instructions: String? = null,
@@ -82,29 +90,36 @@ public data class ForkOptions(
 public data class SessionQuery(
     /** Only those opened against this agent name. */
     val agent: String? = null,
-    val configId: String? = null,
-    val project: String? = null,
-    /** Omitted is both. */
-    val state: State? = null,
-    /** Labels a session's custom object must contain, all of them. */
-    val custom: JsonObject? = null,
-    val createdAfter: Instant? = null,
-    val createdBefore: Instant? = null,
+    /** Only those created with this agent id, which names their transcript channel. */
+    val agentId: String? = null,
+    /** Only this project's. A search covers every project, so the router refuses it there. */
+    val projectId: String? = null,
+    /** Only those the user took part in this way. Omitted is every way. */
+    val modality: Session.Modality? = null,
+    /** Only the live ones, or only the ended ones. Omitted is both. */
+    val state: Session.State? = null,
     /** Up to 200. Omitted is 25. */
     val limit: Int? = null,
-    val offset: Int? = null,
+    /** The [Page.nextCursor] of the page before, asked with the same filters. Omitted is the first page. */
+    val cursor: String? = null,
 ) {
-    public enum class State { Running, Closed }
-
-    internal fun parameters(): List<Pair<String, String>> = queryOf(
-        "agent" to agent,
-        "config_id" to configId,
-        "project" to project,
-        "state" to state?.name?.lowercase(),
-        "custom" to custom?.toString(),
-        "created_after" to createdAfter?.toString(),
-        "created_before" to createdBefore?.toString(),
-        "limit" to limit,
-        "offset" to offset,
+    internal fun schema(text: String): QuerySchema = QuerySchema(
+        filter = SessionFilter(
+            agent = equals(agent),
+            agentId = equals(agentId),
+            projectId = equals(projectId),
+            modality = equals(
+                when (modality) {
+                    Session.Modality.Unknown -> throw AgentsException.Configuration("an unknown modality cannot be asked for")
+                    else -> modality?.name?.lowercase()
+                },
+            ),
+            state = equals(state?.name?.lowercase()),
+            text = text.ifEmpty { null }?.let(::TextMatch),
+        ),
+        limit = limit?.toLong(),
+        cursor = cursor?.ifEmpty { null },
     )
+
+    private fun equals(value: String?): Equals? = value?.ifEmpty { null }?.let(::Equals)
 }

@@ -5,6 +5,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/emit"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -100,6 +101,9 @@ type Responding struct {
 	Participant stt.Participant
 	// Prompt is what the agent is replying to.
 	Prompt string
+	// Continues is the turn whose tools or delegated work this reply delivers, empty on a
+	// reply to something somebody said.
+	Continues string
 }
 
 func (Responding) isAgentEvent() {}
@@ -238,6 +242,8 @@ type TaskSettled struct {
 	// ElapsedMs is how long the caller was kept company for.
 	ElapsedMs float64
 	Err       error
+	// Files are what the work's code handed back, published where the caller can see them.
+	Files []sandbox.Attachment
 }
 
 func (TaskSettled) isAgentEvent() {}
@@ -267,6 +273,18 @@ type ToolStarted struct {
 }
 
 func (ToolStarted) isAgentEvent() {}
+
+// ToolApprovalDecided is a person's answer to a call that waited for their approval. It
+// changes how the call is shown; the call itself is still answered by its result.
+type ToolApprovalDecided struct {
+	ID      string
+	TurnID  string
+	Allowed bool
+	// Summary is shown on a declined call, such as "Location not shared".
+	Summary string
+}
+
+func (ToolApprovalDecided) isAgentEvent() {}
 
 type ToolRan struct {
 	ID     string

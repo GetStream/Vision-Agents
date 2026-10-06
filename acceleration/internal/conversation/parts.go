@@ -37,6 +37,11 @@ const (
 	// A client tool's arguments are shown to every channel member, so they stay small.
 	maxClientArguments = 512
 	maxToolSummary     = 120
+	// An approval's question is shown to every channel member too.
+	maxApprovalTitle   = 80
+	maxApprovalMessage = 240
+	maxApprovalReason  = 160
+	maxApprovalButton  = 40
 )
 
 // Part is one step of a reply. It is kept in the local ledger with the reply, so a restart
@@ -57,15 +62,41 @@ type Part struct {
 	TargetUserID   string          `json:"target_user_id,omitempty"`
 	TargetClientID string          `json:"target_client_id,omitempty"`
 	Arguments      json.RawMessage `json:"arguments,omitempty"`
-	StartedAt      *time.Time      `json:"started_at,omitempty"`
-	FinishedAt     *time.Time      `json:"finished_at,omitempty"`
+	// Approval is the question a call that waits for a person asks them, and their answer.
+	Approval   *Approval  `json:"approval,omitempty"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
+
+// Approval is what a call asks the person it waits for, and how they answered.
+type Approval struct {
+	Title   string `json:"title"`
+	Message string `json:"message,omitempty"`
+	// Reason is the model's own words for why it wants the call.
+	Reason       string `json:"reason,omitempty"`
+	AllowTitle   string `json:"allow_title,omitempty"`
+	DeclineTitle string `json:"decline_title,omitempty"`
+	// Decision is "allowed" or "declined" once they answered.
+	Decision string `json:"decision,omitempty"`
 }
 
 // ToolDisplay is what the people in a conversation may know about one of the caller's
-// tools: what its calls are doing, and whether a person's device runs it.
+// tools: what its calls are doing, whether a person's device runs it, and what a person
+// is asked before each call runs.
 type ToolDisplay struct {
-	Title  string
-	Client bool
+	Title    string
+	Client   bool
+	Approval *ToolApproval
+}
+
+// ToolApproval is a tool's question to the person its calls wait for.
+type ToolApproval struct {
+	Title   string
+	Message string
+	// ReasonArgument names the string argument in which the model says why.
+	ReasonArgument string
+	AllowTitle     string
+	DeclineTitle   string
 }
 
 // DescribeTools records the caller's tools for this session.
@@ -119,7 +150,9 @@ func (c *Conversation) settleThinking(m *Message, now time.Time) bool {
 // names, or one a person's device runs.
 func (c *Conversation) called(m *Message, e toolCall) {
 	display := c.tools[e.name]
-	if !display.Client && !ToolVisible(c.data.VisibleTools, e.name) {
+	// A call a person's device runs or a person must allow is always shown, whatever the
+	// agent config shows: somebody is waiting on it.
+	if !display.Client && display.Approval == nil && !ToolVisible(c.data.VisibleTools, e.name) {
 		return
 	}
 	started := e.startedAt.UTC()
@@ -143,7 +176,65 @@ func (c *Conversation) called(m *Message, e toolCall) {
 			part.Status = "awaiting_client"
 		}
 	}
+	// A call a person must allow first waits for the one whose command it answers, with
+	// the question their client asks. A client tool with no install to address runs
+	// nowhere, so nobody is asked.
+	if approval := display.Approval; approval != nil && (!display.Client || part.Status == "awaiting_client") {
+		if initiator := c.data.Commands[m.CommandID].Initiator; initiator != "" {
+			part.TargetUserID = initiator
+			part.Status = "awaiting_approval"
+			part.Approval = &Approval{
+				Title:        capRunes(strings.TrimSpace(approval.Title), maxApprovalTitle),
+				Message:      capRunes(strings.TrimSpace(approval.Message), maxApprovalMessage),
+				Reason:       reasonOf(e.arguments, approval.ReasonArgument),
+				AllowTitle:   capRunes(strings.TrimSpace(approval.AllowTitle), maxApprovalButton),
+				DeclineTitle: capRunes(strings.TrimSpace(approval.DeclineTitle), maxApprovalButton),
+			}
+		}
+	}
 	m.Parts = append(m.Parts, part)
+}
+
+// reasonOf is the model's reason for a call: the named string argument, on one line.
+func reasonOf(arguments, name string) string {
+	if name == "" {
+		return ""
+	}
+	var values map[string]any
+	if json.Unmarshal([]byte(arguments), &values) != nil {
+		return ""
+	}
+	text, _ := values[name].(string)
+	return capRunes(strings.Join(strings.Fields(text), " "), maxApprovalReason)
+}
+
+// decided records a person's answer to a call awaiting their approval. Allowed, the call
+// goes on as it would have; declined, it is cancelled with their summary. It reports
+// whether the call was waiting for an answer.
+func decided(m *Message, id string, allowed bool, summary string, now time.Time) bool {
+	for i := range m.Parts {
+		part := &m.Parts[i]
+		if part.Type != partToolCall || part.ID != id || part.Status != "awaiting_approval" || part.Approval == nil {
+			continue
+		}
+		if allowed {
+			part.Approval.Decision = "allowed"
+			part.Status = "running"
+			if part.Executor == "client" {
+				part.Status = "awaiting_client"
+			}
+			return true
+		}
+		finished := now.UTC()
+		part.Approval.Decision = "declined"
+		part.Status, part.FinishedAt = "cancelled", &finished
+		if part.StartedAt != nil {
+			part.DurationMS = finished.Sub(*part.StartedAt).Milliseconds()
+		}
+		part.Summary = capRunes(strings.TrimSpace(summary), maxToolSummary)
+		return true
+	}
+	return false
 }
 
 type toolCall struct {
@@ -173,6 +264,9 @@ func ran(m *Message, id, status, result, failure string, now time.Time) {
 			} else if json.Unmarshal([]byte(result), &outcome) == nil {
 				part.Summary = capRunes(strings.TrimSpace(outcome.Summary), maxToolSummary)
 			}
+		} else if part.Approval != nil && part.Approval.Decision == "" && failure != "" {
+			// A question nobody answered says why the call ended, as a device does.
+			part.Summary = capRunes(strings.TrimSpace(failure), maxToolSummary)
 		}
 	}
 }
@@ -224,7 +318,17 @@ func messageAttachments(parts []Part, artifacts []map[string]any) []map[string]a
 		func(p *Part) bool { return trimPreview(p, 160) },
 		func(p *Part) bool { return trimPreview(p, 0) },
 		func(p *Part) bool {
-			if p.Summary == "" || p.Status == "streaming" || p.Status == "awaiting_client" {
+			// A question that was answered keeps its title and the answer.
+			if p.Approval == nil || inProgress(p.Status) || p.Approval.Message == "" && p.Approval.Reason == "" {
+				return false
+			}
+			approval := *p.Approval
+			approval.Message, approval.Reason = "", ""
+			p.Approval = &approval
+			return true
+		},
+		func(p *Part) bool {
+			if p.Summary == "" || p.Status == "streaming" || p.Status == "awaiting_client" || p.Status == "awaiting_approval" {
 				return false
 			}
 			p.Summary = ""
@@ -279,10 +383,20 @@ func trimPreview(p *Part, limit int) bool {
 // dropFinished removes the oldest step that is over, keeping anything still in progress.
 func dropFinished(parts *[]Part) bool {
 	for i, part := range *parts {
-		if part.Status != "streaming" && part.Status != "running" && part.Status != "awaiting_client" {
+		if !inProgress(part.Status) {
 			*parts = append((*parts)[:i], (*parts)[i+1:]...)
 			return true
 		}
+	}
+	return false
+}
+
+// inProgress reports whether a step is still going: thinking, running, or waiting for a
+// person or their device.
+func inProgress(status string) bool {
+	switch status {
+	case "streaming", "running", "awaiting_client", "awaiting_approval":
+		return true
 	}
 	return false
 }

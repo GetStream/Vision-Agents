@@ -66,12 +66,14 @@ type Config struct {
 	VoicesBucketURL string     `koanf:"voices_bucket_url"`
 	Postgres        Postgres   `koanf:"postgres"`
 	Redis           Redis      `koanf:"redis"`
+	Node            Node       `koanf:"node"`
 	Auth            Auth       `koanf:"auth"`
 	RateLimit       RateLimit  `koanf:"rate_limit"`
 	DataMove        DataMove   `koanf:"data_move"`
 	Stream          Stream     `koanf:"stream"`
 	Agent           Agent      `koanf:"agent"`
 	Connectors      Connectors `koanf:"connectors"`
+	Sandbox         Sandbox    `koanf:"sandbox"`
 }
 
 // Postgres is where everything worth keeping is written. An empty DSN is a router that
@@ -88,6 +90,16 @@ type Redis struct {
 	Password string `koanf:"password"`
 }
 
+// Node is how one process of a deployment is reached by the others, which is what lets a
+// request for a session land on any of them.
+type Node struct {
+	// Advertise is the host and port this node's peers reach it at, which is not Addr:
+	// Addr is where to listen, and a node listening on every interface still has one
+	// address its peers use. Empty means this host's own address and the port from Addr,
+	// which is right wherever a pod's address is reachable from its peers.
+	Advertise string `koanf:"advertise"`
+}
+
 // Auth decides who the router believes a caller is.
 type Auth struct {
 	// Mode is api_key, proxy, noauth or custom. Empty means api_key.
@@ -100,6 +112,9 @@ type Auth struct {
 	// app header and takes a caller that declares nothing for an end user. Off, a caller
 	// that declares nothing is a backend, as a proxy that never declares means.
 	ProxyDeclaresKind bool `koanf:"proxy_declares_kind"`
+	// OpsKey is what Stream's own staff tools send as X-Ops-Key to review use cases. Empty
+	// turns those endpoints off. It is never handed to a browser.
+	OpsKey string `koanf:"ops_key"`
 }
 
 // RateLimit caps what one of a customer's end users may spend in a day. Either at 0 turns
@@ -186,6 +201,16 @@ type Connectors struct {
 	Enabled bool `koanf:"enabled"`
 }
 
+// Sandbox holds an app with no approved 10DLC use case to a few numbers and a little
+// traffic. It is for the hosted router: a self-hosted one registers, or not, on its own
+// account, and only opt-outs are enforced there.
+type Sandbox struct {
+	Enabled            bool  `koanf:"enabled"`
+	Recipients         int   `koanf:"recipients"`
+	MessagesPerDay     int64 `koanf:"messages_per_day"`
+	AudioMinutesPerDay int64 `koanf:"audio_minutes_per_day"`
+}
+
 // variables maps each setting to the environment variable that has always carried it.
 // Both directions are read from here: the variable wins over the file on the way in, and
 // the effective value is written back to it on the way out.
@@ -203,8 +228,10 @@ var variables = map[string]string{
 	"redis.addr":          "ROUTER_REDIS_ADDR",
 	"redis.username":      "ROUTER_REDIS_USERNAME",
 	"redis.password":      "ROUTER_REDIS_PASSWORD",
+	"node.advertise":      "ROUTER_NODE_ADVERTISE",
 	"auth.mode":           "ROUTER_AUTH_MODE",
 	"auth.kek":            "ROUTER_AUTH_KEK",
+	"auth.ops_key":        "ROUTER_AUTH_OPS_KEY",
 	"data_move.retention": "ROUTER_DATA_MOVE_RETENTION",
 	"stream.api_key":      "STREAM_API_KEY",
 	"stream.api_secret":   "STREAM_API_SECRET",
@@ -223,6 +250,11 @@ var variables = map[string]string{
 	"agent.speculative_replies": "ROUTER_SPECULATIVE_REPLIES",
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
+
+	"sandbox.enabled":               "ROUTER_SANDBOX_ENABLED",
+	"sandbox.recipients":            "ROUTER_SANDBOX_RECIPIENTS",
+	"sandbox.messages_per_day":      "ROUTER_SANDBOX_MESSAGES_PER_DAY",
+	"sandbox.audio_minutes_per_day": "ROUTER_SANDBOX_AUDIO_MINUTES_PER_DAY",
 }
 
 // lists are the settings written as a comma-separated variable and as a sequence in YAML.
@@ -239,6 +271,7 @@ func Defaults() Config {
 		// so it should only be reached by somebody making a few enormous requests.
 		RateLimit: RateLimit{MessagesPerDay: 200, TokensPerDay: 500_000},
 		DataMove:  DataMove{Retention: 7 * 24 * time.Hour},
+		Sandbox:   Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
 	}
 }
 
@@ -396,36 +429,42 @@ func (c Config) validateAppTenancy() error {
 // leaves the environment as it found it would mean two answers to where Postgres is.
 func (c Config) export() error {
 	values := map[string]string{
-		"addr":                        c.Addr,
-		"public_url":                  c.PublicURL,
-		"log_level":                   c.LogLevel,
-		"dashboard_url":               c.DashboardURL,
-		"cors_origins":                strings.Join(c.CORSOrigins, ","),
-		"trusted_proxies":             strings.Join(c.TrustedProxies, ","),
-		"routing_config":              c.RoutingConfig,
-		"phone_config":                c.PhoneConfig,
-		"voices_bucket_url":           c.VoicesBucketURL,
-		"postgres.dsn":                c.Postgres.DSN,
-		"redis.addr":                  c.Redis.Addr,
-		"redis.username":              c.Redis.Username,
-		"redis.password":              c.Redis.Password,
-		"auth.mode":                   c.Auth.Mode,
-		"auth.kek":                    c.Auth.KEK,
-		"auth.proxy_declares_kind":    fmt.Sprint(c.Auth.ProxyDeclaresKind),
-		"stream.api_key":              c.Stream.APIKey,
-		"stream.api_secret":           c.Stream.APISecret,
-		"stream.base_url":             c.Stream.BaseURL,
-		"stream.user_token":           c.Stream.UserToken,
-		"stream.tenancy":              c.Stream.Tenancy,
-		"stream.fallback":             c.Stream.Fallback,
-		"stream.app_id":               appID(c.Stream.AppID),
-		"stream.trust_api_key_header": fmt.Sprint(c.Stream.TrustAPIKeyHeader),
-		"stream.deny_registration":    strings.Join(c.Stream.DenyRegistration, ","),
-		"data_move.retention":         c.DataMove.Retention.String(),
-		"rate_limit.messages_per_day": fmt.Sprint(c.RateLimit.MessagesPerDay),
-		"rate_limit.tokens_per_day":   fmt.Sprint(c.RateLimit.TokensPerDay),
-		"agent.speculative_replies":   fmt.Sprint(c.Agent.SpeculativeReplies),
-		"connectors.enabled":          fmt.Sprint(c.Connectors.Enabled),
+		"addr":                          c.Addr,
+		"public_url":                    c.PublicURL,
+		"log_level":                     c.LogLevel,
+		"dashboard_url":                 c.DashboardURL,
+		"cors_origins":                  strings.Join(c.CORSOrigins, ","),
+		"trusted_proxies":               strings.Join(c.TrustedProxies, ","),
+		"routing_config":                c.RoutingConfig,
+		"phone_config":                  c.PhoneConfig,
+		"voices_bucket_url":             c.VoicesBucketURL,
+		"postgres.dsn":                  c.Postgres.DSN,
+		"redis.addr":                    c.Redis.Addr,
+		"redis.username":                c.Redis.Username,
+		"redis.password":                c.Redis.Password,
+		"node.advertise":                c.Node.Advertise,
+		"auth.mode":                     c.Auth.Mode,
+		"auth.kek":                      c.Auth.KEK,
+		"auth.ops_key":                  c.Auth.OpsKey,
+		"auth.proxy_declares_kind":      fmt.Sprint(c.Auth.ProxyDeclaresKind),
+		"stream.api_key":                c.Stream.APIKey,
+		"stream.api_secret":             c.Stream.APISecret,
+		"stream.base_url":               c.Stream.BaseURL,
+		"stream.user_token":             c.Stream.UserToken,
+		"stream.tenancy":                c.Stream.Tenancy,
+		"stream.fallback":               c.Stream.Fallback,
+		"stream.app_id":                 appID(c.Stream.AppID),
+		"stream.trust_api_key_header":   fmt.Sprint(c.Stream.TrustAPIKeyHeader),
+		"stream.deny_registration":      strings.Join(c.Stream.DenyRegistration, ","),
+		"data_move.retention":           c.DataMove.Retention.String(),
+		"rate_limit.messages_per_day":   fmt.Sprint(c.RateLimit.MessagesPerDay),
+		"rate_limit.tokens_per_day":     fmt.Sprint(c.RateLimit.TokensPerDay),
+		"agent.speculative_replies":     fmt.Sprint(c.Agent.SpeculativeReplies),
+		"connectors.enabled":            fmt.Sprint(c.Connectors.Enabled),
+		"sandbox.enabled":               fmt.Sprint(c.Sandbox.Enabled),
+		"sandbox.recipients":            fmt.Sprint(c.Sandbox.Recipients),
+		"sandbox.messages_per_day":      fmt.Sprint(c.Sandbox.MessagesPerDay),
+		"sandbox.audio_minutes_per_day": fmt.Sprint(c.Sandbox.AudioMinutesPerDay),
 	}
 	for key, value := range values {
 		if value == "" {

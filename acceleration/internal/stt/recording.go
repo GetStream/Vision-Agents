@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Recording is a whole recording to transcribe, off the live path.
@@ -53,13 +55,13 @@ type Recording struct {
 // Validate reports whether there is anything to transcribe.
 func (r Recording) Validate() error {
 	if r.URL == "" && len(r.Audio) == 0 {
-		return errors.New("stt: a recording needs a url or the audio itself")
+		return stack.Wrap(errors.New("stt: a recording needs a url or the audio itself"))
 	}
 	if r.URL != "" && len(r.Audio) > 0 {
-		return errors.New("stt: a recording is either a url or the audio itself, not both")
+		return stack.Wrap(errors.New("stt: a recording is either a url or the audio itself, not both"))
 	}
 	if len(r.Keyterms) > MaxKeyterms {
-		return fmt.Errorf("stt: at most %d keyterms are allowed, got %d", MaxKeyterms, len(r.Keyterms))
+		return stack.Wrap(fmt.Errorf("stt: at most %d keyterms are allowed, got %d", MaxKeyterms, len(r.Keyterms)))
 	}
 	return nil
 }
@@ -129,7 +131,7 @@ func Subtitles(transcription Transcription, format string) (string, error) {
 	case "vtt":
 		return "WEBVTT\n\n" + render(transcription.Words, true), nil
 	default:
-		return "", fmt.Errorf("stt: subtitles are srt or vtt, not %q", format)
+		return "", stack.Wrap(fmt.Errorf("stt: subtitles are srt or vtt, not %q", format))
 	}
 }
 

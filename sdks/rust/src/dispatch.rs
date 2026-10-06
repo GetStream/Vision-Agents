@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as SyncMutex};
 use std::time::Duration;
 
@@ -14,9 +15,11 @@ use tokio_util::sync::CancellationToken;
 use crate::agent::Agent;
 use crate::client::Client;
 use crate::error::{Error, Result};
+use crate::responses::{AgentResponse, Responses};
 use crate::session::Session;
 use crate::socket::{Frame, Incoming, SocketSender};
 use crate::tools::Tools;
+use crate::types;
 
 /// How many calls a worker takes at once when it does not say.
 const DEFAULT_CAPACITY: u32 = 4;
@@ -66,10 +69,11 @@ impl InboundCall {
     }
 }
 
-/// A message written to an agent that is not running.
+/// A message written to an agent that is not running, or to a running session whose agent
+/// leaves text to dispatch.
 ///
-/// One written to an agent that is already running never arrives here: the router answers
-/// it from that session, because that agent knows what has been said so far.
+/// Otherwise one written to an agent that is already running never arrives here: the router
+/// answers it from that session, because that agent knows what has been said so far.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct InboundMessage {
     /// The channel it was written in, which is the conversation to answer in.
@@ -79,6 +83,11 @@ pub struct InboundMessage {
     pub agent_id: String,
     /// The stored agent config the router matched, if it matched one.
     pub config_id: String,
+    /// The running session it was written to, when its agent leaves text to dispatch.
+    /// Nothing has answered it: [`Dispatch::answer`] has the model do so.
+    pub session_id: String,
+    /// The durable command it was sent as, which the answer is created on. May be empty.
+    pub command_id: String,
     pub text: String,
     pub message_id: String,
     pub user_id: String,
@@ -93,6 +102,8 @@ impl InboundMessage {
             channel_type: or(frame.text("channel_type"), "agent"),
             agent_id: frame.text("agent_id").into(),
             config_id: frame.text("config_id").into(),
+            session_id: frame.text("session_id").into(),
+            command_id: frame.text("command_id").into(),
             text: frame.text("text").into(),
             message_id: frame.text("message_id").into(),
             user_id: frame.text("user_id").into(),
@@ -166,6 +177,9 @@ struct Inner {
     /// Which session is answering which channel. A channel is one conversation, so the
     /// session that answered the last message on it should answer the next.
     answering: Mutex<HashMap<String, Arc<Session>>>,
+    /// The calls and messages being handled, which is what the router counts against
+    /// capacity. Hosted tool calls are not among them.
+    handling: Arc<AtomicUsize>,
     worker_id: SyncMutex<String>,
     stop: CancellationToken,
 }
@@ -187,6 +201,7 @@ impl Dispatch {
                 on_message: SyncMutex::new(None),
                 hosted: SyncMutex::new(Vec::new()),
                 answering: Mutex::new(HashMap::new()),
+                handling: Arc::new(AtomicUsize::new(0)),
                 worker_id: SyncMutex::new(String::new()),
                 stop: CancellationToken::new(),
             }),
@@ -201,7 +216,7 @@ impl Dispatch {
     /// Registers what to do with an arriving call.
     ///
     /// The handler runs as its own task, so one long call does not stop the next from being
-    /// answered. An error it returns is reported to the router as a call nobody took.
+    /// answered. An error it returns is reported to the router with the call's `done`.
     pub fn wait_for_call<F, Fut>(&self, handler: F) -> &Self
     where
         F: Fn(InboundCall) -> Fut + Send + Sync + 'static,
@@ -212,8 +227,9 @@ impl Dispatch {
         self
     }
 
-    /// Registers what to do with a message written to an agent that is not running. It runs
-    /// as its own task, the way a call's handler does.
+    /// Registers what to do with a message written to an agent that is not running, or to a
+    /// session whose agent leaves text to dispatch. It runs as its own task, the way a call's
+    /// handler does.
     pub fn wait_for_message<F, Fut>(&self, handler: F) -> &Self
     where
         F: Fn(InboundMessage) -> Fut + Send + Sync + 'static,
@@ -244,7 +260,8 @@ impl Dispatch {
     ///
     /// The second message on a channel goes to the session that answered the first, which
     /// is still open and knows what has been said; only a channel nothing is answering calls
-    /// `create`. Sessions are kept until this worker stops waiting.
+    /// `create`. Sessions are kept until this worker stops waiting. A message that already
+    /// has a session is refused: answer it with [`Dispatch::answer`].
     pub async fn get_or_create_agent<F, Fut>(
         &self,
         message: &InboundMessage,
@@ -254,6 +271,11 @@ impl Dispatch {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<Agent>>,
     {
+        if !message.session_id.is_empty() {
+            return Err(Error::configuration(
+                "a session is already holding this conversation; answer it there with answer",
+            ));
+        }
         let mut answering = self.inner.answering.lock().await;
         if let Some(open) = answering.get(&message.channel_id)
             && open.live()
@@ -263,6 +285,30 @@ impl Dispatch {
         let session = Arc::new(create().await?.reply(message).await?);
         answering.insert(message.channel_id.clone(), session.clone());
         Ok(session)
+    }
+
+    /// Has the model answer a message written to a session whose agent leaves text to
+    /// dispatch.
+    ///
+    /// The response is created with this worker's own credential acting for whoever wrote
+    /// the message, so it reaches their conversation and goes to the model rather than back
+    /// to a worker. It carries the message's command, so the answer lands on it.
+    pub async fn answer(&self, message: &InboundMessage) -> Result<AgentResponse> {
+        if message.session_id.is_empty() {
+            return Err(Error::configuration(
+                "no session is holding this message; open one with get_or_create_agent",
+            ));
+        }
+        Responses::new(
+            self.inner.client.acting_for(&message.user_id),
+            &message.session_id,
+        )
+        .create_with(&types::CreateResponseRequest {
+            text: message.text.clone(),
+            command_id: (!message.command_id.is_empty()).then(|| message.command_id.clone()),
+            ..Default::default()
+        })
+        .await
     }
 
     /// Waits for calls, messages and hosted tool calls until the router closes the
@@ -282,10 +328,23 @@ impl Dispatch {
             ));
         }
 
+        // Always said, even when it is nothing: a worker that only hosts tools answers neither.
+        let handles: Vec<&str> = [
+            (on_call.is_some(), "call"),
+            (on_message.is_some(), "message"),
+        ]
+        .into_iter()
+        .filter_map(|(handled, kind)| handled.then_some(kind))
+        .collect();
         let socket = self
             .inner
             .client
-            .socket(&format!("/v1/dispatch?capacity={}", self.inner.capacity))
+            .socket(&format!(
+                "/v1/dispatch?capacity={}&active={}&handles={}",
+                self.inner.capacity,
+                self.inner.handling.load(Ordering::SeqCst),
+                handles.join(",")
+            ))
             .await?;
         let (sender, mut receiver) = (socket.sender, socket.receiver);
         let mut running: JoinSet<()> = JoinSet::new();
@@ -314,31 +373,36 @@ impl Dispatch {
 
             match frame.kind() {
                 "call" => {
-                    let Some(handler) = on_call.clone() else {
-                        continue;
-                    };
-                    let (call, sender) = (InboundCall::of(&frame), sender.clone());
-                    running.spawn(async move {
-                        let call_id = call.call_id.clone();
-                        // Spawned again so a handler that panics is reported like one that failed.
-                        let outcome = tokio::spawn(handler(call)).await;
-                        let answer = match outcome {
-                            Ok(Ok(())) => json!({"type": "accepted", "call_id": call_id}),
-                            Ok(Err(error)) => json!({"type": "rejected", "call_id": call_id, "reason": error.to_string()}),
-                            Err(_) => json!({"type": "rejected", "call_id": call_id, "reason": "the handler panicked"}),
-                        };
-                        tell(&sender, answer).await;
-                    });
+                    let work_id = frame.text("work_id").to_string();
+                    match on_call.clone() {
+                        Some(handler) => {
+                            let call = InboundCall::of(&frame);
+                            self.work(&mut running, &sender, work_id, move || handler(call));
+                        }
+                        None => {
+                            tell(
+                                &sender,
+                                done(&work_id, Some("this worker answers no calls".into())),
+                            )
+                            .await
+                        }
+                    }
                 }
-                // Nothing is reported back for a message: there is no caller waiting on a line.
                 "message" => {
-                    let Some(handler) = on_message.clone() else {
-                        continue;
-                    };
-                    let message = InboundMessage::of(&frame);
-                    running.spawn(async move {
-                        let _ = tokio::spawn(handler(message)).await;
-                    });
+                    let work_id = frame.text("work_id").to_string();
+                    match on_message.clone() {
+                        Some(handler) => {
+                            let message = InboundMessage::of(&frame);
+                            self.work(&mut running, &sender, work_id, move || handler(message));
+                        }
+                        None => {
+                            tell(
+                                &sender,
+                                done(&work_id, Some("this worker answers no messages".into())),
+                            )
+                            .await
+                        }
+                    }
                 }
                 "ready" => {
                     *self.inner.worker_id.lock().expect("worker id") =
@@ -406,6 +470,35 @@ impl Dispatch {
     pub fn stop(&self) {
         self.inner.stop.cancel();
     }
+
+    /// Runs one call or message as its own task, then tells the router it is `done`, which is
+    /// what gives this worker its room back.
+    fn work<F>(&self, running: &mut JoinSet<()>, sender: &SocketSender, work_id: String, start: F)
+    where
+        F: FnOnce() -> BoxFuture<'static, Result<()>> + Send + 'static,
+    {
+        let (sender, handling) = (sender.clone(), self.inner.handling.clone());
+        handling.fetch_add(1, Ordering::SeqCst);
+        running.spawn(async move {
+            // Spawned again so a handler that panics is reported like one that failed.
+            let error = match tokio::spawn(async move { start().await }).await {
+                Ok(Ok(())) => None,
+                Ok(Err(error)) => Some(error.to_string()),
+                Err(_) => Some("the handler panicked".to_string()),
+            };
+            handling.fetch_sub(1, Ordering::SeqCst);
+            tell(&sender, done(&work_id, error)).await;
+        });
+    }
+}
+
+/// The frame that ends one piece of work, with what went wrong if anything did.
+fn done(work_id: &str, error: Option<String>) -> Value {
+    let mut done = json!({"type": "done", "work_id": work_id});
+    if let Some(error) = error {
+        done["error"] = error.into();
+    }
+    done
 }
 
 /// Sends a frame if the socket is still there. None of these is something a call depends on.

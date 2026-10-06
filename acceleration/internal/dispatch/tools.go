@@ -143,7 +143,8 @@ func (p *Pool) HostedTools(customerID, agentID string) ([]Tool, time.Duration) {
 // RunHosted sends one call to a worker hosting that tool for the agent and waits for its
 // answer, the worker's own timeout, or the caller giving up.
 //
-// Workers take turns the way they do for calls, and one whose queue is full is passed over.
+// It goes to whichever host has the least still to answer, and hosts that are equally busy
+// take turns. One whose queue is full is passed over.
 func (p *Pool) RunHosted(ctx context.Context, customerID, agentID string, call ToolCall) (string, error) {
 	if call.ID == "" {
 		return "", errors.New("dispatch: a hosted call needs an id")
@@ -155,33 +156,36 @@ func (p *Pool) RunHosted(ctx context.Context, customerID, agentID string, call T
 	key := customerID + "\x00" + agentID + "\x00" + call.Name
 	start := p.toolCursors[key]
 	p.toolCursors[key] = start + 1
-	var chosen *hosting
+	var (
+		chosen *hosting
+		least  int
+	)
 	for offset := range offers {
 		offer := offers[(start+offset)%len(offers)]
-		if !offer.offers(call.Name) {
+		if !offer.offers(call.Name) || len(offer.worker.toolCalls) == cap(offer.worker.toolCalls) {
 			continue
 		}
-		offer.worker.mu.Lock()
-		if _, duplicate := offer.worker.results[call.ID]; duplicate {
-			offer.worker.mu.Unlock()
-			p.mu.Unlock()
-			return "", fmt.Errorf("dispatch: %s was already asked for", call.ID)
+		// Strictly fewer, so the first host reached from the cursor keeps a tie.
+		if running := offer.worker.answering(); chosen == nil || running < least {
+			chosen, least = offer, running
 		}
-		offer.worker.results[call.ID] = answer
-		offer.worker.mu.Unlock()
-		select {
-		case offer.worker.toolCalls <- call:
-			chosen = offer
-		default:
-			offer.worker.forget(call.ID)
-			continue
-		}
-		break
 	}
-	p.mu.Unlock()
 	if chosen == nil {
+		p.mu.Unlock()
 		return "", fmt.Errorf("dispatch: no worker is running %s now", call.Name)
 	}
+	chosen.worker.mu.Lock()
+	if _, duplicate := chosen.worker.results[call.ID]; duplicate {
+		chosen.worker.mu.Unlock()
+		p.mu.Unlock()
+		return "", fmt.Errorf("dispatch: %s was already asked for", call.ID)
+	}
+	chosen.worker.results[call.ID] = answer
+	chosen.worker.mu.Unlock()
+	// Cannot block: the queue was not full a moment ago and nothing else writes to it
+	// without this lock.
+	chosen.worker.toolCalls <- call
+	p.mu.Unlock()
 
 	deadline, cancel := context.WithTimeout(ctx, chosen.timeout)
 	defer cancel()
@@ -204,6 +208,13 @@ func (w *Worker) forget(id string) {
 	w.mu.Lock()
 	delete(w.results, id)
 	w.mu.Unlock()
+}
+
+// answering is how many hosted calls this worker has been given and not yet answered.
+func (w *Worker) answering() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(w.results)
 }
 
 // registered reports whether a worker is still in the pool. The caller holds the lock.

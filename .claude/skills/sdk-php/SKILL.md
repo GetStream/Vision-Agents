@@ -84,7 +84,9 @@ tests/Unit tests/Live tests/Support tests/server/router.php
 - **Tool results repeat `command_id` and `turn_id`** from the `tool_call` when present, or a
   durable command's result is refused. Tools run in their own fiber; a `tool_cancel` drops
   the answer (a PHP callable cannot be interrupted).
-- **Dispatch** answers `accepted`/`rejected` for calls only, reports `load {active_agents,
+- **Dispatch** sends `active` and `handles` on the handshake, answers every call and message
+  with `done` and its `work_id` (an `error` when it failed or had no handler), answers a
+  message with a `session_id` through `answer`, reports `load {active_agents,
   latency_ms}` after a `ping`/`pong` round trip, drains running handlers on exit, and traps
   SIGINT/SIGTERM only when pcntl is loaded (the official image has none).
   `getOrCreateAgent` holds a per-channel `LocalKeyedMutex` so two messages cannot start two
@@ -151,16 +153,3 @@ Docker VM disk was full; do not prune shared images or volumes to make room.
 - A blocking `sleep`/`usleep` in code a worker calls (use `Pause::for`).
 - A mock, or an assertion on which method ran instead of what went over the wire.
 - `agent.yaml` handling that silently ignores a key.
-
-## Pending: cursor pagination
-
-Go has moved; this SDK still needs to. `listSessions`, `searchSessions`, `listResponses` and
-`listResponseItems` take `cursor` instead of `offset` and return `{items, has_more,
-next_cursor}` instead of an array. See the `pagination` skill and `sdks/go/client`.
-
-## Pending: session update (Go is done)
-
-The Go SDK moved to `PATCH /v1/agents/sessions/{id}` (`updateSession`), which changes title,
-description, custom, instructions, models and voice in one call. Regenerate, then expose
-`$session->update(...)` and `$agent->sessions->update($id, ...)`; drop the settings method. See "Updating a session" in the `sdk` skill. The `/settings` and
-`/instructions` endpoints are deprecated.

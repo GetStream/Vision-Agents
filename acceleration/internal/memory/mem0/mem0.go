@@ -21,6 +21,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 const apiKeyEnvVar = "MEM0_API_KEY"
@@ -167,7 +168,7 @@ func (s *Store) Remember(ctx context.Context, scope memory.Scope, messages []llm
 // Truncate deletes everything mem0 knows about one user of one app.
 func (s *Store) Truncate(ctx context.Context, appID, userID string) error {
 	if appID == "" || userID == "" {
-		return errors.New("mem0: truncating needs an app id and a user id")
+		return stack.Wrap(errors.New("mem0: truncating needs an app id and a user id"))
 	}
 	return s.deleteMatching(ctx, map[string]any{"app_id": appID, "user_id": userID})
 }
@@ -175,7 +176,7 @@ func (s *Store) Truncate(ctx context.Context, appID, userID string) error {
 // ForgetRun deletes what one session of one app taught mem0.
 func (s *Store) ForgetRun(ctx context.Context, appID, runID string) error {
 	if appID == "" || runID == "" {
-		return errors.New("mem0: forgetting a session needs an app id and a run id")
+		return stack.Wrap(errors.New("mem0: forgetting a session needs an app id and a run id"))
 	}
 	return s.deleteMatching(ctx, map[string]any{"app_id": appID, "run_id": runID})
 }
@@ -201,7 +202,7 @@ func (s *Store) deleteMatching(ctx context.Context, filters map[string]any) erro
 		for _, found := range page.Results {
 			// A memory listed again after being deleted would loop here for ever.
 			if deleted[found.ID] {
-				return fmt.Errorf("mem0: memory %s is still listed after being deleted", found.ID)
+				return stack.Wrap(fmt.Errorf("mem0: memory %s is still listed after being deleted", found.ID))
 			}
 			deleted[found.ID] = true
 			batch.Memories = append(batch.Memories, batchMemory{MemoryID: found.ID})
@@ -226,12 +227,12 @@ func (s *Store) Close() error { return nil }
 func (s *Store) call(ctx context.Context, method, path string, body, into any) error {
 	encoded, err := json.Marshal(body)
 	if err != nil {
-		return fmt.Errorf("mem0: encode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("mem0: encode %s: %w", path, err))
 	}
 
 	request, err := http.NewRequestWithContext(ctx, method, s.baseURL+path, bytes.NewReader(encoded))
 	if err != nil {
-		return fmt.Errorf("mem0: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("mem0: %s: %w", path, err))
 	}
 	request.Header.Set("Authorization", "Token "+s.apiKey)
 	request.Header.Set("Content-Type", "application/json")
@@ -239,17 +240,17 @@ func (s *Store) call(ctx context.Context, method, path string, body, into any) e
 
 	response, err := s.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("mem0: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("mem0: %s: %w", path, err))
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return fmt.Errorf("mem0: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail)))
+		return stack.Wrap(fmt.Errorf("mem0: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
 	}
 
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return fmt.Errorf("mem0: decode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("mem0: decode %s: %w", path, err))
 	}
 	return nil
 }

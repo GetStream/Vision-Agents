@@ -5,8 +5,8 @@
 // SIP trunk, minting a token or checking a hook, is done in one app with one key. Which app
 // that is used to be the deployment's own, whoever was calling. A Source answers it per
 // customer instead, from the customer id alone, because much of that work happens with no
-// request behind it: an outbox delivering after the caller left, a conversation recovered
-// at startup, a campaign ringing on a schedule, a hook Stream sends on its own.
+// request behind it: a pending write delivered after the caller left, a campaign ringing on
+// a schedule, a hook Stream sends on its own.
 //
 // Work already written records the app it was written in, its pin, so it is read and
 // finished there even after the customer's app has changed.

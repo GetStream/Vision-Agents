@@ -12,6 +12,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
@@ -101,14 +102,14 @@ func (a *Agent) SetSettings(ctx context.Context, next Settings) error {
 	a.mu.Lock()
 	if !a.joined || a.closed || a.pipe == nil {
 		a.mu.Unlock()
-		return errors.New("agent: not joined")
+		return stack.Wrap(errors.New("agent: not joined"))
 	}
 	current := a.settingsLocked()
 	wasNative := a.pipe.native
 	a.mu.Unlock()
 
 	if err := a.validate(next); err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	native := next.STSTarget != ""
 	// Delegation changes the tools a native model is offered and whether a cascade has
@@ -117,11 +118,11 @@ func (a *Agent) SetSettings(ctx context.Context, next Settings) error {
 
 	prep, err := a.prepare(current, next, native, restart)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	if err := a.quiesce(ctx); err != nil {
 		prep.close()
-		return err
+		return stack.Wrap(err)
 	}
 	defer a.switching.Store(false)
 
@@ -173,21 +174,21 @@ func (a *Agent) Native() bool { return a.native() }
 func (a *Agent) validate(next Settings) error {
 	if next.STSTarget != "" {
 		if a.options.Text {
-			return errors.New("agent: a text agent has no voice, so it cannot run a speech-to-speech model")
+			return stack.Wrap(errors.New("agent: a text agent has no voice, so it cannot run a speech-to-speech model"))
 		}
 		if a.options.STS == nil {
-			return errors.New("agent: this deployment has no speech-to-speech models")
+			return stack.Wrap(errors.New("agent: this deployment has no speech-to-speech models"))
 		}
 	} else {
 		if a.options.LLM == nil {
-			return errors.New("agent: an llm router is required")
+			return stack.Wrap(errors.New("agent: an llm router is required"))
 		}
 		if !a.options.Text && (a.options.STT == nil || a.options.TTS == nil) {
-			return errors.New("agent: this deployment cannot run a cascade")
+			return stack.Wrap(errors.New("agent: this deployment cannot run a cascade"))
 		}
 	}
 	if next.SubagentTarget != "" && a.options.LLM == nil {
-		return errors.New("agent: a subagent requires an llm router")
+		return stack.Wrap(errors.New("agent: a subagent requires an llm router"))
 	}
 	return nil
 }
@@ -206,7 +207,7 @@ func (a *Agent) prepare(current, next Settings, native, restart bool) (*prepared
 		// was chosen once and works does not need proving again on every call.
 		if err := answers(a.ctx, rebuilt.llm); err != nil {
 			rebuilt.close()
-			return nil, fmt.Errorf("agent: %s cannot answer: %w", next.LLMTarget, err)
+			return nil, stack.Wrap(fmt.Errorf("agent: %s cannot answer: %w", next.LLMTarget, err))
 		}
 		return rebuilt, nil
 	}
@@ -215,7 +216,7 @@ func (a *Agent) prepare(current, next Settings, native, restart bool) (*prepared
 	var err error
 	fail := func(failure error) (*prepared, error) {
 		prep.close()
-		return nil, failure
+		return nil, stack.Wrap(failure)
 	}
 	if native {
 		if next.STSTarget != current.STSTarget || next.Voice != current.Voice {
@@ -270,7 +271,7 @@ func (a *Agent) quiesce(ctx context.Context) error {
 		a.mu.Lock()
 		if a.closed {
 			a.mu.Unlock()
-			return errors.New("agent: closed")
+			return stack.Wrap(errors.New("agent: closed"))
 		}
 		if !a.generating && a.utterances == 0 && a.pendingTools == 0 && !a.toolReply &&
 			!a.nativeAwaiting && len(a.streams) == 0 && len(a.generatingCancel) == 0 {
@@ -283,7 +284,7 @@ func (a *Agent) quiesce(ctx context.Context) error {
 		select {
 		case <-ticker.C:
 		case <-ctx.Done():
-			return ctx.Err()
+			return stack.Wrap(ctx.Err())
 		}
 	}
 }
@@ -502,7 +503,7 @@ func (a *Agent) openCascade(s Settings) (*prepared, error) {
 	prep := &prepared{}
 	var err error
 	if prep.llm, err = a.startLLM(s.LLMTarget); err != nil {
-		return nil, fmt.Errorf("agent: start llm: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("agent: start llm: %w", err))
 	}
 	// Flow decisions use their own fast-model session so deciding whether speech is
 	// complete never competes with the reply being streamed to the voice. It routes to a
@@ -510,7 +511,7 @@ func (a *Agent) openCascade(s Settings) (*prepared, error) {
 	// and thinking would only add latency to every turn the caller waits through.
 	if prep.controller, err = a.startLLM(s.controller()); err != nil {
 		prep.close()
-		return nil, fmt.Errorf("agent: start flow controller: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("agent: start flow controller: %w", err))
 	}
 	prep.harness, err = harness.New(harness.Options{
 		Text:         a.options.Text,
@@ -521,6 +522,7 @@ func (a *Agent) openCascade(s Settings) (*prepared, error) {
 		Skills:       a.options.Skills,
 		Tools:        a.availableTools(),
 		Sandbox:      a.options.Sandbox,
+		Publish:      a.options.Publish,
 		Tasks:        a.options.Tasks,
 		MaxTokens:    a.options.MaxTokens,
 		Overwrites:   s.Overwrites,
@@ -536,7 +538,7 @@ func (a *Agent) openCascade(s Settings) (*prepared, error) {
 	if !a.options.Text {
 		if prep.tts, err = a.startVoice(s); err != nil {
 			prep.close()
-			return nil, fmt.Errorf("agent: start tts: %w", err)
+			return nil, stack.Wrap(fmt.Errorf("agent: start tts: %w", err))
 		}
 	}
 	return prep, nil
@@ -550,7 +552,7 @@ func (a *Agent) openNative(s Settings) (*prepared, error) {
 		var err error
 		prep.harness, err = harness.New(harness.Options{
 			OpenSubagent: subagent, Capture: a.captureVideo, Skills: a.options.Skills,
-			Sandbox: a.options.Sandbox, Tasks: a.options.Tasks, Logger: a.logger,
+			Sandbox: a.options.Sandbox, Publish: a.options.Publish, Tasks: a.options.Tasks, Logger: a.logger,
 			OnModelCall: func(timing llm.CallTiming) { a.emitter.Send(ModelCall{CallTiming: timing}) },
 		})
 		if err != nil {
@@ -597,7 +599,7 @@ func (a *Agent) openSpeech(s Settings, delegating bool) (*stsrouter.Session, err
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("agent: start sts: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("agent: start sts: %w", err))
 	}
 	return session, nil
 }

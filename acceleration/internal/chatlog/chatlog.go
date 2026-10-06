@@ -30,6 +30,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -168,10 +169,10 @@ type message struct {
 // New validates the options and returns a Log. It writes nothing; Start does that.
 func New(options Options) (*Log, error) {
 	if options.AgentID == "" {
-		return nil, errors.New("chatlog: an agent id is required")
+		return nil, stack.Wrap(errors.New("chatlog: an agent id is required"))
 	}
 	if options.Agent.ID == "" {
-		return nil, errors.New("chatlog: an agent user id is required")
+		return nil, stack.Wrap(errors.New("chatlog: an agent user id is required"))
 	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
@@ -179,11 +180,11 @@ func New(options Options) (*Log, error) {
 	client := options.Client
 	if client == nil {
 		if options.APIKey == "" || options.APISecret == "" {
-			return nil, errors.New("chatlog: a client, or an api key and secret, are required")
+			return nil, stack.Wrap(errors.New("chatlog: a client, or an api key and secret, are required"))
 		}
 		var err error
 		if client, err = getstream.NewClient(options.APIKey, options.APISecret); err != nil {
-			return nil, err
+			return nil, stack.Wrap(err)
 		}
 	}
 
@@ -227,7 +228,7 @@ func (l *Log) Start(ctx context.Context) error {
 	}
 	_, err := l.client.Chat().GetOrCreateChannel(ctx, ChannelType, l.channel, request)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 
 	l.started.Store(true)

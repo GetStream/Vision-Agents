@@ -43,7 +43,7 @@ func (s *CallHooksSuite) SetupTest() {
 
 func (s *CallHooksSuite) TestAnArrivingCallReachesTheWorkerOfWhoeverHoldsTheNumber() {
 	s.hold("default", s.callID)
-	worker, release := s.dispatch.Register(s.customerID(), 1)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
 	s.Require().Equal(http.StatusOK, s.arrive("default:"+s.callID))
@@ -66,7 +66,7 @@ func (s *CallHooksSuite) TestACallOnACustomNamedLineStillFindsItsOwner() {
 	// nothing about "the-support-line" says which number it belongs to.
 	line := "line-" + s.utils.uuid()
 	s.hold("support", line)
-	worker, release := s.dispatch.Register(s.customerID(), 1)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
 	s.Require().Equal(http.StatusOK, s.arrive("support:"+line))
@@ -84,7 +84,7 @@ func (s *CallHooksSuite) TestACallOnACustomNamedLineStillFindsItsOwner() {
 func (s *CallHooksSuite) TestAnotherCustomersWorkerIsNotGivenTheCall() {
 	// Two customers' workers are two rotations, and a call is one customer's.
 	s.hold("default", s.callID)
-	somebodyElse, release := s.dispatch.Register(s.utils.uuid(), 1)
+	somebodyElse, release := s.dispatch.Register(s.utils.uuid(), dispatch.Registration{Capacity: 1})
 	defer release()
 
 	s.Require().Equal(http.StatusOK, s.arrive("default:"+s.callID))
@@ -95,7 +95,7 @@ func (s *CallHooksSuite) TestAnotherCustomersWorkerIsNotGivenTheCall() {
 func (s *CallHooksSuite) TestACallOnANumberNobodyHoldsIsAcceptedAndDropped() {
 	// Every video call in the app arrives at this hook too. Retrying would not make one
 	// answerable, so it is accepted and nothing is woken.
-	worker, release := s.dispatch.Register(s.customerID(), 1)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
 	s.Require().Equal(http.StatusOK, s.arrive("default:standup-"+s.utils.uuid()))
@@ -108,7 +108,7 @@ func (s *CallHooksSuite) TestACallOnAReleasedNumberIsNotAnswered() {
 	s.hold("default", s.callID)
 	s.Require().NoError(s.store.ReleaseNumber(
 		context.Background(), s.customerID(), s.e164, time.Now().UTC()))
-	worker, release := s.dispatch.Register(s.customerID(), 1)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
 	s.Require().Equal(http.StatusOK, s.arrive("default:"+s.callID))
@@ -165,7 +165,7 @@ func (s *CallHooksSuite) TestTheHookIgnoresWhoeverTheCallerClaimsToBe() {
 	// Stream is not a customer, so a credential is neither required nor read. Sending one
 	// changes nothing, which is what stops a caller thinking it scopes the hook.
 	s.hold("default", s.callID)
-	worker, release := s.dispatch.Register(s.customerID(), 1)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
 	body := s.arriving("default:" + s.callID)

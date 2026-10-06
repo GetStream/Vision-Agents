@@ -27,44 +27,88 @@ public sealed class AgentTests : IDisposable
             Name = "Jean Luc!",
             Instructions = "You are Jean.",
             Pipeline = new Pipeline { Llm = "llm-fast", Language = "fr", ToolTimeout = TimeSpan.FromSeconds(2) },
-            Harness = new Harness
-            {
-                Subagents = new Dictionary<string, string> { ["default"] = "llm-thinking" },
-                Sandbox = Sandbox.Daytona(),
-                Skills = [new Skill { Name = "think", Description = "Work it out", Instructions = "Reason.", Deadline = TimeSpan.FromSeconds(30) }],
-                Tasks = 2,
-            },
+            Harness = new Harness { Subagents = new Dictionary<string, string> { ["default"] = "llm-thinking" }, Sandbox = Sandbox.Daytona() },
             CostTracking = new Dictionary<string, string> { ["team"] = "support" },
             MemoryFilter = new Dictionary<string, string> { [Agent.UserKey] = "ada", ["topic"] = "billing" },
             Client = client,
         });
 
-        var request = agent.Request(null, new SessionOptions { Title = "Billing" }, null, false);
+        var request = agent.Request(null, new SessionOptions { Id = "0199a000-0000-7000-8000-000000000001", Title = "Billing", ProjectId = "docs" }, null, false);
 
         Assert.Equal("jean-luc", agent.UserId);
         Assert.Equal(("support", null), (request.Agent, request.ConfigId));
         Assert.True(request.Text);
         Assert.Equal(("jean-luc", "Jean Luc!", "jean-luc"), (request.UserId, request.UserName, request.AgentId));
-        Assert.Equal(("llm-fast", "llm-thinking", "daytona", 2), (request.Llm, request.Subagent, request.Sandbox, request.Tasks));
+        Assert.Equal("llm-fast", request.Llm);
         Assert.Equal(["fr"], request.Languages!);
         Assert.Equal(2000, request.ToolTimeoutMs);
-        Assert.Equal(30_000, Assert.Single(request.Skills!).DeadlineMs);
         Assert.Equal("support", request.Tags!["team"]);
         Assert.Equal("ada", request.Memory!.UserId);
         Assert.Equal(new Dictionary<string, string> { ["topic"] = "billing" }, request.Memory.Filter);
         Assert.Equal((null, "Billing"), (request.Incognito, request.Title));
+        Assert.Equal(("0199a000-0000-7000-8000-000000000001", "docs"), (request.Id, request.ProjectId));
     }
 
     [Fact]
-    public void AnAbsentSkillListAndAnEmptyOneDiffer()
+    public async Task TheHarnessIsWrittenOntoTheConfigAndTheSessionRunsUnderIt()
     {
-        using var client = new VisionAgentsClient(new VisionAgentsOptions { Url = "http://x", CustomerId = "examples" });
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sync", 200, new { unchanged = false, config = Fixtures.Config("jean", "cfg-1") });
+        router.On("POST", "/v1/agents/sessions", 201, Fixtures.Session());
+        router.OnSocket(Events, peer => peer.ReceiveAsync("close"));
+        using var client = Fixtures.Client(router);
+        await using var agent = new Agent(new AgentOptions
+        {
+            Name = "jean",
+            Harness = new Harness
+            {
+                Name = "default",
+                Subagents = new Dictionary<string, string> { ["default"] = "llm-thinking" },
+                Sandbox = Sandbox.Daytona(),
+                Skills = [new Skill { Name = "think", Description = "Work it out", Instructions = "Reason.", Deadline = TimeSpan.FromSeconds(30) }],
+            },
+            Client = client,
+        });
+        var cancel = TestContext.Current.CancellationToken;
 
-        var defaults = new Agent(new AgentOptions { Name = "jean", Harness = new Harness(), Client = client });
-        var none = new Agent(new AgentOptions { Name = "jean", Harness = new Harness { UseSkills = false }, Client = client });
+        await agent.SyncAsync(cancel);
+        await agent.ChatAsync(cancellationToken: cancel);
 
-        Assert.Null(defaults.Request(null, null, null, false).Skills);
-        Assert.Empty(none.Request(null, null, null, false).Skills!);
+        var synced = router.Only("POST", "/v1/agents/sync").Body;
+        Assert.Equal(("default", "llm-thinking", "daytona"), (synced.Text("harness"), synced.Text("subagent"), synced.Text("sandbox")));
+        Assert.Equal(30_000, synced!["skills"]![0]!["deadline_ms"]!.GetValue<long>());
+        var opened = router.Only("POST", "/v1/agents/sessions").Body!.AsObject();
+        Assert.Equal("cfg-1", opened.Text("config_id"));
+        Assert.DoesNotContain(opened, pair => pair.Key is "subagent" or "sandbox" or "skills" or "tasks");
+    }
+
+    [Fact]
+    public void AHarnessThatDoesNotExistIsRefused()
+    {
+        Assert.Throws<ConfigurationException>(() => new Agent(new AgentOptions
+        {
+            Name = "jean",
+            Harness = new Harness { Name = "fancy" },
+            Client = new VisionAgentsClient(new VisionAgentsOptions { Url = "http://x", CustomerId = "examples" }),
+        }));
+    }
+
+    [Fact]
+    public async Task TheConfigIsPatchedWithOnlyWhatWasSet()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("GET", "/v1/agents/configs", 200, new[] { Fixtures.Config("support", "cfg-9") });
+        router.On("PATCH", "/v1/agents/configs/cfg-9", 200, Fixtures.Config("support", "cfg-9"));
+        using var client = Fixtures.Client(router);
+        var cancel = TestContext.Current.CancellationToken;
+
+        var config = await client.Agent("support").UpdateConfigAsync(new AgentConfigPatch { Guardrail = "No refunds.", VisibleTools = ["athena_*"] }, cancel);
+
+        Assert.Equal("cfg-9", config.Id);
+        Assert.Equal("support", router.Only("GET", "/v1/agents/configs").Query["name"]);
+        var patch = router.Only("PATCH", "/v1/agents/configs/cfg-9").Body!.AsObject();
+        Assert.Equal(["guardrail", "visible_tools"], patch.Select(pair => pair.Key).Order());
+        await Assert.ThrowsAsync<ConfigurationException>(() => client.Agent("nowhere").UpdateConfigAsync(new AgentConfigPatch(), cancel));
     }
 
     [Fact]
@@ -185,12 +229,14 @@ public sealed class AgentTests : IDisposable
         await using var router = await TestRouter.StartAsync();
         router.On("POST", "/v1/agents/sessions", 201, Fixtures.Session());
         var sent = new List<JsonObject>();
+        var received = new TaskCompletionSource();
         router.OnSocket(Events, async peer =>
         {
-            for (var index = 0; index < 5; index++)
+            for (var index = 0; index < 4; index++)
             {
                 sent.Add(await peer.ReceiveAsync());
             }
+            received.SetResult();
         });
         using var client = Fixtures.Client(router);
         await using var agent = new Agent(new AgentOptions { Name = "jean", Client = client });
@@ -198,16 +244,17 @@ public sealed class AgentTests : IDisposable
 
         var session = await agent.ChatAsync(cancellationToken: cancel);
         await session.SayAsync("Hello.", cancel);
-        await session.RespondAsync("What is new?", cancellationToken: cancel);
         await session.InterruptAsync(cancel);
         await session.SetInstructionsAsync("Be brief.", cancel);
         await session.CloseAsync(cancel);
         await session.WaitAsync(cancel);
+        await received.Task.WaitAsync(cancel);
 
-        Assert.Equal(["say", "respond", "interrupt", "instructions", "close"], sent.Select(frame => frame.Text("type")));
+        Assert.Equal(["say", "interrupt", "instructions", "close"], sent.Select(frame => frame.Text("type")));
         Assert.Equal("Hello.", sent[0].Text("text"));
-        Assert.Equal("Be brief.", sent[3].Text("instructions"));
+        Assert.Equal("Be brief.", sent[2].Text("instructions"));
         Assert.False(session.Live);
+        Assert.Empty(router.To("POST", "/v1/agents/sessions/s1/stop"));
     }
 
     [Fact]
@@ -252,18 +299,19 @@ public sealed class AgentTests : IDisposable
     }
 
     [Fact]
-    public async Task ASocketThatCannotOpenDeletesTheSession()
+    public async Task ASocketThatCannotOpenStopsTheSession()
     {
         await using var router = await TestRouter.StartAsync();
         router.On("POST", "/v1/agents/sessions", 201, Fixtures.Session());
-        router.On("DELETE", "/v1/agents/sessions/s1", 204);
+        router.On("POST", "/v1/agents/sessions/s1/stop", 204);
         using var client = Fixtures.Client(router);
         await using var agent = new Agent(new AgentOptions { Name = "jean", Client = client });
 
         var refused = await Assert.ThrowsAsync<RouterException>(() => agent.ChatAsync(cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Equal(404, refused.Status);
-        router.Only("DELETE", "/v1/agents/sessions/s1");
+        router.Only("POST", "/v1/agents/sessions/s1/stop");
+        Assert.Empty(router.To("DELETE", "/v1/agents/sessions/s1"));
     }
 
     [Fact]
@@ -345,10 +393,14 @@ public sealed class AgentTests : IDisposable
     {
         var root = Path.Combine(_workspace, "agents", "jean");
         Directory.CreateDirectory(Path.Combine(root, "knowledge"));
-        File.WriteAllText(Path.Combine(root, "agent.yaml"), "name: jean\nllm: openai/gpt-5.6\ntags:\n  team: docs\n");
+        File.WriteAllText(Path.Combine(root, "agent.yaml"),
+            "name: jean\nllm: openai/gpt-5.6\nspeed: 0.9\nharness: default\ntags:\n  team: docs\ndispatch:\n  text: enabled\n");
         File.WriteAllText(Path.Combine(root, "instructions.md"), "You are Jean.\n");
         File.WriteAllText(Path.Combine(root, "knowledge", "pricing.md"), "A penny.\n");
-        File.WriteAllText(Path.Combine(root, "knowledge", "urls.yaml"), "- url: https://example.com/plans\n  title: Plans\n");
+        File.WriteAllText(Path.Combine(root, "knowledge", "urls.yaml"), "- url: https://example.com/plans\n  title: Plans\n  refresh_hours: 24\n");
+        Directory.CreateDirectory(Path.Combine(root, "simulations"));
+        File.WriteAllText(Path.Combine(root, "simulations", "lunch.yaml"),
+            "- name: lunch\n  scenario: Order a club, then swap it.\n  assertion: One wrap.\n  variations: 3\n");
 
         await using var router = await TestRouter.StartAsync();
         router.On("POST", "/v1/agents/sync", 200, new { unchanged = false, config = Fixtures.Config("jean", "cfg-1") });
@@ -371,8 +423,15 @@ public sealed class AgentTests : IDisposable
         var synced = router.Only("POST", "/v1/agents/sync").Body!;
         Assert.Equal(("jean", "openai/gpt-5.6", "You are Jean."), (synced.Text("name"), synced.Text("llm"), synced.Text("instructions")));
         Assert.Equal(("docs", "acme"), (synced["tags"].Text("team"), synced["tags"].Text("tenant")));
+        Assert.Equal("enabled", synced["dispatch"].Text("text"));
+        Assert.Null(synced["dispatch"]!["incoming_call"]);
         Assert.Equal("pricing.md", synced["knowledge"]![0].Text("source"));
         Assert.Equal(("https://example.com/plans", "Plans"), (synced["knowledge_urls"]![0].Text("url"), synced["knowledge_urls"]![0].Text("title")));
+        Assert.Equal(24, synced["knowledge_urls"]![0]!["refresh_hours"]!.GetValue<long>());
+        Assert.Equal((0.9, "default"), (synced["speed"]!.GetValue<double>(), synced.Text("harness")));
+        var simulation = Assert.Single(synced["simulations"]!.AsArray())!.AsObject();
+        Assert.Equal(["assertion", "name", "scenario", "variations"], simulation.Select(pair => pair.Key).Order());
+        Assert.Equal(3, simulation["variations"]!.GetValue<long>());
         Assert.Equal(synced.Text("hash"), Folder.Load(root).ReadStamp());
         Assert.Equal("cfg-1", router.Only("POST", "/v1/agents/sessions").Body.Text("config_id"));
         Assert.Equal("jean", router.Only("GET", "/v1/agents/configs").Query["name"]);
@@ -388,12 +447,15 @@ public sealed class AgentTests : IDisposable
         using var client = Fixtures.Client(router);
         await using var agent = new Agent(new AgentOptions { Config = "support", Client = client });
 
-        var page = await agent.Knowledge.AddUrlAsync("https://example.com/plans", "Plans", cancellationToken: TestContext.Current.CancellationToken);
+        var page = await agent.Knowledge.AddUrlAsync("https://example.com/plans", "Plans", refreshHours: 24, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(("ready", 12), (page.State, page.Passages));
         var added = router.Only("POST", "/v1/agents/knowledge/urls").Body;
         Assert.Equal(("support", "https://example.com/plans", "Plans"), (added.Text("namespace"), added.Text("url"), added.Text("title")));
-        Assert.Null(added?["description"]);
+        Assert.Equal(24, added!["refresh_hours"]!.GetValue<int>());
+        Assert.Null(added["description"]);
+        await Assert.ThrowsAsync<ConfigurationException>(() =>
+            agent.Knowledge.AddUrlAsync("https://example.com/plans", refreshHours: 0, cancellationToken: TestContext.Current.CancellationToken));
     }
 
     private static object Page(string state, int passages) => new

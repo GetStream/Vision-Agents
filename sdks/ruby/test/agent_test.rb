@@ -124,7 +124,8 @@ class TestAgent < LocalRouterTest
       peer.receive_type("close", timeout: 10)
     end
     tools = VA::Tools.new
-    tools.register("weather", description: "Weather for a city") { |args| { city: args["city"], sky: "clear" } }
+    tools.register("weather", description: "Weather for a city", executor: "client",
+                              display_title: "Checking the sky") { |args| { city: args["city"], sky: "clear" } }
     tools.register("broken", description: "Always fails") { raise ArgumentError, "no sky today" }
 
     agent(tools: tools).join("call-1", participant_wait_timeout: 0, wait_for_end: false) do
@@ -133,7 +134,11 @@ class TestAgent < LocalRouterTest
       assert_equal({ "type" => "tool_result", "tool_call_id" => "t2", "error" => "no sky today" },
                    results.pop(timeout: 5))
     end
-    assert_equal "weather", session_request["tools"][0]["name"]
+    assert_equal [{ "name" => "weather", "description" => "Weather for a city",
+                    "parameters" => { "type" => "object", "properties" => {} }, "executor" => "client",
+                    "display_title" => "Checking the sky" },
+                  { "name" => "broken", "description" => "Always fails",
+                    "parameters" => { "type" => "object", "properties" => {} } }], session_request["tools"]
   end
 
   def test_a_cancelled_tool_answers_nothing
@@ -176,12 +181,13 @@ class TestAgent < LocalRouterTest
                  @router.last(:get, "/v1/agents/sessions/sess_1/events").query)
   end
 
-  def test_a_session_nothing_can_watch_is_closed
+  def test_a_session_nothing_can_watch_is_stopped_rather_than_deleted
     @router.on(:post, "/v1/agents/sessions", body: { "id" => "sess_9" })
-    @router.on(:delete, "/v1/agents/sessions/sess_9", status: 204)
+    @router.on(:post, "/v1/agents/sessions/sess_9/stop", status: 204)
 
     assert_raises(VA::RouterError) { agent.join("call-1", participant_wait_timeout: 0) }
-    assert_equal 1, @router.seen(:delete, "/v1/agents/sessions/sess_9").size
+    assert_equal 1, @router.seen(:post, "/v1/agents/sessions/sess_9/stop").size
+    assert_empty @router.seen(:delete, "/v1/agents/sessions/sess_9")
   end
 
   def test_chat_holds_the_conversation_in_writing
@@ -230,11 +236,8 @@ class TestAgent < LocalRouterTest
 
   def test_what_the_code_sets_is_sent_and_nothing_else
     serve_session
-    skills = [VA::Skill.new(name: "research", description: "Looks things up", instructions: "Search first",
-                            deadline: 30)]
 
-    agent(name: "Ada", instructions: "Be brief", pipeline: { llm: "fast", language: "fr", max_tokens: 200 },
-          skills: skills, sandbox: VA::Sandbox.daytona, tasks: 2)
+    agent(name: "Ada", instructions: "Be brief", pipeline: { llm: "fast", language: "fr", max_tokens: 200 })
       .chat { nil }
 
     request = session_request
@@ -244,19 +247,50 @@ class TestAgent < LocalRouterTest
     assert_equal "fast", request["llm"]
     assert_equal ["fr"], request["languages"]
     assert_equal 200, request["max_tokens"]
-    assert_equal "daytona", request["sandbox"]
-    assert_equal 2, request["tasks"]
-    assert_equal [{ "name" => "research", "description" => "Looks things up", "instructions" => "Search first",
-                    "capture_video" => false, "deadline_ms" => 30_000 }], request["skills"]
     refute request.key?("stt")
   end
 
-  def test_turning_the_built_in_skills_off_sends_an_empty_list
+  def test_the_harness_is_synced_onto_the_config_and_never_sent_with_a_session
     serve_session
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
+    skills = [VA::Skill.new(name: "research", description: "Looks things up", instructions: "Search first",
+                            deadline: 30)]
+    support = agent(harness: "default", pipeline: { subagent: "llm-thinking" }, skills: skills,
+                    sandbox: VA::Sandbox.daytona)
 
-    agent(use_skills: false).chat { nil }
+    support.chat { nil }
+    support.sync
 
-    assert_equal [], session_request["skills"]
+    request = session_request
+    %w[harness subagent sandbox skills skill_names tasks].each { |key| refute request.key?(key), key }
+    synced = @router.last(:post, "/v1/agents/sync").json
+    assert_equal "default", synced["harness"]
+    assert_equal "llm-thinking", synced["subagent"]
+    assert_equal "daytona", synced["sandbox"]
+    assert_equal [{ "name" => "research", "description" => "Looks things up", "instructions" => "Search first",
+                    "capture_video" => false, "deadline_ms" => 30_000, "config_id" => "" }], synced["skills"]
+    expected = VA::Folder.fingerprint(VA::Folder.fingerprint("", "", "", skills, [], []),
+                                      "defaultllm-thinkingdaytona", "map[]", [], [], [])
+    assert_equal expected, synced["hash"]
+  end
+
+  def test_update_config_patches_only_what_it_is_given
+    @router.on(:get, "/v1/agents/configs", body: [{ "name" => "support", "id" => "cfg_1" }])
+    @router.on(:patch, "/v1/agents/configs/cfg_1") { |request| request.json.merge("id" => "cfg_1") }
+
+    config = agent.update_config(guardrail: "Never quote prices.", visible_tools: ["athena_*"], speed: 1.1)
+
+    assert_equal "cfg_1", config["id"]
+    assert_equal({ "guardrail" => "Never quote prices.", "visible_tools" => ["athena_*"], "speed" => 1.1 },
+                 @router.last(:patch, "/v1/agents/configs/cfg_1").json)
+    assert_equal({ "name" => "support" }, @router.last(:get, "/v1/agents/configs").query)
+  end
+
+  def test_update_config_needs_a_stored_config
+    @router.on(:get, "/v1/agents/configs", body: [])
+
+    assert_raises(VA::Error) { agent.update_config(guardrail: "x") }
+    assert_empty @router.seen(:patch, %r{\A/v1/agents/configs/})
   end
 
   def test_what_cannot_be_an_agent_is_refused
@@ -321,6 +355,57 @@ class TestAgent < LocalRouterTest
     FileUtils.rm_rf(File.dirname(root))
   end
 
+  def test_sync_sends_what_the_folder_leaves_to_dispatch
+    root = folder
+    File.write(File.join(root, "agent.yaml"), "name: jean\ndispatch:\n  text: enabled\n")
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
+
+    VA::Agent.new(folder: root, client: client).sync
+
+    assert_equal({ "text" => "enabled" }, @router.last(:post, "/v1/agents/sync").json["dispatch"])
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
+  def test_sync_sends_the_speed_harness_pages_and_simulations_the_folder_declares
+    root = folder
+    File.write(File.join(root, "agent.yaml"), "name: jean\nspeed: 1.1\nharness: default\n")
+    File.write(File.join(root, "knowledge/urls.yaml"), "- url: https://example.com/plans\n  refresh_hours: 24\n")
+    FileUtils.mkdir_p(File.join(root, "simulations"))
+    File.write(File.join(root, "simulations/lunch.yaml"),
+               "- name: lunch\n  scenario: Order a club\n  assertion: One club\n  variations: 3\n")
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
+
+    VA::Agent.new(folder: root, client: client).sync
+
+    request = @router.last(:post, "/v1/agents/sync").json
+    assert_equal 1.1, request["speed"]
+    assert_equal "default", request["harness"]
+    assert_equal [{ "url" => "https://example.com/plans", "refresh_hours" => 24 }], request["knowledge_urls"]
+    assert_equal [{ "name" => "lunch", "scenario" => "Order a club", "assertion" => "One club", "variations" => 3 }],
+                 request["simulations"]
+    assert_equal VA::Folder.load(root).fingerprint, request["hash"]
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
+  def test_simulations_are_sent_only_when_the_folder_has_a_directory_for_them
+    root = folder
+    File.write(File.join(root, "agent.yaml"), "name: jean\nspeed: 0\n")
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
+
+    VA::Agent.new(folder: root, client: client).sync
+    FileUtils.mkdir_p(File.join(root, "simulations"))
+    VA::Agent.new(folder: root, client: client).sync
+
+    without, empty = @router.seen(:post, "/v1/agents/sync").map(&:json)
+    refute without.key?("simulations")
+    refute without.key?("speed")
+    assert_equal [], empty["simulations"]
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
   def test_an_untouched_folder_is_read_back_rather_than_written
     root = folder
     @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false, "config" => { "name" => "jean" } })
@@ -371,51 +456,91 @@ class TestAgent < LocalRouterTest
       { "id" => "k1", "state" => reads < 2 ? "pending" : "indexed", "passages" => 4 }
     end
 
-    page = agent.knowledge.add_url("https://example.com/pricing", title: "Pricing")
+    page = agent.knowledge.add_url("https://example.com/pricing", title: "Pricing", refresh_hours: 24)
 
     assert_equal "indexed", page["state"]
-    assert_equal({ "namespace" => "support", "url" => "https://example.com/pricing", "title" => "Pricing" },
-                 @router.last(:post, "/v1/agents/knowledge/urls").json)
+    assert_equal({ "namespace" => "support", "url" => "https://example.com/pricing", "title" => "Pricing",
+                   "refresh_hours" => 24 }, @router.last(:post, "/v1/agents/knowledge/urls").json)
   end
 end
 
 class TestSessions < LocalRouterTest
-  def test_sessions_are_read_back_by_agent
-    @router.on(:get, "/v1/agents/sessions", body: [{ "id" => "s1" }])
-    @router.on(:get, "/v1/agents/sessions/search", body: [{ "id" => "s2" }])
+  def test_sessions_are_queried_by_agent_a_page_at_a_time
+    queries = []
+    @router.on(:post, "/v1/agents/sessions/query") do |request|
+      queries << request.json
+      { "items" => [{ "id" => "s#{queries.size}" }], "has_more" => queries.size == 1, "next_cursor" => "c1" }
+    end
     sessions = client.agent("docs").sessions
 
-    assert_equal [{ "id" => "s1" }], sessions.query(state: "closed", custom: { tenant: "acme" })
-    assert_equal [{ "id" => "s2" }], sessions.search("billing")
+    first = sessions.query(user_id: "u1", state: "live", agent_id: "docs-1", limit: 10)
+    sessions.query(user_id: "u1", state: "live", agent_id: "docs-1", limit: 10, cursor: first["next_cursor"])
+    found = sessions.search("billing", modality: "text")
 
-    assert_equal({ "state" => "closed", "custom" => '{"tenant":"acme"}', "agent" => "docs" },
-                 @router.last(:get, "/v1/agents/sessions").query)
-    assert_equal({ "agent" => "docs", "q" => "billing" }, @router.last(:get, "/v1/agents/sessions/search").query)
+    assert_equal [{ "id" => "s1" }], first["items"]
+    assert_equal [{ "id" => "s3" }], found["items"]
+    filter = { "agent" => "docs", "user_id" => "u1", "state" => "live", "agent_id" => "docs-1" }
+    assert_equal [{ "filter" => filter, "limit" => 10 }, { "filter" => filter, "limit" => 10, "cursor" => "c1" },
+                  { "filter" => { "agent" => "docs", "modality" => "text", "text" => { "$q" => "billing" } } }],
+                 queries
   end
 
   def test_create_opens_a_written_conversation
     serve_session
 
-    session = client.agent("docs").sessions.create(title: "Is Stream better?")
+    session = client.agent("docs").sessions.create(id: "0198c3a0-0000-7000-8000-000000000001",
+                                                   title: "Is Stream better?", project_id: "pricing")
     session.close
 
     request = @router.last(:post, "/v1/agents/sessions").json
     assert_equal({ "agent" => "docs", "user_id" => "docs", "user_name" => "docs", "agent_id" => "docs",
-                   "title" => "Is Stream better?", "text" => true }, request)
+                   "id" => "0198c3a0-0000-7000-8000-000000000001", "title" => "Is Stream better?",
+                   "project_id" => "pricing", "text" => true }, request)
   end
 
-  def test_update_settings_changes_the_models_of_one_session
+  def test_update_changes_one_session
     serve_session
-    @router.on(:patch, "/v1/agents/sessions/sess_1/settings", body: { "id" => "sess_1", "llm" => "llm-thinking" })
+    @router.on(:patch, "/v1/agents/sessions/sess_1", body: { "id" => "sess_1", "llm" => "llm-thinking" })
 
     session = client.agent("docs").sessions.create
-    updated = session.update_settings(llm: "llm-thinking", thinking: "high", sts: "")
+    updated = session.update(title: "Pricing", llm: "llm-thinking", thinking: "high", sts: "")
     session.close
 
     assert_equal "llm-thinking", updated["llm"]
-    assert_equal({ "llm" => "llm-thinking", "thinking" => "high", "sts" => "" },
-                 @router.last(:patch, "/v1/agents/sessions/sess_1/settings").json)
-    assert_raises(VA::ConfigurationError) { session.update_settings(model: "llm-fast") }
+    assert_equal({ "title" => "Pricing", "llm" => "llm-thinking", "thinking" => "high", "sts" => "" },
+                 @router.last(:patch, "/v1/agents/sessions/sess_1").json)
+    assert_raises(VA::ConfigurationError) { session.update(model: "llm-fast") }
+    assert_raises(VA::ConfigurationError) { session.update(subagent: "llm-thinking") }
+  end
+
+  def test_an_ended_session_is_renamed_deleted_and_forgotten_by_id
+    @router.on(:patch, "/v1/agents/sessions/s1") { |request| request.json.merge("id" => "s1") }
+    @router.on(:delete, "/v1/agents/sessions/s1/memories", status: 204)
+    @router.on(:delete, "/v1/agents/sessions/s1", status: 204)
+    sessions = client.agent("docs").sessions
+
+    assert_equal "Pricing", sessions.update("s1", title: "Pricing")["title"]
+    assert_nil sessions.delete_memories("s1")
+    assert_nil sessions.delete("s1")
+    assert_equal 1, @router.seen(:delete, "/v1/agents/sessions/s1/memories").size
+    assert_equal 1, @router.seen(:delete, "/v1/agents/sessions/s1").size
+  end
+
+  def test_closing_a_session_stops_it_and_only_delete_deletes_it
+    closed = Thread::Queue.new
+    serve_session { |peer| closed << peer.receive_type("close", timeout: 10) }
+    @router.on(:delete, "/v1/agents/sessions/sess_1/memories", status: 204)
+    @router.on(:delete, "/v1/agents/sessions/sess_1", status: 204)
+    session = client.agent("docs").sessions.create
+
+    session.delete_memories
+    session.close
+    assert_equal({ "type" => "close" }, closed.pop(timeout: 5))
+    assert_empty @router.seen(:delete, "/v1/agents/sessions/sess_1")
+    session.delete
+
+    assert_equal 1, @router.seen(:delete, "/v1/agents/sessions/sess_1/memories").size
+    assert_equal 1, @router.seen(:delete, "/v1/agents/sessions/sess_1").size
   end
 end
 
@@ -443,25 +568,39 @@ class TestResponses < LocalRouterTest
     assert_raises(VA::ConfigurationError) { responses.rewind(VA::AgentResponse.new(client, { "id" => "" })) }
   end
 
-  def test_items_are_read_a_page_at_a_time
+  def test_items_are_read_a_page_at_a_time_by_cursor
     @router.on(:get, "/v1/agents/sessions/sess_1/responses/items") do |request|
-      offset = request.query["offset"].to_i
-      (offset...[offset + 2, 3].min).map { |i| { "id" => "item_#{i}" } }
+      start = request.query["cursor"].to_i
+      ids = (start...[start + 2, 3].min).map { |i| { "id" => "item_#{i}" } }
+      more = start + 2 < 3
+      { "items" => ids, "has_more" => more, "next_cursor" => (more ? (start + 2).to_s : nil) }.compact
     end
 
     items = responses.items.each(page: 2).to_a
 
     assert_equal %w[item_0 item_1 item_2], items.map { |item| item["id"] }
+    assert_equal [{ "limit" => "2" }, { "limit" => "2", "cursor" => "2" }],
+                 @router.seen(:get, "/v1/agents/sessions/sess_1/responses/items").map(&:query)
   end
 
   def test_one_turns_items
-    @router.on(:get, "/v1/agents/sessions/sess_1/responses/items", body: [])
+    @router.on(:get, "/v1/agents/sessions/sess_1/responses/items", body: { "items" => [], "has_more" => false })
     turn = VA::AgentResponse.new(client, { "id" => "resp_1", "session_id" => "sess_1" })
 
-    turn.items.list(limit: 10)
+    turn.items.list(limit: 10, cursor: "c1")
 
-    assert_equal({ "response_id" => "resp_1", "limit" => "10" },
+    assert_equal({ "response_id" => "resp_1", "limit" => "10", "cursor" => "c1" },
                  @router.last(:get, "/v1/agents/sessions/sess_1/responses/items").query)
+  end
+
+  def test_turns_are_listed_a_page_at_a_time
+    @router.on(:get, "/v1/agents/sessions/sess_1/responses",
+               body: { "items" => [{ "id" => "resp_1" }], "has_more" => true, "next_cursor" => "c1" })
+
+    page = responses.list(limit: 1)
+
+    assert_equal "c1", page["next_cursor"]
+    assert_equal({ "limit" => "1" }, @router.last(:get, "/v1/agents/sessions/sess_1/responses").query)
   end
 
   def test_a_fork_takes_the_history_up_to_a_response

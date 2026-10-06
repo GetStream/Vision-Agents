@@ -191,6 +191,79 @@ func (s *SessionListSuite) TestAnAgentIdNarrowsTheList() {
 	s.Equal(agentID, listed[0].AgentId)
 }
 
+func (s *SessionListSuite) TestAConfigNarrowsTheListToTheSessionsItRan() {
+	config := s.data.createAgentConfig()
+	configured := textSession(nil)
+	configured.ConfigId = &config.Id
+	wanted := s.serverClient.createSession(configured)
+	s.serverClient.createSession(textSession(nil))
+
+	equals := Equals(config.Id)
+	listed := s.serverClient.querySessions(SessionQuery{Filter: &SessionFilter{ConfigID: &equals}}).Items
+	s.Require().Equal([]string{wanted.Id}, ids(listed))
+	s.Require().NotNil(listed[0].ConfigId)
+	s.Equal(config.Id, *listed[0].ConfigId)
+}
+
+func (s *SessionListSuite) TestALabelNarrowsTheListToTheSessionsCarryingAllOfIt() {
+	tested := textSession(nil)
+	tested.Custom = &map[string]any{"origin": "test", "suite": "checkout"}
+	wanted := s.serverClient.createSession(tested)
+
+	other := textSession(nil)
+	other.Custom = &map[string]any{"origin": "test"}
+	s.serverClient.createSession(other)
+
+	s.Equal([]string{wanted.Id}, ids(s.serverClient.querySessions(SessionQuery{
+		Filter: &SessionFilter{Custom: &map[string]string{"origin": "test", "suite": "checkout"}},
+	}).Items), "every pair has to be held, not just one of them")
+
+	s.Empty(s.serverClient.querySessions(SessionQuery{
+		Filter: &SessionFilter{Custom: &map[string]string{"origin": "production"}},
+	}).Items)
+}
+
+func (s *SessionListSuite) TestACreatedAtWindowLeavesOutWhatStartedOutsideIt() {
+	opened := s.serverClient.createSession(textSession(nil))
+	started := opened.CreatedAt
+
+	before, soon := started.Add(-time.Minute), started.Add(time.Minute)
+	within := &TimeRange{Gte: &before, Lt: &soon}
+	s.Contains(ids(s.serverClient.querySessions(SessionQuery{
+		Filter: &SessionFilter{CreatedAt: within}}).Items), opened.Id)
+
+	after := &TimeRange{Gte: &soon}
+	s.NotContains(ids(s.serverClient.querySessions(SessionQuery{
+		Filter: &SessionFilter{CreatedAt: after}}).Items), opened.Id)
+}
+
+func (s *SessionListSuite) TestTheWindowIsHalfOpenSoTwoThatMeetShareNoSession() {
+	opened := s.serverClient.createSession(textSession(nil))
+	// The session started on the boundary, so the window that ends there leaves it out
+	// and the window that starts there takes it: paging over both counts it once.
+	boundary := opened.CreatedAt
+
+	s.NotContains(ids(s.serverClient.querySessions(SessionQuery{
+		Filter: &SessionFilter{CreatedAt: &TimeRange{Lt: &boundary}}}).Items), opened.Id)
+	s.Contains(ids(s.serverClient.querySessions(SessionQuery{
+		Filter: &SessionFilter{CreatedAt: &TimeRange{Gte: &boundary}}}).Items), opened.Id)
+}
+
+func (s *SessionListSuite) TestAWindowThatEndsBeforeItStartsIsRefused() {
+	s.assertRefused(map[string]any{"filter": map[string]any{"created_at": map[string]any{
+		"$gte": "2026-10-05T00:00:00Z", "$lt": "2026-10-01T00:00:00Z"}}})
+}
+
+func (s *SessionListSuite) TestATimeThatIsNotRFC3339IsRefused() {
+	s.assertRefused(map[string]any{
+		"filter": map[string]any{"created_at": map[string]any{"$gte": "last tuesday"}}})
+}
+
+func (s *SessionListSuite) TestAnOperatorTheWindowDoesNotTakeIsRefused() {
+	s.assertRefused(map[string]any{
+		"filter": map[string]any{"created_at": map[string]any{"$ne": "2026-10-05T00:00:00Z"}}})
+}
+
 func (s *SessionListSuite) TestAFieldNobodyMayFilterOnIsRefused() {
 	s.assertRefused(map[string]any{"filter": map[string]any{"call_id": "abc"}})
 }

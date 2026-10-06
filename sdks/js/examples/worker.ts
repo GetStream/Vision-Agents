@@ -34,7 +34,7 @@ dispatch.onMessage(async (message) => {
   console.log(`${message.userName || message.userId} wrote: ${message.text}`);
 
   const session = await dispatch.sessionFor(message, john);
-  session.respond(message.text);
+  await session.responses.create(message.text);
 });
 
 const stop = new AbortController();

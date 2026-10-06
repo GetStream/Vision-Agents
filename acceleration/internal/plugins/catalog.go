@@ -3,12 +3,18 @@ package plugins
 import (
 	"embed"
 	"fmt"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
-//go:embed plugins.yaml
+// The logos are our own plain marks, not the vendors' artwork, so a deployment that has
+// licensed the real thing replaces a file and changes nothing else.
+//
+//go:embed plugins.yaml logos
 var catalogFS embed.FS
 
 // Plugin is one hosted MCP server the dashboard may attach to an agent.
@@ -19,9 +25,45 @@ type Plugin struct {
 	Description string `yaml:"description"`
 	URL         string `yaml:"url"`
 	Auth        string `yaml:"auth"`
+	// Logo is the file under logos/ this plugin is drawn with.
+	Logo string `yaml:"logo"`
 	// InstanceRequired means the URL is a template that needs a shop or org hostname.
 	InstanceRequired bool   `yaml:"instance_required"`
 	InstanceHint     string `yaml:"instance_hint"`
+	// Scopes are asked for at consent. Empty asks for none and takes the server's default.
+	Scopes []string `yaml:"scopes"`
+	// ScopesSupported are what the server's protected-resource metadata says it accepts,
+	// which an agent's own scopes must come from. Empty checks nothing.
+	ScopesSupported []string `yaml:"scopes_supported"`
+	// AuthorizeParams go on the authorize URL as well, for a provider that needs them.
+	AuthorizeParams map[string]string `yaml:"authorize_params"`
+	// ReadonlyURL is the server's read-only endpoint, for a vendor that runs one, and
+	// ReadonlyScopes what is asked for at consent there instead of Scopes.
+	ReadonlyURL    string   `yaml:"readonly_url"`
+	ReadonlyScopes []string `yaml:"readonly_scopes"`
+	// Toolsets are the groups of tools the server can be limited to, by a toolsets query
+	// parameter on its URL. Empty means it cannot be.
+	Toolsets []string `yaml:"toolsets"`
+	// Tools are the agent's own allowlist of the server's tools, as names or path.Match
+	// patterns, set by Configured. Empty offers every tool.
+	Tools []string `yaml:"-"`
+	// ByURL is an MCP server an agent config names by its URL rather than from the catalog.
+	// Its login registers a client of its own, never the deployment's, and asks for the
+	// scopes its server advertises when given none.
+	ByURL bool `yaml:"-"`
+}
+
+// Options are what an agent config changes about a catalog plugin.
+type Options struct {
+	// Readonly reaches the read-only endpoint.
+	Readonly bool
+	// Scopes are asked for at consent in place of the catalog's.
+	Scopes []string
+	// Toolsets limit the server to these groups of tools. Empty offers every tool.
+	Toolsets []string
+	// Tools offer only the server's tools matching these names or path.Match patterns.
+	// Empty offers every tool.
+	Tools []string
 }
 
 type catalogFile struct {
@@ -58,9 +100,37 @@ func loadCatalog() ([]Plugin, error) {
 		if _, duplicate := seen[plugin.ID]; duplicate {
 			return nil, fmt.Errorf("plugins: %s is declared twice", plugin.ID)
 		}
+		// Read now rather than when a card is drawn, so a misnamed file is a router that
+		// will not start rather than a login nobody can see the plugin on.
+		if _, err := catalogFS.ReadFile(logoFile(plugin.Logo)); err != nil {
+			return nil, fmt.Errorf("plugins: %s has no logo: %w", plugin.ID, err)
+		}
 		seen[plugin.ID] = struct{}{}
 	}
 	return file.Plugins, nil
+}
+
+func logoFile(name string) string {
+	return "logos/" + name
+}
+
+// LogoPath is where a plugin's logo is served, which is what an authorization attachment
+// points its thumbnail at.
+func LogoPath(id string) string {
+	return "/v1/agents/plugins/" + id + "/logo"
+}
+
+// Logo is the SVG a catalog plugin is drawn with.
+func Logo(id string) ([]byte, bool) {
+	plugin, ok := Lookup(id)
+	if !ok {
+		return nil, false
+	}
+	raw, err := catalogFS.ReadFile(logoFile(plugin.Logo))
+	if err != nil {
+		return nil, false
+	}
+	return raw, true
 }
 
 // Catalog is the built-in set, in the order they are declared.
@@ -94,6 +164,42 @@ func Search(query string) []Plugin {
 	return found
 }
 
+// Configured is the plugin as an agent config asks for it: at its read-only endpoint when
+// readonly is set, asking for scopes at consent when any are given, and limited to the
+// toolsets and tools named.
+func (p Plugin) Configured(options Options) (Plugin, error) {
+	supported := p.ScopesSupported
+	if options.Readonly {
+		if p.ReadonlyURL == "" {
+			return Plugin{}, stack.Wrap(fmt.Errorf("plugins: %s has no read-only endpoint", p.Name))
+		}
+		p.URL = p.ReadonlyURL
+		p.Scopes = p.ReadonlyScopes
+		supported = p.ReadonlyScopes
+	}
+	if len(options.Scopes) > 0 {
+		for _, scope := range options.Scopes {
+			if len(supported) > 0 && !slices.Contains(supported, scope) {
+				return Plugin{}, stack.Wrap(fmt.Errorf("plugins: %s does not accept the scope %q", p.Name, scope))
+			}
+		}
+		p.Scopes = options.Scopes
+	}
+	if err := CheckToolPatterns(options.Tools); err != nil {
+		return Plugin{}, err
+	}
+	p.Tools = options.Tools
+	if len(options.Toolsets) > 0 {
+		for _, toolset := range options.Toolsets {
+			if !slices.Contains(p.Toolsets, toolset) {
+				return Plugin{}, stack.Wrap(fmt.Errorf("plugins: %s has no toolset %q", p.Name, toolset))
+			}
+		}
+		p.URL += "?toolsets=" + strings.Join(options.Toolsets, ",")
+	}
+	return p, nil
+}
+
 // Endpoint is the MCP URL this plugin is reached at. An instance is the shop or org
 // hostname for the two that have no single global URL.
 func (p Plugin) Endpoint(instance string) (string, error) {
@@ -106,9 +212,9 @@ func (p Plugin) Endpoint(instance string) (string, error) {
 	host = strings.TrimSuffix(host, "/")
 	if host == "" {
 		if p.InstanceHint != "" {
-			return "", fmt.Errorf("plugins: %s needs an instance url: %s", p.Name, p.InstanceHint)
+			return "", stack.Wrap(fmt.Errorf("plugins: %s needs an instance url: %s", p.Name, p.InstanceHint))
 		}
-		return "", fmt.Errorf("plugins: %s needs an instance url", p.Name)
+		return "", stack.Wrap(fmt.Errorf("plugins: %s needs an instance url", p.Name))
 	}
 	return strings.ReplaceAll(p.URL, "{instance}", host), nil
 }

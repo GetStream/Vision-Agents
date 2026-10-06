@@ -25,16 +25,19 @@ module GetStream
       # comes back already says whether it worked. It stays a subscription: reading the same
       # url again replaces its passages rather than adding a copy.
       #
+      # @param refresh_hours [Integer] how often the page is read again on its own. nil is
+      #   never, and since adding a page again replaces it, turns a schedule off.
       # @return [Hash] the KnowledgeUrl as stored: state, passages, and error if it failed.
       #   Still pending if it was not read within timeout seconds.
-      def add_url(url, title: nil, description: nil, timeout: READ_TIMEOUT)
+      def add_url(url, title: nil, description: nil, refresh_hours: nil, timeout: READ_TIMEOUT)
         if @namespace.to_s.empty?
           raise ConfigurationError,
                 "a knowledge base is named by the agent it belongs to; build the agent from a config or a folder"
         end
 
         page = @client.post("/v1/agents/knowledge/urls",
-                            body: { namespace: @namespace, url: url, title: title, description: description })
+                            body: { namespace: @namespace, url: url, title: title, description: description,
+                                    refresh_hours: refresh_hours })
         deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
         while page["state"] == "pending" && Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
           sleep POLL_INTERVAL

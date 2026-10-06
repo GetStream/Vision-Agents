@@ -24,7 +24,7 @@ func TestPartsSuite(t *testing.T) { suite.Run(t, new(PartsSuite)) }
 // SetupTest is a reply to a command from Alice's phone, in a conversation whose agent config
 // shows its athena_* tools and web search (visible_tools), with one tool her device runs.
 func (s *PartsSuite) SetupTest() {
-	s.c = &Conversation{data: disk{
+	s.c = &Conversation{data: ledger{
 		Commands:     map[string]commandRecord{"command": {Initiator: "emp_alice", ClientID: "ios-7F3A"}},
 		VisibleTools: []string{"athena_*", "web_search"},
 	}}
@@ -114,6 +114,72 @@ func (s *PartsSuite) TestAClientToolIsAStepWhateverVisibleToolsSays() {
 	s.Equal("awaiting_client", s.m.Parts[0].Status)
 }
 
+func (s *PartsSuite) TestACallAPersonMustAllowWaitsForTheirAnswer() {
+	s.c.tools["athena_device_location"] = ToolDisplay{Title: "Checking your location", Client: true, Approval: &ToolApproval{
+		Title: "Share your location?", Message: "Only your city is shared.", ReasonArgument: "purpose",
+		AllowTitle: "Share location", DeclineTitle: "Don't share",
+	}}
+	now := time.Now()
+	s.c.called(s.m, toolCall{id: "toolu_01A", name: "athena_device_location", arguments: `{"purpose":"  to check\nthe weather "}`, startedAt: now})
+	part := s.m.Parts[0]
+	s.Equal("awaiting_approval", part.Status)
+	s.Equal("emp_alice", part.TargetUserID)
+	s.Equal("ios-7F3A", part.TargetClientID)
+	s.Equal(&Approval{Title: "Share your location?", Message: "Only your city is shared.", Reason: "to check the weather",
+		AllowTitle: "Share location", DeclineTitle: "Don't share"}, part.Approval)
+
+	s.False(decided(s.m, "toolu_other", true, "", now), "only the call waiting is answered")
+	s.True(decided(s.m, "toolu_01A", true, "", now))
+	s.Equal("awaiting_client", s.m.Parts[0].Status, "allowed, the device runs it")
+	s.Equal("allowed", s.m.Parts[0].Approval.Decision)
+	s.False(decided(s.m, "toolu_01A", false, "Location not shared", now), "an answer is given once")
+	ran(s.m, "toolu_01A", "completed", `{"summary":"Shared approximate location"}`, "", now.Add(time.Second))
+	s.Equal("completed", s.m.Parts[0].Status)
+	s.Equal("Shared approximate location", s.m.Parts[0].Summary)
+
+	// Declined, the call is cancelled with the person's summary, and its result changes nothing.
+	s.c.called(s.m, toolCall{id: "toolu_01B", name: "athena_device_location", arguments: `{}`, startedAt: now})
+	s.Empty(s.m.Parts[1].Approval.Reason)
+	s.True(decided(s.m, "toolu_01B", false, "Location not shared", now.Add(2*time.Second)))
+	s.Equal("cancelled", s.m.Parts[1].Status)
+	s.Equal("declined", s.m.Parts[1].Approval.Decision)
+	s.Equal("Location not shared", s.m.Parts[1].Summary)
+	s.EqualValues(2000, s.m.Parts[1].DurationMS)
+	ran(s.m, "toolu_01B", "failed", "", "The employee declined", now.Add(3*time.Second))
+	s.Equal("cancelled", s.m.Parts[1].Status)
+
+	// Nobody answered: the caller's reason is the summary.
+	s.c.called(s.m, toolCall{id: "toolu_01C", name: "athena_device_location", startedAt: now})
+	ran(s.m, "toolu_01C", "failed", "", "Not answered in time", now)
+	s.Equal("failed", s.m.Parts[2].Status)
+	s.Equal("Not answered in time", s.m.Parts[2].Summary)
+
+	// A client tool with no install to address has nobody to ask.
+	s.c.data.Commands["command"] = commandRecord{Initiator: "emp_alice"}
+	s.c.called(s.m, toolCall{id: "toolu_01D", name: "athena_device_location", startedAt: now})
+	s.Equal("running", s.m.Parts[3].Status)
+	s.Nil(s.m.Parts[3].Approval)
+}
+
+func (s *PartsSuite) TestAServerToolAPersonMustAllowIsShownAndRunsOnceAllowed() {
+	s.c.data.VisibleTools = nil
+	s.c.tools["send_email"] = ToolDisplay{Title: "Sending the email", Approval: &ToolApproval{
+		Title: "Send this email?", ReasonArgument: "subject",
+	}}
+	now := time.Now()
+	s.c.called(s.m, toolCall{id: "call-1", name: "send_email", arguments: `{"subject":"Q3 numbers","to":"a@b.c"}`, startedAt: now})
+	s.Require().Len(s.m.Parts, 1, "a question is shown whatever visible_tools says")
+	part := s.m.Parts[0]
+	s.Equal("awaiting_approval", part.Status)
+	s.Equal("server", part.Executor)
+	s.Equal("emp_alice", part.TargetUserID)
+	s.Empty(part.TargetClientID, "any of the person's clients may answer")
+	s.Empty(part.Arguments, "only the reason of a server tool's arguments is shown")
+	s.Equal("Q3 numbers", part.Approval.Reason)
+	s.True(decided(s.m, "call-1", true, "", now))
+	s.Equal("running", s.m.Parts[0].Status)
+}
+
 func (s *PartsSuite) TestToolsPeopleMayNotSeeAreNotSteps() {
 	s.c.called(s.m, toolCall{id: "call-1", name: "crm_update_contact", arguments: `{"email":"a@b.c"}`, startedAt: time.Now()})
 	s.Empty(s.m.Parts)
@@ -149,6 +215,10 @@ func (s *PartsSuite) TestAttachmentsStayWithinStreamsLimits() {
 		parts = append(parts, Part{Type: partToolCall, V: 1, ID: fmt.Sprintf("call-%d", i), Status: "completed",
 			Name: "web_search", DisplayTitle: "Searching the web", Executor: "server"})
 	}
+	parts = append(parts, Part{Type: partToolCall, V: 1, ID: "toolu_asked", Status: "cancelled", Name: "athena_device_location", Executor: "client",
+		Approval: &Approval{Title: "Share your location?", Message: strings.Repeat("m", 240), Reason: strings.Repeat("r", 160), Decision: "declined"}})
+	parts = append(parts, Part{Type: partToolCall, V: 1, ID: "toolu_waiting", Status: "awaiting_approval", Name: "athena_device_location", Executor: "client",
+		Approval: &Approval{Title: "Share your location?", Message: strings.Repeat("m", 240), Reason: strings.Repeat("r", 160)}})
 	parts = append(parts, Part{Type: partToolCall, V: 1, ID: "toolu_live", Status: "awaiting_client", Name: "athena_device_location", Executor: "client"})
 	artifacts := partialAttachments([]ArtifactAttachment{{Type: "athena_image", ArtifactID: "art_1", Revision: 1, Title: "Chart"}})
 
@@ -159,6 +229,9 @@ func (s *PartsSuite) TestAttachmentsStayWithinStreamsLimits() {
 	s.Equal("athena_image", out[len(out)-1]["type"], "artifacts are kept, after the steps")
 	s.Equal("art_1", out[len(out)-1]["artifact_id"], "an artifact's fields are on the attachment itself")
 	s.Equal("toolu_live", out[len(out)-2]["id"], "a step still in progress is kept")
+	waiting := out[len(out)-3]
+	s.Equal("toolu_waiting", waiting["id"], "a question still open is kept whole")
+	s.Equal(strings.Repeat("r", 160), waiting["approval"].(map[string]any)["reason"])
 
 	// A short reply keeps everything as it is.
 	short := messageAttachments(parts[:3], artifacts)

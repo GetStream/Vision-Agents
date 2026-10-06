@@ -24,32 +24,32 @@ class DataChange:
     """One thing that happened to one row of the calling app's data.
 
     Attributes:
+        at (datetime.datetime):
+        key (DataChangeKey): What identifies the row, which is all a delete has.
+        op (DataChangeOp):
         seq (int): Where this sits in the order changes happened, and the cursor to resume from.
         table (str): Which table the row is in. Example: agent_configs.
-        op (DataChangeOp):
-        key (DataChangeKey): What identifies the row, which is all a delete has.
-        at (datetime.datetime):
         row (DataChangeRow | Unset): The row as it now reads, absent for a delete and never carrying a credential.
     """
 
+    at: datetime.datetime
+    key: DataChangeKey
+    op: DataChangeOp
     seq: int
     table: str
-    op: DataChangeOp
-    key: DataChangeKey
-    at: datetime.datetime
     row: DataChangeRow | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        seq = self.seq
-
-        table = self.table
-
-        op = self.op.value
+        at = self.at.isoformat()
 
         key = self.key.to_dict()
 
-        at = self.at.isoformat()
+        op = self.op.value
+
+        seq = self.seq
+
+        table = self.table
 
         row: dict[str, Any] | Unset = UNSET
         if not isinstance(self.row, Unset):
@@ -59,11 +59,11 @@ class DataChange:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "at": at,
+                "key": key,
+                "op": op,
                 "seq": seq,
                 "table": table,
-                "op": op,
-                "key": key,
-                "at": at,
             }
         )
         if row is not UNSET:
@@ -77,15 +77,15 @@ class DataChange:
         from ..models.data_change_row import DataChangeRow
 
         d = dict(src_dict)
-        seq = d.pop("seq")
-
-        table = d.pop("table")
-
-        op = DataChangeOp(d.pop("op"))
+        at = datetime.datetime.fromisoformat(d.pop("at"))
 
         key = DataChangeKey.from_dict(d.pop("key"))
 
-        at = datetime.datetime.fromisoformat(d.pop("at"))
+        op = DataChangeOp(d.pop("op"))
+
+        seq = d.pop("seq")
+
+        table = d.pop("table")
 
         _row = d.pop("row", UNSET)
         row: DataChangeRow | Unset
@@ -95,11 +95,11 @@ class DataChange:
             row = DataChangeRow.from_dict(_row)
 
         data_change = cls(
+            at=at,
+            key=key,
+            op=op,
             seq=seq,
             table=table,
-            op=op,
-            key=key,
-            at=at,
             row=row,
         )
 

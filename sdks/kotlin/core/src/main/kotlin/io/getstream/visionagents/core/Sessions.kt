@@ -3,9 +3,11 @@ package io.getstream.visionagents.core
 import io.getstream.visionagents.core.generated.CreateSessionRequest
 import io.getstream.visionagents.core.generated.ForkSessionRequest
 import io.getstream.visionagents.core.generated.Session as SessionSchema
-import io.getstream.visionagents.core.generated.SessionTool
+import io.getstream.visionagents.core.generated.SessionPage
+import io.getstream.visionagents.core.generated.SessionQuery as QuerySchema
+import io.getstream.visionagents.core.generated.UpdateSessionRequest
 import io.ktor.http.HttpMethod
-import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.JsonObject
 
 /**
  * Conversations: opening one, finding the ones there were, and acting on one by id.
@@ -29,13 +31,14 @@ public class Sessions internal constructor(
      */
     public suspend fun create(options: SessionOptions = SessionOptions(), callId: String? = null): Session {
         val request = CreateSessionRequest(
+            id = options.id?.ifEmpty { null },
             callId = callId,
             text = if (callId == null) true else null,
             agent = (options.agent ?: agent)?.ifEmpty { null },
             configId = options.configId?.ifEmpty { null },
             title = options.title,
             description = options.description,
-            project = options.project,
+            projectId = options.projectId,
             custom = options.custom,
             incognito = options.incognito,
             conversationId = options.conversationId,
@@ -46,7 +49,7 @@ public class Sessions internal constructor(
             stt = options.stt,
             tts = options.tts,
             voice = options.voice,
-            tools = options.tools.ifEmpty { null }?.map { SessionTool(it.name, it.description, it.parameters) },
+            tools = options.tools.ifEmpty { null }?.map { it.schema },
             tags = options.tags.ifEmpty { null },
         )
         val created = backend.post(
@@ -59,30 +62,20 @@ public class Sessions internal constructor(
     }
 
     /**
-     * This caller's conversations, newest first, the ones that ended included.
-     *
-     * A page shorter than the limit asked for is the last one.
+     * A page of this caller's conversations, most recently active first, the ones that ended
+     * included. Pass its [Page.nextCursor] as [SessionQuery.cursor] for the next one.
      */
-    public suspend fun query(query: SessionQuery = SessionQuery()): List<Session> =
-        backend.get(
-            listOf("v1", "agents", "sessions"),
-            ListSerializer(SessionSchema.serializer()),
-            scoped(query).parameters(),
-        ).map(Session::of)
+    public suspend fun query(query: SessionQuery = SessionQuery()): Page<Session> = page(scoped(query).schema(text = ""))
 
     /**
      * Finds conversations by what they were called: their title, description, project and
-     * agent name, best match first.
+     * agent name, best match first. It pages the way [query] does.
      *
      * What was said is not searched. An empty [text] is the same as [query], so a search box
      * nobody has typed in yet shows a person their conversations rather than nothing.
      */
-    public suspend fun search(text: String, query: SessionQuery = SessionQuery()): List<Session> =
-        backend.get(
-            listOf("v1", "agents", "sessions", "search"),
-            ListSerializer(SessionSchema.serializer()),
-            queryOf("q" to text) + scoped(query).parameters(),
-        ).map(Session::of)
+    public suspend fun search(text: String, query: SessionQuery = SessionQuery()): Page<Session> =
+        page(scoped(query).schema(text))
 
     /**
      * One session. Somebody else's is reported as not found, so this is not a way to find out
@@ -91,8 +84,39 @@ public class Sessions internal constructor(
     public suspend fun get(id: String): Session =
         Session.of(backend.get(listOf("v1", "agents", "sessions", id), SessionSchema.serializer()))
 
-    /** Ends a session, which is how the agent leaves. */
+    /**
+     * Renames a session or relabels it, running or ended, and returns it as it now is. Null
+     * leaves a field as it is; [custom] replaces the labels whole, and an empty one clears them.
+     */
+    public suspend fun update(
+        id: String,
+        title: String? = null,
+        description: String? = null,
+        custom: JsonObject? = null,
+    ): Session {
+        val request = UpdateSessionRequest(title = title, description = description, custom = custom)
+        val updated = backend.send(
+            HttpMethod.Patch,
+            listOf("v1", "agents", "sessions", id),
+            SessionSchema.serializer(),
+            body = wire.encodeToString(UpdateSessionRequest.serializer(), request),
+        )!!
+        return Session.of(updated)
+    }
+
+    /**
+     * Stops a session, which is how the agent leaves. What it recorded and remembered is kept;
+     * [delete] takes it away.
+     */
     public suspend fun close(id: String) {
+        backend.send<Unit>(HttpMethod.Post, listOf("v1", "agents", "sessions", id, "stop"), answer = null)
+    }
+
+    /**
+     * Deletes a session, running or ended: it is stopped, and its turns and what it remembered
+     * are deleted with it. The user's other memories are kept.
+     */
+    public suspend fun delete(id: String) {
         backend.send<Unit>(HttpMethod.Delete, listOf("v1", "agents", "sessions", id), answer = null)
     }
 
@@ -107,7 +131,7 @@ public class Sessions internal constructor(
             configId = options.configId?.ifEmpty { null },
             title = options.title,
             description = options.description,
-            project = options.project,
+            projectId = options.projectId,
             custom = options.custom,
             modelOverwrites = options.modelOverwrites?.schema,
             instructions = options.instructions,
@@ -130,4 +154,14 @@ public class Sessions internal constructor(
 
     private fun scoped(query: SessionQuery): SessionQuery =
         if (agent == null || query.agent != null) query else query.copy(agent = agent)
+
+    private suspend fun page(request: QuerySchema): Page<Session> {
+        val page = backend.post(
+            listOf("v1", "agents", "sessions", "query"),
+            QuerySchema.serializer(),
+            request,
+            SessionPage.serializer(),
+        )
+        return Page(page.items.map(Session::of), page.hasMore, page.nextCursor?.ifEmpty { null })
+    }
 }

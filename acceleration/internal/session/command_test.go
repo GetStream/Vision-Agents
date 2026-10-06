@@ -2,9 +2,6 @@ package session
 
 import (
 	"context"
-	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -67,9 +64,7 @@ func (g *gatedLLM) answers(count int) {
 // persists prepares a manager whose text sessions keep a durable command ledger, answered
 // by a model whose timing the test decides.
 func (s *SessionSuite) persists() {
-	s.outbox = s.T().TempDir()
-	service, err := persistent.NewForChat(s.outbox, chattest.Client(s.T()))
-	s.Require().NoError(err)
+	service := persistent.NewForChat(chattest.Client(s.T()))
 	s.T().Cleanup(service.Close)
 	s.conversations = service
 	s.gated = newGatedLLM()
@@ -113,6 +108,9 @@ func (s *SessionSuite) TestPersistentToolResultsStayBoundToTheirCommandAndTurn()
 	s.False(running.ResolveTool("call-a", "legacy result", ""))
 	s.False(running.ResolveCommandTool("call-a", "command-b", "turn-a", llm.TextParts("wrong command"), ""))
 	s.False(running.ResolveCommandTool("call-a", "command-a", "turn-b", llm.TextParts("wrong turn"), ""))
+	s.False(running.DecideCommandTool("call-a", "command-b", "turn-a", true, ""), "an approval is bound to its command")
+	s.False(running.DecideCommandTool("call-a", "command-a", "turn-b", true, ""), "and to its turn")
+	s.True(running.DecideCommandTool("call-a", "command-a", "turn-a", true, ""))
 	s.True(running.ResolveCommandTool("call-a", "command-a", "turn-a", llm.TextParts("authorized"), ""))
 	s.False(running.ResolveCommandTool("call-a", "command-a", "turn-a", llm.TextParts("duplicate"), ""))
 	s.Require().NoError(<-resolved)
@@ -271,31 +269,6 @@ func (s *SessionSuite) TestRepeatedStopsAndFinishedCommandsConvergeOnOneReceipt(
 	s.Require().ErrorIs(err, persistent.ErrCommandNotFound)
 }
 
-func (s *SessionSuite) TestAStopThatCouldNotBeRecordedIsNotReportedAsStopped() {
-	s.persists()
-	running := s.commands()
-
-	accepted, _, err := running.RespondCommand(s.ctx, "command-a", "First question", "")
-	s.Require().NoError(err)
-	s.Equal("First question", s.asked())
-
-	// The conversation's own record is made unwritable, which is the case where the stop
-	// may have happened but cannot be known to have happened.
-	state := filepath.Join(s.outbox, strings.TrimPrefix(running.Spec().ConversationID, "agent:"), "state.json")
-	s.Require().NoError(os.Remove(state))
-	s.Require().NoError(os.Mkdir(state, 0700))
-
-	_, err = running.InterruptCommand("command-a")
-	s.Require().ErrorContains(err, "persistence outcome unknown")
-
-	// Retrying the same stop once the record is writable again settles it.
-	s.Require().NoError(os.Remove(state))
-	stopped, err := running.InterruptCommand("command-a")
-	s.Require().NoError(err)
-	s.Equal("cancelled", stopped.State)
-	s.Equal(accepted.AssistantMessageID, stopped.AssistantMessageID)
-}
-
 func (s *SessionSuite) TestConcurrentStopsAndSubmissionsKeepEachCommandSeparate() {
 	s.persists()
 	running := s.commands()
@@ -350,8 +323,7 @@ func (s *SessionSuite) TestPersistentConversationsStillRequireTextMode() {
 
 func (s *SessionSuite) TestSharedConversationHandsOffAfterWatcherDetachAndRejectsRemovedMemberCommands() {
 	client := chattest.Client(s.T())
-	service, err := persistent.NewForChat(s.T().TempDir(), client)
-	s.Require().NoError(err)
+	service := persistent.NewForChat(client)
 	s.T().Cleanup(service.Close)
 	s.conversations = service
 	s.manages()
@@ -434,9 +406,7 @@ func (s *SessionSuite) TestSharedConversationHandsOffAfterWatcherDetachAndReject
 }
 
 func (s *SessionSuite) TestAVoiceSessionRestoresChatHistoryWithoutPersisting() {
-	s.outbox = s.T().TempDir()
-	service, err := persistent.NewForChat(s.outbox, chattest.Client(s.T()))
-	s.Require().NoError(err)
+	service := persistent.NewForChat(chattest.Client(s.T()))
 	s.T().Cleanup(service.Close)
 	s.conversations = service
 	s.manages()

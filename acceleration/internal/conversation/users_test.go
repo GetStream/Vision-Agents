@@ -13,8 +13,7 @@ func TestOpeningAConversationLeavesAnExistingUserAlone(t *testing.T) {
 	// Opening a conversation with them must not write them back as a bare id.
 	chat := chattest.NewServer(t)
 	chat.PutUser(map[string]any{"id": "employee", "name": "Ada Lovelace", "image": "https://example.com/ada.png"})
-	service, err := NewForChat(t.TempDir(), chat.Client)
-	require.NoError(t, err)
+	service := NewForChat(chat.Client)
 	t.Cleanup(service.Close)
 
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")

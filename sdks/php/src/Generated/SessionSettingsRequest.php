@@ -17,17 +17,16 @@ final readonly class SessionSettingsRequest
     public function __construct(
         // The conversation model, a provider/model or a capability shortcut.
         public ?string $llm = null,
-        public ?string $stt = null,
-        public ?string $tts = null,
+        public ?int $maxOutputTokens = null,
         // A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
         public ?string $sts = null,
-        public ?string $subagent = null,
+        public ?string $stt = null,
+        public ?float $temperature = null,
+        public ?string $thinking = null,
+        public ?string $tts = null,
+        public ?string $verbosity = null,
         // The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
         public ?string $voice = null,
-        public ?string $thinking = null,
-        public ?float $temperature = null,
-        public ?int $maxOutputTokens = null,
-        public ?string $verbosity = null,
     ) {
     }
 
@@ -38,15 +37,14 @@ final readonly class SessionSettingsRequest
     {
         return new self(
             llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
-            stt: array_key_exists('stt', $data) && $data['stt'] !== null ? Json::string($data, 'stt') : null,
-            tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
-            sts: array_key_exists('sts', $data) && $data['sts'] !== null ? Json::string($data, 'sts') : null,
-            subagent: array_key_exists('subagent', $data) && $data['subagent'] !== null ? Json::string($data, 'subagent') : null,
-            voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
-            thinking: array_key_exists('thinking', $data) && $data['thinking'] !== null ? Json::string($data, 'thinking') : null,
-            temperature: array_key_exists('temperature', $data) && $data['temperature'] !== null ? Json::float($data, 'temperature') : null,
             maxOutputTokens: array_key_exists('max_output_tokens', $data) && $data['max_output_tokens'] !== null ? Json::int($data, 'max_output_tokens') : null,
+            sts: array_key_exists('sts', $data) && $data['sts'] !== null ? Json::string($data, 'sts') : null,
+            stt: array_key_exists('stt', $data) && $data['stt'] !== null ? Json::string($data, 'stt') : null,
+            temperature: array_key_exists('temperature', $data) && $data['temperature'] !== null ? Json::float($data, 'temperature') : null,
+            thinking: array_key_exists('thinking', $data) && $data['thinking'] !== null ? Json::string($data, 'thinking') : null,
+            tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
             verbosity: array_key_exists('verbosity', $data) && $data['verbosity'] !== null ? Json::string($data, 'verbosity') : null,
+            voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
         );
     }
 
@@ -61,32 +59,29 @@ final readonly class SessionSettingsRequest
         if ($this->llm !== null) {
             $out['llm'] = $this->llm;
         }
-        if ($this->stt !== null) {
-            $out['stt'] = $this->stt;
-        }
-        if ($this->tts !== null) {
-            $out['tts'] = $this->tts;
+        if ($this->maxOutputTokens !== null) {
+            $out['max_output_tokens'] = $this->maxOutputTokens;
         }
         if ($this->sts !== null) {
             $out['sts'] = $this->sts;
         }
-        if ($this->subagent !== null) {
-            $out['subagent'] = $this->subagent;
-        }
-        if ($this->voice !== null) {
-            $out['voice'] = $this->voice;
-        }
-        if ($this->thinking !== null) {
-            $out['thinking'] = $this->thinking;
+        if ($this->stt !== null) {
+            $out['stt'] = $this->stt;
         }
         if ($this->temperature !== null) {
             $out['temperature'] = $this->temperature;
         }
-        if ($this->maxOutputTokens !== null) {
-            $out['max_output_tokens'] = $this->maxOutputTokens;
+        if ($this->thinking !== null) {
+            $out['thinking'] = $this->thinking;
+        }
+        if ($this->tts !== null) {
+            $out['tts'] = $this->tts;
         }
         if ($this->verbosity !== null) {
             $out['verbosity'] = $this->verbosity;
+        }
+        if ($this->voice !== null) {
+            $out['voice'] = $this->voice;
         }
         return $out;
     }

@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // defaultToolsFS carries the built-in tool set so an agent with telephony works without an
@@ -37,6 +38,20 @@ type Tool struct {
 	Client bool `yaml:"-"`
 	// DisplayTitle is what a call is doing, in words for the people in the conversation.
 	DisplayTitle string `yaml:"-"`
+	// Approval, when set, is what a person is asked before each call runs. A persistent
+	// conversation shows the call as awaiting their answer.
+	Approval *ToolApproval `yaml:"-"`
+}
+
+// ToolApproval is the question a person answers before a call runs.
+type ToolApproval struct {
+	Title   string
+	Message string
+	// ReasonArgument names the string argument in which the model says why it wants the
+	// call, which is shown as the question's reason.
+	ReasonArgument string
+	AllowTitle     string
+	DeclineTitle   string
 }
 
 // Tools is the set a harness was configured with.
@@ -78,14 +93,14 @@ func (t Tools) Validate() error {
 	seen := map[string]struct{}{}
 	for _, tool := range t.Tools {
 		if tool.Name == "" {
-			return errors.New("harness: every tool needs a name")
+			return stack.Wrap(errors.New("harness: every tool needs a name"))
 		}
 		if tool.Description == "" {
-			return fmt.Errorf("harness: tool %s has no description, so the model would "+
-				"never know when to use it", tool.Name)
+			return stack.Wrap(fmt.Errorf("harness: tool %s has no description, so the model would "+
+				"never know when to use it", tool.Name))
 		}
 		if _, duplicate := seen[tool.Name]; duplicate {
-			return fmt.Errorf("harness: tool %s is declared twice", tool.Name)
+			return stack.Wrap(fmt.Errorf("harness: tool %s is declared twice", tool.Name))
 		}
 		seen[tool.Name] = struct{}{}
 	}
@@ -96,7 +111,7 @@ func (t Tools) Validate() error {
 func DefaultTools() (Tools, error) {
 	raw, err := defaultToolsFS.ReadFile("tools.yaml")
 	if err != nil {
-		return Tools{}, fmt.Errorf("harness: read default tools: %w", err)
+		return Tools{}, stack.Wrap(fmt.Errorf("harness: read default tools: %w", err))
 	}
 	return parseTools(raw)
 }
@@ -117,7 +132,7 @@ func LoadTools(path string) (Tools, error) {
 func parseTools(raw []byte) (Tools, error) {
 	var tools Tools
 	if err := yaml.Unmarshal(raw, &tools); err != nil {
-		return Tools{}, fmt.Errorf("harness: parse tools: %w", err)
+		return Tools{}, stack.Wrap(fmt.Errorf("harness: parse tools: %w", err))
 	}
 	if err := tools.Validate(); err != nil {
 		return Tools{}, err

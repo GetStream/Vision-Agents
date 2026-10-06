@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -130,7 +131,7 @@ func (s *TenancyGuardSuite) TestTheDeploymentAppsHooksStartNothingForACustomerOn
 		ID: s.utils.uuid(), CustomerID: s.customerID(), CallID: s.utils.callID(), AgentID: agent,
 		StartedAt: time.Now().UTC(),
 	}))
-	worker, release := s.dispatch.Register(s.customerID(), 1)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 	body := fmt.Sprintf(`{"type": "message.new", "channel_id": %q, "channel_type": "agent", "created_at": %q,
   "message": {"id": %q, "text": "hello", "user": {"id": "sam"}}}`,

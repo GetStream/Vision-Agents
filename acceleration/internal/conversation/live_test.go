@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -34,8 +32,7 @@ func TestLiveSuite(t *testing.T) { suite.Run(t, new(LiveSuite)) }
 // SetupTest begins a reply and waits for Stream to have it, so live updates can go out.
 func (s *LiveSuite) SetupTest() {
 	db, client := newChat(s.T())
-	service, err := NewForChat(s.T().TempDir(), client)
-	s.Require().NoError(err)
+	service := NewForChat(client)
 	c, _, _, err := service.Open(context.Background(), "customer", "support-agent", "")
 	s.Require().NoError(err)
 	s.Require().NoError(c.Begin("question"))
@@ -84,13 +81,6 @@ func (s *LiveSuite) TestProgressIsLiveUntilTheReplySettles() {
 	s.db.mu.Lock()
 	s.Zero(s.db.updates, "tool progress was stored before the reply settled")
 	s.db.mu.Unlock()
-
-	// The local ledger still holds the progress a restart recovers from.
-	raw, err := os.ReadFile(filepath.Join(s.c.dir(), "state.json"))
-	s.Require().NoError(err)
-	s.Contains(string(raw), "athena_start_task")
-	s.Contains(string(raw), `"summary":"Weighing the two options."`)
-	s.NotContains(string(raw), "PRIVATE TAIL")
 
 	s.c.Observe(agent.ResponseDelta{Text: "The answer."})
 	s.c.Observe(agent.Responded{})

@@ -17,64 +17,64 @@ T = TypeVar("T", bound="TagStatsBucket")
 class TagStatsBucket:
     """
     Attributes:
+        audio_ms_total (int):
+        bucket (datetime.datetime):
+        cached_input_tokens_total (int):
+        characters_total (int):
+        cost_micros_total (int): Millionths of a dollar, priced from the configured rates.
+        error_count (int):
+        images_total (int):
+        input_tokens_total (int):
+        output_tokens_total (int):
+        request_count (int):
         tag_key (str):  Example: project.
         tag_value (str):  Example: moderation.
-        bucket (datetime.datetime):
-        audio_ms_total (int):
-        characters_total (int):
-        input_tokens_total (int):
-        cached_input_tokens_total (int):
-        output_tokens_total (int):
-        images_total (int):
-        cost_micros_total (int): Millionths of a dollar, priced from the configured rates.
-        request_count (int):
-        error_count (int):
         latency_p50_ms (float | None | Unset):
         latency_p95_ms (float | None | Unset):
         uptime (float | None | Unset):
     """
 
+    audio_ms_total: int
+    bucket: datetime.datetime
+    cached_input_tokens_total: int
+    characters_total: int
+    cost_micros_total: int
+    error_count: int
+    images_total: int
+    input_tokens_total: int
+    output_tokens_total: int
+    request_count: int
     tag_key: str
     tag_value: str
-    bucket: datetime.datetime
-    audio_ms_total: int
-    characters_total: int
-    input_tokens_total: int
-    cached_input_tokens_total: int
-    output_tokens_total: int
-    images_total: int
-    cost_micros_total: int
-    request_count: int
-    error_count: int
     latency_p50_ms: float | None | Unset = UNSET
     latency_p95_ms: float | None | Unset = UNSET
     uptime: float | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        tag_key = self.tag_key
-
-        tag_value = self.tag_value
+        audio_ms_total = self.audio_ms_total
 
         bucket = self.bucket.isoformat()
 
-        audio_ms_total = self.audio_ms_total
+        cached_input_tokens_total = self.cached_input_tokens_total
 
         characters_total = self.characters_total
 
-        input_tokens_total = self.input_tokens_total
+        cost_micros_total = self.cost_micros_total
 
-        cached_input_tokens_total = self.cached_input_tokens_total
-
-        output_tokens_total = self.output_tokens_total
+        error_count = self.error_count
 
         images_total = self.images_total
 
-        cost_micros_total = self.cost_micros_total
+        input_tokens_total = self.input_tokens_total
+
+        output_tokens_total = self.output_tokens_total
 
         request_count = self.request_count
 
-        error_count = self.error_count
+        tag_key = self.tag_key
+
+        tag_value = self.tag_value
 
         latency_p50_ms: float | None | Unset
         if isinstance(self.latency_p50_ms, Unset):
@@ -98,18 +98,18 @@ class TagStatsBucket:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "audio_ms_total": audio_ms_total,
+                "bucket": bucket,
+                "cached_input_tokens_total": cached_input_tokens_total,
+                "characters_total": characters_total,
+                "cost_micros_total": cost_micros_total,
+                "error_count": error_count,
+                "images_total": images_total,
+                "input_tokens_total": input_tokens_total,
+                "output_tokens_total": output_tokens_total,
+                "request_count": request_count,
                 "tag_key": tag_key,
                 "tag_value": tag_value,
-                "bucket": bucket,
-                "audio_ms_total": audio_ms_total,
-                "characters_total": characters_total,
-                "input_tokens_total": input_tokens_total,
-                "cached_input_tokens_total": cached_input_tokens_total,
-                "output_tokens_total": output_tokens_total,
-                "images_total": images_total,
-                "cost_micros_total": cost_micros_total,
-                "request_count": request_count,
-                "error_count": error_count,
             }
         )
         if latency_p50_ms is not UNSET:
@@ -124,29 +124,29 @@ class TagStatsBucket:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        tag_key = d.pop("tag_key")
-
-        tag_value = d.pop("tag_value")
+        audio_ms_total = d.pop("audio_ms_total")
 
         bucket = datetime.datetime.fromisoformat(d.pop("bucket"))
 
-        audio_ms_total = d.pop("audio_ms_total")
+        cached_input_tokens_total = d.pop("cached_input_tokens_total")
 
         characters_total = d.pop("characters_total")
 
-        input_tokens_total = d.pop("input_tokens_total")
+        cost_micros_total = d.pop("cost_micros_total")
 
-        cached_input_tokens_total = d.pop("cached_input_tokens_total")
-
-        output_tokens_total = d.pop("output_tokens_total")
+        error_count = d.pop("error_count")
 
         images_total = d.pop("images_total")
 
-        cost_micros_total = d.pop("cost_micros_total")
+        input_tokens_total = d.pop("input_tokens_total")
+
+        output_tokens_total = d.pop("output_tokens_total")
 
         request_count = d.pop("request_count")
 
-        error_count = d.pop("error_count")
+        tag_key = d.pop("tag_key")
+
+        tag_value = d.pop("tag_value")
 
         def _parse_latency_p50_ms(data: object) -> float | None | Unset:
             if data is None:
@@ -176,18 +176,18 @@ class TagStatsBucket:
         uptime = _parse_uptime(d.pop("uptime", UNSET))
 
         tag_stats_bucket = cls(
+            audio_ms_total=audio_ms_total,
+            bucket=bucket,
+            cached_input_tokens_total=cached_input_tokens_total,
+            characters_total=characters_total,
+            cost_micros_total=cost_micros_total,
+            error_count=error_count,
+            images_total=images_total,
+            input_tokens_total=input_tokens_total,
+            output_tokens_total=output_tokens_total,
+            request_count=request_count,
             tag_key=tag_key,
             tag_value=tag_value,
-            bucket=bucket,
-            audio_ms_total=audio_ms_total,
-            characters_total=characters_total,
-            input_tokens_total=input_tokens_total,
-            cached_input_tokens_total=cached_input_tokens_total,
-            output_tokens_total=output_tokens_total,
-            images_total=images_total,
-            cost_micros_total=cost_micros_total,
-            request_count=request_count,
-            error_count=error_count,
             latency_p50_ms=latency_p50_ms,
             latency_p95_ms=latency_p95_ms,
             uptime=uptime,

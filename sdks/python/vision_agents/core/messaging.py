@@ -13,10 +13,11 @@ from typing import Optional
 
 @dataclass
 class InboundMessage:
-    """Somebody has written to an agent that is not running.
+    """Somebody has written to an agent that is not running, or to a running session whose
+    agent leaves text to dispatch.
 
-    A message to an agent that *is* running never reaches here: the backend answers it from
-    the session itself, because that agent already knows what has been said.
+    Otherwise a message to an agent that *is* running never reaches here: the backend
+    answers it from the session itself, because that agent already knows what has been said.
 
     Attributes:
         channel_id: The channel it was written in, which is also the agent id a session
@@ -34,6 +35,9 @@ class InboundMessage:
         user_id: Who wrote it.
         user_name: Their name, which may be empty.
         at: When it arrived.
+        session_id: The running session it was written to, set when its agent leaves text
+            to dispatch. Nothing has answered it yet; a response on this session does.
+        command_id: The durable command it was sent as, for that response to land on.
     """
 
     channel_id: str
@@ -45,6 +49,8 @@ class InboundMessage:
     user_id: str = ""
     user_name: str = ""
     at: Optional[datetime] = None
+    session_id: str = ""
+    command_id: str = ""
 
     @property
     def agent_id(self) -> str:

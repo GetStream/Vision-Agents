@@ -11,13 +11,13 @@ use GetStream\VisionAgents\Json;
 final readonly class AttachNumberRequest
 {
     public function __construct(
+        // The vendor's signalling addresses, as IPs or CIDR blocks.
+        /** @var list<string>|null */
+        public ?array $allowedIps = null,
         // The call every caller joins. Omit to give each caller their own call, named after the number they rang.
         public ?string $callId = null,
         // The Stream call type. Omit for "agent".
         public ?string $callType = null,
-        // The vendor's signalling addresses, as IPs or CIDR blocks.
-        /** @var list<string>|null */
-        public ?array $allowedIps = null,
     ) {
     }
 
@@ -27,9 +27,9 @@ final readonly class AttachNumberRequest
     public static function fromArray(array $data): self
     {
         return new self(
+            allowedIps: array_key_exists('allowed_ips', $data) && $data['allowed_ips'] !== null ? Json::strings($data, 'allowed_ips') : null,
             callId: array_key_exists('call_id', $data) && $data['call_id'] !== null ? Json::string($data, 'call_id') : null,
             callType: array_key_exists('call_type', $data) && $data['call_type'] !== null ? Json::string($data, 'call_type') : null,
-            allowedIps: array_key_exists('allowed_ips', $data) && $data['allowed_ips'] !== null ? Json::strings($data, 'allowed_ips') : null,
         );
     }
 
@@ -41,14 +41,14 @@ final readonly class AttachNumberRequest
     public function toArray(): array
     {
         $out = [];
+        if ($this->allowedIps !== null) {
+            $out['allowed_ips'] = $this->allowedIps;
+        }
         if ($this->callId !== null) {
             $out['call_id'] = $this->callId;
         }
         if ($this->callType !== null) {
             $out['call_type'] = $this->callType;
-        }
-        if ($this->allowedIps !== null) {
-            $out['allowed_ips'] = $this->allowedIps;
         }
         return $out;
     }

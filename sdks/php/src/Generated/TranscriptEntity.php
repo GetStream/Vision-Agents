@@ -14,10 +14,10 @@ use GetStream\VisionAgents\Json;
 final readonly class TranscriptEntity
 {
     public function __construct(
-        public string $type,
         public string $text,
-        public ?int $startMs = null,
+        public string $type,
         public ?int $endMs = null,
+        public ?int $startMs = null,
     ) {
     }
 
@@ -27,10 +27,10 @@ final readonly class TranscriptEntity
     public static function fromArray(array $data): self
     {
         return new self(
-            type: Json::string($data, 'type'),
             text: Json::string($data, 'text'),
-            startMs: array_key_exists('start_ms', $data) && $data['start_ms'] !== null ? Json::int($data, 'start_ms') : null,
+            type: Json::string($data, 'type'),
             endMs: array_key_exists('end_ms', $data) && $data['end_ms'] !== null ? Json::int($data, 'end_ms') : null,
+            startMs: array_key_exists('start_ms', $data) && $data['start_ms'] !== null ? Json::int($data, 'start_ms') : null,
         );
     }
 
@@ -42,13 +42,13 @@ final readonly class TranscriptEntity
     public function toArray(): array
     {
         $out = [];
-        $out['type'] = $this->type;
         $out['text'] = $this->text;
-        if ($this->startMs !== null) {
-            $out['start_ms'] = $this->startMs;
-        }
+        $out['type'] = $this->type;
         if ($this->endMs !== null) {
             $out['end_ms'] = $this->endMs;
+        }
+        if ($this->startMs !== null) {
+            $out['start_ms'] = $this->startMs;
         }
         return $out;
     }

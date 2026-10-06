@@ -3,11 +3,14 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // PluginsSuite covers the hosted MCP catalog and the logins an agent holds against it.
@@ -20,6 +23,13 @@ type PluginsSuite struct {
 
 func TestPluginsSuite(t *testing.T) {
 	runSuite(t, new(PluginsSuite))
+}
+
+// SetupSuite lets the API reach the token servers the tests stand up on loopback, which
+// the router's own client refuses.
+func (s *PluginsSuite) SetupSuite() {
+	s.pluginHTTP = &http.Client{}
+	s.RouterSuite.SetupSuite()
 }
 
 func (s *PluginsSuite) SetupTest() {
@@ -44,6 +54,25 @@ func (s *PluginsSuite) TestTheCatalogIsFilteredByWhatItIsFor() {
 	s.NotContains(named(scheduling), "slack")
 }
 
+func (s *PluginsSuite) TestEveryCatalogPluginHasALogoAnythingCanDraw() {
+	// Whatever renders the card, a chat client or a browser, has no credential of ours to
+	// put on an <img>, so the logo has to be served to a caller that sends none.
+	for _, plugin := range s.catalog("") {
+		s.Require().NotEmpty(plugin.LogoUrl, plugin.Id)
+
+		status, body := s.unauthenticatedClient.call(http.MethodGet, plugins.LogoPath(plugin.Id), nil)
+
+		s.Equal(http.StatusOK, status, plugin.Id)
+		s.Contains(string(body), "<svg", plugin.Id)
+	}
+}
+
+func (s *PluginsSuite) TestAPluginNobodyHasHasNoLogo() {
+	status, _ := s.unauthenticatedClient.call(http.MethodGet, plugins.LogoPath("carrier-pigeon"), nil)
+
+	s.Equal(http.StatusNotFound, status)
+}
+
 func (s *PluginsSuite) TestAPluginOnAHostOfItsOwnSaysSoInTheCatalog() {
 	shopify := s.catalog("shopify")
 
@@ -62,6 +91,65 @@ func (s *PluginsSuite) TestAnAgentHoldsNoLoginsUntilOneIsMade() {
 		"/v1/agents/configs/"+agent.Id+"/plugins", nil, &connections))
 
 	s.Empty(connections, "the rest of the catalog is implied absent")
+}
+
+func (s *PluginsSuite) TestAPluginTheAgentNamesThatNobodyConnectedIsLeftToRemindAbout() {
+	var agent AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
+		AgentConfigRequest{
+			Name:         "on-call-" + s.utils.uuid(),
+			AgentPlugins: pointerTo([]PluginEntry{{Name: "sentry"}}),
+			UserPlugins:  pointerTo([]PluginEntry{{Name: "google_calendar"}}),
+		}, &agent))
+
+	var connections []PluginConnection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/configs/"+agent.Id+"/plugins", nil, &connections))
+
+	s.Require().Len(connections, 1, "each user connects their own calendar, so the app has nothing to finish for it")
+	s.Equal("sentry", connections[0].PluginId)
+	s.Equal(PluginConnectionStatusNotConnected, connections[0].Status)
+	s.Equal([]PluginEntry{{Name: "google_calendar"}}, *agent.UserPlugins)
+}
+
+func (s *PluginsSuite) TestAnEndUsersLoginIsTheirsAloneAndSendsThemBackToTheConversation() {
+	agent := s.data.createAgentConfig()
+	tokens := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.Equal("the-code", r.FormValue("code"))
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "alices-token", "expires_in": 3600})
+	}))
+	defer tokens.Close()
+	ctx := s.T().Context()
+	state := s.utils.uuid()
+	// The app's own pending login of the same plugin on the same agent is a different row.
+	s.Require().NoError(s.store.UpsertPluginConnection(ctx, &store.PluginConnection{
+		CustomerID: s.customerID(), ConfigID: agent.Id, PluginID: "google_calendar",
+		OAuthState: s.utils.uuid(), TokenEndpoint: tokens.URL,
+	}))
+	s.Require().NoError(s.store.UpsertPluginConnection(ctx, &store.PluginConnection{
+		CustomerID: s.customerID(), ConfigID: agent.Id, PluginID: "google_calendar", UserID: "alice",
+		OAuthState: state, CodeVerifier: "verifier", ClientID: "client", TokenEndpoint: tokens.URL,
+	}))
+
+	status, page := s.unauthenticatedClient.call(http.MethodGet,
+		plugins.CallbackPath+"?state="+state+"&code=the-code", nil)
+
+	s.Equal(http.StatusOK, status)
+	s.Contains(string(page), "Google Calendar is connected")
+	alices, err := s.store.UserPluginConnection(ctx, s.customerID(), agent.Id, "alice", "google_calendar")
+	s.Require().NoError(err)
+	s.Equal(store.PluginConnected, alices.Status)
+	s.Equal("alices-token", alices.AccessToken)
+	_, err = s.store.UserPluginConnection(ctx, s.customerID(), agent.Id, "bob", "google_calendar")
+	s.Error(err, "nobody else holds Alice's login")
+	var connections []PluginConnection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/configs/"+agent.Id+"/plugins", nil, &connections))
+	s.Require().Len(connections, 1, "only the app's own login is the agent's")
+	s.Equal(PluginConnectionStatusPending, connections[0].Status)
+	var stored AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+agent.Id, nil, &stored))
+	s.Nil(stored.AgentPlugins, "a user's login does not hand the plugin to every session")
 }
 
 func (s *PluginsSuite) TestTheLoginsOfAnAgentThatIsNotThereAreNotFound() {

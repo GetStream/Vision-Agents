@@ -26,22 +26,23 @@ module GetStream
         return enum_for(:each, page: page) unless block
 
         size = [page, CEILING].min
-        offset = 0
+        cursor = nil
         loop do
-          read = list(limit: size, offset: offset)
-          read.each(&block)
-          # A short page is the last page.
-          break if read.size < size
-
-          offset += read.size
+          read = list(limit: size, cursor: cursor)
+          read["items"].each(&block)
+          cursor = read["next_cursor"]
+          break unless read["has_more"] && cursor
         end
       end
 
-      # One page, for a caller doing its own paging.
-      def list(limit: nil, offset: nil)
+      # One page, for a caller doing its own paging. A nil cursor is the first page, and the
+      # page's next_cursor the next.
+      #
+      # @return [Hash] the AgentResponseItemPage: items, has_more and next_cursor.
+      def list(limit: nil, cursor: nil)
         @client.get("/v1/agents/sessions/{id}/responses/items",
                     path: { id: @session_id },
-                    query: { response_id: @response_id, limit: limit, offset: offset })
+                    query: { response_id: @response_id, limit: limit, cursor: cursor })
       end
 
       def all
@@ -85,16 +86,23 @@ module GetStream
       # Asks the agent something and names the turn it answers as.
       #
       # @param images [Array<Hash>] ImageSource hashes, each a url and an optional detail.
-      def create(text, images: nil)
+      # @param command_id [String] the durable command this answers, such as the one a dispatch
+      #   worker was handed with the text. Empty sends none.
+      def create(text, images: nil, command_id: nil)
+        command_id = nil if command_id.to_s.empty?
         created = @client.post("/v1/agents/sessions/{id}/responses",
-                               path: { id: @session_id }, body: { text: text, images: images })
+                               path: { id: @session_id },
+                               body: { text: text, images: images, command_id: command_id })
         AgentResponse.new(@client, created)
       end
 
-      # The turns so far, oldest first.
-      def list(limit: nil, offset: nil)
+      # A page of the turns so far, oldest first. A nil cursor is the first page, and the
+      # page's next_cursor the next.
+      #
+      # @return [Hash] the AgentResponsePage: items, has_more and next_cursor.
+      def list(limit: nil, cursor: nil)
         @client.get("/v1/agents/sessions/{id}/responses",
-                    path: { id: @session_id }, query: { limit: limit, offset: offset })
+                    path: { id: @session_id }, query: { limit: limit, cursor: cursor })
       end
 
       # Goes back to a response and carries on from there.

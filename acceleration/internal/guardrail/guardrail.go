@@ -27,6 +27,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Kind is how a turn is checked.
@@ -155,7 +156,7 @@ func New(ctx context.Context, policy Policy, deps Deps) (Guardrail, error) {
 	case KindLLM:
 		return newJudge(ctx, policy, deps)
 	default:
-		return nil, fmt.Errorf("guardrail: %q is not a way of checking a turn", policy.Kind)
+		return nil, stack.Wrap(fmt.Errorf("guardrail: %q is not a way of checking a turn", policy.Kind))
 	}
 }
 
@@ -222,33 +223,33 @@ func (p Policy) Validate() error {
 	switch p.Kind {
 	case KindClassifier, KindLLM:
 		if strings.TrimSpace(p.Text) == "" {
-			return errors.New("guardrail: there is no policy to judge a turn against")
+			return stack.Wrap(errors.New("guardrail: there is no policy to judge a turn against"))
 		}
 		if p.URL != "" {
-			return fmt.Errorf("guardrail: a %s guardrail calls nothing, so its url would be ignored", p.Kind)
+			return stack.Wrap(fmt.Errorf("guardrail: a %s guardrail calls nothing, so its url would be ignored", p.Kind))
 		}
 		if p.Threshold <= 0 || p.Threshold > 1 {
-			return fmt.Errorf("guardrail: a threshold of %v is not a probability between 0 and 1", p.Threshold)
+			return stack.Wrap(fmt.Errorf("guardrail: a threshold of %v is not a probability between 0 and 1", p.Threshold))
 		}
 	case KindWebhook:
 		if p.URL == "" {
-			return errors.New("guardrail: a webhook guardrail needs a url to ask")
+			return stack.Wrap(errors.New("guardrail: a webhook guardrail needs a url to ask"))
 		}
 		if !strings.HasPrefix(p.URL, "https://") && !strings.HasPrefix(p.URL, "http://") {
-			return fmt.Errorf("guardrail: %q is not a url a webhook can be posted to", p.URL)
+			return stack.Wrap(fmt.Errorf("guardrail: %q is not a url a webhook can be posted to", p.URL))
 		}
 	default:
-		return fmt.Errorf("guardrail: %q is not a way of checking a turn", p.Kind)
+		return stack.Wrap(fmt.Errorf("guardrail: %q is not a way of checking a turn", p.Kind))
 	}
 
 	switch p.Mode {
 	case ModeParallel, ModeBlocking:
 	default:
-		return fmt.Errorf("guardrail: %q is not when a check can run", p.Mode)
+		return stack.Wrap(fmt.Errorf("guardrail: %q is not when a check can run", p.Mode))
 	}
 
 	if strings.TrimSpace(p.Refusal) == "" {
-		return errors.New("guardrail: there is nothing for the agent to say when a turn is refused")
+		return stack.Wrap(errors.New("guardrail: there is nothing for the agent to say when a turn is refused"))
 	}
 	return nil
 }

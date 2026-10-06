@@ -42,11 +42,17 @@ type dataTable struct {
 // Deliberately absent: organizations, apps and api_keys, which are the credentials rather
 // than the data, and which a deployment mints for itself; and goose_db_version, which is
 // this schema's own bookkeeping. Organization-scope policies are absent too, since one
-// organization's decisions cover apps the caller may not have.
+// organization's decisions cover apps the caller may not have. So are
+// connector_authorization_attempts: one lives minutes, is sealed under this deployment's
+// key and finishes at this deployment's callback, so a copy could only expire.
 var dataTables = []dataTable{
 	{name: "agent_configs", customer: "customer_id"},
 	{name: "skills", customer: "customer_id"},
 	{name: "agent_plugin_connections", customer: "customer_id"},
+	// Only the customer's own definitions: the built-ins are under no customer, and every
+	// deployment seeds its own. They come before the connections that pin them.
+	{name: "connector_definitions", customer: "customer_id"},
+	{name: "connector_connections", customer: "customer_id"},
 	{name: "router_configs", customer: "customer_id"},
 	{name: "voices", customer: "customer_id"},
 	{name: "voice_samples", parent: "voices", parentColumn: "voice_id"},
@@ -59,7 +65,7 @@ var dataTables = []dataTable{
 	{name: "simulations", customer: "customer_id"},
 	{name: "simulation_runs", customer: "customer_id"},
 	{name: "simulation_cases", parent: "simulation_runs", parentColumn: "run_id"},
-	{name: "guest_users", customer: "customer_id"},
+	{name: "users", customer: "customer_id"},
 	{name: "calls", customer: "customer_id"},
 	{name: "call_events", customer: "customer_id"},
 	{name: "call_bridges", customer: "customer_id"},
@@ -89,7 +95,7 @@ var dataTables = []dataTable{
 // their data would be a way to walk off with a customer's users' accounts. Both are left
 // out on the way out and left alone on the way in, so a connection arrives needing to be
 // authorized again rather than arriving broken.
-var secretColumns = []string{"secret_sealed", "access_token", "refresh_token", "oauth_state", "code_verifier"}
+var secretColumns = []string{"secret_sealed", "access_token", "refresh_token", "oauth_state", "code_verifier", "credentials_sealed"}
 
 // DataChange is one thing that happened to one row.
 type DataChange struct {
@@ -329,6 +335,15 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 func (t dataTable) identity() string {
 	if t.name == "policies" {
 		return "jsonb_build_object('scope_id', ?::text, 'scope', 'app')"
+	}
+	// A connector connection arrives without its credentials, so it arrives saying it needs
+	// one, rather than connected with nothing to connect with. Key version 0 and no
+	// expiry are what a connection without credentials holds (20261002193000_connector_connections.sql),
+	// so the source credentials' key version and expiry do not come along either, on an import or
+	// on every change applied after it.
+	if t.name == "connector_connections" {
+		return "jsonb_build_object('customer_id', ?::text, 'status', '" + ConnectionNeedsReauthorization + "'," +
+			" 'credentials_kek_version', 0, 'expires_at', NULL)"
 	}
 	return fmt.Sprintf("jsonb_build_object('%s', ?::text)", t.customer)
 }

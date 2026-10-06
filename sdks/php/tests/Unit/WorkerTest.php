@@ -17,7 +17,6 @@ use GetStream\VisionAgents\Generated\SttOptions;
 use GetStream\VisionAgents\Inbound\InboundCall;
 use GetStream\VisionAgents\Inbound\InboundMessage;
 use GetStream\VisionAgents\Json;
-use GetStream\VisionAgents\Router;
 use GetStream\VisionAgents\Session;
 use GetStream\VisionAgents\Tests\Support\LocalRouter;
 use GetStream\VisionAgents\Tests\Support\LocalSocketServer;
@@ -40,13 +39,13 @@ final class WorkerTest extends TestCase
         $this->router?->stop();
     }
 
-    public function testDispatchAcceptsAndRejectsCalls(): void
+    public function testDispatchSaysDoneForFinishedAndFailedCalls(): void
     {
         $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
             LocalSocketServer::send($socket, ['type' => 'ready', 'worker_id' => 'w-1']);
-            LocalSocketServer::send($socket, ['type' => 'call', 'call_id' => 'c1', 'caller_number' => '+15550001111', 'custom' => ['lang' => 'fr']]);
-            LocalSocketServer::send($socket, ['type' => 'call', 'call_id' => 'c2', 'call_type' => 'phone']);
-            while (count($server->sent('accepted')) + count($server->sent('rejected')) < 2 && $server->next($socket) !== null) {
+            LocalSocketServer::send($socket, ['type' => 'call', 'work_id' => 'wk1', 'call_id' => 'c1', 'caller_number' => '+15550001111', 'custom' => ['lang' => 'fr']]);
+            LocalSocketServer::send($socket, ['type' => 'call', 'work_id' => 'wk2', 'call_id' => 'c2', 'call_type' => 'phone']);
+            while (count($server->sent('done')) < 2 && $server->next($socket) !== null) {
             }
             $socket->close();
         });
@@ -62,10 +61,14 @@ final class WorkerTest extends TestCase
         $dispatch->run();
 
         self::assertSame('w-1', $dispatch->workerId);
-        self::assertSame('/v1/dispatch?capacity=2', $server->handshakes[0]);
+        self::assertSame('/v1/dispatch?capacity=2&active=0&handles=call', $server->handshakes[0]);
         self::assertSame('examples', $server->headers[0]['x-customer-id']);
-        self::assertSame([['type' => 'accepted', 'call_id' => 'c1']], $server->sent('accepted'));
-        self::assertSame([['type' => 'rejected', 'call_id' => 'c2', 'reason' => 'no agent for phone calls']], $server->sent('rejected'));
+        self::assertSame([
+            ['type' => 'done', 'work_id' => 'wk1'],
+            ['type' => 'done', 'work_id' => 'wk2', 'error' => 'no agent for phone calls'],
+        ], $server->sent('done'));
+        self::assertSame([], $server->sent('accepted'));
+        self::assertSame([], $server->sent('rejected'));
         self::assertSame('+15550001111', $answered[0]->callerNumber);
         self::assertSame(['lang' => 'fr'], $answered[0]->custom);
         self::assertSame('default', $answered[0]->callType);
@@ -78,26 +81,118 @@ final class WorkerTest extends TestCase
         $this->router = new LocalRouter();
         $this->router->answer('POST', '/v1/agents/sessions', 201, Rows::session('ses_1'), Rows::session('ses_2'));
         $http = $this->router->client();
-        $server = $this->serve(static function (WebsocketClient $socket): void {
-            foreach (['ch1', 'ch1', 'ch2'] as $channel) {
-                LocalSocketServer::send($socket, ['type' => 'message', 'channel_id' => $channel, 'text' => 'hi', 'agent_id' => 'jean']);
+        $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
+            foreach (['ch1', 'ch1', 'ch2'] as $i => $channel) {
+                LocalSocketServer::send($socket, ['type' => 'message', 'work_id' => "wk{$i}", 'channel_id' => $channel, 'text' => 'hi', 'agent_id' => 'jean']);
             }
-            delay(0.5);
+            while (count($server->sent('done')) < 3 && $server->next($socket) !== null) {
+            }
             $socket->close();
         });
         $sessions = [];
         $dispatch = new Dispatch(client: $server->client());
         $dispatch->waitForMessage(static function (InboundMessage $message) use ($dispatch, $http, &$sessions): void {
             $session = $dispatch->getOrCreateAgent($message, static fn (): Agent => new Agent(name: 'jean', client: $http));
-            $sessions[] = $message->channelId . '=' . $session->id();
+            $sessions[$message->channelId][] = $session->id();
         });
 
         $dispatch->run();
 
-        sort($sessions);
         self::assertCount(2, $this->router->to('POST', '/v1/agents/sessions'));
-        self::assertSame(['ch1=ses_1', 'ch1=ses_1', 'ch2=ses_2'], $sessions);
-        self::assertSame([], $server->sent('accepted'), 'a message is not a call to accept');
+        self::assertCount(2, $sessions['ch1']);
+        self::assertSame($sessions['ch1'][0], $sessions['ch1'][1]);
+        self::assertNotSame($sessions['ch1'][0], $sessions['ch2'][0]);
+        self::assertSame('/v1/dispatch?capacity=4&active=0&handles=message', $server->handshakes[0]);
+        self::assertCount(3, $server->sent('done'));
+    }
+
+    public function testDispatchSaysDoneWithAnErrorForAMessageItHasNoHandlerFor(): void
+    {
+        $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
+            LocalSocketServer::send($socket, ['type' => 'message', 'work_id' => 'wk1', 'channel_id' => 'ch1', 'text' => 'hi']);
+            while ($server->sent('done') === [] && $server->next($socket) !== null) {
+            }
+            $socket->close();
+        });
+        $tools = (new Tools())->register('weather_lookup', 'The weather somewhere', [], static fn (array $args): string => 'sunny');
+
+        (new Dispatch(client: $server->client()))->host('my-agent', $tools)->run();
+
+        self::assertSame('/v1/dispatch?capacity=4&active=0&handles=', $server->handshakes[0]);
+        self::assertSame([['type' => 'done', 'work_id' => 'wk1', 'error' => 'this worker answers no messages']], $server->sent('done'));
+    }
+
+    public function testDispatchHandsTheMessageItsSessionAndCommand(): void
+    {
+        $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
+            LocalSocketServer::send($socket, ['type' => 'message', 'work_id' => 'wk1', 'session_id' => 'ses_1', 'command_id' => 'cmd_1', 'agent_id' => 'jean', 'text' => 'hi', 'user_id' => 'ada']);
+            while ($server->sent('done') === [] && $server->next($socket) !== null) {
+            }
+            $socket->close();
+        });
+        $received = [];
+        $dispatch = new Dispatch(client: $server->client());
+        $dispatch->waitForMessage(static function (InboundMessage $message) use (&$received): void {
+            $received[] = $message;
+        });
+
+        $dispatch->run();
+
+        self::assertSame('ses_1', $received[0]->sessionId);
+        self::assertSame('cmd_1', $received[0]->commandId);
+        self::assertSame('', $received[0]->channelId);
+    }
+
+    public function testAnswerCreatesTheResponseActingForTheWriterWithTheServerCredential(): void
+    {
+        $this->router = new LocalRouter();
+        $this->router->answer('POST', '/v1/agents/sessions/ses_1/responses', 201, Rows::response('resp_1', 'running'));
+        $dispatch = new Dispatch(client: new Client(new Backend(url: $this->router->url, apiKey: 'key', apiSecret: 'secret')));
+
+        $dispatch->answer(new InboundMessage(channelId: '', text: 'what does it cost?', agentId: 'jean', userId: 'ada', sessionId: 'ses_1', commandId: 'cmd_1'));
+
+        $sent = $this->router->to('POST', '/v1/agents/sessions/ses_1/responses')[0];
+        self::assertSame(['text' => 'what does it cost?', 'command_id' => 'cmd_1'], $sent->json());
+        self::assertSame('ada', $sent->headers['x-stream-user-id']);
+        self::assertSame('server', $sent->headers['stream-auth-type']);
+        self::assertStringStartsWith('Bearer ', $sent->headers['authorization']);
+    }
+
+    public function testAnswerBehindTheProxySendsTheServerTokenNotTheWritersOwn(): void
+    {
+        $this->router = new LocalRouter();
+        $this->router->answer('POST', '/v1/agents/sessions/ses_1/responses', 201, Rows::response('resp_1', 'running'));
+        $dispatch = new Dispatch(client: new Client(new Backend(url: $this->router->url, apiKey: 'key', apiSecret: 'secret', authenticate: true)));
+
+        $dispatch->answer(new InboundMessage(channelId: '', text: 'hi', userId: 'ada', sessionId: 'ses_1'));
+
+        $sent = $this->router->to('POST', '/v1/agents/sessions/ses_1/responses')[0];
+        self::assertSame('ada', $sent->headers['x-stream-user-id']);
+        self::assertSame('jwt', $sent->headers['stream-auth-type']);
+        $payload = explode('.', substr($sent->headers['authorization'], strlen('Bearer ')))[1];
+        $claims = Json::asObject(Json::decode((string) base64_decode(strtr($payload, '-_', '+/'), true)));
+        self::assertTrue($claims['server']);
+        self::assertArrayNotHasKey('user_id', $claims);
+    }
+
+    public function testAnswerNeedsASession(): void
+    {
+        $dispatch = new Dispatch(client: new Client(new Backend(url: 'http://127.0.0.1:1', customerId: 'examples')));
+
+        $this->expectException(ConfigurationException::class);
+        $dispatch->answer(new InboundMessage(channelId: 'ch1', text: 'hi'));
+    }
+
+    public function testGetOrCreateAgentRefusesAMessageASessionIsHolding(): void
+    {
+        $dispatch = new Dispatch(client: new Client(new Backend(url: 'http://127.0.0.1:1', customerId: 'examples')));
+
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('a session is already holding this conversation');
+        $dispatch->getOrCreateAgent(
+            new InboundMessage(channelId: 'ch1', text: 'hi', sessionId: 'ses_1'),
+            static fn (): Agent => throw new RuntimeException('no agent should be built'),
+        );
     }
 
     public function testDispatchReportsLoadAfterTimingARoundTrip(): void
@@ -152,9 +247,9 @@ final class WorkerTest extends TestCase
             'type' => 'host_tools',
             'agent_id' => 'my-agent',
             'tools' => [
-                ['name' => 'weather_lookup', 'description' => 'The weather somewhere', 'parameters' => ['type' => 'object', 'properties' => ['location' => ['type' => 'string']]]],
-                ['name' => 'slow', 'description' => 'Takes a while'],
-                ['name' => 'broken', 'description' => 'Always fails'],
+                ['description' => 'The weather somewhere', 'name' => 'weather_lookup', 'parameters' => ['type' => 'object', 'properties' => ['location' => ['type' => 'string']]]],
+                ['description' => 'Takes a while', 'name' => 'slow'],
+                ['description' => 'Always fails', 'name' => 'broken'],
             ],
             'timeout_ms' => 30000,
         ]], $server->sent('host_tools'));
@@ -257,7 +352,7 @@ final class WorkerTest extends TestCase
             delay(0.1);
             $socket->close();
         });
-        $router = new Router('healthcare', ['team' => 'clinical'], $server->client());
+        $router = $server->client()->router('healthcare', ['team' => 'clinical']);
 
         $stt = $router->stt->realtime(new SttOptions(interim: true));
         $stt->sendAudio(str_repeat("\0", 320));
@@ -279,7 +374,7 @@ final class WorkerTest extends TestCase
             $socket->close();
         });
 
-        $llm = (new Router(client: $server->client()))->llm->realtime();
+        $llm = $server->client()->router()->llm->realtime();
 
         $this->expectException(RealtimeException::class);
         $this->expectExceptionMessage('no model here takes images');
@@ -307,7 +402,7 @@ final class WorkerTest extends TestCase
 
         (new Dispatch(client: $client))->waitForCall(static fn (InboundCall $call) => null)->run();
 
-        self::assertSame('/v1/dispatch?capacity=4', $server->handshakes[0]);
+        self::assertSame('/v1/dispatch?capacity=4&active=0&handles=call', $server->handshakes[0]);
         self::assertSame('key', $server->headers[0]['x-api-key']);
         self::assertSame('server', $server->headers[0]['stream-auth-type']);
         self::assertStringStartsWith('Bearer ', $server->headers[0]['authorization']);

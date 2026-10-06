@@ -11,15 +11,15 @@ use GetStream\VisionAgents\Json;
 final readonly class AgentResponse
 {
     public function __construct(
+        public \DateTimeImmutable $createdAt,
         public string $id,
         public string $sessionId,
         // cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went w...
         public string $status,
-        public \DateTimeImmutable $createdAt,
-        // What the person asked, which is the first item of every response.
-        public ?string $said = null,
         public ?string $error = null,
         public ?\DateTimeImmutable $finishedAt = null,
+        // What the person asked, which is the first item of every response.
+        public ?string $said = null,
     ) {
     }
 
@@ -29,13 +29,13 @@ final readonly class AgentResponse
     public static function fromArray(array $data): self
     {
         return new self(
+            createdAt: Json::date($data, 'created_at'),
             id: Json::string($data, 'id'),
             sessionId: Json::string($data, 'session_id'),
             status: Json::string($data, 'status'),
-            createdAt: Json::date($data, 'created_at'),
-            said: array_key_exists('said', $data) && $data['said'] !== null ? Json::string($data, 'said') : null,
             error: array_key_exists('error', $data) && $data['error'] !== null ? Json::string($data, 'error') : null,
             finishedAt: array_key_exists('finished_at', $data) && $data['finished_at'] !== null ? Json::date($data, 'finished_at') : null,
+            said: array_key_exists('said', $data) && $data['said'] !== null ? Json::string($data, 'said') : null,
         );
     }
 
@@ -47,18 +47,18 @@ final readonly class AgentResponse
     public function toArray(): array
     {
         $out = [];
+        $out['created_at'] = Json::dateValue($this->createdAt);
         $out['id'] = $this->id;
         $out['session_id'] = $this->sessionId;
         $out['status'] = $this->status;
-        $out['created_at'] = Json::dateValue($this->createdAt);
-        if ($this->said !== null) {
-            $out['said'] = $this->said;
-        }
         if ($this->error !== null) {
             $out['error'] = $this->error;
         }
         if ($this->finishedAt !== null) {
             $out['finished_at'] = Json::dateValue($this->finishedAt);
+        }
+        if ($this->said !== null) {
+            $out['said'] = $this->said;
         }
         return $out;
     }

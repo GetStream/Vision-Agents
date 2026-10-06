@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using GetStream.VisionAgents.Models;
 using YamlDotNet.Core;
 using YamlDotNet.RepresentationModel;
 using YamlDotNet.Serialization;
@@ -45,10 +46,21 @@ public sealed record Document(string Source, string Text);
 /// One page from <c>knowledge/urls.yaml</c>. A page is a subscription rather than a copy:
 /// what a crawler makes of it is what ends up in the knowledge base.
 /// </summary>
-public sealed record KnowledgePage(string Url, string Title = "", string Description = "");
+/// <param name="Url">The page.</param>
+/// <param name="Title">What the declaration says the page is.</param>
+/// <param name="Description">What it holds.</param>
+/// <param name="RefreshHours">How often the backend reads it again on its own. Zero is never.</param>
+public sealed record KnowledgePage(string Url, string Title = "", string Description = "", int RefreshHours = 0);
 
 /// <summary>What the video a skill captures is.</summary>
 public sealed record VideoDeclaration(string Source, int MaxFrames);
+
+/// <summary>
+/// What the agent leaves to the application's own dispatch worker, each <c>enabled</c> or
+/// <c>disabled</c>, empty when not written. With <paramref name="Text"/> enabled the model
+/// does not answer what end users write; the worker is handed it.
+/// </summary>
+public sealed record DispatchDeclaration(string IncomingCall, string Text);
 
 /// <summary>
 /// What <c>agent.yaml</c> declares: what the agent is called and what it runs on.
@@ -80,8 +92,14 @@ public sealed record Declaration
     /// <summary>A provider-specific voice id.</summary>
     public string Voice { get; init; } = "";
 
+    /// <summary>The voice's rate of delivery, 1 being its own. Zero leaves it there.</summary>
+    public double Speed { get; init; }
+
     /// <summary>The model that answers.</summary>
     public string Llm { get; init; } = "";
+
+    /// <summary>Which harness the backend runs, empty for the default.</summary>
+    public string Harness { get; init; } = "";
 
     /// <summary>The model delegated work runs on.</summary>
     public string Subagent { get; init; } = "";
@@ -106,6 +124,9 @@ public sealed record Declaration
 
     /// <summary>Which video a skill that captures it sees.</summary>
     public VideoDeclaration? Video { get; init; }
+
+    /// <summary>What is left to dispatch, null when agent.yaml has no <c>dispatch:</c> block.</summary>
+    public DispatchDeclaration? Dispatch { get; init; }
 }
 
 /// <summary>
@@ -120,6 +141,7 @@ public sealed record Declaration
 ///   skills/think.md
 ///   knowledge/pricing.md
 ///   knowledge/urls.yaml
+///   simulations/lunch.yaml
 /// </code>
 /// </remarks>
 public sealed class Folder
@@ -144,6 +166,9 @@ public sealed class Folder
 
     /// <summary>The pages a knowledge directory is kept filled from.</summary>
     public const string KnowledgeUrlsFile = "urls.yaml";
+
+    /// <summary>The simulations directory.</summary>
+    public const string SimulationsDir = "simulations";
 
     // Written the way Go writes it, so the + in the offset is not escaped.
     private static readonly JsonSerializerOptions StampJson = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
@@ -188,6 +213,13 @@ public sealed class Folder
     public IReadOnlyList<KnowledgePage> KnowledgeUrls { get; private set; } = [];
 
     /// <summary>
+    /// What simulations/*.yaml declare, by file name and then as listed. Null when there is
+    /// no simulations/, which leaves the stored ones alone; empty when it has none, which
+    /// deletes them.
+    /// </summary>
+    public IReadOnlyList<SimulationDeclaration>? Simulations { get; private set; }
+
+    /// <summary>
     /// Where the directory's knowledge is looked up: the agent's own name, so two agents
     /// never read each other's. Empty when there is nothing to look up.
     /// </summary>
@@ -228,6 +260,7 @@ public sealed class Folder
         folder.Skills = LoadSkills(System.IO.Path.Combine(root, SkillsDir));
         folder.Knowledge = LoadKnowledge(System.IO.Path.Combine(root, KnowledgeDir));
         folder.KnowledgeUrls = LoadPages(System.IO.Path.Combine(root, KnowledgeDir, KnowledgeUrlsFile));
+        folder.Simulations = LoadSimulations(System.IO.Path.Combine(root, SimulationsDir));
         return folder;
     }
 
@@ -278,7 +311,7 @@ public sealed class Folder
     /// A fingerprint of the directory. The Go and Python SDKs take it the same way, so a
     /// stamp any of them wrote is understood by all three.
     /// </summary>
-    public string Hash() => Fingerprint(Source, Instructions, Guardrail, Skills, Knowledge, KnowledgeUrls);
+    public string Hash() => Fingerprint(Source, Instructions, Guardrail, Skills, Knowledge, KnowledgeUrls, Simulations);
 
     /// <summary>The fingerprint the directory was last synced under, or empty.</summary>
     public string ReadStamp()
@@ -311,7 +344,8 @@ public sealed class Folder
         string guardrail,
         IEnumerable<Skill> skills,
         IEnumerable<Document> knowledge,
-        IEnumerable<KnowledgePage> pages)
+        IEnumerable<KnowledgePage> pages,
+        IEnumerable<SimulationDeclaration>? simulations)
     {
         var text = new StringBuilder();
         text.Append(declaration).Append('\n').Append(instructions).Append('\n').Append(guardrail);
@@ -334,8 +368,94 @@ public sealed class Folder
         foreach (var page in pages)
         {
             text.Append("\nurl:").Append(page.Url).Append('\n').Append(page.Title).Append('\n').Append(page.Description);
+            // Only when there is one, so a page without keeps the fingerprint it had.
+            if (page.RefreshHours > 0)
+            {
+                text.Append("\nrefresh_hours:").Append(page.RefreshHours.ToString(CultureInfo.InvariantCulture));
+            }
+        }
+        // Only when there is a simulations/, so a directory without one keeps its fingerprint.
+        if (simulations is not null)
+        {
+            text.Append("\nsimulations:");
+            foreach (var simulation in simulations)
+            {
+                GoJson(text, simulation);
+            }
         }
         return Convert.ToHexStringLower(MD5.HashData(Encoding.UTF8.GetBytes(text.ToString())));
+    }
+
+    /// <summary>
+    /// A simulation the way Go's <c>json.Marshal</c> writes its <c>agents.Simulation</c>: every
+    /// field in that order, zero values included, and strings escaped as Go escapes them.
+    /// </summary>
+    private static void GoJson(StringBuilder text, SimulationDeclaration simulation)
+    {
+        text.Append('{');
+        foreach (var (key, value) in new (string, string?)[]
+        {
+            ("name", simulation.Name), ("scenario", simulation.Scenario), ("assertion", simulation.Assertion), ("mode", simulation.Mode),
+        })
+        {
+            GoString(text, key).Append(':');
+            GoString(text, value ?? "").Append(',');
+        }
+        text.Append("\"variations\":").Append((simulation.Variations ?? 0).ToString(CultureInfo.InvariantCulture))
+            .Append(",\"max_turns\":").Append((simulation.MaxTurns ?? 0).ToString(CultureInfo.InvariantCulture));
+        foreach (var (key, value) in new (string, string?)[]
+        {
+            ("caller_target", simulation.CallerTarget), ("judge_target", simulation.JudgeTarget), ("caller_stt", simulation.CallerStt),
+            ("caller_tts", simulation.CallerTts), ("caller_voice", simulation.CallerVoice),
+        })
+        {
+            text.Append(',');
+            GoString(text, key).Append(':');
+            GoString(text, value ?? "");
+        }
+        text.Append(",\"tags\":");
+        if (simulation.Tags is not { } tags)
+        {
+            text.Append("null");
+        }
+        else
+        {
+            text.Append('{');
+            var first = true;
+            foreach (var (key, value) in tags.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+            {
+                if (!first)
+                {
+                    text.Append(',');
+                }
+                first = false;
+                GoString(text, key).Append(':');
+                GoString(text, value);
+            }
+            text.Append('}');
+        }
+        text.Append('}');
+    }
+
+    private static StringBuilder GoString(StringBuilder text, string value)
+    {
+        text.Append('"');
+        foreach (var letter in value)
+        {
+            _ = letter switch
+            {
+                '"' => text.Append("\\\""),
+                '\\' => text.Append("\\\\"),
+                '\b' => text.Append("\\b"),
+                '\f' => text.Append("\\f"),
+                '\n' => text.Append("\\n"),
+                '\r' => text.Append("\\r"),
+                '\t' => text.Append("\\t"),
+                < ' ' or '<' or '>' or '&' or '\u2028' or '\u2029' => text.Append("\\u").Append(((int)letter).ToString("x4", CultureInfo.InvariantCulture)),
+                _ => text.Append(letter),
+            };
+        }
+        return text.Append('"');
     }
 
     /// <summary>A map printed the way Go's <c>fmt.Sprint</c> prints one, keys sorted.</summary>
@@ -388,7 +508,9 @@ public sealed class Folder
             Tts = read.Tts ?? "",
             Sts = read.Sts,
             Voice = read.Voice ?? "",
+            Speed = read.Speed ?? 0,
             Llm = read.Llm ?? "",
+            Harness = read.Harness ?? "",
             Subagent = read.Subagent ?? "",
             Search = read.Search ?? "",
             Greeting = read.Greeting ?? "",
@@ -397,6 +519,7 @@ public sealed class Folder
             Keyterms = read.Keyterms ?? [],
             Tags = read.Tags ?? [],
             Video = video,
+            Dispatch = read.Dispatch is { } dispatch ? new DispatchDeclaration(dispatch.IncomingCall ?? "", dispatch.Text ?? "") : null,
         };
     }
 
@@ -627,6 +750,7 @@ public sealed class Folder
     private static KnowledgePage PageOf(YamlMappingNode mapping, string path)
     {
         string url = "", title = "", description = "";
+        var refreshHours = 0;
         foreach (var (key, value) in mapping.Children)
         {
             var said = value is YamlScalarNode scalar ? (scalar.Value ?? "").Trim()
@@ -642,12 +766,87 @@ public sealed class Folder
                 case "description":
                     description = said;
                     break;
+                case "refresh_hours":
+                    if (!int.TryParse(said, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out refreshHours) || refreshHours < 1)
+                    {
+                        throw new ConfigurationException(
+                            $"{path}: refresh_hours is how many hours between reads, so it is a whole number of at least 1; leave it out for never");
+                    }
+                    break;
                 default:
                     throw new ConfigurationException(
-                        $"{path}: \"{(key as YamlScalarNode)?.Value}\" is not something a page says; url, title and description are");
+                        $"{path}: \"{(key as YamlScalarNode)?.Value}\" is not something a page says; url, title, description and refresh_hours are");
             }
         }
-        return new KnowledgePage(url, title, description);
+        return new KnowledgePage(url, title, description, refreshHours);
+    }
+
+    /// <summary>
+    /// Reads every .yaml and .yml file in simulations/, each a list of simulations. A key
+    /// nobody knows is refused, as in agent.yaml, and so is a name two simulations share,
+    /// since a sync finds a simulation by its name.
+    /// </summary>
+    private static List<SimulationDeclaration>? LoadSimulations(string path)
+    {
+        if (!Directory.Exists(path))
+        {
+            return null;
+        }
+        var simulations = new List<SimulationDeclaration>();
+        var named = new Dictionary<string, string>(StringComparer.Ordinal);
+        var files = Directory.GetFiles(path)
+            .Where(file => System.IO.Path.GetExtension(file).ToLowerInvariant() is ".yaml" or ".yml")
+            .Order(StringComparer.Ordinal);
+        foreach (var file in files)
+        {
+            List<WrittenSimulation>? listed;
+            try
+            {
+                listed = new DeserializerBuilder().WithDuplicateKeyChecking().Build()
+                    .Deserialize<List<WrittenSimulation>?>(File.ReadAllText(file));
+            }
+            catch (YamlException failure)
+            {
+                throw new ConfigurationException($"{file}: {failure.InnerException?.Message ?? failure.Message}");
+            }
+            foreach (var written in listed ?? [])
+            {
+                var name = written.Name ?? "";
+                var problem = (name, written.Scenario ?? "", written.Assertion ?? "", written.Mode ?? "") switch
+                {
+                    ("", _, _, _) => "a simulation needs a name",
+                    (_, "", _, _) => $"simulation \"{name}\" needs a scenario",
+                    (_, _, "", _) => $"simulation \"{name}\" needs an assertion",
+                    (_, _, _, not ("" or "text" or "audio")) => $"simulation \"{name}\" is text or audio, not \"{written.Mode}\"",
+                    _ => null,
+                };
+                if (problem is not null)
+                {
+                    throw new ConfigurationException($"{file}: {problem}");
+                }
+                if (named.TryGetValue(name, out var first))
+                {
+                    throw new ConfigurationException($"{file}: simulation \"{name}\" is also declared in {first}");
+                }
+                named[name] = System.IO.Path.GetFileName(file);
+                simulations.Add(new SimulationDeclaration
+                {
+                    Name = name,
+                    Scenario = written.Scenario!,
+                    Assertion = written.Assertion!,
+                    Mode = VisionAgentsClient.Blank(written.Mode),
+                    Variations = written.Variations is > 0 ? written.Variations : null,
+                    MaxTurns = written.MaxTurns is > 0 ? written.MaxTurns : null,
+                    CallerTarget = VisionAgentsClient.Blank(written.CallerTarget),
+                    JudgeTarget = VisionAgentsClient.Blank(written.JudgeTarget),
+                    CallerStt = VisionAgentsClient.Blank(written.CallerStt),
+                    CallerTts = VisionAgentsClient.Blank(written.CallerTts),
+                    CallerVoice = VisionAgentsClient.Blank(written.CallerVoice),
+                    Tags = written.Tags,
+                });
+            }
+        }
+        return simulations;
     }
 
     private sealed record Stamp(
@@ -663,7 +862,9 @@ public sealed class Folder
         [YamlMember(Alias = "tts")] public string? Tts { get; set; }
         [YamlMember(Alias = "sts")] public string? Sts { get; set; }
         [YamlMember(Alias = "voice")] public string? Voice { get; set; }
+        [YamlMember(Alias = "speed")] public double? Speed { get; set; }
         [YamlMember(Alias = "llm")] public string? Llm { get; set; }
+        [YamlMember(Alias = "harness")] public string? Harness { get; set; }
         [YamlMember(Alias = "subagent")] public string? Subagent { get; set; }
         [YamlMember(Alias = "search")] public string? Search { get; set; }
         [YamlMember(Alias = "greeting")] public string? Greeting { get; set; }
@@ -672,11 +873,34 @@ public sealed class Folder
         [YamlMember(Alias = "keyterms")] public List<string>? Keyterms { get; set; }
         [YamlMember(Alias = "tags")] public Dictionary<string, string>? Tags { get; set; }
         [YamlMember(Alias = "video")] public WrittenVideo? Video { get; set; }
+        [YamlMember(Alias = "dispatch")] public WrittenDispatch? Dispatch { get; set; }
     }
 
     private sealed class WrittenVideo
     {
         [YamlMember(Alias = "source")] public string? Source { get; set; }
         [YamlMember(Alias = "max_frames")] public int? MaxFrames { get; set; }
+    }
+
+    private sealed class WrittenDispatch
+    {
+        [YamlMember(Alias = "incoming_call")] public string? IncomingCall { get; set; }
+        [YamlMember(Alias = "text")] public string? Text { get; set; }
+    }
+
+    private sealed class WrittenSimulation
+    {
+        [YamlMember(Alias = "name")] public string? Name { get; set; }
+        [YamlMember(Alias = "scenario")] public string? Scenario { get; set; }
+        [YamlMember(Alias = "assertion")] public string? Assertion { get; set; }
+        [YamlMember(Alias = "mode")] public string? Mode { get; set; }
+        [YamlMember(Alias = "variations")] public long? Variations { get; set; }
+        [YamlMember(Alias = "max_turns")] public long? MaxTurns { get; set; }
+        [YamlMember(Alias = "caller_target")] public string? CallerTarget { get; set; }
+        [YamlMember(Alias = "judge_target")] public string? JudgeTarget { get; set; }
+        [YamlMember(Alias = "caller_stt")] public string? CallerStt { get; set; }
+        [YamlMember(Alias = "caller_tts")] public string? CallerTts { get; set; }
+        [YamlMember(Alias = "caller_voice")] public string? CallerVoice { get; set; }
+        [YamlMember(Alias = "tags")] public Dictionary<string, string>? Tags { get; set; }
     }
 }

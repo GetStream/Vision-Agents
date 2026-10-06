@@ -30,6 +30,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/emit"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -110,19 +111,19 @@ type Edge struct {
 // New validates the options and returns an Edge. It connects nothing; Join does that.
 func New(options Options) (*Edge, error) {
 	if options.CallID == "" {
-		return nil, errors.New("streamedge: a call id is required")
+		return nil, stack.Wrap(errors.New("streamedge: a call id is required"))
 	}
 	if options.User.ID == "" {
-		return nil, errors.New("streamedge: a user id is required")
+		return nil, stack.Wrap(errors.New("streamedge: a user id is required"))
 	}
 	if options.CallType == "" {
 		options.CallType = defaultCallType
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("streamedge: an api key is required")
+		return nil, stack.Wrap(errors.New("streamedge: an api key is required"))
 	}
 	if options.APISecret == "" && options.UserToken == "" {
-		return nil, errors.New("streamedge: a secret or a user token is required")
+		return nil, stack.Wrap(errors.New("streamedge: a secret or a user token is required"))
 	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
@@ -157,7 +158,7 @@ func (e *Edge) Join(ctx context.Context) error {
 		e.listen(remote)
 	})))
 	if err != nil {
-		return fmt.Errorf("streamedge: join %s:%s: %w", e.options.CallType, e.options.CallID, err)
+		return stack.Wrap(fmt.Errorf("streamedge: join %s:%s: %w", e.options.CallType, e.options.CallID, err))
 	}
 	e.call = call
 	signalingMs := float64(time.Since(signalingStarted).Microseconds()) / 1000
@@ -171,7 +172,7 @@ func (e *Edge) Join(ctx context.Context) error {
 
 	subscribeStarted := time.Now()
 	if err := e.call.SubscribeToTracks(ctx, subscriptions...); err != nil {
-		return fmt.Errorf("streamedge: subscribe: %w", err)
+		return stack.Wrap(fmt.Errorf("streamedge: subscribe: %w", err))
 	}
 	subscribeMs := float64(time.Since(subscribeStarted).Microseconds()) / 1000
 	e.watchForNewTracks(ctx)
@@ -309,7 +310,7 @@ func (e *Edge) connect() (*rtc.Client, error) {
 	if e.options.UserToken != "" {
 		client, err := rtc.NewClient(e.options.APIKey, user, rtc.StaticToken(e.options.UserToken))
 		if err != nil {
-			return nil, fmt.Errorf("streamedge: connect: %w", err)
+			return nil, stack.Wrap(fmt.Errorf("streamedge: connect: %w", err))
 		}
 		return client, nil
 	}
@@ -323,7 +324,7 @@ func (e *Edge) connect() (*rtc.Client, error) {
 	}
 	client, err := rtc.NewRTCClient(e.options.APIKey, e.options.APISecret, options...)
 	if err != nil {
-		return nil, fmt.Errorf("streamedge: connect: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("streamedge: connect: %w", err))
 	}
 	return client, nil
 }
@@ -341,10 +342,10 @@ func (e *Edge) publish() error {
 		Channels:  opusNegotiatedChannels,
 	})
 	if err != nil {
-		return fmt.Errorf("streamedge: build audio track: %w", err)
+		return stack.Wrap(fmt.Errorf("streamedge: build audio track: %w", err))
 	}
 	if _, err := e.call.AddTrack(info, voice); err != nil {
-		return fmt.Errorf("streamedge: publish audio track: %w", err)
+		return stack.Wrap(fmt.Errorf("streamedge: publish audio track: %w", err))
 	}
 	return nil
 }

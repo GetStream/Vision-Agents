@@ -11,20 +11,20 @@ use GetStream\VisionAgents\Json;
 final readonly class ModelCallTiming
 {
     public function __construct(
-        public \DateTimeImmutable $startedAt,
-        public string $provider,
         public string $model,
+        public string $provider,
+        public \DateTimeImmutable $startedAt,
         public bool $success,
+        // Request to completed response or failed create.
+        public ?float $durationMs = null,
+        public ?int $inputTokens = null,
         // Response ID for this operation; retries can share an ID.
         public ?string $operationId = null,
+        public ?int $outputTokens = null,
         // reply, flow or subagent.
         public ?string $purpose = null,
         // Request to first token.
         public ?float $ttftMs = null,
-        // Request to completed response or failed create.
-        public ?float $durationMs = null,
-        public ?int $inputTokens = null,
-        public ?int $outputTokens = null,
     ) {
     }
 
@@ -34,16 +34,16 @@ final readonly class ModelCallTiming
     public static function fromArray(array $data): self
     {
         return new self(
-            startedAt: Json::date($data, 'started_at'),
-            provider: Json::string($data, 'provider'),
             model: Json::string($data, 'model'),
+            provider: Json::string($data, 'provider'),
+            startedAt: Json::date($data, 'started_at'),
             success: Json::bool($data, 'success'),
-            operationId: array_key_exists('operation_id', $data) && $data['operation_id'] !== null ? Json::string($data, 'operation_id') : null,
-            purpose: array_key_exists('purpose', $data) && $data['purpose'] !== null ? Json::string($data, 'purpose') : null,
-            ttftMs: array_key_exists('ttft_ms', $data) && $data['ttft_ms'] !== null ? Json::float($data, 'ttft_ms') : null,
             durationMs: array_key_exists('duration_ms', $data) && $data['duration_ms'] !== null ? Json::float($data, 'duration_ms') : null,
             inputTokens: array_key_exists('input_tokens', $data) && $data['input_tokens'] !== null ? Json::int($data, 'input_tokens') : null,
+            operationId: array_key_exists('operation_id', $data) && $data['operation_id'] !== null ? Json::string($data, 'operation_id') : null,
             outputTokens: array_key_exists('output_tokens', $data) && $data['output_tokens'] !== null ? Json::int($data, 'output_tokens') : null,
+            purpose: array_key_exists('purpose', $data) && $data['purpose'] !== null ? Json::string($data, 'purpose') : null,
+            ttftMs: array_key_exists('ttft_ms', $data) && $data['ttft_ms'] !== null ? Json::float($data, 'ttft_ms') : null,
         );
     }
 
@@ -55,27 +55,27 @@ final readonly class ModelCallTiming
     public function toArray(): array
     {
         $out = [];
-        $out['started_at'] = Json::dateValue($this->startedAt);
-        $out['provider'] = $this->provider;
         $out['model'] = $this->model;
+        $out['provider'] = $this->provider;
+        $out['started_at'] = Json::dateValue($this->startedAt);
         $out['success'] = $this->success;
-        if ($this->operationId !== null) {
-            $out['operation_id'] = $this->operationId;
-        }
-        if ($this->purpose !== null) {
-            $out['purpose'] = $this->purpose;
-        }
-        if ($this->ttftMs !== null) {
-            $out['ttft_ms'] = $this->ttftMs;
-        }
         if ($this->durationMs !== null) {
             $out['duration_ms'] = $this->durationMs;
         }
         if ($this->inputTokens !== null) {
             $out['input_tokens'] = $this->inputTokens;
         }
+        if ($this->operationId !== null) {
+            $out['operation_id'] = $this->operationId;
+        }
         if ($this->outputTokens !== null) {
             $out['output_tokens'] = $this->outputTokens;
+        }
+        if ($this->purpose !== null) {
+            $out['purpose'] = $this->purpose;
+        }
+        if ($this->ttftMs !== null) {
+            $out['ttft_ms'] = $this->ttftMs;
         }
         return $out;
     }

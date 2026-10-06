@@ -11,9 +11,9 @@ use GetStream\VisionAgents\Json;
 final readonly class Candidate
 {
     public function __construct(
-        public string $provider,
-        public string $model,
         public ProviderHealth $health,
+        public string $model,
+        public string $provider,
     ) {
     }
 
@@ -23,9 +23,9 @@ final readonly class Candidate
     public static function fromArray(array $data): self
     {
         return new self(
-            provider: Json::string($data, 'provider'),
-            model: Json::string($data, 'model'),
             health: ProviderHealth::fromArray(Json::object($data, 'health')),
+            model: Json::string($data, 'model'),
+            provider: Json::string($data, 'provider'),
         );
     }
 
@@ -37,9 +37,9 @@ final readonly class Candidate
     public function toArray(): array
     {
         $out = [];
-        $out['provider'] = $this->provider;
-        $out['model'] = $this->model;
         $out['health'] = $this->health->toArray();
+        $out['model'] = $this->model;
+        $out['provider'] = $this->provider;
         return $out;
     }
 }

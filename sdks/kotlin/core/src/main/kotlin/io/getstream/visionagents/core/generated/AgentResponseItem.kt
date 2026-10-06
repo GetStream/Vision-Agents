@@ -36,31 +36,35 @@ import kotlinx.serialization.encoding.Encoder
 /**
  * 
  *
- * @param responseId 
- * @param ordinal The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in. 
- * @param kind 
  * @param at 
+ * @param kind 
+ * @param ordinal The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in. 
+ * @param responseId 
+ * @param payload Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result. 
  * @param sessionId 
  * @param text 
  * @param toolName 
- * @param payload Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result. 
  */
 @Serializable
 
 internal data class AgentResponseItem (
 
-    @SerialName(value = "response_id")
-    val responseId: kotlin.String,
+    @SerialName(value = "at")
+    val at: kotlin.String,
+
+    @SerialName(value = "kind")
+    val kind: AgentResponseItem.Kind,
 
     /* The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in.  */
     @SerialName(value = "ordinal")
     val ordinal: kotlin.Int,
 
-    @SerialName(value = "kind")
-    val kind: AgentResponseItem.Kind,
+    @SerialName(value = "response_id")
+    val responseId: kotlin.String,
 
-    @SerialName(value = "at")
-    val at: kotlin.String,
+    /* Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result.  */
+    @Contextual @SerialName(value = "payload")
+    val payload: kotlin.collections.Map<kotlin.String, kotlinx.serialization.json.JsonElement>? = null,
 
     @SerialName(value = "session_id")
     val sessionId: kotlin.String? = null,
@@ -69,11 +73,7 @@ internal data class AgentResponseItem (
     val text: kotlin.String? = null,
 
     @SerialName(value = "tool_name")
-    val toolName: kotlin.String? = null,
-
-    /* Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result.  */
-    @Contextual @SerialName(value = "payload")
-    val payload: kotlin.collections.Map<kotlin.String, kotlinx.serialization.json.JsonElement>? = null
+    val toolName: kotlin.String? = null
 
 ) {
 

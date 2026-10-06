@@ -21,10 +21,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 )
+
+var tracer = tracing.Tracer("policy")
 
 // ErrBudgetSpent is what a customer whose app or organization has spent its budget is
 // refused with. The message names which budget and when it resets.
@@ -42,7 +47,7 @@ const joinTimeout = 2 * time.Second
 // Every read fails open, as the daily quota does: a database blip should not become an
 // outage of everything the policies were protecting.
 type Enforcer struct {
-	store  *store.Store
+	config *appconfig.Store
 	logger *slog.Logger
 
 	mu        sync.Mutex
@@ -66,15 +71,15 @@ type decision struct {
 	expires time.Time
 }
 
-// New returns an Enforcer reading policies from the store.
-func New(db *store.Store, logger *slog.Logger) (*Enforcer, error) {
-	if db == nil {
-		return nil, errors.New("policy: a store is required")
+// New returns an Enforcer reading policies from the configuration store.
+func New(config *appconfig.Store, logger *slog.Logger) (*Enforcer, error) {
+	if config == nil {
+		return nil, errors.New("policy: a configuration store is required")
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Enforcer{store: db, logger: logger, decisions: map[string]decision{}}, nil
+	return &Enforcer{config: config, logger: logger, decisions: map[string]decision{}}, nil
 }
 
 // Admit refuses a customer whose app or organization has spent its budget, and says what
@@ -83,8 +88,10 @@ func (e *Enforcer) Admit(ctx context.Context, customerID string) (routing.Admiss
 	if e == nil || customerID == "" {
 		return routing.Admission{}, nil
 	}
+	ctx, span := tracer.Start(ctx, "policy.admit")
+	defer span.End()
 	decided := e.decide(ctx, customerID)
-	return routing.Admission{DataPolicy: decided.floor, Models: decided.models, Tags: decided.tags}, decided.refusal
+	return routing.Admission{DataPolicy: decided.floor, Models: decided.models, Tags: decided.tags}, stack.Wrap(decided.refusal)
 }
 
 // Join records that an app was seen under an organization, which is what an organization's
@@ -100,7 +107,7 @@ func (e *Enforcer) Join(appID, organizationID string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), joinTimeout)
 		defer cancel()
-		if err := e.store.JoinOrganization(ctx, appID, organizationID); err != nil {
+		if err := e.config.JoinOrganization(ctx, appID, organizationID); err != nil {
 			e.members.Delete(appID)
 			e.logger.Error("could not record which organization an app belongs to",
 				"app", appID, "organization", organizationID, "error", err)
@@ -127,7 +134,7 @@ func (e *Enforcer) RequiresOwnStreamApp(ctx context.Context, customerID string) 
 
 // Save replaces a scope's policy and drops the decisions it may have changed.
 func (e *Enforcer) Save(ctx context.Context, scope store.PolicyScope, id string, document store.PolicyDocument) error {
-	if err := e.store.SavePolicy(ctx, scope, id, document); err != nil {
+	if err := e.config.SavePolicy(ctx, scope, id, document); err != nil {
 		return err
 	}
 	if scope == store.ScopeApp {
@@ -145,10 +152,10 @@ func (e *Enforcer) Save(ctx context.Context, scope store.PolicyScope, id string,
 func (e *Enforcer) Spent(ctx context.Context, scope store.PolicyScope, id string, budget store.Budget) (int64, time.Time, error) {
 	start, end := budget.Interval.Window(time.Now())
 	if scope == store.ScopeOrganization {
-		spent, err := e.store.OrganizationSpendSince(ctx, id, start)
+		spent, err := e.config.DB().OrganizationSpendSince(ctx, id, start)
 		return spent, end, err
 	}
-	spent, err := e.store.SpendSince(ctx, id, start)
+	spent, err := e.config.DB().SpendSince(ctx, id, start)
 	return spent, end, err
 }
 
@@ -177,11 +184,11 @@ func (e *Enforcer) decide(ctx context.Context, customerID string) decision {
 
 // work reads the app's and the organization's policies and what each has spent.
 func (e *Enforcer) work(ctx context.Context, appID string) (decision, error) {
-	app, err := e.store.Policy(ctx, store.ScopeApp, appID)
+	app, err := e.config.Policy(ctx, store.ScopeApp, appID)
 	if err != nil {
 		return decision{}, err
 	}
-	organizationID, err := e.store.OrganizationOf(ctx, appID)
+	organizationID, err := e.config.OrganizationOf(ctx, appID)
 	if err != nil {
 		return decision{}, err
 	}
@@ -193,7 +200,7 @@ func (e *Enforcer) work(ctx context.Context, appID string) (decision, error) {
 	}
 	var organization store.PolicyDocument
 	if organizationID != "" {
-		if organization, err = e.store.Policy(ctx, store.ScopeOrganization, organizationID); err != nil {
+		if organization, err = e.config.Policy(ctx, store.ScopeOrganization, organizationID); err != nil {
 			return decision{}, err
 		}
 	}
@@ -230,9 +237,9 @@ func (e *Enforcer) over(ctx context.Context, scope store.PolicyScope, id string,
 	if spent < budget.LimitMicros {
 		return nil, nil
 	}
-	return fmt.Errorf("%w: the %s's %s budget of $%.2f is spent; it resets at %s",
+	return stack.Wrap(fmt.Errorf("%w: the %s's %s budget of $%.2f is spent; it resets at %s",
 		ErrBudgetSpent, scope, budget.Interval, float64(budget.LimitMicros)/1e6,
-		resets.Format(time.RFC3339)), nil
+		resets.Format(time.RFC3339))), nil
 }
 
 // forget drops one customer's decision so the next request reads it again.

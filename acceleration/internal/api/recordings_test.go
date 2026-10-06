@@ -65,7 +65,8 @@ func (s *RecordingsSuite) TestAnOutputFormatNobodyRendersIsRefusedBeforeTheJobRu
 	})
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "srt or vtt")
+	s.Contains(failure, "srt")
+	s.Contains(failure, "vtt")
 }
 
 func (s *RecordingsSuite) TestATextIsSpokenIntoOneFileAndReadBack() {

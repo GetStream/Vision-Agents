@@ -135,34 +135,38 @@ describe("Agent", () => {
     assert.deepEqual(requested().tags, { team: "support" });
   });
 
-  it("renders a harness as the configuration the backend takes", async () => {
-    await chatting(
-      new Agent({
-        name: "John",
-        client: api,
-        harness: {
-          useSkills: true,
-          subagents: { default: "llm-slow" },
-          tasks: 2,
-          vm: daytona(),
-          skills: [{ name: "think", description: "Think", instructions: "Work it out." }],
-        },
-      }),
-    );
+  it("stores a harness on the config rather than on each session, since a session runs its config's", async () => {
+    router.serve("POST", "/v1/agents/sync", {
+      body: {
+        unchanged: false,
+        config: { id: "cfg_1", name: "John", created_at: "2026-01-01T00:00:00Z" },
+      },
+    });
+    const agent = new Agent({
+      name: "John",
+      client: api,
+      harness: {
+        name: "default",
+        subagents: { default: "llm-slow" },
+        vm: daytona(),
+        skills: [{ name: "think", description: "Think", instructions: "Work it out." }],
+      },
+    });
 
-    const body = requested();
-    assert.equal(body.subagent, "llm-slow");
-    assert.equal(body.tasks, 2);
-    assert.equal(body.sandbox, "daytona");
-    assert.deepEqual(body.skills, [
-      { name: "think", description: "Think", instructions: "Work it out." },
+    await agent.sync();
+    await chatting(agent);
+
+    const synced = router.requestsTo("POST", "/v1/agents/sync")[0]?.body as Schemas["SyncAgentRequest"];
+    assert.equal(synced.harness, "default");
+    assert.equal(synced.thinking_llm, "llm-slow");
+    assert.equal(synced.sandbox, "daytona");
+    assert.deepEqual(synced.skills, [
+      { name: "think", description: "Think", instructions: "Work it out.", config_id: "" },
     ]);
-  });
-
-  it("turns delegation off when asked for no skills, which is not the same as saying nothing", async () => {
-    await chatting(new Agent({ name: "John", client: api, harness: { useSkills: false } }));
-
-    assert.deepEqual(requested().skills, []);
+    const body = requested() as Record<string, unknown>;
+    for (const key of ["harness", "thinking_llm", "sandbox", "skills", "tasks"]) {
+      assert.equal(key in body, false, `${key} went on the session`);
+    }
   });
 
   it("refuses a harness that would mean something different on every run", () => {
@@ -173,10 +177,6 @@ describe("Agent", () => {
           client: api,
           harness: { skills: [{ name: "x", description: "", instructions: "Go." }] },
         }),
-      ConfigurationError,
-    );
-    assert.throws(
-      () => new Agent({ name: "John", client: api, harness: { tasks: -1 } }),
       ConfigurationError,
     );
   });
@@ -206,7 +206,7 @@ describe("Agent", () => {
     assert.equal(requested().config_id, "cfg_raw");
   });
 
-  it("fills in from a directory what was not written in code", async () => {
+  it("fills in from a directory what was not written in code", () => {
     const folder: Folder = {
       path: "/agents/jean",
       name: "jean",
@@ -222,11 +222,6 @@ describe("Agent", () => {
     assert.equal(agent.name, "jean");
     assert.equal(agent.instructions, "Be brief.");
     assert.equal(agent.guardrail, "Refuse medical advice.");
-
-    await chatting(agent);
-    assert.deepEqual(requested().skills, [
-      { name: "think", description: "Think", instructions: "Work it out." },
-    ]);
   });
 
   it("lets what is written in code win over the directory", () => {
@@ -341,12 +336,20 @@ describe("Agent", () => {
       const folder: Folder = {
         path: "/agents/jean",
         name: "jean",
-        settings: { llm: "llm-smart", stt: "flux", tags: { team: "support" } },
+        settings: {
+          llm: "llm-smart",
+          stt: "flux",
+          speed: 0.9,
+          harness: "default",
+          tags: { team: "support" },
+          dispatch: { incoming_call: "disabled", text: "enabled" },
+        },
         instructions: "Be brief.",
         guardrail: "Refuse medical advice.",
         skills: [{ name: "think", description: "Think", instructions: "Work it out." }],
         knowledge: [{ source: "pricing.md", text: "The plans cost money." }],
-        knowledgeURLs: [{ url: "https://example.com", title: "Home" }],
+        knowledgeURLs: [{ url: "https://example.com", title: "Home", refresh_hours: 24 }],
+        simulations: [{ name: "order", scenario: "Order a wrap.", assertion: "One wrap." }],
       };
 
       const result = await new Agent({
@@ -365,11 +368,47 @@ describe("Agent", () => {
       assert.equal(body.llm, "llm-fast", "what the code set wins over agent.yaml");
       assert.equal(body.stt, "flux", "what only agent.yaml says still goes");
       assert.deepEqual(body.tags, { team: "support" });
+      assert.deepEqual(body.dispatch, { incoming_call: "disabled", text: "enabled" });
+      assert.equal(body.speed, 0.9);
+      assert.equal(body.harness, "default");
       assert.equal(body.skills?.length, 1);
       assert.equal(body.knowledge?.length, 1);
-      assert.deepEqual(body.knowledge_urls, [{ url: "https://example.com", title: "Home" }]);
+      assert.deepEqual(body.knowledge_urls, [
+        { url: "https://example.com", title: "Home", refresh_hours: 24 },
+      ]);
+      assert.deepEqual(body.simulations, [
+        { name: "order", scenario: "Order a wrap.", assertion: "One wrap." },
+      ]);
       assert.match(body.hash, /^[0-9a-f]{64}$/);
       assert.equal(router.received.length, 1, "the pages go in the same request");
+    });
+
+    it("sends an empty simulations/ as an empty list and a missing one not at all", async () => {
+      router.serve("POST", "/v1/agents/sync", {
+        body: {
+          unchanged: false,
+          config: { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" },
+        },
+      });
+      const folder: Folder = {
+        path: "/agents/jean",
+        name: "jean",
+        instructions: "Be brief.",
+        guardrail: "",
+        skills: [],
+        knowledge: [],
+        knowledgeURLs: [],
+      };
+
+      await new Agent({ folder, client: api }).sync();
+      await new Agent({ folder: { ...folder, simulations: [] }, client: api }).sync();
+
+      const [without, emptied] = router
+        .requestsTo("POST", "/v1/agents/sync")
+        .map((one) => one.body as Schemas["SyncAgentRequest"]);
+      assert.equal(without && "simulations" in without, false, "the stored ones would be deleted");
+      assert.deepEqual(emptied?.simulations, [], "the stored ones would never be deleted");
+      assert.notEqual(without?.hash, emptied?.hash, "emptying simulations/ would not sync");
     });
 
     it("fingerprints the same agent the same way twice, and a changed one differently", async () => {

@@ -32,6 +32,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -137,6 +138,9 @@ type Options struct {
 	// holding the conversation: running code takes seconds, and a conversation cannot
 	// spare them.
 	Sandbox sandbox.Sandbox
+	// Publish puts the files the subagent's code hands back where the caller can see them,
+	// which is the conversation's channel when there is one. Nil means nowhere.
+	Publish sandbox.Publisher
 	// Tasks caps how much delegated work may run at once. Zero leaves the harness's own
 	// default in place.
 	Tasks int
@@ -331,8 +335,11 @@ type Agent struct {
 	// pendingTools is how many tool calls from the current turn have not come back yet.
 	// The spoken follow-up waits until this is zero so two results share one generate.
 	pendingTools int
-	joined       bool
-	closed       bool
+	// owedTurn is the last turn that ended with tools or delegated work outstanding, which
+	// the reply delivering that work continues.
+	owedTurn string
+	joined   bool
+	closed   bool
 
 	// lastParticipant is who the agent was last talking to, so a reply prompted by
 	// delegated work coming back is attributed to the person who is waiting for it.
@@ -397,35 +404,35 @@ type Agent struct {
 func New(options Options) (*Agent, error) {
 	native := options.STSTarget != ""
 	if native && options.STS == nil {
-		return nil, errors.New("agent: an sts router is required")
+		return nil, stack.Wrap(errors.New("agent: an sts router is required"))
 	}
 	if !native && options.LLM == nil {
-		return nil, errors.New("agent: an llm router is required")
+		return nil, stack.Wrap(errors.New("agent: an llm router is required"))
 	}
 	if options.Text && native {
-		return nil, errors.New("agent: a text agent has no voice, so it cannot run a speech-to-speech model")
+		return nil, stack.Wrap(errors.New("agent: a text agent has no voice, so it cannot run a speech-to-speech model"))
 	}
 	if options.LLM == nil && options.SubagentTarget != "" {
-		return nil, errors.New("agent: a subagent requires an llm router")
+		return nil, stack.Wrap(errors.New("agent: a subagent requires an llm router"))
 	}
 	// A conversation in writing has nowhere to listen and nothing to speak with, so the
 	// three that carry a voice are only required when there is one. A native agent's one
 	// model is its transcriber and its voice both, so it needs neither router.
 	if !options.Text {
 		if options.Edge == nil {
-			return nil, errors.New("agent: an edge is required")
+			return nil, stack.Wrap(errors.New("agent: an edge is required"))
 		}
 		if !native {
 			if options.STT == nil {
-				return nil, errors.New("agent: an stt router is required")
+				return nil, stack.Wrap(errors.New("agent: an stt router is required"))
 			}
 			if options.TTS == nil {
-				return nil, errors.New("agent: a tts router is required")
+				return nil, stack.Wrap(errors.New("agent: a tts router is required"))
 			}
 		}
 	}
 	if options.CustomerID == "" {
-		return nil, errors.New("agent: a customer id is required")
+		return nil, stack.Wrap(errors.New("agent: a customer id is required"))
 	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
@@ -557,11 +564,11 @@ func (a *Agent) Join(ctx context.Context) error {
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
-		return errors.New("agent: already closed")
+		return stack.Wrap(errors.New("agent: already closed"))
 	}
 	if a.joined {
 		a.mu.Unlock()
-		return errors.New("agent: already joined")
+		return stack.Wrap(errors.New("agent: already joined"))
 	}
 	a.ctx, a.cancel = context.WithCancel(ctx)
 	a.joined = true
@@ -601,7 +608,7 @@ func (a *Agent) Join(ctx context.Context) error {
 
 	if !a.options.Text {
 		if err := a.options.Edge.Join(a.ctx); err != nil {
-			return fmt.Errorf("agent: join edge: %w", err)
+			return stack.Wrap(fmt.Errorf("agent: join edge: %w", err))
 		}
 		a.running.Add(1)
 		go a.consumeEdge()
@@ -644,7 +651,7 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 		current := a.harness
 		a.mu.Unlock()
 		if current == nil {
-			return "", errors.New("agent: not joined")
+			return "", stack.Wrap(errors.New("agent: not joined"))
 		}
 		id := replyPrefix + turnStamp()
 		parts := llm.TextParts(text)
@@ -806,13 +813,13 @@ func (a *Agent) Say(ctx context.Context, text string) error {
 	// A native model has no way to say exact words: it says what it makes of a prompt.
 	// Pretending otherwise would promise a caller a script and deliver a paraphrase.
 	if a.native() {
-		return errors.New("agent: a speech-to-speech agent cannot say exact words; use Prompt")
+		return stack.Wrap(errors.New("agent: a speech-to-speech agent cannot say exact words; use Prompt"))
 	}
 
 	a.mu.Lock()
 	if a.tts == nil {
 		a.mu.Unlock()
-		return errors.New("agent: not joined")
+		return stack.Wrap(errors.New("agent: not joined"))
 	}
 	a.speakingTurn = turnID
 	a.saying = text
@@ -1434,16 +1441,19 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	a.speakingTurn = turnID
 	a.generating = true
 	a.toolReply = false
+	continues := a.owedTurn
+	a.owedTurn = ""
 	instructions := a.instructions()
 	a.mu.Unlock()
 
 	a.turns.begin(turnID, participant, time.Now(), time.Time{}, 0)
-	a.emitter.Send(Responding{TurnID: turnID, Participant: participant})
+	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Continues: continues})
 
 	return a.generate(harness.Turn{
 		ID:           turnID,
 		Instructions: instructions,
 		History:      history,
+		AfterTool:    true,
 	}, "")
 }
 
@@ -1458,7 +1468,7 @@ func (a *Agent) respondTurn(
 	a.mu.Lock()
 	if a.harness == nil {
 		a.mu.Unlock()
-		return errors.New("agent: not joined")
+		return stack.Wrap(errors.New("agent: not joined"))
 	}
 	a.history = append(a.history, a.userTurnLocked(text, images))
 	history := a.replayLocked()
@@ -1582,7 +1592,7 @@ func (a *Agent) generate(turn harness.Turn, screen string) error {
 	a.mu.Lock()
 	if a.closed || a.harness == nil || a.replies == nil {
 		a.mu.Unlock()
-		return errors.New("agent: not joined")
+		return stack.Wrap(errors.New("agent: not joined"))
 	}
 	if a.switching.Load() {
 		a.mu.Unlock()
@@ -1951,8 +1961,14 @@ func (a *Agent) finish(response llm.Response) {
 		a.fail(err, "compaction")
 	}
 
+	pendingWork := len(calls) > 0 || a.Busy()
+	if pendingWork {
+		a.mu.Lock()
+		a.owedTurn = response.ID
+		a.mu.Unlock()
+	}
 	a.emitter.Send(Responded{
-		PendingWork:        len(calls) > 0 || a.Busy(),
+		PendingWork:        pendingWork,
 		TurnID:             response.ID,
 		Text:               said,
 		TimeToFirstTokenMs: response.TimeToFirstTokenMs,
@@ -2138,6 +2154,7 @@ func (a *Agent) consumeHarness(current *harness.Harness, drained chan struct{}) 
 					Question:  typed.Question,
 					ElapsedMs: typed.ElapsedMs,
 					Err:       typed.Err,
+					Files:     typed.Files,
 				})
 			}
 			// Asked after the report rather than instead of it: work that ran out of time
@@ -2227,12 +2244,14 @@ func (a *Agent) follow() error {
 	a.speakingTurn = turnID
 	a.generating = true
 	participant := a.lastParticipant
+	continues := a.owedTurn
+	a.owedTurn = ""
 	instructions := a.instructions()
 	a.mu.Unlock()
 
 	// This turn is deliberately not measured. A Turn reports the wait between someone
 	// finishing a sentence and hearing the answer start, and nobody said anything here.
-	a.emitter.Send(Responding{TurnID: turnID, Participant: participant})
+	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Continues: continues})
 
 	return a.generate(harness.Turn{
 		ID:           turnID,
@@ -2329,7 +2348,7 @@ func (a *Agent) speakSentence(turnID, text string) error {
 func (a *Agent) speakWhole(turnID, text string) error {
 	voice := a.voice()
 	if voice == nil {
-		return errors.New("agent: not joined")
+		return stack.Wrap(errors.New("agent: not joined"))
 	}
 	a.turns.ttsStarted(turnID, time.Now())
 	a.begin()

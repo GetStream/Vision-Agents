@@ -11,9 +11,9 @@ use GetStream\VisionAgents\Json;
 final readonly class SyncAgentResult
 {
     public function __construct(
+        public AgentConfig $config,
         // True when the hash matched and nothing was written.
         public bool $unchanged,
-        public AgentConfig $config,
     ) {
     }
 
@@ -23,8 +23,8 @@ final readonly class SyncAgentResult
     public static function fromArray(array $data): self
     {
         return new self(
-            unchanged: Json::bool($data, 'unchanged'),
             config: AgentConfig::fromArray(Json::object($data, 'config')),
+            unchanged: Json::bool($data, 'unchanged'),
         );
     }
 
@@ -36,8 +36,8 @@ final readonly class SyncAgentResult
     public function toArray(): array
     {
         $out = [];
-        $out['unchanged'] = $this->unchanged;
         $out['config'] = $this->config->toArray();
+        $out['unchanged'] = $this->unchanged;
         return $out;
     }
 }

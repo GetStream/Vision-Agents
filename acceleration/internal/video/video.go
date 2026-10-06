@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 const (
@@ -70,22 +71,22 @@ func frames(ctx context.Context, client *http.Client, source string, count int) 
 		count = DefaultFrames
 	}
 	if count < 1 || count > MaxFrames {
-		return nil, 0, fmt.Errorf("video: max_frames must be between 1 and %d", MaxFrames)
+		return nil, 0, stack.Wrap(fmt.Errorf("video: max_frames must be between 1 and %d", MaxFrames))
 	}
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		return nil, 0, ErrUnavailable
+		return nil, 0, stack.Wrap(ErrUnavailable)
 	}
 	if _, err := exec.LookPath("ffprobe"); err != nil {
-		return nil, 0, ErrUnavailable
+		return nil, 0, stack.Wrap(ErrUnavailable)
 	}
 
 	clip, err := load(ctx, client, source)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, stack.Wrap(err)
 	}
 	file, err := os.CreateTemp("", "clip-*")
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, stack.Wrap(err)
 	}
 	defer os.Remove(file.Name())
 	_, err = file.Write(clip)
@@ -93,12 +94,12 @@ func frames(ctx context.Context, client *http.Client, source string, count int) 
 		err = closeErr
 	}
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, stack.Wrap(err)
 	}
 
 	length, err := duration(ctx, file.Name())
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, stack.Wrap(err)
 	}
 	sampled := make([]Frame, 0, count)
 	for i := range count {
@@ -107,7 +108,7 @@ func frames(ctx context.Context, client *http.Client, source string, count int) 
 		at := time.Duration(float64(length) * (float64(i) + 0.5) / float64(count))
 		jpeg, err := frameAt(ctx, file.Name(), at)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, stack.Wrap(err)
 		}
 		sampled = append(sampled, Frame{At: at, Image: llm.ImagePart{MIME: "image/jpeg", Data: jpeg}})
 	}
@@ -119,45 +120,45 @@ func load(ctx context.Context, client *http.Client, source string) ([]byte, erro
 	if rest, ok := strings.CutPrefix(source, "data:"); ok {
 		mime, encoded, found := strings.Cut(rest, ";base64,")
 		if !found || !strings.HasPrefix(mime, "video/") {
-			return nil, errors.New("video: a data URI must be base64 with a video/ media type")
+			return nil, stack.Wrap(errors.New("video: a data URI must be base64 with a video/ media type"))
 		}
 		if base64.StdEncoding.DecodedLen(len(encoded)) > MaxBytes {
-			return nil, fmt.Errorf("video: a clip is at most %d MB", MaxBytes>>20)
+			return nil, stack.Wrap(fmt.Errorf("video: a clip is at most %d MB", MaxBytes>>20))
 		}
 		clip, err := base64.StdEncoding.DecodeString(encoded)
 		if err != nil {
-			return nil, fmt.Errorf("video: the data URI is not valid base64: %w", err)
+			return nil, stack.Wrap(fmt.Errorf("video: the data URI is not valid base64: %w", err))
 		}
 		return clip, nil
 	}
 
 	address, err := url.Parse(source)
 	if err != nil || (address.Scheme != "https" && address.Scheme != "http") || address.Hostname() == "" || address.User != nil {
-		return nil, errors.New("video: url must be an absolute HTTP(S) URL without credentials, or a data URI")
+		return nil, stack.Wrap(errors.New("video: url must be an absolute HTTP(S) URL without credentials, or a data URI"))
 	}
 	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address.String(), nil)
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	response, err := client.Do(request)
 	if err != nil {
 		if errors.Is(err, errPrivate) {
-			return nil, errPrivate
+			return nil, stack.Wrap(errPrivate)
 		}
-		return nil, fmt.Errorf("video: fetching the clip: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("video: fetching the clip: %w", err))
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("video: fetching the clip: %s", response.Status)
+		return nil, stack.Wrap(fmt.Errorf("video: fetching the clip: %s", response.Status))
 	}
 	clip, err := io.ReadAll(io.LimitReader(response.Body, MaxBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("video: fetching the clip: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("video: fetching the clip: %w", err))
 	}
 	if len(clip) > MaxBytes {
-		return nil, fmt.Errorf("video: a clip is at most %d MB", MaxBytes>>20)
+		return nil, stack.Wrap(fmt.Errorf("video: a clip is at most %d MB", MaxBytes>>20))
 	}
 	return clip, nil
 }
@@ -168,7 +169,7 @@ func duration(ctx context.Context, path string) (time.Duration, error) {
 		"-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", path).Output()
 	seconds, parseErr := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
 	if err != nil || parseErr != nil || seconds <= 0 {
-		return 0, errors.New("video: not a video ffmpeg can read")
+		return 0, stack.Wrap(errors.New("video: not a video ffmpeg can read"))
 	}
 	return time.Duration(seconds * float64(time.Second)), nil
 }
@@ -183,7 +184,7 @@ func frameAt(ctx context.Context, path string, at time.Duration) ([]byte, error)
 	command.Stderr = &stderr
 	jpeg, err := command.Output()
 	if err != nil || len(jpeg) == 0 {
-		return nil, fmt.Errorf("video: reading the frame at %s: %s", at, strings.TrimSpace(stderr.String()))
+		return nil, stack.Wrap(fmt.Errorf("video: reading the frame at %s: %s", at, strings.TrimSpace(stderr.String())))
 	}
 	return jpeg, nil
 }

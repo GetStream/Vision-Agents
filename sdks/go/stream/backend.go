@@ -42,6 +42,8 @@ const (
 	AuthTypeJWT    = "jwt"
 	// AuthorizationHeader carries the token signed with the app's secret.
 	AuthorizationHeader = "authorization"
+	// UserHeader names the end user a server-side caller is acting for.
+	UserHeader = "X-Stream-User-Id"
 	// DefaultURL is the hosted router.
 	DefaultURL = "https://accelerate.gcp.stream-io-api.com"
 )
@@ -84,6 +86,11 @@ type Backend struct {
 	// standing in for a device. With it, APISecret is not needed at all, which is the point
 	// -- a token is the whole credential and the secret behind it could mint any other.
 	Token string
+	// ActingFor is the end user a server-side credential speaks for, which is how a backend
+	// reaches a conversation that belongs to somebody. Unlike UserID it keeps the app's own
+	// credential, so the request is still the server's: what it writes is answered by the
+	// model rather than handed to a dispatch worker, and no daily limit is counted.
+	ActingFor string
 	// HTTPClient is used for both the REST calls and the socket handshake. Nil uses the
 	// default client.
 	HTTPClient *http.Client
@@ -158,6 +165,9 @@ func (b Backend) token() (string, error) {
 // it when going through the proxy, and otherwise who is billed.
 func (b Backend) Credentials() (http.Header, error) {
 	header := http.Header{}
+	if b.ActingFor != "" {
+		header.Set(UserHeader, b.ActingFor)
+	}
 	if !b.Authenticate {
 		if b.CustomerID != "" {
 			header.Set(CustomerHeader, b.CustomerID)

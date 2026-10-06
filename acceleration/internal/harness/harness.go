@@ -28,6 +28,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	llmoptions "github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Default is the harness every agent runs unless its config names another. It is named so
@@ -68,6 +69,9 @@ type Options struct {
 	// alone: running code takes seconds, and the model holding the conversation does not
 	// have seconds. Nil means the subagent works everything out in its head.
 	Sandbox sandbox.Sandbox
+	// Publish puts the files the subagent's code hands back where the caller can see them.
+	// Nil means there is nowhere to, and the subagent is told so.
+	Publish sandbox.Publisher
 	// Tasks caps how much delegated work may run at once.
 	Tasks int
 	// MaxTokens caps each reply. Zero leaves the model's own default in place.
@@ -99,6 +103,9 @@ type noted struct {
 }
 
 // Turn is what the harness is asked to answer.
+// toolReplyEffort is how hard the model thinks before answering a tool result.
+const toolReplyEffort = "low"
+
 type Turn struct {
 	// ID correlates the reply with the turn the agent is measuring.
 	ID string
@@ -110,6 +117,8 @@ type Turn struct {
 	// Note is something true of this turn alone, such as the caller not having been
 	// heard clearly. It is not remembered past the reply it shapes.
 	Note string
+	// AfterTool says the reply follows a tool result rather than the caller.
+	AfterTool bool
 }
 
 // Harness decides what the fast model is asked and what becomes of what it answers.
@@ -159,7 +168,7 @@ type Harness struct {
 // given are already started.
 func New(options Options) (*Harness, error) {
 	if options.Model == nil && options.Subagent == nil && options.OpenSubagent == nil {
-		return nil, errors.New("harness: a model session is required")
+		return nil, stack.Wrap(errors.New("harness: a model session is required"))
 	}
 	if options.Tasks <= 0 {
 		options.Tasks = defaultTasks
@@ -185,6 +194,7 @@ func New(options Options) (*Harness, error) {
 		h.tasks.onModelCall = options.OnModelCall
 		h.tasks.capture = options.Capture
 		h.tasks.load = options.Skills.Load
+		h.tasks.publish = options.Publish
 		if options.Subagent == nil {
 			h.tasks.open(options.OpenSubagent)
 		}
@@ -305,9 +315,18 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	model := session.Capabilities()
 	h.mu.Unlock()
 
+	// A reply to a tool result is given a little thinking. The caller was told to wait
+	// while the tool ran, so it costs them nothing they notice, and at no effort Luna
+	// answers a free table with "may I book it?" instead of booking it.
+	var reasoning llm.ReasoningParams
+	if turn.AfterTool && slices.Contains(model.ReasoningEfforts, toolReplyEffort) {
+		reasoning.Effort = toolReplyEffort
+	}
+
 	return session.Create(ctx, llm.ResponseParams{
 		ID:                 turn.ID,
 		Purpose:            "reply",
+		Reasoning:          reasoning,
 		TurnID:             turn.ID,
 		OnTiming:           h.options.OnModelCall,
 		Instructions:       instructions,
@@ -397,7 +416,7 @@ func (h *Harness) Requested(turnID string, calls []llm.ToolCall) {
 // Decide asks the fast flow controller what to do with an evolving transcript.
 func (h *Harness) Decide(turn FlowTurn) error {
 	if h.flow == nil {
-		return errors.New("harness: a flow controller is required")
+		return stack.Wrap(errors.New("harness: a flow controller is required"))
 	}
 	return h.flow.Decide(turn)
 }
@@ -761,10 +780,10 @@ func identifiersAlreadyComplete(history []llm.Message) bool {
 func (h *Harness) Delegate(skillName, prompt, turnID string, parts []llm.ContentPart, history []llm.Message) (string, error) {
 	skill, ok := h.options.Skills.Lookup(skillName)
 	if !ok || h.tasks == nil {
-		return "", fmt.Errorf("harness: skill %q is not available", skillName)
+		return "", stack.Wrap(fmt.Errorf("harness: skill %q is not available", skillName))
 	}
 	if strings.TrimSpace(prompt) == "" {
-		return "", errors.New("harness: delegation needs a prompt")
+		return "", stack.Wrap(errors.New("harness: delegation needs a prompt"))
 	}
 	if history == nil {
 		h.mu.Lock()

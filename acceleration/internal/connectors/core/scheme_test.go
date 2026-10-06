@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -11,36 +12,36 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-type CredentialSuite struct {
+type AccessCredentialSuite struct {
 	suite.Suite
-	credential Credential
+	credential AccessCredential
 }
 
-func TestCredentialSuite(t *testing.T) {
-	suite.Run(t, new(CredentialSuite))
+func TestAccessCredentialSuite(t *testing.T) {
+	suite.Run(t, new(AccessCredentialSuite))
 }
 
-func (s *CredentialSuite) SetupTest() {
-	s.credential = NewCredential("bearer", time.Unix(1_800_000_000, 0).UTC(), json.RawMessage(`"tok-very-secret"`))
+func (s *AccessCredentialSuite) SetupTest() {
+	s.credential = NewAccessCredential("bearer", time.Unix(1_800_000_000, 0).UTC(), json.RawMessage(`"tok-very-secret"`))
 }
 
-func (s *CredentialSuite) TestTheMintingSchemeReadsTheSecretBack() {
+func (s *AccessCredentialSuite) TestTheIssuingSchemeReadsTheSecretBack() {
 	s.JSONEq(`"tok-very-secret"`, string(s.credential.Secret()))
 }
 
-func (s *CredentialSuite) TestNoFormatVerbPrintsTheSecret() {
+func (s *AccessCredentialSuite) TestNoFormatVerbPrintsTheSecret() {
 	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
 		s.NotContains(fmt.Sprintf(verb, s.credential), "tok-very-secret", verb)
 	}
 }
 
-func (s *CredentialSuite) TestJSONLeavesTheSecretOut() {
+func (s *AccessCredentialSuite) TestJSONLeavesTheSecretOut() {
 	raw, err := json.Marshal(s.credential)
 	s.Require().NoError(err)
 	s.NotContains(string(raw), "tok-very-secret")
 }
 
-func (s *CredentialSuite) TestALogLineLeavesTheSecretOut() {
+func (s *AccessCredentialSuite) TestALogLineLeavesTheSecretOut() {
 	var text, structured strings.Builder
 	slog.New(slog.NewTextHandler(&text, nil)).Info("resolved", "credential", s.credential)
 	slog.New(slog.NewJSONHandler(&structured, nil)).Info("resolved", "credential", s.credential)
@@ -49,40 +50,58 @@ func (s *CredentialSuite) TestALogLineLeavesTheSecretOut() {
 	s.Contains(text.String(), "bearer")
 }
 
-type MaterialSuite struct {
+type StoredCredentialsSuite struct {
 	suite.Suite
-	material Material
+	stored StoredCredentials
 }
 
-func TestMaterialSuite(t *testing.T) {
-	suite.Run(t, new(MaterialSuite))
+func TestStoredCredentialsSuite(t *testing.T) {
+	suite.Run(t, new(StoredCredentialsSuite))
 }
 
-func (s *MaterialSuite) SetupTest() {
-	s.material = Material{Scheme: "oauth2_code", Version: 1, Payload: json.RawMessage(`{"refresh_token":"rt-very-secret"}`)}
+func (s *StoredCredentialsSuite) SetupTest() {
+	s.stored = StoredCredentials{Scheme: "oauth2_code", Version: 1, Payload: json.RawMessage(`{"refresh_token":"rt-very-secret"}`)}
 }
 
-func (s *MaterialSuite) TestNoFormatVerbPrintsThePayload() {
+func (s *StoredCredentialsSuite) TestNoFormatVerbPrintsThePayload() {
 	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
-		out := fmt.Sprintf(verb, s.material)
+		out := fmt.Sprintf(verb, s.stored)
 		s.NotContains(out, "rt-very-secret", verb)
 		s.Contains(out, "oauth2_code", verb)
 	}
 }
 
-func (s *MaterialSuite) TestALogLineLeavesThePayloadOut() {
+func (s *StoredCredentialsSuite) TestALogLineLeavesThePayloadOut() {
 	var text, structured strings.Builder
-	slog.New(slog.NewTextHandler(&text, nil)).Info("rotated", "material", s.material)
-	slog.New(slog.NewJSONHandler(&structured, nil)).Info("rotated", "material", s.material)
+	slog.New(slog.NewTextHandler(&text, nil)).Info("rotated", "credentials", s.stored)
+	slog.New(slog.NewJSONHandler(&structured, nil)).Info("rotated", "credentials", s.stored)
 	s.NotContains(text.String(), "rt-very-secret")
 	s.NotContains(structured.String(), "rt-very-secret")
 	s.Contains(structured.String(), "oauth2_code")
 }
 
-func (s *MaterialSuite) TestJSONKeepsThePayloadForSealing() {
-	raw, err := json.Marshal(s.material)
+type OutcomeErrorSuite struct {
+	suite.Suite
+}
+
+func TestOutcomeErrorSuite(t *testing.T) {
+	suite.Run(t, new(OutcomeErrorSuite))
+}
+
+func (s *OutcomeErrorSuite) TestTheResolverReadsTheOutcomeThroughAWrappedError() {
+	cause := errors.New("token endpoint answered 400 invalid_grant")
+	err := fmt.Errorf("access credential: %w", &OutcomeError{Outcome: Outcome{Kind: OutcomeInvalidGrant}, Err: cause})
+	var failed *OutcomeError
+	s.Require().ErrorAs(err, &failed)
+	s.Equal(OutcomeInvalidGrant, failed.Outcome.Kind)
+	s.ErrorIs(err, cause)
+	s.Equal("access credential: invalid_grant: token endpoint answered 400 invalid_grant", err.Error())
+}
+
+func (s *StoredCredentialsSuite) TestJSONKeepsThePayloadForSealing() {
+	raw, err := json.Marshal(s.stored)
 	s.Require().NoError(err)
-	var back Material
+	var back StoredCredentials
 	s.Require().NoError(json.Unmarshal(raw, &back))
-	s.Equal(s.material, back)
+	s.Equal(s.stored, back)
 }

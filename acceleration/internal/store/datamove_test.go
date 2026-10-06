@@ -277,6 +277,22 @@ func (s *DataMoveSuite) TestADeleteIsReplayedToo() {
 	s.Empty(s.exportFrom(s.destination, "acme").of("agent_configs"))
 }
 
+// The columns a move copies are read from the catalog, so the bindings come with the
+// config without being named anywhere.
+func (s *DataMoveSuite) TestAConfigsBindingsMoveWithIt() {
+	config := &AgentConfig{CustomerID: "acme", Name: "bound", Connectors: []ConnectorBinding{{
+		Name: "crm", ConnectorID: "slack", Connection: ConnectionBinding{Type: "fixed", ConnectionID: "connection-1"},
+		Tools: []ToolGrant{{Name: "search", SchemaDigest: strings.Repeat("a", 64)}}, Required: true,
+	}}}
+	s.Require().NoError(s.source.CreateAgentConfig(s.ctx, config))
+
+	s.move("acme", "moved")
+
+	moved, err := s.destination.AgentConfig(s.ctx, "moved", config.ID)
+	s.Require().NoError(err)
+	s.Equal(config.Connectors, moved.Connectors)
+}
+
 func (s *DataMoveSuite) TestAnImportCannotOverwriteAnotherCustomersRow() {
 	id := s.seedAgentConfig(s.source, "acme", "mine")
 	// The destination already holds a row with that id, belonging to somebody else.
@@ -561,4 +577,89 @@ func (s *DataMoveSuite) TestADeploymentThatCanNeverKnowItsAppParksAPinnedRow() {
 	s.Require().NoError(s.destination.ImportRow(s.ctx, "acme", "agent_sessions", encoded))
 
 	s.Equal(ForeignStreamApp, *s.pinOnDestination(id))
+}
+
+func (s *DataMoveSuite) TestAMovedConnectorConnectionArrivesNeedingReauthorization() {
+	id := s.seedConnectorConnection(s.source, "acme")
+
+	exported := s.export("acme").of("connector_connections")
+	s.Require().Len(exported, 1)
+	s.NotContains(exported[0], "credentials_sealed", "sealed credentials are not part of a customer's data")
+
+	s.move("acme", "moved")
+
+	s.assertArrivedWithoutCredentials(id, "moved")
+}
+
+func (s *DataMoveSuite) TestACustomConnectorDefinitionMovesAndABuiltInDoesNot() {
+	s.seedConnectorConnection(s.source, "acme")
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"INSERT INTO connector_definitions (customer_id, id, revision, name, manifest) VALUES ('', 'acme', 1, 'Acme', '{}')")
+	s.Require().NoError(err)
+
+	s.move("acme", "moved")
+
+	definitions := s.exportFrom(s.destination, "moved").of("connector_definitions")
+	s.Require().Len(definitions, 1)
+	s.Equal("custom_acme", definitions[0]["id"])
+	s.Equal("moved", definitions[0]["customer_id"])
+}
+
+func (s *DataMoveSuite) TestAChangeToAConnectorConnectionLeavesItsCredentialsBehind() {
+	s.capture("acme")
+	id := s.seedConnectorConnection(s.source, "acme")
+
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"UPDATE connector_connections SET credentials_sealed = 'rotated credentials', revision = 2 WHERE id = ?", id)
+	s.Require().NoError(err)
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", 0, 100)
+	s.Require().NoError(err)
+	recorded := 0
+	for _, change := range changes {
+		if change.Table != "connector_connections" {
+			continue
+		}
+		recorded++
+		s.NotContains(string(change.Payload), "credentials_sealed")
+	}
+	s.Equal(2, recorded, "the insert and the update")
+
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "acme", changes))
+	s.assertArrivedWithoutCredentials(id, "acme")
+}
+
+// assertArrivedWithoutCredentials checks a connection the destination received holds what a
+// connection with no credentials holds: none, key version 0, no expiry, and a status asking
+// for a reconnect.
+func (s *DataMoveSuite) assertArrivedWithoutCredentials(id, owner string) {
+	var sealed []byte
+	var kekVersion int
+	var expiresAt sql.NullTime
+	var status, customer string
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+		"SELECT credentials_sealed, credentials_kek_version, expires_at, status, customer_id FROM connector_connections WHERE id = ?",
+		id).Scan(&sealed, &kekVersion, &expiresAt, &status, &customer))
+	s.Empty(sealed)
+	s.Zero(kekVersion, "the source credentials' key version does not come along")
+	s.False(expiresAt.Valid, "the source credentials' expiry does not come along")
+	s.Equal(ConnectionNeedsReauthorization, status)
+	s.Equal(owner, customer)
+}
+
+// seedConnectorConnection stores a custom definition and a connected connection to it with
+// sealed credentials under key version 1 and an expiry, the state a credentials write leaves.
+func (s *DataMoveSuite) seedConnectorConnection(store *Store, customerID string) string {
+	_, err := store.DB().ExecContext(s.ctx,
+		"INSERT INTO connector_definitions (customer_id, id, revision, name, manifest) VALUES (?, 'custom_acme', 1, 'Acme', '{}')",
+		customerID)
+	s.Require().NoError(err)
+	id := newID()
+	_, err = store.DB().ExecContext(s.ctx,
+		"INSERT INTO connector_connections (id, customer_id, connector_id, definition_revision, owner_type, auth_scheme,"+
+			" status, credentials_sealed, credentials_kek_version, expires_at)"+
+			" VALUES (?, ?, 'custom_acme', 1, 'app', 'test_key', ?, 'sealed credentials', 1, now() + interval '1 hour')",
+		id, customerID, ConnectionConnected)
+	s.Require().NoError(err)
+	return id
 }

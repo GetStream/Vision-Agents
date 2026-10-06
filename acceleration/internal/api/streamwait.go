@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -17,16 +16,6 @@ const streamRetryAfter = 30 * time.Second
 // streamUnknown is what work that may be the deployment app's answers until that app's id
 // is known: try again shortly, rather than a guess at which app to act in.
 const streamUnknown = "the router does not know which Stream app is its own yet: try again shortly"
-
-// answerFailure answers an error a generated operation returned. Work waiting on the
-// deployment's own app is a 503 the caller can retry; anything else is a 500, as before.
-func answerFailure(w http.ResponseWriter, _ *http.Request, err error) {
-	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
-		writeStreamWaiting(w)
-		return
-	}
-	http.Error(w, err.Error(), http.StatusInternalServerError)
-}
 
 // writeStreamWaiting answers a request waiting on the deployment's own app: try again.
 func writeStreamWaiting(w http.ResponseWriter) {

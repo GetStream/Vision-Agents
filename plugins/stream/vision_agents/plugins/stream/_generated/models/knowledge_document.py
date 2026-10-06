@@ -15,8 +15,7 @@ class KnowledgeDocument:
     """
     Attributes:
         source (str): Where the document came from, as a reader would recognise it. Passage ids are keyed by it, so
-            posting the same source again replaces what it wrote before.
-             Example: pricing.md.
+            posting the same source again replaces what it wrote before. Example: pricing.md.
         text (str): The document, whole. It is cut into passages here.
     """
 

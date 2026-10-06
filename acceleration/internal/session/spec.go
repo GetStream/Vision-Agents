@@ -13,6 +13,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -166,19 +168,34 @@ type Spec struct {
 	// Harness is which harness the session runs, from the agent's config. Empty is the
 	// default, and so is every session today; a caller cannot choose it.
 	Harness string
+	// DispatchText hands what an end user writes to the customer's dispatch worker rather
+	// than the model, from the agent's config. The model answers only the server.
+	DispatchText bool
 
 	// SkillNames are the skills the voice model may hand to the subagent: the agent
 	// config's own, or one of the built-in think, recall and explain. Empty means the
 	// built-in set, which is only loaded when there is a subagent to run them.
 	SkillNames []string
-	// Plugins are hosted MCP servers this session may reach, named from the catalog.
-	Plugins []string
+	// AgentPlugins are hosted MCP servers this session may reach, named from the catalog
+	// with how each is reached.
+	AgentPlugins []store.PluginEntry
+	// UserPlugins are hosted MCP servers the caller reaches with their own account, named
+	// from the catalog. A session with no caller is offered none of them.
+	UserPlugins []store.PluginEntry
+	// MCPServers are MCP servers outside the catalog, opened by their URL with no login, the
+	// app's, or each caller's own.
+	MCPServers []store.MCPServer
+	// ServerInstructions are what those servers said at initialize about using their
+	// tools, added after Instructions. The session fills it in once they are open.
+	ServerInstructions string
 	// KnowledgeNamespace is what the agent may look things up in. Empty means it knows
 	// only what it was told.
 	KnowledgeNamespace string
 	// Sandbox names where the subagent may run code it writes, "daytona" being the one
 	// provider there is. Empty means it runs none, and works everything out in its head.
 	Sandbox string
+	// SandboxOptions is how the sandbox is built and how long code may run in it.
+	SandboxOptions sandbox.Config
 	// Tools are what the voice model may do rather than say. These are the caller's own
 	// functions: the session carries the request out to whoever asked for the session
 	// and waits for them to answer it.
@@ -256,12 +273,16 @@ func FromConfig(config store.AgentConfig) Spec {
 		Greeting:           config.Greeting,
 		Guardrail:          config.Guardrail,
 		SkillNames:         config.Skills,
-		Plugins:            config.Plugins,
+		AgentPlugins:       config.AgentPlugins,
+		UserPlugins:        config.UserPlugins,
+		MCPServers:         config.MCPServers,
 		Keyterms:           config.Keyterms,
 		VisibleTools:       config.VisibleTools,
 		KnowledgeNamespace: config.KnowledgeNamespace,
 		Sandbox:            config.Sandbox,
+		SandboxOptions:     config.SandboxOptions,
 		Harness:            config.Harness,
+		DispatchText:       config.DispatchText,
 		Tags:               routing.Tags(config.Tags),
 	}
 }
@@ -278,17 +299,17 @@ func (s *Spec) Normalize() error {
 		s.Harness = harness.Default
 	}
 	if s.Harness != harness.Default {
-		return fmt.Errorf("session: there is no harness called %q", s.Harness)
+		return stack.Wrap(fmt.Errorf("session: there is no harness called %q", s.Harness))
 	}
 
 	if s.ID == "" {
 		id, err := uuid.NewV7()
 		if err != nil {
-			return fmt.Errorf("session: generating an id: %w", err)
+			return stack.Wrap(fmt.Errorf("session: generating an id: %w", err))
 		}
 		s.ID = id.String()
 	} else if _, err := uuid.Parse(s.ID); err != nil {
-		return fmt.Errorf("session: the id %q is not a UUID", s.ID)
+		return stack.Wrap(fmt.Errorf("session: the id %q is not a UUID", s.ID))
 	}
 
 	// Incognito is honoured here rather than at each of the places that records something,
@@ -316,14 +337,14 @@ func (s *Spec) Normalize() error {
 	s.CallID = strings.TrimSpace(s.CallID)
 	switch {
 	case s.Text && s.CallID != "":
-		return errors.New("session: a text session holds no call, so it cannot join one")
+		return stack.Wrap(errors.New("session: a text session holds no call, so it cannot join one"))
 	case s.Text && s.Native():
-		return errors.New("session: a text session has no voice, so it cannot run a speech-to-speech model")
+		return stack.Wrap(errors.New("session: a text session has no voice, so it cannot run a speech-to-speech model"))
 	case !s.Text && s.CallID == "":
-		return errors.New("session: a call id is required")
+		return stack.Wrap(errors.New("session: a call id is required"))
 	}
 	if s.CustomerID == "" {
-		return errors.New("session: a customer id is required")
+		return stack.Wrap(errors.New("session: a customer id is required"))
 	}
 
 	if s.CallType == "" {
@@ -351,6 +372,11 @@ func (s *Spec) Normalize() error {
 	if s.LLMTarget == "" && !s.Native() {
 		s.LLMTarget = defaultLLMTarget
 	}
+	// A text session runs on one model. Nobody is waiting on a voice while it thinks, so
+	// the skills it hands over run on the model holding the conversation.
+	if s.Text {
+		s.SubagentTarget = s.LLMTarget
+	}
 	if s.ControllerTarget == "" && !s.Native() {
 		s.ControllerTarget = defaultControllerTarget
 	}
@@ -370,15 +396,15 @@ func (s *Spec) Normalize() error {
 
 	s.Keyterms = stt.CleanKeyterms(s.Keyterms)
 	if len(s.Keyterms) > stt.MaxKeyterms {
-		return fmt.Errorf("session: at most %d keyterms may be named, and this asks for %d",
-			stt.MaxKeyterms, len(s.Keyterms))
+		return stack.Wrap(fmt.Errorf("session: at most %d keyterms may be named, and this asks for %d",
+			stt.MaxKeyterms, len(s.Keyterms)))
 	}
 
 	if s.VideoMaxFrames == 0 {
 		s.VideoMaxFrames = 1
 	}
 	if s.VideoMaxFrames < 1 || s.VideoMaxFrames > 8 {
-		return fmt.Errorf("session: video.max_frames must be between 1 and 8")
+		return stack.Wrap(fmt.Errorf("session: video.max_frames must be between 1 and 8"))
 	}
 
 	if err := s.Tags.Validate(); err != nil {
@@ -439,13 +465,17 @@ func (s Spec) LLMOverwrites() options.LLM {
 // prompt is what the agent is told to be. An agent that placed the call is told how to get
 // through whatever answers, ahead of whatever it was told to do once it has.
 func (s Spec) prompt() string {
-	if !s.Navigating {
-		return s.Instructions
+	var parts []string
+	if s.Navigating {
+		parts = append(parts, agent.NavigatingInstructions)
 	}
-	if s.Instructions == "" {
-		return agent.NavigatingInstructions
+	if s.Instructions != "" {
+		parts = append(parts, s.Instructions)
 	}
-	return agent.NavigatingInstructions + "\n\n" + s.Instructions
+	if s.ServerInstructions != "" {
+		parts = append(parts, s.ServerInstructions)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // duplex is how the agent listens and talks at the same time.

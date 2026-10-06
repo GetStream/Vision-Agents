@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -72,7 +73,9 @@ func (s *PolicySuite) SetupSuite() {
 }
 
 func (s *PolicySuite) SetupTest() {
-	enforcer, err := New(s.store, nil)
+	configs, err := appconfig.New(appconfig.Options{Store: s.store})
+	s.Require().NoError(err)
+	enforcer, err := New(configs, nil)
 	s.Require().NoError(err)
 	s.enforcer = enforcer
 	stamp := time.Now().UnixNano()
@@ -308,7 +311,9 @@ func (s *PolicySuite) TestAPolicyReadErrorRequiresItsOwnApp() {
 	closed, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
 	s.Require().NoError(err)
 	s.Require().NoError(closed.Close())
-	enforcer, err := New(closed, slog.New(slog.DiscardHandler))
+	configs, err := appconfig.New(appconfig.Options{Store: closed})
+	s.Require().NoError(err)
+	enforcer, err := New(configs, slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 
 	requires, err := enforcer.RequiresOwnStreamApp(s.ctx, s.app)

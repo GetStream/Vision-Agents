@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
@@ -74,7 +73,7 @@ func runStreamApps(args []string, settings config.Config, logger *slog.Logger) e
 	case "require":
 		return runRequire(ctx, args[1:], settings, os.Stdout)
 	case "legacy":
-		return runLegacy(ctx, args[1:], settings, logger, os.Getenv("CHAT_OUTBOX_DIR"), os.Stdout)
+		return runLegacy(ctx, args[1:], settings, logger, os.Stdout)
 	case "fallbacks":
 		return runFallbacks(ctx, args[1:], settings, os.Stdout)
 	case "backfill-pins":
@@ -345,7 +344,7 @@ func runRequire(ctx context.Context, args []string, settings config.Config, out 
 
 // runLegacy counts what customers other than the deployment's own still have in the
 // deployment's app, which is what turning the fallback off would leave read-only.
-func runLegacy(ctx context.Context, args []string, settings config.Config, logger *slog.Logger, outbox string, out io.Writer) error {
+func runLegacy(ctx context.Context, args []string, settings config.Config, logger *slog.Logger, out io.Writer) error {
 	flags := flag.NewFlagSet("stream-apps legacy", flag.ContinueOnError)
 	byCustomer := flags.Bool("by-customer", false, "list each customer")
 	if err := flags.Parse(args); err != nil {
@@ -356,18 +355,6 @@ func runLegacy(ctx context.Context, args []string, settings config.Config, logge
 		counted, err := pgStore.LegacyStreamPins(ctx, deployment)
 		if err != nil {
 			return err
-		}
-		if outbox != "" {
-			records, err := conversation.LegacyRecords(outbox)
-			if err != nil {
-				return err
-			}
-			own := streamapp.CustomerOf(deployment)
-			for customer, rows := range records {
-				if customer != own {
-					counted = append(counted, store.LegacyCount{Kind: "conversation", CustomerID: customer, Rows: int64(rows)})
-				}
-			}
 		}
 		return printLegacy(out, counted, *byCustomer)
 	})
@@ -381,7 +368,7 @@ func printLegacy(out io.Writer, counted []store.LegacyCount, byCustomer bool) er
 		total := kinds[one.Kind]
 		kinds[one.Kind] = [2]int64{total[0] + one.Rows, total[1] + 1}
 	}
-	for _, kind := range []string{"conversation", "session", "call", "number"} {
+	for _, kind := range []string{"session", "call", "number"} {
 		fmt.Fprintf(out, "%s: %d rows of %d customers\n", kind, kinds[kind][0], kinds[kind][1])
 	}
 	if !byCustomer || len(counted) == 0 {

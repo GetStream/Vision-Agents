@@ -130,6 +130,7 @@ impl Agent {
     }
 
     /// What stands between the caller and the model: skills, subagents and the sandbox.
+    /// Stored on the agent's config by [`Agent::sync`], never sent with a session.
     pub fn harness(mut self, harness: Harness) -> Self {
         self.harness = Some(harness);
         self
@@ -378,6 +379,9 @@ impl Agent {
     /// skills and config written by name, editing whatever is already stored under it.
     /// Server side only.
     pub async fn sync(&self) -> Result<types::AgentConfig> {
+        if let Some(harness) = &self.harness {
+            harness.validate()?;
+        }
         match &self.folder {
             Some(folder) => self.sync_folder(folder).await,
             None => self.sync_config().await,
@@ -387,7 +391,7 @@ impl Agent {
     /// Renders the agent's configuration into a session and opens it.
     async fn open(&self, overrides: types::CreateSessionRequest) -> Result<Session> {
         self.ensure().await?;
-        let mut request = types::CreateSessionRequest {
+        let request = types::CreateSessionRequest {
             user_id: Some(self.user_id.clone()),
             user_name: Some(self.name.clone()),
             agent_id: Some(self.user_id.clone()),
@@ -397,22 +401,6 @@ impl Agent {
             memory: memory_of(&self.memory_filter),
             ..self.pipeline.clone()
         };
-        if let Some(harness) = &self.harness {
-            harness.validate()?;
-            let subagent = harness.subagent();
-            if !subagent.is_empty() {
-                request.subagent = Some(subagent.into());
-            }
-            if harness.tasks > 0 {
-                request.tasks = Some(harness.tasks);
-            }
-            if let Some(vm) = harness.vm {
-                request.sandbox = Some(vm);
-            }
-            if harness.replaces_skills() {
-                request.skills = Some(harness.skills.iter().map(|skill| skill.session()).collect());
-            }
-        }
         Session::open(
             self.router()?,
             overlay(request, overrides)?,
@@ -458,7 +446,6 @@ impl Agent {
             match &mut self.harness {
                 None => {
                     self.harness = Some(Harness {
-                        use_skills: true,
                         skills: folder.skills.clone(),
                         ..Harness::default()
                     })
@@ -480,8 +467,19 @@ impl Agent {
         }
     }
 
-    fn subagent(&self) -> &str {
-        self.harness.as_ref().map_or("", Harness::subagent)
+    /// What the harness sets on the agent's config: its name, subagent and sandbox. `None`
+    /// is left out, so the router keeps whatever is already stored for it.
+    fn stored_harness(
+        &self,
+    ) -> (
+        Option<types::Harness>,
+        Option<String>,
+        Option<types::Sandbox>,
+    ) {
+        match &self.harness {
+            None => (None, None, None),
+            Some(harness) => (harness.name, text(harness.subagent()), harness.vm),
+        }
     }
 
     /// The directory's fingerprint, extended by what the code set, so changing either one
@@ -504,11 +502,24 @@ impl Agent {
             self.synced_skills(Some(folder)),
             &folder.knowledge,
             &folder.knowledge_urls,
+            folder.simulations.as_deref(),
         );
-        if self.subagent().is_empty() && self.cost_tracking.is_empty() {
+        let (harness, subagent, sandbox) = self.stored_harness();
+        if harness.is_none()
+            && subagent.is_none()
+            && sandbox.is_none()
+            && self.cost_tracking.is_empty()
+        {
             return hash;
         }
-        // Go's fmt.Sprint of a map, which sorts its keys.
+        // Go's fmt.Sprint of three strings, which runs them together, and of a map, which
+        // sorts its keys.
+        let stored = format!(
+            "{}{}{}",
+            harness.map(|name| name.to_string()).unwrap_or_default(),
+            subagent.unwrap_or_default(),
+            sandbox.map(|vm| vm.to_string()).unwrap_or_default(),
+        );
         let tags: Vec<String> = self
             .cost_tracking
             .iter()
@@ -516,11 +527,12 @@ impl Agent {
             .collect();
         folder::fingerprint(
             &hash,
-            self.subagent(),
+            &stored,
             &format!("map[{}]", tags.join(" ")),
             &[],
             &[],
             &[],
+            None,
         )
     }
 
@@ -548,11 +560,7 @@ impl Agent {
         let skills = self.synced_skills(Some(folder));
         let mut tags = settings.tags.clone();
         tags.extend(self.cost_tracking.clone());
-        let subagent = if self.subagent().is_empty() {
-            &settings.subagent
-        } else {
-            self.subagent()
-        };
+        let (harness, subagent, sandbox) = self.stored_harness();
 
         let body = types::SyncAgentRequest {
             name,
@@ -579,7 +587,14 @@ impl Agent {
                         url: page.url.clone(),
                         title: text(&page.title),
                         description: text(&page.description),
+                        refresh_hours: (page.refresh_hours > 0).then_some(page.refresh_hours),
                     })
+                    .collect()
+            }),
+            simulations: folder.simulations.as_ref().map(|simulations| {
+                simulations
+                    .iter()
+                    .map(folder::Simulation::declaration)
                     .collect()
             }),
             mode: settings.mode,
@@ -587,11 +602,13 @@ impl Agent {
             tts: text(&settings.tts),
             sts: settings.sts.clone(),
             voice: text(&settings.voice),
+            speed: (settings.speed != 0.0).then_some(settings.speed),
             llm: text(&settings.llm),
-            subagent: text(subagent),
+            harness: harness.or(settings.harness),
+            subagent: subagent.or_else(|| text(&settings.subagent)),
             search: text(&settings.search),
             greeting: text(&settings.greeting),
-            sandbox: settings.sandbox,
+            sandbox: sandbox.or(settings.sandbox),
             plugins: (!settings.plugins.is_empty()).then(|| settings.plugins.clone()),
             keyterms: (!settings.keyterms.is_empty()).then(|| settings.keyterms.clone()),
             tags,
@@ -599,6 +616,7 @@ impl Agent {
                 max_frames: Some(video.max_frames),
                 source: text(&video.source),
             }),
+            dispatch: settings.dispatch.clone(),
         };
         let synced = client.sync_agent(&body).await?;
         folder::write_stamp(&folder.path, &hash)?;
@@ -624,11 +642,14 @@ impl Agent {
         }
 
         let name = self.config.clone().unwrap_or_else(|| self.name.clone());
+        let (harness, subagent, sandbox) = self.stored_harness();
         let wanted = types::AgentConfigRequest {
             name: name.clone(),
             instructions: text(&self.instructions),
             guardrail: text(&self.guardrail),
-            subagent: text(self.subagent()),
+            harness,
+            subagent,
+            sandbox,
             tags: self.cost_tracking.clone(),
             skills: (!skills.is_empty())
                 .then(|| skills.iter().map(|skill| skill.name.clone()).collect()),

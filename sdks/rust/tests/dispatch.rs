@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use axum::http::Method;
 use serde_json::json;
-use support::{Server, session};
+use support::{Server, claims, response, session};
 use tokio::sync::mpsc;
-use vision_agents::{Agent, Dispatch, Error, InboundCall, Tools};
+use vision_agents::{Agent, Dispatch, Error, InboundCall, InboundMessage, Tools};
 
 fn investigate_sdk() -> Tools {
     let tools = Tools::new();
@@ -41,6 +41,7 @@ async fn a_hosted_function_is_declared_and_answered_over_the_dispatch_socket() {
         tokio::spawn(async move { dispatch.run().await })
     };
     let mut socket = server.accept().await;
+    assert_eq!(socket.query, "capacity=4&active=0&handles=");
     socket
         .send(json!({"type": "ready", "worker_id": "w-1"}))
         .await;
@@ -159,25 +160,25 @@ async fn a_worker_answers_calls_and_tells_the_router_how_each_went() {
     };
     let mut socket = server.accept().await;
     assert_eq!(socket.path, "/v1/dispatch");
-    assert_eq!(socket.query, "capacity=2");
+    assert_eq!(socket.query, "capacity=2&active=0&handles=call");
     assert_eq!(socket.header("stream-auth-type"), "server");
 
     socket
         .send(json!({"type": "ready", "worker_id": "w-1"}))
         .await;
     socket
-        .send(json!({"type": "call", "call_id": "c1", "called_number": "+15550100", "custom": {"tier": "gold", "seats": 3}}))
+        .send(json!({"type": "call", "work_id": "work-1", "call_id": "c1", "called_number": "+15550100", "custom": {"tier": "gold", "seats": 3}}))
         .await;
     assert_eq!(
-        socket.expect("accepted").await,
-        json!({"type": "accepted", "call_id": "c1"})
+        socket.expect("done").await,
+        json!({"type": "done", "work_id": "work-1"})
     );
     socket
-        .send(json!({"type": "call", "call_id": "refused"}))
+        .send(json!({"type": "call", "work_id": "work-2", "call_id": "refused"}))
         .await;
     assert_eq!(
-        socket.expect("rejected").await,
-        json!({"type": "rejected", "call_id": "refused", "reason": "nobody is free"})
+        socket.expect("done").await,
+        json!({"type": "done", "work_id": "work-2", "error": "nobody is free"})
     );
 
     let first = calls.recv().await.unwrap();
@@ -202,10 +203,14 @@ async fn a_handler_that_panics_is_a_call_nobody_took() {
         tokio::spawn(async move { dispatch.run().await })
     };
     let mut socket = server.accept().await;
-    socket.send(json!({"type": "call", "call_id": "c1"})).await;
+    socket
+        .send(json!({"type": "call", "work_id": "work-1", "call_id": "c1"}))
+        .await;
 
-    let rejected = socket.expect("rejected").await;
-    assert_eq!(rejected["call_id"], "c1");
+    assert_eq!(
+        socket.expect("done").await,
+        json!({"type": "done", "work_id": "work-1", "error": "the handler panicked"})
+    );
     socket.close().await;
     running.await.unwrap().unwrap();
 }
@@ -253,6 +258,12 @@ async fn a_worker_with_no_handler_is_refused() {
 async fn the_second_message_on_a_channel_goes_to_the_session_that_answered_the_first() {
     let server = Server::start().await;
     server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));
+    server.route(
+        Method::POST,
+        "/v1/agents/sessions/s1/responses",
+        201,
+        response("r1", "s1"),
+    );
     let dispatch = Dispatch::new(server.client());
     let created = Arc::new(AtomicUsize::new(0));
     let (replied, mut replies) = mpsc::unbounded_channel::<String>();
@@ -273,7 +284,7 @@ async fn the_second_message_on_a_channel_goes_to_the_session_that_answered_the_f
                         Ok(Agent::new("support").client(client))
                     })
                     .await?;
-                session.respond(&message.text).await?;
+                session.responses.create(&message.text).await?;
                 replied.send(session.id().to_string()).unwrap();
                 Ok(())
             }
@@ -289,16 +300,20 @@ async fn the_second_message_on_a_channel_goes_to_the_session_that_answered_the_f
         .send(json!({"type": "message", "channel_id": "c1", "agent_id": "support-bot", "text": "hello"}))
         .await;
     let mut conversation = server.accept().await;
-    assert_eq!(conversation.expect("respond").await["text"], "hello");
     assert_eq!(replies.recv().await.unwrap(), "s1");
 
     worker
         .send(json!({"type": "message", "channel_id": "c1", "text": "again"}))
         .await;
-    assert_eq!(conversation.expect("respond").await["text"], "again");
     replies.recv().await.unwrap();
 
     assert_eq!(created.load(Ordering::SeqCst), 1);
+    let asked: Vec<_> = server
+        .requests(Method::POST, "/v1/agents/sessions/s1/responses")
+        .into_iter()
+        .map(|seen| seen.body["text"].clone())
+        .collect();
+    assert_eq!(asked, ["hello", "again"]);
     let sent = server.request(Method::POST, "/v1/agents/sessions").body;
     assert_eq!(sent["conversation_id"], "agent:c1");
     assert_eq!(sent["agent_id"], "support-bot");
@@ -307,4 +322,124 @@ async fn the_second_message_on_a_channel_goes_to_the_session_that_answered_the_f
     conversation.expect("close").await;
     conversation.close().await;
     running.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_message_nobody_handles_is_done_with_an_error() {
+    let server = Server::start().await;
+    let dispatch = Dispatch::new(server.client());
+    dispatch.wait_for_call(|_| async { Ok(()) });
+
+    let running = {
+        let dispatch = dispatch.clone();
+        tokio::spawn(async move { dispatch.run().await })
+    };
+    let mut socket = server.accept().await;
+    socket
+        .send(json!({"type": "message", "work_id": "work-1", "channel_id": "c1", "text": "hello"}))
+        .await;
+
+    assert_eq!(
+        socket.expect("done").await,
+        json!({"type": "done", "work_id": "work-1", "error": "this worker answers no messages"})
+    );
+    dispatch.stop();
+    running.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_message_left_to_dispatch_is_answered_on_its_session_for_whoever_wrote_it() {
+    let server = Server::start().await;
+    server.route(
+        Method::POST,
+        "/v1/agents/sessions/s1/responses",
+        201,
+        response("r1", "s1"),
+    );
+    let dispatch = Dispatch::new(server.backend());
+    let (handled, mut messages) = mpsc::unbounded_channel::<InboundMessage>();
+    {
+        let worker = dispatch.clone();
+        dispatch.wait_for_message(move |message| {
+            let (worker, handled) = (worker.clone(), handled.clone());
+            async move {
+                handled.send(message.clone()).unwrap();
+                worker.answer(&message).await?;
+                Ok(())
+            }
+        });
+    }
+
+    let running = {
+        let dispatch = dispatch.clone();
+        tokio::spawn(async move { dispatch.run().await })
+    };
+    let mut socket = server.accept().await;
+    assert_eq!(socket.query, "capacity=4&active=0&handles=message");
+    socket
+        .send(json!({"type": "message", "work_id": "work-1", "session_id": "s1", "command_id": "cmd-1",
+                     "agent_id": "support", "user_id": "ada", "text": "where is my order?"}))
+        .await;
+    assert_eq!(
+        socket.expect("done").await,
+        json!({"type": "done", "work_id": "work-1"})
+    );
+
+    let message = messages.recv().await.unwrap();
+    assert_eq!(
+        (message.session_id.as_str(), message.command_id.as_str()),
+        ("s1", "cmd-1")
+    );
+    let sent = server.request(Method::POST, "/v1/agents/sessions/s1/responses");
+    assert_eq!(
+        sent.body,
+        json!({"text": "where is my order?", "command_id": "cmd-1"})
+    );
+    assert_eq!(sent.header("x-stream-user-id"), "ada");
+    assert_eq!(sent.header("stream-auth-type"), "server");
+    assert_eq!(claims(sent.header("authorization"))["server"], true);
+
+    dispatch.stop();
+    running.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_message_with_no_session_cannot_be_answered_on_one() {
+    let server = Server::start().await;
+    let dispatch = Dispatch::new(server.backend());
+
+    let refused = dispatch
+        .answer(&InboundMessage {
+            channel_id: "c1".into(),
+            text: "hello".into(),
+            ..Default::default()
+        })
+        .await;
+
+    assert!(matches!(refused, Err(Error::Configuration(_))));
+    assert!(server.seen().is_empty());
+}
+
+#[tokio::test]
+async fn a_message_a_session_already_holds_gets_no_agent_of_its_own() {
+    let server = Server::start().await;
+    let dispatch = Dispatch::new(server.client());
+    let client = server.client();
+
+    let refused = dispatch
+        .get_or_create_agent(
+            &InboundMessage {
+                channel_id: "c1".into(),
+                session_id: "s1".into(),
+                ..Default::default()
+            },
+            || async move { Ok(Agent::new("support").client(client)) },
+        )
+        .await;
+
+    let Err(Error::Configuration(reason)) = refused else {
+        panic!("a message with a session got an agent");
+    };
+    assert!(reason.contains("answer"), "{reason}");
+    assert!(server.seen().is_empty());
 }

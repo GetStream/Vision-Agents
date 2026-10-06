@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -12,7 +13,9 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -73,8 +76,16 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, noSessions)
 		return
 	}
-	found, ok := s.sessions.Get(r.PathValue("id"), OwnerFrom(r.Context()))
+	id := r.PathValue("id")
+	found, ok := s.sessions.Get(id, OwnerFrom(r.Context()))
 	if !ok || !canReadSession(r.Context(), found.Spec()) {
+		// A session this node is not running may still be running on another one, and a
+		// browser reconnecting has no reason to land back where it was. The relay asks
+		// the rest of the deployment for it; without one, this node is the deployment.
+		if !ok && s.relayed != nil {
+			s.watchRemoteSession(w, r, id, OwnerFrom(r.Context()))
+			return
+		}
 		writeError(w, http.StatusNotFound, unknownSession)
 		return
 	}
@@ -137,6 +148,19 @@ func (w wanted) takes(event session.Event) bool {
 	}
 }
 
+// takesFrame asks the same question of an event that has already been rendered, which is
+// how it reaches a watcher on a node other than the one that held the conversation.
+func (w wanted) takesFrame(kind string) bool {
+	switch kind {
+	case "hearing":
+		return w.interim
+	case "decision":
+		return w.decisions
+	default:
+		return true
+	}
+}
+
 // writeEvents pushes the conversation to the caller until the session ends or the socket
 // breaks.
 func (s *Server) writeEvents(connection *websocket.Conn, events <-chan session.Event, asked wanted, gone <-chan struct{}) {
@@ -176,6 +200,32 @@ func (s *Server) writeEvents(connection *websocket.Conn, events <-chan session.E
 	}
 }
 
+// watcherCommand is what the caller may send on a session socket. It is a type of its own
+// rather than an anonymous struct because a relayed socket decodes the same frame on
+// whichever node is holding the session.
+type watcherCommand struct {
+	Type string `json:"type"`
+	// ToolCallID names the call a tool_result answers.
+	ToolCallID string `json:"tool_call_id"`
+	CommandID  string `json:"command_id"`
+	TurnID     string `json:"turn_id"`
+	// Output is a string or a parts array, which is what a tool that returns an
+	// image sends.
+	Output json.RawMessage `json:"output"`
+	// Error is what to tell the model instead, when the tool did not work.
+	Error string `json:"error"`
+	// Allowed and Summary carry tool_approval: a person's answer to a call that
+	// waited for them, and what a declined call shows.
+	Allowed *bool  `json:"allowed"`
+	Summary string `json:"summary"`
+	// Text carries say and respond.
+	Text string `json:"text"`
+	// Images attach to a respond command, and become image parts on that turn.
+	Images []wireImage `json:"images"`
+	// Instructions carries the instructions command.
+	Instructions string `json:"instructions"`
+}
+
 // readCommands applies what the caller sends, which is tool results and the handful of
 // things it can do to the conversation.
 //
@@ -188,24 +238,7 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 	})
 
 	for {
-		var command struct {
-			Type string `json:"type"`
-			// ToolCallID names the call a tool_result answers.
-			ToolCallID string `json:"tool_call_id"`
-			CommandID  string `json:"command_id"`
-			TurnID     string `json:"turn_id"`
-			// Output is a string or a parts array, which is what a tool that returns an
-			// image sends.
-			Output json.RawMessage `json:"output"`
-			// Error is what to tell the model instead, when the tool did not work.
-			Error string `json:"error"`
-			// Text carries say and respond.
-			Text string `json:"text"`
-			// Images attach to a respond command, and become image parts on that turn.
-			Images []wireImage `json:"images"`
-			// Instructions carries the instructions command.
-			Instructions string `json:"instructions"`
-		}
+		var command watcherCommand
 		if err := connection.ReadJSON(&command); err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				s.logger.Debug("session socket read failed", "error", err)
@@ -214,80 +247,115 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 		}
 		connection.SetReadDeadline(time.Now().Add(pongWait))
 
-		switch command.Type {
-		case "tool_result":
-			parts, err := parseToolOutput(command.Output)
-			if err != nil {
-				found.Report(err, "tool")
-				if !resolveTool(found, command.ToolCallID, command.CommandID, command.TurnID, nil, err.Error()) {
-					s.logger.Debug("a tool result answered nothing",
-						"session", found.ID(), "call", command.ToolCallID)
-				}
-				continue
-			}
-			if !resolveTool(found, command.ToolCallID, command.CommandID, command.TurnID, parts, command.Error) {
+		if !s.applyCommand(found, owner, command) {
+			return
+		}
+	}
+}
+
+// applyCommand carries out one of the watcher's commands, reporting whether the socket
+// goes on reading afterwards. Only closing the session ends it.
+//
+// It is separate from the read loop because a relayed socket arrives at the same switch
+// from the other direction: the frame came off a socket on another node and was carried
+// here on the bus, and a watcher on either node must be able to do the same things.
+func (s *Server) applyCommand(found *session.Session, owner session.Owner, command watcherCommand) bool {
+	switch command.Type {
+	case "tool_result":
+		parts, err := parseToolOutput(command.Output)
+		if err != nil {
+			found.Report(err, "tool")
+			if !resolveTool(found, command.ToolCallID, command.CommandID, command.TurnID, nil, err.Error()) {
 				s.logger.Debug("a tool result answered nothing",
 					"session", found.ID(), "call", command.ToolCallID)
 			}
-
-		case "say":
-			if err := found.Say(context.Background(), command.Text); err != nil {
-				s.logger.Debug("could not say it", "session", found.ID(), "error", err)
-			}
-
-		case "respond":
-			if command.CommandID != "" {
-				if len(command.Images) > 0 {
-					found.Report(fmt.Errorf("durable commands currently support text only"), "llm")
-					continue
-				}
-				if _, _, err := found.RespondCommand(context.Background(), command.CommandID, command.Text, ""); err != nil {
-					found.Report(err, "llm")
-				}
-				continue
-			}
-			images, err := imagesFromWire(command.Images)
-			if err != nil {
-				found.Report(err, "llm")
-				continue
-			}
-			if _, err := found.Respond(context.Background(), command.Text, images); err != nil {
-				found.Report(err, "llm")
-			}
-
-		case "interrupt":
-			// A stop naming a command stops that command wherever it got to. Without a
-			// name it stops whatever is being said now, which is what a voice caller
-			// talking over the agent means.
-			if command.CommandID != "" {
-				if _, err := found.InterruptCommand(command.CommandID); err != nil {
-					found.Report(err, "command")
-				}
-				continue
-			}
-			found.Interrupt()
-
-		case "instructions":
-			found.SetInstructions(command.Instructions)
-
-		case "close":
-			// Through the manager rather than found.Close(), which ends the conversation
-			// and leaves it in the manager's map: a session closed this way stayed listed
-			// as live for the rest of the process's life. Every SDK closes over the socket
-			// when it is holding one, so that was every conversation, and the resource
-			// surface made it visible — a query returns live sessions ahead of the rows,
-			// so conversations that were over came back as running ones.
-			if _, err := s.sessions.Close(found.ID(), owner); err != nil {
-				s.logger.Debug("could not close the session", "session", found.ID(), "error", err)
-			}
-			return
-
-		default:
-			found.Report(fmt.Errorf("unknown command %q", command.Type), "command")
-			s.logger.Debug("ignoring an unknown command",
-				"session", found.ID(), "type", command.Type)
+			return true
 		}
+		if !resolveTool(found, command.ToolCallID, command.CommandID, command.TurnID, parts, command.Error) {
+			s.logger.Debug("a tool result answered nothing",
+				"session", found.ID(), "call", command.ToolCallID)
+		}
+
+	case "tool_approval":
+		if command.Allowed == nil {
+			found.Report(fmt.Errorf("tool_approval needs allowed"), "tool")
+			return true
+		}
+		if !found.DecideCommandTool(command.ToolCallID, command.CommandID, command.TurnID, *command.Allowed, command.Summary) {
+			s.logger.Debug("a tool approval answered nothing",
+				"session", found.ID(), "call", command.ToolCallID)
+		}
+
+	case "say":
+		if err := found.Say(context.Background(), command.Text); err != nil {
+			s.logger.Debug("could not say it", "session", found.ID(), "error", err)
+		}
+
+	case "respond":
+		if leftToDispatch(found, owner.Kind) {
+			if len(command.Images) > 0 {
+				found.Report(errors.New("this agent hands what is written to its server, which takes text only"), "dispatch")
+				return true
+			}
+			if _, err := s.dispatchText(context.Background(), found, dispatch.Message{
+				Text: command.Text, CommandID: command.CommandID, UserID: owner.UserID,
+			}, ""); err != nil {
+				found.Report(err, "dispatch")
+			}
+			return true
+		}
+		if command.CommandID != "" {
+			if len(command.Images) > 0 {
+				found.Report(fmt.Errorf("durable commands currently support text only"), "llm")
+				return true
+			}
+			if _, _, err := found.RespondCommand(context.Background(), command.CommandID, command.Text, ""); err != nil {
+				found.Report(err, "llm")
+			}
+			return true
+		}
+		images, err := imagesFromWire(command.Images)
+		if err != nil {
+			found.Report(err, "llm")
+			return true
+		}
+		if _, err := found.Respond(context.Background(), command.Text, images); err != nil {
+			found.Report(err, "llm")
+		}
+
+	case "interrupt":
+		// A stop naming a command stops that command wherever it got to. Without a
+		// name it stops whatever is being said now, which is what a voice caller
+		// talking over the agent means.
+		if command.CommandID != "" {
+			if _, err := found.InterruptCommand(command.CommandID); err != nil {
+				found.Report(err, "command")
+			}
+			return true
+		}
+		found.Interrupt()
+
+	case "instructions":
+		found.SetInstructions(command.Instructions)
+
+	case "close":
+		// Through the manager rather than found.Close(), which ends the conversation
+		// and leaves it in the manager's map: a session closed this way stayed listed
+		// as live for the rest of the process's life. Every SDK closes over the socket
+		// when it is holding one, so that was every conversation, and the resource
+		// surface made it visible — a query returns live sessions ahead of the rows,
+		// so conversations that were over came back as running ones.
+		if _, err := s.sessions.Close(found.ID(), owner); err != nil {
+			s.logger.Debug("could not close the session", "session", found.ID(), "error", err)
+		}
+		return false
+
+	default:
+		found.Report(fmt.Errorf("unknown command %q", command.Type), "command")
+		s.logger.Debug("ignoring an unknown command",
+			"session", found.ID(), "type", command.Type)
 	}
+	return true
 }
 
 func resolveTool(found *session.Session, callID, commandID, turnID string, parts []llm.ContentPart, failure string) bool {
@@ -450,6 +518,7 @@ func frameOf(event session.Event) (frame, bool) {
 			"question":   typed.Question,
 			"elapsed_ms": typed.ElapsedMs,
 			"error":      errorText(typed.Err),
+			"files":      filesOf(typed.Files),
 		}, true
 
 	case agent.TaskCancelled:
@@ -579,4 +648,13 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(Error{Error: message})
+}
+
+// filesOf is what a settled task handed back, as a frame lists it: always a list, so a
+// client reading it need not tell an absent one from an empty one.
+func filesOf(files []sandbox.Attachment) []sandbox.Attachment {
+	if files == nil {
+		return []sandbox.Attachment{}
+	}
+	return files
 }

@@ -16,6 +16,7 @@ import (
 	"fmt"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Scope is who a memory belongs to.
@@ -45,13 +46,13 @@ type Scope struct {
 func (s Scope) Validate() error {
 	switch {
 	case s.UserID == "":
-		return errors.New("memory: a user id is required, memories are never shared")
+		return stack.Wrap(errors.New("memory: a user id is required, memories are never shared"))
 	case s.AppID == "":
-		return errors.New("memory: an app id is required, memories never cross applications")
+		return stack.Wrap(errors.New("memory: an app id is required, memories never cross applications"))
 	case s.AgentID == "":
-		return errors.New("memory: an agent id is required")
+		return stack.Wrap(errors.New("memory: an agent id is required"))
 	case s.RunID == "":
-		return errors.New("memory: a run id is required")
+		return stack.Wrap(errors.New("memory: a run id is required"))
 	}
 	return nil
 }

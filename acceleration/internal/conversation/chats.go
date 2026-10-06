@@ -2,10 +2,7 @@ package conversation
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
-	"os"
-	"path/filepath"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -89,8 +86,8 @@ type readingChats interface {
 }
 
 // parked reports whether an error means the conversation's app cannot be reached from here
-// at all, or can only be read. Its writes stay on disk and are tried again much later,
-// rather than delivered anywhere else.
+// at all, or can only be read. Its writes are held and tried again much later, rather than
+// delivered anywhere else.
 func parked(err error) bool {
 	return errors.Is(err, streamapp.ErrStreamAppMoved) ||
 		errors.Is(err, streamapp.ErrStreamAppDisconnected) ||
@@ -99,26 +96,6 @@ func parked(err error) bool {
 
 // parkedRetry is how long a conversation whose app is out of reach waits to try again.
 const parkedRetry = 5 * time.Minute
-
-// appsDir holds the records of conversations kept in apps other than the deployment's,
-// one directory per customer.
-const appsDir = "apps"
-
-// legacy reports whether a pin is the deployment's own app, whose records keep the layout
-// every record had before apps had identities, so an older binary still finds them.
-func (s *Service) legacy(app int64) bool {
-	return app == 0 || app == s.chats.DeploymentApp()
-}
-
-// recordDir is where one conversation's record lives. A conversation kept in a customer's
-// own app is filed under that customer, hex-encoded so no customer id can name a path, and
-// out of sight of an older binary that would deliver it into the deployment's app.
-func (s *Service) recordDir(customer string, app int64, id string) string {
-	if s.legacy(app) {
-		return filepath.Join(s.root, id)
-	}
-	return filepath.Join(s.root, appsDir, hex.EncodeToString([]byte(customer)), id)
-}
 
 // SetPins says where to find which app a conversation with no record here was written in.
 func (s *Service) SetPins(pins Pins) {
@@ -199,30 +176,4 @@ func (s *Service) appOf(ctx context.Context, customer, cid string, reading bool)
 // another app may be bound to it.
 func (s *Service) AppOf(ctx context.Context, customer, cid string) (int64, error) {
 	return s.appOf(ctx, customer, cid, true)
-}
-
-// LegacyRecords counts, by customer, the conversations recorded in the outbox at root in
-// the layout every record had before apps had identities: those kept in the deployment's own
-// app. A record that cannot be read is counted under the empty customer.
-func LegacyRecords(root string) (map[string]int, error) {
-	entries, err := os.ReadDir(root)
-	if errors.Is(err, os.ErrNotExist) {
-		return map[string]int{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	counted := map[string]int{}
-	for _, entry := range entries {
-		if !entry.IsDir() || !validID.MatchString(entry.Name()) {
-			continue
-		}
-		record, err := loadDisk(filepath.Join(root, entry.Name()))
-		if err != nil {
-			counted[""]++
-			continue
-		}
-		counted[record.Customer]++
-	}
-	return counted, nil
 }

@@ -5,11 +5,14 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -29,12 +32,16 @@ import (
 	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
@@ -42,10 +49,14 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -100,6 +111,9 @@ const (
 	suiteStreamApp = 1
 )
 
+// suiteOpsKey is what Stream staff's review paths are reached with.
+const suiteOpsKey = "suite-ops-key"
+
 // RouterSuite runs the whole router against Postgres and Redis with real API key auth, for
 // suites to embed. A suite picks the app its clients call in its SetupTest:
 // s.useFixture("standard") for the app most tests share, or s.useApp(s.data.createApp())
@@ -110,9 +124,10 @@ const (
 type RouterSuite struct {
 	suite.Suite
 
-	store  *store.Store
-	live   *live.Client
-	sealer *auth.Sealer
+	store   *store.Store
+	configs *appconfig.Store
+	live    *live.Client
+	sealer  *auth.Sealer
 	// manager runs the suite's sessions, for a test about what ends them from inside.
 	manager *session.Manager
 
@@ -129,6 +144,17 @@ type RouterSuite struct {
 	denied []string
 	server *httptest.Server
 	app    testApp
+
+	// streams, modalities and conversations are what the suite's router was built from,
+	// kept so that otherNode can build a second one over the same routing.
+	streams       *Streams
+	modalities    map[routing.Modality]routing.Inspector
+	conversations *conversation.Service
+	// relayPrefix names this suite's relay channels and the keys saying which of its
+	// nodes runs what. Pub/sub ignores the database number the rest of a suite's keys are
+	// kept apart by, so this is the only thing stopping one suite's nodes from reading
+	// another's sessions.
+	relayPrefix string
 
 	// unauthenticatedClient sends no credentials. The rest hold the app's key:
 	// anonymousClient goes by a name nothing proves, guestClient and client are signed-in
@@ -149,9 +175,6 @@ type RouterSuite struct {
 	knowledge *knowledgeBase
 	memories  *keptMemories
 
-	// outbox is where the conversations service queues what it could not write down.
-	outbox string
-
 	// chat is the Stream Chat the conversations are written to and transcripts read from:
 	// the deployment's own app. apps gives a customer an app of its own instead, and
 	// stream is what the API resolves through.
@@ -170,6 +193,39 @@ type RouterSuite struct {
 	// memoryStore is where sessions remember, for a suite about memory to set before it
 	// starts the harness. Nil keeps them in memories.
 	memoryStore memory.Store
+
+	// connectors is what connector adapters the router has, for a suite about connectors to
+	// set before it starts the harness. Empty has none.
+	connectors core.Registry
+	// publicURL and dashboardURL are the router's ROUTER_PUBLIC_URL and DASHBOARD_BASE_URL,
+	// for a suite about connector consents to set before it starts the harness. Empty leaves
+	// them unset, as a deployment that never set them has.
+	publicURL    string
+	dashboardURL string
+
+	// pluginMCP is where every plugin's MCP server is reached, for a suite about plugin
+	// events to set before it starts the harness. Nil reaches the real ones.
+	pluginMCP *httptest.Server
+	// pluginHTTP is what the API reaches plugins with, for a suite whose stand-ins listen
+	// on loopback in each test. Nil is mcpTransport.
+	pluginHTTP *http.Client
+	// events subscribes configs to their plugins' events.
+	events *pluginevents.Service
+
+	// channelAPI is where every channel provider is reached, for a suite about channels to
+	// set before it starts the harness. Nil reaches the real WhatsApp, Telnyx and Linq.
+	channelAPI *httptest.Server
+	// inbound answers what arrives on the app's channels.
+	inbound *channels.Service
+
+	// sandbox is what an app with no approved use case may do, for a suite about the
+	// sandbox to set before it starts the harness. The zero value is off.
+	sandbox dlc.Sandbox
+	// registrar is who registers 10DLC campaigns, for a suite about registration to set
+	// before it starts the harness. Nil makes Stream's approval final.
+	registrar dlc.Registrar
+	// gate is what every text and call passes.
+	gate *dlc.Gate
 
 	utils testUtils
 	data  testData
@@ -243,50 +299,165 @@ func (s *RouterSuite) SetupSuite() {
 		s.stream = streamapp.NewClients(stored, streamapp.ClientsOptions{})
 	}
 	s.store.SetStreamPins(store.StreamPins{Deployment: s.apps.deployment.App, For: s.stream.Pin, Knowable: s.stream.DeploymentAppKnowable})
+	s.configs, err = appconfig.New(appconfig.Options{
+		Store: pgStore, Address: redisAddr, Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(s.configs.Close)
+	s.relayPrefix = uuid.NewString()
+
 	limiter := s.quota(liveClient, logger)
 	policies := s.policies(logger)
 	streams := s.routers(limiter, policies, logger)
-	sessions := s.sessionManager(streams, logger)
+	// Built before it is served on, because a node says where it is before it has
+	// anything to say it is running.
+	listener := httptest.NewUnstartedServer(nil)
+	directory := s.nodeDirectory(listener, logger)
+	sessions := s.sessionManager(streams, directory, logger)
+	// A nil client reaches public hosts alone, and every auth server here is a local one.
+	public := &plugins.Auth{HTTP: http.DefaultClient}
+	s.events = s.pluginEvents(sessions, public, logger)
+	s.gate = dlc.NewGate(pgStore, liveClient.Redis(), s.sandbox, logger)
+	s.inbound = s.channels(sessions, logger)
 	s.dispatch = dispatch.NewPool()
+	s.streams = streams
+	s.modalities = map[routing.Modality]routing.Inspector{
+		routing.LLM:    streams.LLM,
+		routing.STT:    streams.STT,
+		routing.TTS:    streams.TTS,
+		routing.STS:    streams.STS,
+		routing.Search: streams.Search,
+		routing.LCM:    streams.LCM,
+		routing.Image:  streams.Image,
+	}
 
 	server, err := NewServer(Options{
-		Routers: map[routing.Modality]routing.Inspector{
-			routing.LLM:    streams.LLM,
-			routing.STT:    streams.STT,
-			routing.TTS:    streams.TTS,
-			routing.STS:    streams.STS,
-			routing.Search: streams.Search,
-			routing.LCM:    streams.LCM,
-			routing.Image:  streams.Image,
-		},
-		Streams:     streams,
-		Sessions:    sessions,
-		Store:       pgStore,
-		Live:        liveClient,
-		Auth:        s.authenticator(pgStore),
-		AuthMode:    auth.APIKey,
-		Phone:       s.telephony(logger),
-		Campaigns:   s.campaigns(sessions, logger),
-		Simulations: s.simulations(sessions, streams, logger),
-		Knowledge:   s.knowledgeWriter(),
-
+		Routers:       s.modalities,
+		Streams:       streams,
+		Relay:         s.relayBus(logger),
+		Directory:     directory,
+		Sessions:      sessions,
+		Store:         pgStore,
+		Configs:       s.configs,
+		Live:          liveClient,
+		Auth:          s.authenticator(),
+		AuthMode:      auth.APIKey,
+		Phone:         s.telephony(logger),
+		Campaigns:     s.campaigns(sessions, logger),
+		Simulations:   s.simulations(sessions, streams, logger),
+		PluginEvents:  s.events,
+		Channels:      s.inbound,
+		DLC:           s.registrations(listener, logger),
+		Gate:          s.gate,
+		OpsKey:        suiteOpsKey,
+		Secrets:       s.sealer,
+		Knowledge:     s.knowledgeWriter(),
 		KnowledgeURLs: s.pages(redisAddr),
 		Voices:        s.voiceService(),
 		VoiceLibrary:  voices.NewCatalogue(),
 		Dispatch:      s.dispatch,
 		Policies:      policies,
-		Quota:         limiter,
-		Stream:        s.stream,
-		HookSecret:    suiteStreamSecret,
-
+		Connectors:    s.connectors,
+		// Connector consents and credentials seal under the suite's key.
+		ConnectorSecrets:  s.sealer,
+		PublicURL:         s.publicURL,
+		DashboardURL:      s.dashboardURL,
+		Quota:             limiter,
+		DataRetention:     time.Hour,
+		PluginHTTP:        s.mcpTransport(),
+		Stream:            s.stream,
+		HookSecret:        suiteStreamSecret,
 		TrustAPIKeyHeader: s.trustAPIKeyHeader,
 		DenyRegistration:  s.denied,
-		DataRetention:     time.Hour,
 		Logger:            logger,
 	})
 	s.Require().NoError(err)
-	s.server = httptest.NewServer(server.Handler())
+	listener.Config.Handler = server.Handler()
+	listener.Start()
+	public.PublicURL = listener.URL
+	s.server = listener
 	s.T().Cleanup(s.server.Close)
+}
+
+// pluginEvents subscribes against pluginMCP, whatever host a catalog plugin names, so a
+// suite's own server stands in for Sentry's.
+func (s *RouterSuite) pluginEvents(sessions *session.Manager, public *plugins.Auth, logger *slog.Logger) *pluginevents.Service {
+	var transport *http.Client
+	if s.pluginMCP != nil {
+		transport = s.mcpTransport()
+	}
+	service, err := pluginevents.New(pluginevents.Options{
+		Store: s.store, Sessions: sessions, Auth: public, Transport: transport, Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(service.Close)
+	return service
+}
+
+// channels answers deliveries against channelAPI, whatever host a provider's API is at, so a
+// test's reply is sent to the suite's own server rather than to Meta.
+func (s *RouterSuite) channels(sessions *session.Manager, logger *slog.Logger) *channels.Service {
+	inbound, err := channels.New(channels.Options{
+		Store:     s.store,
+		Sessions:  sessions,
+		Secrets:   s.sealer,
+		Transport: redirected(s.channelAPI),
+		Gate:      s.gate,
+		Logger:    logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(inbound.Close)
+	return inbound
+}
+
+// registrations reviews use cases and registers them with the suite's registrar, which
+// reports back to the suite's own router.
+func (s *RouterSuite) registrations(listener *httptest.Server, logger *slog.Logger) *dlc.Service {
+	service, err := dlc.NewService(dlc.Options{
+		Store: s.store, Registrar: s.registrar, PublicURL: "http://" + listener.Listener.Addr().String(), Logger: logger,
+	})
+	s.Require().NoError(err)
+	return service
+}
+
+// redirected dials one server whatever host is asked for, or nothing when there is none.
+func redirected(to *httptest.Server) *http.Client {
+	if to == nil {
+		return &http.Client{Transport: &http.Transport{
+			DialContext: func(context.Context, string, string) (net.Conn, error) {
+				return nil, errors.New("tests reach no real provider")
+			},
+		}}
+	}
+	address := to.Listener.Addr().String()
+	return &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, address)
+		},
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // the suite's own server
+	}}
+}
+
+// mcpTransport reaches pluginMCP whatever host is asked for, or nothing when a suite has
+// none, so saving a config never asks a real MCP server about itself.
+func (s *RouterSuite) mcpTransport() *http.Client {
+	if s.pluginHTTP != nil {
+		return s.pluginHTTP
+	}
+	if s.pluginMCP == nil {
+		return &http.Client{Transport: &http.Transport{
+			DialContext: func(context.Context, string, string) (net.Conn, error) {
+				return nil, errors.New("tests reach no real MCP server")
+			},
+		}}
+	}
+	address := s.pluginMCP.Listener.Addr().String()
+	return &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, address)
+		},
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // the suite's own server
+	}}
 }
 
 // routers builds every modality against stubs that answer in process. What a real vendor
@@ -402,11 +573,14 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 // sessionManager runs conversations, writing them down in Stream Chat through a stand-in
 // for the chat backend: what a session records is under test, what Stream does with it is
 // not.
-func (s *RouterSuite) sessionManager(streams *Streams, logger *slog.Logger) *session.Manager {
-	s.outbox = s.T().TempDir()
-	conversations, err := conversation.NewForChats(s.outbox, conversation.StreamApps(s.stream))
-	s.Require().NoError(err)
+func (s *RouterSuite) sessionManager(
+	streams *Streams,
+	directory *node.Directory,
+	logger *slog.Logger,
+) *session.Manager {
+	conversations := conversation.NewForChats(conversation.StreamApps(s.stream))
 	s.T().Cleanup(conversations.Close)
+	s.conversations = conversations
 
 	s.memories = &keptMemories{}
 	var remembering memory.Store = s.memories
@@ -421,6 +595,8 @@ func (s *RouterSuite) sessionManager(streams *Streams, logger *slog.Logger) *ses
 		Conversations: conversations,
 		Stream:        s.stream,
 		Store:         s.store,
+		Configs:       s.configs,
+		Directory:     directory,
 		Logger:        logger,
 		Edge: func(context.Context, session.Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
 			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
@@ -434,29 +610,8 @@ func (s *RouterSuite) sessionManager(streams *Streams, logger *slog.Logger) *ses
 
 // authenticator resolves a key the way a deployment in api_key mode does: the row is read
 // from Postgres and its secret unsealed, so the credentials a test holds are real ones.
-func (s *RouterSuite) authenticator(pgStore *store.Store) auth.Authenticator {
-	authenticator, err := auth.New(auth.APIKey, func(ctx context.Context, key string) (auth.App, error) {
-		if !auth.ValidKey(key) {
-			return auth.App{}, auth.ErrUnauthenticated
-		}
-		owner, err := pgStore.LiveAPIKey(ctx, key)
-		if err != nil {
-			return auth.App{}, auth.ErrUnauthenticated
-		}
-		secret, err := s.sealer.Open(owner.Sealed)
-		if err != nil {
-			return auth.App{}, err
-		}
-		return auth.App{
-			OrganizationID: owner.OrganizationID,
-			AppID:          owner.AppID,
-			Secret:         secret,
-			Levels: auth.Levels{
-				NoAnonymous: !owner.Settings.AnonymousAllowed(),
-				NoGuest:     !owner.Settings.GuestAllowed(),
-			},
-		}, nil
-	})
+func (s *RouterSuite) authenticator() auth.Authenticator {
+	authenticator, err := auth.New(auth.APIKey, s.configs.Lookup(s.sealer))
 	s.Require().NoError(err)
 	return authenticator
 }
@@ -474,6 +629,7 @@ func (s *RouterSuite) telephony(logger *slog.Logger) *phone.Service {
 		Registry: vendors.Registry(config),
 		Store:    s.store,
 		Recorder: routing.NewRecorder(routing.Phone, s.store, s.live, logger),
+		Gate:     s.gate,
 		Logger:   logger,
 	})
 	s.Require().NoError(err)
@@ -542,13 +698,91 @@ func (s *RouterSuite) voiceService() *voices.Service {
 	cloners := voices.NewRegistry()
 	cloners.Register("elevenlabs", cloner)
 
-	service, err := voices.NewService(voices.Options{Store: s.store, Bucket: bucket, Cloners: cloners})
+	service, err := voices.NewService(voices.Options{Store: s.configs, Bucket: bucket, Cloners: cloners})
 	s.Require().NoError(err)
 	return service
 }
 
+// otherNode is a second router over the same Postgres, Redis and relay channels as the
+// suite's own, with sessions of its own.
+//
+// It is what a deployment of more than one process looks like: a session opened on one
+// node is in the other's memory nowhere, so a socket that lands on the wrong one has to
+// be served over the relay, and anything else asked of it carried to the node running it.
+// The routing is shared because what differs between two nodes is which conversations
+// they are holding, not what they route to.
+func (s *RouterSuite) otherNode() *httptest.Server {
+	logger := slog.New(slog.DiscardHandler)
+	other := httptest.NewUnstartedServer(nil)
+	directory := s.nodeDirectory(other, logger)
+	sessions, err := session.NewManager(session.ManagerOptions{
+		LLM:           s.streams.LLM,
+		STT:           s.streams.STT,
+		TTS:           s.streams.TTS,
+		Memory:        &keptMemories{},
+		Conversations: s.conversations,
+		Stream:        s.stream,
+		Store:         s.store,
+		Configs:       s.configs,
+		Directory:     directory,
+		Logger:        logger,
+		Edge: func(context.Context, session.Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
+			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
+		},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = sessions.Shutdown() })
+
+	server, err := NewServer(Options{
+		Routers:    s.modalities,
+		Streams:    s.streams,
+		Sessions:   sessions,
+		Relay:      s.relayBus(logger),
+		Directory:  directory,
+		Store:      s.store,
+		Configs:    s.configs,
+		Live:       s.live,
+		Auth:       s.authenticator(),
+		AuthMode:   auth.APIKey,
+		Stream:     s.stream,
+		HookSecret: suiteStreamSecret,
+		Logger:     logger,
+	})
+	s.Require().NoError(err)
+	other.Config.Handler = server.Handler()
+	other.Start()
+	s.T().Cleanup(other.Close)
+	return other
+}
+
+// nodeDirectory is one node's end of the register of which node is running which session.
+//
+// The address is the listener's, which is known before anything is served on it, and the
+// prefix is the suite's, because every suite in the run shares one Redis and a node of
+// another suite is a node that is not there.
+func (s *RouterSuite) nodeDirectory(listener *httptest.Server, logger *slog.Logger) *node.Directory {
+	directory, err := node.NewDirectory(node.DirectoryOptions{
+		Redis:   s.live.Redis(),
+		Address: listener.Listener.Addr().String(),
+		Prefix:  s.relayPrefix,
+		Logger:  logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(directory.Close)
+	return directory
+}
+
+// relayBus is one node's end of the suite's relay.
+func (s *RouterSuite) relayBus(logger *slog.Logger) *relay.Bus {
+	bus, err := relay.New(relay.Options{
+		Redis: s.live.Redis(), Prefix: s.relayPrefix, Logger: logger,
+	})
+	s.Require().NoError(err)
+	return bus
+}
+
 func (s *RouterSuite) policies(logger *slog.Logger) *policy.Enforcer {
-	enforcer, err := policy.New(s.store, logger)
+	enforcer, err := policy.New(s.configs, logger)
 	s.Require().NoError(err)
 	return enforcer
 }
@@ -622,6 +856,8 @@ type testClient struct {
 	userID string
 	// token is what signs for the client, which a socket sends in its query string.
 	token string
+	// address is the node the client sends to, empty for the suite's own.
+	address string
 }
 
 // actingFor is the backend naming user as who it acts for, so what it opens is theirs.
@@ -631,6 +867,23 @@ func (c *testClient) actingFor(user *testClient) *testClient {
 	named.header.Set(auth.UserHeader, user.userID)
 	named.userID = user.userID
 	return &named
+}
+
+// on is the same caller sending to another node of the same deployment, for a test about
+// what a caller reaches when their request did not land where the session is.
+func (c *testClient) on(other *httptest.Server) *testClient {
+	elsewhere := *c
+	elsewhere.header = c.header.Clone()
+	elsewhere.address = other.URL
+	return &elsewhere
+}
+
+// base is the node the client sends to.
+func (c *testClient) base() string {
+	if c.address != "" {
+		return c.address
+	}
+	return c.suite.server.URL
 }
 
 // do sends body as JSON and decodes the answer into into, when there is one to decode.
@@ -672,7 +925,7 @@ func (c *testClient) call(method, path string, body any) (int, []byte) {
 		require.NoError(err)
 		payload = bytes.NewReader(encoded)
 	}
-	request, err := http.NewRequest(method, c.suite.server.URL+path, payload)
+	request, err := http.NewRequest(method, c.base()+path, payload)
 	require.NoError(err)
 	request.Header = c.header.Clone()
 	request.Header.Set("Content-Type", "application/json")
@@ -702,7 +955,7 @@ func (c *testClient) failure(method, path string, body any) (int, string) {
 //
 // It returns the status when the handshake is refused.
 func (c *testClient) watch(path string) (*websocket.Conn, int) {
-	address := "ws" + strings.TrimPrefix(c.suite.server.URL, "http") + path
+	address := "ws" + strings.TrimPrefix(c.base(), "http") + path
 	query := url.Values{}
 	if key := c.header.Get(auth.APIKeyHeader); key != "" {
 		query.Set(auth.APIKeyParam, key)
@@ -733,6 +986,20 @@ func (c *testClient) opens(path string) *websocket.Conn {
 	connection, status := c.watch(path)
 	c.suite.Require().NotNil(connection, "the handshake for %s answered %d", path, status)
 	return connection
+}
+
+// await reads frames off a socket until one of the wanted type arrives.
+func (s *RouterSuite) await(connection *websocket.Conn, wanted string) map[string]any {
+	s.Require().NoError(connection.SetReadDeadline(time.Now().Add(settleFor)))
+	for {
+		var received map[string]any
+		if err := connection.ReadJSON(&received); err != nil {
+			s.Require().FailNow("the socket closed before " + wanted + " arrived: " + err.Error())
+		}
+		if received["type"] == wanted {
+			return received
+		}
+	}
 }
 
 // createSession opens a session the router must accept.

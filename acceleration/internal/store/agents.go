@@ -8,15 +8,17 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // CreateAgentConfig stores a new config and fills in its id and timestamps.
 func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) error {
 	if config.CustomerID == "" {
-		return errors.New("store: customer id is required")
+		return stack.Wrap(errors.New("store: customer id is required"))
 	}
 	if config.Name == "" {
-		return errors.New("store: an agent config needs a name")
+		return stack.Wrap(errors.New("store: an agent config needs a name"))
 	}
 
 	config.ID = newID()
@@ -27,7 +29,7 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 	normalizeConfig(config)
 
 	if _, err := s.db.NewInsert().Model(config).Exec(ctx); err != nil {
-		return fmt.Errorf("store: create agent config: %w", err)
+		return stack.Wrap(fmt.Errorf("store: create agent config: %w", err))
 	}
 	return nil
 }
@@ -41,18 +43,18 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 var configColumns = []string{
 	"name", "mode", "stt", "tts", "sts", "voice", "speed", "llm", "subagent",
 	"video_source", "video_max_frames", "search", "instructions", "greeting", "guardrail",
-	"skills", "plugins", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "harness", "tags",
-	"sync_hash", "updated_at",
+	"skills", "agent_plugins", "connectors", "user_plugins", "plugin_events", "mcp_servers", "channels", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "sandbox_options", "harness", "tags",
+	"dispatch_incoming_call", "dispatch_text", "sync_hash", "updated_at",
 }
 
 // UpdateAgentConfig replaces a config a customer holds. Every field is written, so an
 // update is what the config now is rather than what changed about it.
 func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) error {
 	if config.CustomerID == "" || config.ID == "" {
-		return errors.New("store: a customer and a config id are required")
+		return stack.Wrap(errors.New("store: a customer and a config id are required"))
 	}
 	if config.Name == "" {
-		return errors.New("store: an agent config needs a name")
+		return stack.Wrap(errors.New("store: an agent config needs a name"))
 	}
 
 	config.UpdatedAt = time.Now().UTC()
@@ -65,11 +67,11 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) erro
 		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: update agent config: %w", err)
+		return stack.Wrap(fmt.Errorf("store: update agent config: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: update agent config: %w", err)
+		return stack.Wrap(fmt.Errorf("store: update agent config: %w", err))
 	}
 	if affected == 0 {
 		return unknownAgentConfig(config.ID)
@@ -81,7 +83,7 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) erro
 // under it still name it.
 func (s *Store) DeleteAgentConfig(ctx context.Context, customerID, id string) error {
 	if customerID == "" || id == "" {
-		return errors.New("store: a customer and a config id are required")
+		return stack.Wrap(errors.New("store: a customer and a config id are required"))
 	}
 
 	result, err := s.db.NewUpdate().Model((*AgentConfig)(nil)).
@@ -91,11 +93,11 @@ func (s *Store) DeleteAgentConfig(ctx context.Context, customerID, id string) er
 		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: delete agent config: %w", err)
+		return stack.Wrap(fmt.Errorf("store: delete agent config: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: delete agent config: %w", err)
+		return stack.Wrap(fmt.Errorf("store: delete agent config: %w", err))
 	}
 	if affected == 0 {
 		return unknownAgentConfig(id)
@@ -106,7 +108,7 @@ func (s *Store) DeleteAgentConfig(ctx context.Context, customerID, id string) er
 // AgentConfig returns one config a customer holds.
 func (s *Store) AgentConfig(ctx context.Context, customerID, id string) (AgentConfig, error) {
 	if customerID == "" || id == "" {
-		return AgentConfig{}, errors.New("store: a customer and a config id are required")
+		return AgentConfig{}, stack.Wrap(errors.New("store: a customer and a config id are required"))
 	}
 
 	var config AgentConfig
@@ -120,7 +122,7 @@ func (s *Store) AgentConfig(ctx context.Context, customerID, id string) (AgentCo
 		return AgentConfig{}, unknownAgentConfig(id)
 	}
 	if err != nil {
-		return AgentConfig{}, fmt.Errorf("store: agent config: %w", err)
+		return AgentConfig{}, stack.Wrap(fmt.Errorf("store: agent config: %w", err))
 	}
 	return config, nil
 }
@@ -155,7 +157,7 @@ func (s *Store) AgentConfigOwner(ctx context.Context, id string) (AgentConfig, e
 // AgentConfigByName returns the config a customer holds under this name.
 func (s *Store) AgentConfigByName(ctx context.Context, customerID, name string) (AgentConfig, bool, error) {
 	if customerID == "" || name == "" {
-		return AgentConfig{}, false, errors.New("store: a customer and a config name are required")
+		return AgentConfig{}, false, stack.Wrap(errors.New("store: a customer and a config name are required"))
 	}
 
 	var config AgentConfig
@@ -169,7 +171,7 @@ func (s *Store) AgentConfigByName(ctx context.Context, customerID, name string) 
 		return AgentConfig{}, false, nil
 	}
 	if err != nil {
-		return AgentConfig{}, false, fmt.Errorf("store: agent config by name: %w", err)
+		return AgentConfig{}, false, stack.Wrap(fmt.Errorf("store: agent config by name: %w", err))
 	}
 	return config, true, nil
 }
@@ -177,7 +179,7 @@ func (s *Store) AgentConfigByName(ctx context.Context, customerID, name string) 
 // CustomerAgentConfigs returns the configs a customer holds, newest first.
 func (s *Store) CustomerAgentConfigs(ctx context.Context, customerID string) ([]AgentConfig, error) {
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
 	var configs []AgentConfig
@@ -187,7 +189,7 @@ func (s *Store) CustomerAgentConfigs(ctx context.Context, customerID string) ([]
 		Order("created_at DESC").
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("store: customer agent configs: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer agent configs: %w", err))
 	}
 	return configs, nil
 }
@@ -195,13 +197,13 @@ func (s *Store) CustomerAgentConfigs(ctx context.Context, customerID string) ([]
 // CreateSkill stores a new skill and fills in its id and timestamps.
 func (s *Store) CreateSkill(ctx context.Context, skill *Skill) error {
 	if skill.CustomerID == "" {
-		return errors.New("store: customer id is required")
+		return stack.Wrap(errors.New("store: customer id is required"))
 	}
 	if skill.ConfigID == "" {
-		return errors.New("store: a skill belongs to an agent config")
+		return stack.Wrap(errors.New("store: a skill belongs to an agent config"))
 	}
 	if skill.Name == "" {
-		return errors.New("store: a skill needs a name")
+		return stack.Wrap(errors.New("store: a skill needs a name"))
 	}
 
 	skill.ID = newID()
@@ -211,7 +213,7 @@ func (s *Store) CreateSkill(ctx context.Context, skill *Skill) error {
 	skill.DeletedAt = nil
 
 	if _, err := s.db.NewInsert().Model(skill).Exec(ctx); err != nil {
-		return fmt.Errorf("store: create skill: %w", err)
+		return stack.Wrap(fmt.Errorf("store: create skill: %w", err))
 	}
 	return nil
 }
@@ -219,10 +221,10 @@ func (s *Store) CreateSkill(ctx context.Context, skill *Skill) error {
 // UpdateSkill replaces a skill a customer holds.
 func (s *Store) UpdateSkill(ctx context.Context, skill *Skill) error {
 	if skill.CustomerID == "" || skill.ID == "" {
-		return errors.New("store: a customer and a skill id are required")
+		return stack.Wrap(errors.New("store: a customer and a skill id are required"))
 	}
 	if skill.Name == "" {
-		return errors.New("store: a skill needs a name")
+		return stack.Wrap(errors.New("store: a skill needs a name"))
 	}
 
 	skill.UpdatedAt = time.Now().UTC()
@@ -234,11 +236,11 @@ func (s *Store) UpdateSkill(ctx context.Context, skill *Skill) error {
 		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: update skill: %w", err)
+		return stack.Wrap(fmt.Errorf("store: update skill: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: update skill: %w", err)
+		return stack.Wrap(fmt.Errorf("store: update skill: %w", err))
 	}
 	if affected == 0 {
 		return unknownSkill(skill.ID)
@@ -249,7 +251,7 @@ func (s *Store) UpdateSkill(ctx context.Context, skill *Skill) error {
 // DeleteSkill marks a skill as gone.
 func (s *Store) DeleteSkill(ctx context.Context, customerID, id string) error {
 	if customerID == "" || id == "" {
-		return errors.New("store: a customer and a skill id are required")
+		return stack.Wrap(errors.New("store: a customer and a skill id are required"))
 	}
 
 	result, err := s.db.NewUpdate().Model((*Skill)(nil)).
@@ -259,11 +261,11 @@ func (s *Store) DeleteSkill(ctx context.Context, customerID, id string) error {
 		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: delete skill: %w", err)
+		return stack.Wrap(fmt.Errorf("store: delete skill: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: delete skill: %w", err)
+		return stack.Wrap(fmt.Errorf("store: delete skill: %w", err))
 	}
 	if affected == 0 {
 		return unknownSkill(id)
@@ -274,7 +276,7 @@ func (s *Store) DeleteSkill(ctx context.Context, customerID, id string) error {
 // Skill returns one skill a customer holds.
 func (s *Store) Skill(ctx context.Context, customerID, id string) (Skill, error) {
 	if customerID == "" || id == "" {
-		return Skill{}, errors.New("store: a customer and a skill id are required")
+		return Skill{}, stack.Wrap(errors.New("store: a customer and a skill id are required"))
 	}
 
 	var skill Skill
@@ -288,7 +290,7 @@ func (s *Store) Skill(ctx context.Context, customerID, id string) (Skill, error)
 		return Skill{}, unknownSkill(id)
 	}
 	if err != nil {
-		return Skill{}, fmt.Errorf("store: skill: %w", err)
+		return Skill{}, stack.Wrap(fmt.Errorf("store: skill: %w", err))
 	}
 	return skill, nil
 }
@@ -297,7 +299,7 @@ func (s *Store) Skill(ctx context.Context, customerID, id string) (Skill, error)
 // them to that agent's own; empty returns every skill across all of them.
 func (s *Store) CustomerSkills(ctx context.Context, customerID, configID string) ([]Skill, error) {
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
 	var skills []Skill
@@ -308,7 +310,7 @@ func (s *Store) CustomerSkills(ctx context.Context, customerID, configID string)
 		query = query.Where("config_id = ?", configID)
 	}
 	if err := query.Order("created_at DESC").Scan(ctx); err != nil {
-		return nil, fmt.Errorf("store: customer skills: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer skills: %w", err))
 	}
 	return skills, nil
 }
@@ -317,7 +319,7 @@ func (s *Store) CustomerSkills(ctx context.Context, customerID, configID string)
 // is simply absent, so the caller can report which ones it could not find.
 func (s *Store) SkillsNamed(ctx context.Context, customerID, configID string, names []string) ([]Skill, error) {
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 	// Skills belong to a config, so a session that was not created from one reaches
 	// nothing here and takes the built-in set.
@@ -333,7 +335,7 @@ func (s *Store) SkillsNamed(ctx context.Context, customerID, configID string, na
 		Where("deleted_at IS NULL").
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("store: skills named: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: skills named: %w", err))
 	}
 	return skills, nil
 }
@@ -350,8 +352,20 @@ func normalizeConfig(config *AgentConfig) {
 	if config.Skills == nil {
 		config.Skills = []string{}
 	}
-	if config.Plugins == nil {
-		config.Plugins = []string{}
+	if config.AgentPlugins == nil {
+		config.AgentPlugins = []PluginEntry{}
+	}
+	if config.Connectors == nil {
+		config.Connectors = []ConnectorBinding{}
+	}
+	if config.UserPlugins == nil {
+		config.UserPlugins = []PluginEntry{}
+	}
+	if config.PluginEvents == nil {
+		config.PluginEvents = []PluginEvent{}
+	}
+	if config.MCPServers == nil {
+		config.MCPServers = []MCPServer{}
 	}
 	if config.Keyterms == nil {
 		config.Keyterms = []string{}
@@ -365,9 +379,9 @@ func normalizeConfig(config *AgentConfig) {
 }
 
 func unknownAgentConfig(id string) error {
-	return fmt.Errorf("store: there is no agent config %s", id)
+	return stack.Wrap(fmt.Errorf("store: there is no agent config %s", id))
 }
 
 func unknownSkill(id string) error {
-	return fmt.Errorf("store: there is no skill %s", id)
+	return stack.Wrap(fmt.Errorf("store: there is no skill %s", id))
 }

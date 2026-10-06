@@ -312,10 +312,8 @@ type SessionSuite struct {
 	// gated answers the conversation model instead of stubLLM, for a test that needs a
 	// reply it can hold open while something else happens to the session.
 	gated *gatedLLM
-	// conversations persists text commands, for a test that submits one, and outbox is
-	// where it writes them.
+	// conversations persists text commands, for a test that submits one.
 	conversations *persistent.Service
-	outbox        string
 	// apps is the Stream apps sessions act in, when a test names them; edgeApps is the
 	// identity each edge was built with.
 	apps     *streamapp.Clients
@@ -1619,10 +1617,11 @@ func (s *SessionSuite) TestRequestedMemoryRequiresAConfiguredProvider() {
 	s.Require().ErrorContains(err, "memory is unavailable")
 }
 
-func (s *SessionSuite) TestTextSessionDoesNotAcquireAnImplicitSubagent() {
+func (s *SessionSuite) TestTextSessionThinksOnItsOwnModel() {
 	s.thinks = true
 	s.manages()
-	created := s.writes(Spec{})
-	s.Empty(created.Spec().SubagentTarget)
-	s.Empty(row(created).Subagent)
+	created := s.writes(Spec{SubagentTarget: defaultSubagentTarget})
+	s.Equal(created.Spec().LLMTarget, created.Spec().SubagentTarget)
+	s.NotEqual(defaultSubagentTarget, row(created).Subagent)
+	s.Equal(created.Spec().LLMTarget, row(created).Subagent)
 }

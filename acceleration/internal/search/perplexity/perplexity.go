@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ProviderName is how this provider is named in stats.
@@ -80,7 +81,7 @@ func New(options Options) (*Provider, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("perplexity: " + apiKeyEnvVar + " is required")
+		return nil, stack.Wrap(errors.New("perplexity: " + apiKeyEnvVar + " is required"))
 	}
 	if options.Model == "" {
 		options.Model = ModelSearch
@@ -236,13 +237,13 @@ func (p *Provider) answer(ctx context.Context, question string) (search.Result, 
 func (p *Provider) call(ctx context.Context, path string, body, into any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return fmt.Errorf("perplexity: encode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("perplexity: encode %s: %w", path, err))
 	}
 
 	request, err := http.NewRequestWithContext(
 		ctx, http.MethodPost, p.baseURL+path, bytes.NewReader(payload))
 	if err != nil {
-		return fmt.Errorf("perplexity: build %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("perplexity: build %s: %w", path, err))
 	}
 	request.Header.Set("Authorization", "Bearer "+p.apiKey)
 	request.Header.Set("Content-Type", "application/json")
@@ -250,17 +251,17 @@ func (p *Provider) call(ctx context.Context, path string, body, into any) error 
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("perplexity: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("perplexity: %s: %w", path, err))
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusOK {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return fmt.Errorf("perplexity: %s returned %d: %s",
-			path, response.StatusCode, strings.TrimSpace(string(detail)))
+		return stack.Wrap(fmt.Errorf("perplexity: %s returned %d: %s",
+			path, response.StatusCode, strings.TrimSpace(string(detail))))
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return fmt.Errorf("perplexity: decode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("perplexity: decode %s: %w", path, err))
 	}
 	return nil
 }

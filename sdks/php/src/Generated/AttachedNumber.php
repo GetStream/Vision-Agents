@@ -11,10 +11,10 @@ use GetStream\VisionAgents\Json;
 final readonly class AttachedNumber
 {
     public function __construct(
-        public string $trunkId,
         public string $routeId,
         // Where the vendor sends calls, e.g. sip:trunk@sip.stream-io-api.com.
         public string $sipUri,
+        public string $trunkId,
     ) {
     }
 
@@ -24,9 +24,9 @@ final readonly class AttachedNumber
     public static function fromArray(array $data): self
     {
         return new self(
-            trunkId: Json::string($data, 'trunk_id'),
             routeId: Json::string($data, 'route_id'),
             sipUri: Json::string($data, 'sip_uri'),
+            trunkId: Json::string($data, 'trunk_id'),
         );
     }
 
@@ -38,9 +38,9 @@ final readonly class AttachedNumber
     public function toArray(): array
     {
         $out = [];
-        $out['trunk_id'] = $this->trunkId;
         $out['route_id'] = $this->routeId;
         $out['sip_uri'] = $this->sipUri;
+        $out['trunk_id'] = $this->trunkId;
         return $out;
     }
 }

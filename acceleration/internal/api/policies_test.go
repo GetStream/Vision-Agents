@@ -167,11 +167,16 @@ func (s *PoliciesSuite) TestAnOrganizationPolicyReadAndWrittenBackKeepsTheOperat
 	var read Policy
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/organization", nil, &read))
 	read.Budget.LimitMicros = 2_000
-	var written Policy
-	status := s.serverClient.do(http.MethodPut, "/v1/policies/organization", read, &written)
+	status := s.serverClient.do(http.MethodPut, "/v1/policies/organization", read, nil)
 
 	s.Require().Equal(http.StatusOK, status, "a backend writes back what it read with only its budget changed")
-	s.Equal(int64(2_000), written.Budget.LimitMicros)
+	// A replica's cached policy is dropped when Redis says so, a moment after the write.
+	var written Policy
+	s.Require().Eventually(func() bool {
+		written = Policy{}
+		return s.serverClient.do(http.MethodGet, "/v1/policies/organization", nil, &written) == http.StatusOK &&
+			written.Budget != nil && written.Budget.LimitMicros == 2_000
+	}, settleFor, 10*time.Millisecond)
 	s.Require().NotNil(written.RequireOwnStreamApp)
 	s.True(*written.RequireOwnStreamApp)
 }

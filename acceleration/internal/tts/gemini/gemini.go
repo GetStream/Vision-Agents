@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
@@ -176,7 +177,7 @@ func New(options Options) (*TTS, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, fmt.Errorf("gemini: api key is required (set %s)", apiKeyEnvVar)
+		return nil, stack.Wrap(fmt.Errorf("gemini: api key is required (set %s)", apiKeyEnvVar))
 	}
 	if options.Model == "" {
 		options.Model = DefaultModel
@@ -188,7 +189,7 @@ func New(options Options) (*TTS, error) {
 		options.BaseURL = DefaultBaseURL
 	}
 	if !strings.HasPrefix(options.BaseURL, "http://") && !strings.HasPrefix(options.BaseURL, "https://") {
-		return nil, fmt.Errorf("gemini: base url must be http:// or https://, got %s", options.BaseURL)
+		return nil, stack.Wrap(fmt.Errorf("gemini: base url must be http:// or https://, got %s", options.BaseURL))
 	}
 	if options.Timeout == 0 {
 		options.Timeout = 60 * time.Second
@@ -219,7 +220,7 @@ func (t *TTS) Start(ctx context.Context) error {
 	defer t.mu.Unlock()
 
 	if t.started {
-		return errors.New("gemini: already started")
+		return stack.Wrap(errors.New("gemini: already started"))
 	}
 	t.started = true
 	t.ctx, t.cancel = context.WithCancel(context.WithoutCancel(ctx))
@@ -342,15 +343,15 @@ func (t *TTS) accumulate(request tts.Request) (*tts.Synthesis, string, bool, err
 	defer t.mu.Unlock()
 
 	if t.shutdown {
-		return nil, "", false, errors.New("gemini: session closed")
+		return nil, "", false, stack.Wrap(errors.New("gemini: session closed"))
 	}
 	if !t.started {
-		return nil, "", false, errors.New("gemini: not started")
+		return nil, "", false, stack.Wrap(errors.New("gemini: not started"))
 	}
 	// A partial with no id could not be matched to its continuation, so it is a caller
 	// error rather than something to silently drop.
 	if !request.Final && request.ID == "" {
-		return nil, "", false, errors.New("gemini: a partial request needs an id")
+		return nil, "", false, stack.Wrap(errors.New("gemini: a partial request needs an id"))
 	}
 
 	current := t.pending[request.ID]
@@ -367,7 +368,7 @@ func (t *TTS) accumulate(request tts.Request) (*tts.Synthesis, string, bool, err
 	text := strings.TrimSpace(current.text.String())
 	delete(t.pending, request.ID)
 	if text == "" {
-		return nil, "", false, errors.New("gemini: nothing to say")
+		return nil, "", false, stack.Wrap(errors.New("gemini: nothing to say"))
 	}
 
 	current.tracker.AddText(text)

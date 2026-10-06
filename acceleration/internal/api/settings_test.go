@@ -84,10 +84,12 @@ func (s *SettingsSuite) TestAppSettingsCarryNoSecret() {
 	s.NotContains(string(body), "own-key-secret")
 	s.NotContains(string(body), suiteStreamSecret)
 	s.NotContains(string(body), "918273645", "v1 names no app by its id")
-	var fields map[string]map[string]any
+	var fields struct {
+		Stream map[string]any `json:"stream"`
+	}
 	s.Require().NoError(json.Unmarshal(body, &fields))
 	s.ElementsMatch([]string{"tenancy", "writes_into", "channel_type", "call_type", "checked_at"},
-		slices.Collect(maps.Keys(fields["stream"])))
+		slices.Collect(maps.Keys(fields.Stream)))
 }
 
 func (s *SettingsSuite) TestAppSettingsAreServerSideOnly() {

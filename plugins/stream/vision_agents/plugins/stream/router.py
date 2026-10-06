@@ -77,7 +77,7 @@ class Router:
     are one round trip.
 
     ```python
-    router = Router("healthcare")
+    router = stream.Client().router("healthcare")
 
     async with router.stt.realtime() as stt:
         ...
@@ -86,8 +86,8 @@ class Router:
     hits = await router.search("perioperative antibiotic guidance", results=5)
     ```
 
-    Everything in the named config is a default, and every keyword on a call overrides one
-    field of it.
+    Everything in the named config is a default, the model's `target` included, and every
+    keyword on a call overrides one field of it.
 
     A config that lives on disk as `routers/{name}/router.yaml` is stored on first use, so
     naming one here is all it takes to route through it.
@@ -99,8 +99,12 @@ class Router:
         tags: Optional[dict[str, str]] = None,
         url: Optional[str] = None,
         customer_id: Optional[str] = None,
+        backend: Optional[Backend] = None,
     ):
         """Route through `config`.
+
+        `Client.router` is how one of these is usually had, since that is where the backend
+        was settled.
 
         Args:
             config: A stored router config, by name or by id. Without one every call says
@@ -109,10 +113,12 @@ class Router:
             url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
             customer_id: Who the work is billed to. Defaults to
                 `STREAM_ACCELERATION_CUSTOMER_ID`.
+            backend: A backend to use as it is, instead of building one from `url` and
+                `customer_id`.
         """
         self.config = config
         self.tags = tags or {}
-        self.backend = Backend(url=url, customer_id=customer_id)
+        self.backend = backend or Backend(url=url, customer_id=customer_id)
 
         self.stt = SpeechToText(self)
         self.tts = TextToSpeech(self)
@@ -451,8 +457,9 @@ class SpeechToText:
         agent own its lifecycle instead.
 
         Args:
-            **options: Any field of the config's stt block - `target`, `languages`,
-                `interim`, `endpointing`, `diarize`, `keyterms`, `format`, `redact`.
+            **options: Any field of the config's stt block - `languages`, `interim`,
+                `endpointing`, `diarize`, `keyterms`, `format`, `redact`. Which model
+                answers (`target`) belongs in the config.
 
         Raises:
             ValueError: if an option is not one transcription takes.
@@ -461,8 +468,7 @@ class SpeechToText:
             config_id=self._router.config,
             options=block(SttOptions, options).to_dict(),
             tags=self._router.tags,
-            url=self._router.backend.url,
-            customer_id=self._router.backend.customer_id,
+            backend=self._router.backend,
         )
 
     async def recording(
@@ -522,11 +528,12 @@ class TextToSpeech:
         """A speaking session, configured and not yet started.
 
         Args:
-            **options: Any field of the config's tts block - `target`, `providers`,
-                `voice`, `languages`, `speed`, `emotion`, `stability`, `format`,
-                `data_policy`, `overwrites`. A voice named `custom:receptionist` is one of
-                your own and nothing else; a bare name is looked for among yours and
-                passed to the provider's library when it is not there.
+            **options: Any field of the config's tts block - `providers`, `voice`,
+                `languages`, `speed`, `emotion`, `stability`, `format`, `data_policy`,
+                `overwrites`. Which model answers (`target`) belongs in the config. A
+                voice named `custom:receptionist` is one of your own and nothing else; a
+                bare name is looked for among yours and passed to the provider's library
+                when it is not there.
 
         Raises:
             ValueError: if an option is not one a voice takes.
@@ -535,8 +542,7 @@ class TextToSpeech:
             config_id=self._router.config,
             options=block(TtsOptions, options).to_dict(),
             tags=self._router.tags,
-            url=self._router.backend.url,
-            customer_id=self._router.backend.customer_id,
+            backend=self._router.backend,
         )
 
     async def recording(
@@ -597,9 +603,10 @@ class SpeechToSpeech:
         the socket does all three.
 
         Args:
-            **options: Any field of the config's sts block - `target`, `instructions`,
-                `voice`, `languages`, `turn_detection`, `silence_ms`, `interrupt_response`,
-                `input_transcript`, `output_transcript`, `tools`, `text`, `images`.
+            **options: Any field of the config's sts block - `instructions`, `voice`,
+                `languages`, `turn_detection`, `silence_ms`, `interrupt_response`,
+                `input_transcript`, `output_transcript`, `tools`, `text`, `images`. Which
+                model answers (`target`) belongs in the config.
 
         Raises:
             ValueError: if an option is not one a speech-to-speech model takes.
@@ -608,8 +615,7 @@ class SpeechToSpeech:
             config_id=self._router.config,
             options=block(StsOptions, options).to_dict(),
             tags=self._router.tags,
-            url=self._router.backend.url,
-            customer_id=self._router.backend.customer_id,
+            backend=self._router.backend,
         )
 
 
@@ -627,9 +633,10 @@ class Completions:
         """An answering session, configured and not yet started.
 
         Args:
-            **options: Any field of the config's llm block - `target`, `providers`,
+            **options: Any field of the config's llm block - `providers`,
                 `max_output_tokens`, `temperature`, `reasoning_effort`, `format`,
-                `verbosity`, `tool_choice`.
+                `verbosity`, `tool_choice`. Which model answers (`target`) belongs in the
+                config.
 
         Raises:
             ValueError: if an option is not one the model takes.
@@ -638,8 +645,7 @@ class Completions:
             config_id=self._router.config,
             options=block(LlmOptions, options).to_dict(),
             tags=self._router.tags,
-            url=self._router.backend.url,
-            customer_id=self._router.backend.customer_id,
+            backend=self._router.backend,
         )
 
 

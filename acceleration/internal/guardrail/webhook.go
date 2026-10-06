@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // TimestampHeader and SignatureHeader are how a webhook proves it came from here.
@@ -70,8 +71,8 @@ func newWebhook(policy Policy, deps Deps) (Guardrail, error) {
 	if deps.Secret == "" {
 		// Unsigned, the customer's server cannot tell our request from anyone who found
 		// the URL, and what it decides on that request gates an agent's replies.
-		return nil, errors.New(
-			"guardrail: a webhook guardrail needs the app secret to sign with, and this deployment has none")
+		return nil, stack.Wrap(errors.New(
+			"guardrail: a webhook guardrail needs the app secret to sign with, and this deployment has none"))
 	}
 
 	client := deps.HTTPClient

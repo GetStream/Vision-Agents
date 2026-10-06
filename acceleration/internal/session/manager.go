@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
@@ -23,17 +25,19 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
-	"os"
 )
 
 // EdgeFactory opens the transport a session's agent talks over.
@@ -102,9 +106,20 @@ type ManagerOptions struct {
 	// Without one the manager opens its own over the configured outbox directory.
 	Conversations *persistent.Service
 
-	Store  *store.Store
-	Live   *live.Client
-	Logger *slog.Logger
+	Store *store.Store
+	// Configs reads what a session is opened from -- the skills it names -- through
+	// whatever cache is in front of Postgres. Built over Store when it is not given, in
+	// which case every read is a query, which is what a deployment without Redis does.
+	Configs *appconfig.Store
+	Live    *live.Client
+	// Directory is where this node says which sessions it is running, so the deployment's
+	// other nodes can forward what only this one can answer. Nil keeps a session
+	// reachable on this node alone.
+	Directory *node.Directory
+	// PluginAuth signs an end user into the plugins an agent names per user, sending the
+	// provider back to this deployment's public URL. Nil sends it to localhost.
+	PluginAuth *plugins.Auth
+	Logger     *slog.Logger
 }
 
 // Manager owns the sessions this process is running.
@@ -156,17 +171,19 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		conversations: options.Conversations,
 	}
 	if options.Store != nil {
+		if options.Configs == nil {
+			configs, err := appconfig.New(appconfig.Options{Store: options.Store, Logger: options.Logger})
+			if err != nil {
+				return nil, err
+			}
+			manager.options.Configs = configs
+		}
 		manager.logs = newLogRecorder(options.Store, options.Logger)
 		manager.calls = newCallRecorder(options.Store, options.Logger)
 		manager.records = newSessionRecorder(options.Store, options.Logger)
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
 	}
 	manager.titles = newTitler(options.LLM, manager.records, options.Logger)
-	if os.Getenv("CHAT_OUTBOX_DIR") != "" {
-		if _, err := manager.Conversations(); err != nil {
-			return nil, err
-		}
-	}
 	return manager, nil
 }
 
@@ -177,40 +194,40 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 // session would hold a model session and a place in a call that nobody holds a handle to.
 func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if err := spec.Normalize(); err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	// Refuse unsupported voice modes before opening a call or persistent resource.
 	if spec.Native() && m.options.STS == nil {
-		return nil, errors.New("session: this deployment routes no speech-to-speech model")
+		return nil, stack.Wrap(errors.New("session: this deployment routes no speech-to-speech model"))
 	}
 	if !spec.Text && !spec.Native() {
 		if m.options.STT == nil {
-			return nil, errors.New("session: an stt router is required for voice sessions")
+			return nil, stack.Wrap(errors.New("session: an stt router is required for voice sessions"))
 		}
 		if m.options.TTS == nil {
-			return nil, errors.New("session: a tts router is required for voice sessions")
+			return nil, stack.Wrap(errors.New("session: a tts router is required for voice sessions"))
 		}
 	}
 
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		return nil, errors.New("session: the manager is shut down")
+		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
 	}
 	_, live := m.sessions[spec.ID]
 	m.mu.Unlock()
 	if live {
-		return nil, ErrSessionExists
+		return nil, stack.Wrap(ErrSessionExists)
 	}
 	// The id is the row's primary key whoever owns it, so one somebody already used would
 	// write this session over theirs.
 	if m.options.Store != nil {
 		taken, err := m.options.Store.SessionExists(ctx, spec.ID)
 		if err != nil {
-			return nil, err
+			return nil, stack.Wrap(err)
 		}
 		if taken {
-			return nil, ErrSessionExists
+			return nil, stack.Wrap(ErrSessionExists)
 		}
 	}
 
@@ -234,7 +251,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	var remembering memory.Store
 	if spec.Memory.UserID != "" {
 		if m.options.Memory == nil {
-			return nil, ErrNoMemory
+			return nil, stack.Wrap(ErrNoMemory)
 		}
 		remembering = m.options.Memory
 	}
@@ -253,11 +270,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	var previous []llm.Message
 	if spec.PersistConversation {
 		if !spec.Text {
-			return nil, errors.New("persistent conversations require text mode")
+			return nil, stack.Wrap(errors.New("persistent conversations require text mode"))
 		}
 		service, err := m.Conversations()
 		if err != nil {
-			return nil, err
+			return nil, stack.Wrap(err)
 		}
 		var truncated bool
 		conv, previous, truncated, err = service.OpenInApp(ctx, spec.StreamApp, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
@@ -265,7 +282,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			return nil, ErrConversationReadOnly
 		}
 		if err != nil {
-			return nil, err
+			return nil, stack.Wrap(err)
 		}
 		// A conversation is kept where it was first written, and a session resuming it
 		// acts there too, whichever app its customer acts in now.
@@ -281,13 +298,21 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 		spec.ConversationID = conv.CID()
 		conv.ShowTools(spec.VisibleTools)
+		conv.AcceptLogins(Logins(spec))
 		// A resume was deliberately not given an agent id, because only the conversation
 		// knows the one its transcript was written under.
 		spec.AgentID = conv.Agent()
 		spec.ContextTruncated = truncated
 		displays := map[string]persistent.ToolDisplay{}
 		for _, tool := range spec.Tools {
-			displays[tool.Name] = persistent.ToolDisplay{Title: tool.DisplayTitle, Client: tool.Client}
+			display := persistent.ToolDisplay{Title: tool.DisplayTitle, Client: tool.Client}
+			if approval := tool.Approval; approval != nil {
+				display.Approval = &persistent.ToolApproval{
+					Title: approval.Title, Message: approval.Message, ReasonArgument: approval.ReasonArgument,
+					AllowTitle: approval.AllowTitle, DeclineTitle: approval.DeclineTitle,
+				}
+			}
+			displays[tool.Name] = display
 		}
 		conv.DescribeTools(displays)
 		// A fork opens an empty channel of its own and then reads the parent's, so the model
@@ -298,7 +323,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 				spec.Recall.AgentID, spec.Recall.ConversationID, spec.Caller.UserID)
 			if err != nil {
 				conv.Release()
-				return nil, fmt.Errorf("session: reading the conversation being forked: %w", err)
+				return nil, stack.Wrap(fmt.Errorf("session: reading the conversation being forked: %w", err))
 			}
 			previous = append(recalled, previous...)
 			spec.ContextTruncated = spec.ContextTruncated || cut
@@ -311,7 +336,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	} else if spec.ConversationID != "" {
 		service, err := m.Conversations()
 		if err != nil {
-			return nil, err
+			return nil, stack.Wrap(err)
 		}
 		// A call on a conversation writes its words into the conversation's channel, which
 		// is only there in the app the conversation is kept in.
@@ -323,7 +348,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		var truncated bool
 		previous, truncated, err = service.ContextForCaller(ctx, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID)
 		if err != nil {
-			return nil, err
+			return nil, stack.Wrap(err)
 		}
 		spec.ContextTruncated = truncated
 	}
@@ -335,12 +360,12 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 
 	skills, err := m.skills(ctx, spec)
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	box, err := m.box(spec)
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	// A text session joins nothing, so no edge is opened for it. Everything downstream
@@ -353,13 +378,13 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	default:
 		edge, err = m.options.Edge(ctx, spec, stream, m.logger)
 		if err != nil {
-			return nil, err
+			return nil, stack.Wrap(err)
 		}
 	}
 
 	line, err := m.line(spec)
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	created := &Session{
@@ -393,17 +418,31 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if line != nil || m.reading(spec) || m.searching(spec) {
 		builtin, err := harness.DefaultTools()
 		if err != nil {
-			return nil, err
+			return nil, stack.Wrap(err)
 		}
 		tools = append(tools, builtin.Tools...)
 	}
 
-	mcp, pluginTools := attachPlugins(ctx, spec, m.options.Store, m.logger)
+	var pluginHTTP *http.Client
+	if m.options.PluginAuth != nil {
+		pluginHTTP = m.options.PluginAuth.HTTP
+	}
+	mcp, pluginTools, unconnected := attachPlugins(ctx, spec, m.options.Store, pluginHTTP, m.logger)
 	tools = append(tools, pluginTools...)
+	tools = append(tools, unconnectedTools(unconnected)...)
+	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp)
+	created.spec.ServerInstructions = spec.ServerInstructions
 	var runner agent.ToolRunner = &videoRunner{next: callers, session: created}
+	if mcp != nil || len(unconnected) > 0 {
+		runner = &pluginRunner{mcp: mcp, unconnected: unconnected, next: runner}
+	}
 	if mcp != nil {
-		runner = &pluginRunner{mcp: mcp, next: runner}
 		created.closers = append(created.closers, mcp.Close)
+	}
+	if own := m.userPlugins(spec, runner); own != nil {
+		tools = append(tools, plugins.UserTools(own.offered)...)
+		runner = own
+		created.closers = append(created.closers, own.Close)
 	}
 
 	var toolStarted func(agent.ToolStarted)
@@ -412,7 +451,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	screening, err := m.guardrail(ctx, spec, stream.Identity)
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	if screening != nil {
 		created.closers = append(created.closers, func() {
@@ -450,6 +489,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		ToolRunner:         runner,
 		Tools:              harness.Tools{Tools: tools},
 		Sandbox:            box,
+		Publish:            publisher(conv),
 		Tasks:              spec.Tasks,
 		Duplex:             spec.duplex(),
 		VideoSource:        spec.VideoSource,
@@ -477,7 +517,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		Logger:             m.logger,
 	})
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	if box != nil {
@@ -529,7 +569,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// returned would hang up on the caller immediately.
 	if err := created.voiceAgent.Join(context.WithoutCancel(ctx)); err != nil {
 		created.Close()
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	if spec.Greeting != "" {
@@ -544,7 +584,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 		if err := greet(ctx, greeting); err != nil {
 			created.Close()
-			return nil, fmt.Errorf("session: greet: %w", err)
+			return nil, stack.Wrap(fmt.Errorf("session: greet: %w", err))
 		}
 	}
 
@@ -577,15 +617,21 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if m.closed {
 		m.mu.Unlock()
 		created.Close()
-		return nil, errors.New("session: the manager is shut down")
+		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
 	}
 	if _, raced := m.sessions[created.id]; raced {
 		m.mu.Unlock()
 		created.Close()
-		return nil, ErrSessionExists
+		return nil, stack.Wrap(ErrSessionExists)
 	}
 	m.sessions[created.id] = created
 	m.mu.Unlock()
+
+	// Said after the session is here to be found, so a peer that forwards a request on
+	// the strength of it has somewhere to forward it to.
+	if m.options.Directory != nil {
+		m.options.Directory.Hold(ctx, created.id, spec.AgentID)
+	}
 
 	m.logger.Info("session joined",
 		"session", created.id, "call", spec.CallID, "customer", spec.CustomerID)
@@ -610,6 +656,10 @@ func (m *Manager) supersede(spec Spec) {
 		}
 	}
 	m.mu.Unlock()
+
+	for _, found := range left {
+		m.release(found.id)
+	}
 
 	for _, found := range left {
 		m.logger.Info("ending the session this agent left behind in the call",
@@ -911,6 +961,8 @@ func matchesLive(live *Session, filter store.SessionFilter) bool {
 	switch {
 	case filter.UserID != "" && spec.Caller.UserID != filter.UserID:
 		return false
+	case filter.ConfigID != "" && spec.ConfigID != filter.ConfigID:
+		return false
 	case filter.AgentName != "" && spec.AgentName != filter.AgentName:
 		return false
 	case filter.Project != "" && spec.Project != filter.Project:
@@ -922,8 +974,25 @@ func matchesLive(live *Session, filter store.SessionFilter) bool {
 	case filter.State == store.SessionRunning && live.State() != Live,
 		filter.State == store.SessionClosed && live.State() != Ended:
 		return false
+	case !filter.After.IsZero() && live.CreatedAt().Before(filter.After):
+		return false
+	case !filter.Before.IsZero() && !live.CreatedAt().Before(filter.Before):
+		return false
+	case !contains(spec.Custom, filter.Custom):
+		return false
 	case filter.Cursor != nil && !before(live.CreatedAt(), live.ID(), *filter.Cursor):
 		return false
+	}
+	return true
+}
+
+// contains is the store's custom @> ?::jsonb, for a session that has no row to ask.
+func contains(custom map[string]any, wanted map[string]string) bool {
+	for key, value := range wanted {
+		held, ok := custom[key]
+		if !ok || fmt.Sprint(held) != value {
+			return false
+		}
 	}
 	return true
 }
@@ -947,6 +1016,7 @@ func (m *Manager) Close(id string, owner Owner) (bool, error) {
 	m.mu.Lock()
 	delete(m.sessions, id)
 	m.mu.Unlock()
+	m.release(id)
 
 	return true, found.Close()
 }
@@ -973,6 +1043,34 @@ func (m *Manager) EndPinned(customer string, app int64) int {
 		}
 	}
 	return len(pinned)
+}
+
+// releaseTimeout bounds taking back this node's claim on a session. Short, because a
+// claim that is not taken back expires on its own.
+const releaseTimeout = 2 * time.Second
+
+// release stops telling this deployment's other nodes that a session is here.
+func (m *Manager) release(id string) {
+	if m.options.Directory == nil {
+		return
+	}
+	// Not the caller's context: a session is let go of on paths that have none, and one
+	// cancelled the moment the answer is written would leave the claim behind.
+	ctx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
+	defer cancel()
+	m.options.Directory.Release(ctx, id)
+}
+
+// Running reports whether this process is running a session, whoever it belongs to.
+//
+// No owner is asked for, unlike Get, because which node holds a session is not a question
+// about who may see it: the node that answers checks that for itself.
+func (m *Manager) Running(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	_, running := m.sessions[id]
+	return running
 }
 
 // Delete stops a session if it is running and deletes it: its row, its turns, and what it
@@ -1004,7 +1102,7 @@ func (m *Manager) Delete(ctx context.Context, id string, owner Owner) error {
 // every session and every agent.
 func (m *Manager) TruncateMemories(ctx context.Context, customerID, userID string) error {
 	if m.options.Memory == nil {
-		return ErrNoMemory
+		return stack.Wrap(ErrNoMemory)
 	}
 	return m.options.Memory.Truncate(ctx, customerID, userID)
 }
@@ -1013,7 +1111,7 @@ func (m *Manager) TruncateMemories(ctx context.Context, customerID, userID strin
 // session is the customer's: the id alone says nothing about whose it is.
 func (m *Manager) ForgetSession(ctx context.Context, customerID, sessionID string) error {
 	if m.options.Memory == nil {
-		return ErrNoMemory
+		return stack.Wrap(ErrNoMemory)
 	}
 	return m.options.Memory.ForgetRun(ctx, customerID, sessionID)
 }
@@ -1062,9 +1160,9 @@ func (m *Manager) box(spec Spec) (sandbox.Sandbox, error) {
 		return nil, nil
 	}
 	if spec.Sandbox != daytonaProvider {
-		return nil, fmt.Errorf("session: there is no sandbox provider called %q", spec.Sandbox)
+		return nil, stack.Wrap(fmt.Errorf("session: there is no sandbox provider called %q", spec.Sandbox))
 	}
-	return daytona.New(daytona.Options{Logger: m.logger})
+	return daytona.New(daytona.Options{Config: spec.SandboxOptions, Logger: m.logger})
 }
 
 // reading reports whether this session has anything to look things up in, which is a
@@ -1096,8 +1194,8 @@ func (m *Manager) guardrail(ctx context.Context, spec Spec, stream streamapp.Ide
 	// arrives. Refusing is the honest answer - the alternative is a guardrail that is
 	// configured, reported, and enforcing nothing.
 	if spec.Native() {
-		return nil, errors.New(
-			"session: a speech-to-speech agent answers the caller directly, so a guardrail cannot screen its turns")
+		return nil, stack.Wrap(errors.New(
+			"session: a speech-to-speech agent answers the caller directly, so a guardrail cannot screen its turns"))
 	}
 
 	policy, err := guardrail.Parse(spec.Guardrail)
@@ -1288,7 +1386,7 @@ func (m *Manager) line(spec Spec) (agent.Telephony, error) {
 		return nil, nil
 	}
 	if m.options.Phone == nil {
-		return nil, errors.New("session: this deployment has no telephony, so a number cannot be used")
+		return nil, stack.Wrap(errors.New("session: this deployment has no telephony, so a number cannot be used"))
 	}
 
 	return m.options.Phone.Line(phone.LineOptions{
@@ -1325,16 +1423,22 @@ func (m *Manager) Conversations() (*persistent.Service, error) {
 		// A conversation is kept in the Stream app its session acts in, so without a way
 		// to say which app that is there is nowhere to keep one.
 		if m.options.Stream == nil {
-			return nil, errors.New("Stream Chat credentials are required for persistent conversations")
+			return nil, stack.Wrap(errors.New("Stream Chat credentials are required for persistent conversations"))
 		}
-		service, err := persistent.NewForChats(os.Getenv("CHAT_OUTBOX_DIR"), persistent.StreamApps(m.options.Stream))
-		if err != nil {
-			return nil, err
-		}
+		service := persistent.NewForChats(persistent.StreamApps(m.options.Stream))
 		if m.options.Store != nil {
 			service.SetPins(m.options.Store.ConversationPin)
 		}
 		m.conversations = service
 	}
 	return m.conversations, nil
+}
+
+// publisher is where files the subagent's code hands back are shown: the conversation's
+// channel when the session is kept in one, and nowhere when it is not.
+func publisher(conv *persistent.Conversation) sandbox.Publisher {
+	if conv == nil {
+		return nil
+	}
+	return conv.Publish
 }

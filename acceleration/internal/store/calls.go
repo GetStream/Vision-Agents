@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // defaultCallLimit caps a call list that did not ask for one.
@@ -129,7 +131,7 @@ func (s *Store) ReviewCall(ctx context.Context, customerID, id, summary string, 
 // Call returns one call a customer ran.
 func (s *Store) Call(ctx context.Context, customerID, id string) (Call, error) {
 	if customerID == "" || id == "" {
-		return Call{}, errors.New("store: a customer and a call id are required")
+		return Call{}, stack.Wrap(errors.New("store: a customer and a call id are required"))
 	}
 
 	var call Call
@@ -142,7 +144,7 @@ func (s *Store) Call(ctx context.Context, customerID, id string) (Call, error) {
 		return Call{}, unknownCall(id)
 	}
 	if err != nil {
-		return Call{}, fmt.Errorf("store: call: %w", err)
+		return Call{}, stack.Wrap(fmt.Errorf("store: call: %w", err))
 	}
 	return call, nil
 }
@@ -150,7 +152,7 @@ func (s *Store) Call(ctx context.Context, customerID, id string) (Call, error) {
 // CustomerCalls returns a customer's calls, newest first.
 func (s *Store) CustomerCalls(ctx context.Context, customerID string, filter CallFilter) ([]Call, error) {
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
 	limit := filter.Limit
@@ -183,7 +185,7 @@ func (s *Store) CustomerCalls(ctx context.Context, customerID string, filter Cal
 
 	var calls []Call
 	if err := query.Scan(ctx, &calls); err != nil {
-		return nil, fmt.Errorf("store: customer calls: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer calls: %w", err))
 	}
 	return calls, nil
 }
@@ -193,7 +195,7 @@ func (s *Store) CustomerCalls(ctx context.Context, customerID string, filter Cal
 // it was on for.
 func (s *Store) CallTurns(ctx context.Context, customerID, agentID string, from time.Time, to *time.Time) ([]Turn, error) {
 	if customerID == "" || agentID == "" {
-		return nil, errors.New("store: a customer and an agent id are required")
+		return nil, stack.Wrap(errors.New("store: a customer and an agent id are required"))
 	}
 
 	query := s.db.NewSelect().Model((*Turn)(nil)).
@@ -207,7 +209,7 @@ func (s *Store) CallTurns(ctx context.Context, customerID, agentID string, from 
 
 	var turns []Turn
 	if err := query.Scan(ctx, &turns); err != nil {
-		return nil, fmt.Errorf("store: call turns: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: call turns: %w", err))
 	}
 	return turns, nil
 }
@@ -216,7 +218,7 @@ func (s *Store) CallTurns(ctx context.Context, customerID, agentID string, from 
 // requests, in the order they were sent. TurnID relates each request to its exchange.
 func (s *Store) CallModelCalls(ctx context.Context, customerID, agentID, callID string, from time.Time, to *time.Time) ([]Request, error) {
 	if customerID == "" || agentID == "" {
-		return nil, errors.New("store: a customer and an agent id are required")
+		return nil, stack.Wrap(errors.New("store: a customer and an agent id are required"))
 	}
 	query := s.db.NewSelect().Model((*Request)(nil)).
 		Where("customer_id = ?", customerID).
@@ -232,7 +234,7 @@ func (s *Store) CallModelCalls(ctx context.Context, customerID, agentID, callID 
 	}
 	var requests []Request
 	if err := query.Scan(ctx, &requests); err != nil {
-		return nil, fmt.Errorf("store: call model calls: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: call model calls: %w", err))
 	}
 	return requests, nil
 }
@@ -249,7 +251,7 @@ type UsedModel struct {
 // request row carries the Stream call rather than the session that recorded it.
 func (s *Store) CallUsedModels(ctx context.Context, customerID, agentID string, from time.Time, to *time.Time) ([]UsedModel, error) {
 	if customerID == "" || agentID == "" {
-		return nil, errors.New("store: a customer and an agent id are required")
+		return nil, stack.Wrap(errors.New("store: a customer and an agent id are required"))
 	}
 
 	query := s.db.NewSelect().
@@ -267,7 +269,7 @@ func (s *Store) CallUsedModels(ctx context.Context, customerID, agentID string, 
 
 	var used []UsedModel
 	if err := query.Scan(ctx, &used); err != nil {
-		return nil, fmt.Errorf("store: call used models: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: call used models: %w", err))
 	}
 	return used, nil
 }
@@ -289,7 +291,7 @@ type CallUsage struct {
 // billed for having read it.
 func (s *Store) CallUsage(ctx context.Context, customerID, agentID string, from time.Time, to *time.Time) (CallUsage, error) {
 	if customerID == "" || agentID == "" {
-		return CallUsage{}, errors.New("store: a customer and an agent id are required")
+		return CallUsage{}, stack.Wrap(errors.New("store: a customer and an agent id are required"))
 	}
 
 	query := s.db.NewSelect().
@@ -308,7 +310,7 @@ func (s *Store) CallUsage(ctx context.Context, customerID, agentID string, from 
 
 	var spent CallUsage
 	if err := query.Scan(ctx, &spent); err != nil {
-		return CallUsage{}, fmt.Errorf("store: call usage: %w", err)
+		return CallUsage{}, stack.Wrap(fmt.Errorf("store: call usage: %w", err))
 	}
 	return spent, nil
 }
@@ -341,7 +343,7 @@ func (s *Store) RecordCallEvents(ctx context.Context, events []CallEvent) error 
 // on for.
 func (s *Store) CallEvents(ctx context.Context, customerID, callID string, from time.Time, to *time.Time, limit int) ([]CallEvent, error) {
 	if customerID == "" || callID == "" {
-		return nil, errors.New("store: a customer and a call id are required")
+		return nil, stack.Wrap(errors.New("store: a customer and a call id are required"))
 	}
 	if limit <= 0 {
 		limit = defaultCallEventLimit
@@ -362,11 +364,11 @@ func (s *Store) CallEvents(ctx context.Context, customerID, callID string, from 
 
 	var events []CallEvent
 	if err := query.Scan(ctx, &events); err != nil {
-		return nil, fmt.Errorf("store: call events: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: call events: %w", err))
 	}
 	return events, nil
 }
 
 func unknownCall(id string) error {
-	return fmt.Errorf("store: there is no call %s", id)
+	return stack.Wrap(fmt.Errorf("store: there is no call %s", id))
 }

@@ -34,8 +34,10 @@ public sealed record DispatchOptions
 /// </para>
 /// <para>
 /// A message only arrives when no agent is running on its channel; one written to an agent
-/// that is running is answered by that session. Several workers can wait at once, and the
-/// work is shared between them.
+/// that is running is answered by that session, unless the agent leaves text to dispatch, in
+/// which case it arrives with its <see cref="InboundMessage.SessionId"/> and
+/// <see cref="AnswerAsync"/> answers it. Several workers can wait at once, and the work is
+/// shared between them.
 /// </para>
 /// <para>
 /// A worker can also <see cref="Host"/> tools: the router offers them to every session
@@ -67,6 +69,9 @@ public sealed class Dispatch
     private TaskCompletionSource _pong = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private double _latencyMs;
     private long _handed;
+    // The calls and messages alone, which is what the router counts against this worker's
+    // capacity. A hosted tool call is not one: the router tracks those by their answer.
+    private int _handling;
 
     /// <summary>Waits for one customer's work on a router.</summary>
     /// <exception cref="ConfigurationException">The capacity is not a number of calls.</exception>
@@ -98,8 +103,8 @@ public sealed class Dispatch
 
     /// <summary>
     /// What to do with an arriving call. It runs as its own task, so one long call does not
-    /// stop the next from being answered. The router is told the call was accepted when it
-    /// returns, and rejected, with the reason, when it throws.
+    /// stop the next from being answered. The router is told the call is done when it
+    /// returns, with what it threw if it throws.
     /// </summary>
     public Dispatch WaitForCall(Func<InboundCall, Task> handler)
     {
@@ -108,13 +113,19 @@ public sealed class Dispatch
     }
 
     /// <summary>
-    /// What to do with a message written to an agent that is not running. It runs as its
-    /// own task, the way a call's does.
+    /// What to do with a message written to an agent that is not running, or to a running
+    /// session whose agent leaves text to dispatch. It runs as its own task, the way a call's
+    /// does.
     /// </summary>
     /// <example>
     /// <code>
     /// dispatch.WaitForMessage(async message =>
     /// {
+    ///     if (message.SessionId != "")
+    ///     {
+    ///         await dispatch.AnswerAsync(message);
+    ///         return;
+    ///     }
     ///     var agent = await dispatch.GetOrCreateAgentAsync(message, () => new Agent(new() { Config = "support" }));
     ///     await agent.Responses.CreateAsync(message.Text);
     /// });
@@ -153,12 +164,17 @@ public sealed class Dispatch
     /// still open and knows what has been said; only a channel nothing is answering calls
     /// <paramref name="createAgent"/>. Agents are kept until this worker stops waiting.
     /// </remarks>
+    /// <exception cref="InvalidOperationException">A session is already holding the message.</exception>
     public Task<Agent> GetOrCreateAgentAsync(InboundMessage message, Func<Agent> createAgent, CancellationToken cancellationToken = default) =>
         GetOrCreateAgentAsync(message, _ => Task.FromResult(createAgent()), cancellationToken);
 
     /// <inheritdoc cref="GetOrCreateAgentAsync(InboundMessage, Func{Agent}, CancellationToken)"/>
     public async Task<Agent> GetOrCreateAgentAsync(InboundMessage message, Func<CancellationToken, Task<Agent>> createAgent, CancellationToken cancellationToken = default)
     {
+        if (message.SessionId != "")
+        {
+            throw new InvalidOperationException("a session is already holding this conversation; answer it there with AnswerAsync");
+        }
         await _agentsLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -175,6 +191,27 @@ public sealed class Dispatch
         {
             _agentsLock.Release();
         }
+    }
+
+    /// <summary>
+    /// Has the model answer a message written to a running session whose agent leaves text
+    /// to dispatch, which is what the person who wrote it is waiting on.
+    /// </summary>
+    /// <remarks>
+    /// The response is created with this worker's own credential, acting for whoever wrote
+    /// the message, so it reaches a conversation that belongs to them and goes to the model
+    /// rather than back to a worker. It carries the message's command, so the answer lands on it.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">No session is holding the message.</exception>
+    public async Task<Response> AnswerAsync(InboundMessage message, CancellationToken cancellationToken = default)
+    {
+        if (message.SessionId == "")
+        {
+            throw new InvalidOperationException("no session is holding this message; open one with GetOrCreateAgentAsync");
+        }
+        using var acting = Client.ActingFor(message.UserId);
+        return await new Responses(acting, message.SessionId)
+            .CreateAsync(message.Text, commandId: message.CommandId, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -204,11 +241,10 @@ public sealed class Dispatch
             throw new InvalidOperationException("register a handler with WaitForCall or WaitForMessage, or Host tools, before running");
         }
 
-        var url = Client.Backend.SocketUrl(Path, new Dictionary<string, string> { ["capacity"] = Capacity.ToString(CultureInfo.InvariantCulture) });
         Socket socket;
         try
         {
-            socket = await Socket.ConnectAsync(Client.Backend, url, cancellationToken).ConfigureAwait(false);
+            socket = await Socket.ConnectAsync(Client.Backend, Waiting(), cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -241,7 +277,7 @@ public sealed class Dispatch
                     retry = TimeSpan.FromTicks(Math.Min(retry.Ticks * 2, LastRetry.Ticks));
                     try
                     {
-                        socket = await Socket.ConnectAsync(Client.Backend, url, cancellationToken).ConfigureAwait(false);
+                        socket = await Socket.ConnectAsync(Client.Backend, Waiting(), cancellationToken).ConfigureAwait(false);
                         break;
                     }
                     catch (RouterException)
@@ -282,6 +318,8 @@ public sealed class Dispatch
         ChannelType = frame.Text("channel_type"),
         AgentId = frame.Text("agent_id"),
         ConfigId = frame.Text("config_id"),
+        SessionId = frame.Text("session_id"),
+        CommandId = frame.Text("command_id"),
         Text = frame.Text("text"),
         MessageId = frame.Text("message_id"),
         UserId = frame.Text("user_id"),
@@ -289,6 +327,19 @@ public sealed class Dispatch
         Custom = CustomOf(frame),
         At = TimeOf(frame),
     };
+
+    /// <summary>
+    /// What this worker says about itself on the way in: how much it can hold, how much it is
+    /// still holding from before a reconnect, and which kinds of work it answers. On the
+    /// handshake rather than in a frame, because the router may hand over work before reading
+    /// anything; <c>handles</c> is sent even when empty, for a worker that only hosts tools.
+    /// </summary>
+    private Uri Waiting() => Client.Backend.SocketUrl(Path, new Dictionary<string, string>
+    {
+        ["capacity"] = Capacity.ToString(CultureInfo.InvariantCulture),
+        ["active"] = Volatile.Read(ref _handling).ToString(CultureInfo.InvariantCulture),
+        ["handles"] = string.Join(',', new[] { _onCall is null ? null : "call", _onMessage is null ? null : "message" }.OfType<string>()),
+    });
 
     /// <summary>
     /// Reads one connection until it ends, reporting whether the router dropped it rather
@@ -311,13 +362,13 @@ public sealed class Dispatch
     {
         switch (frame.Type)
         {
-            case "call" when _onCall is { } onCall:
-                var call = CallOf(frame);
-                Track(() => AnswerAsync(onCall, call));
+            case "call":
+                await HandleAsync(frame.Text("work_id"), _onCall is { } onCall ? () => onCall(CallOf(frame)) : null,
+                    "this worker answers no calls").ConfigureAwait(false);
                 break;
-            case "message" when _onMessage is { } onMessage:
-                var message = MessageOf(frame);
-                Track(() => ReplyAsync(onMessage, message));
+            case "message":
+                await HandleAsync(frame.Text("work_id"), _onMessage is { } onMessage ? () => onMessage(MessageOf(frame)) : null,
+                    "this worker answers no messages").ConfigureAwait(false);
                 break;
             case "ready":
                 WorkerId = frame.Text("worker_id");
@@ -396,38 +447,40 @@ public sealed class Dispatch
     }
 
     /// <summary>
-    /// Runs the handler for one call and tells the router how it went. Whatever it throws is
-    /// somebody else's code failing, so it is reported rather than let escape.
+    /// Runs the handler for one call or message and tells the router it is done. Whatever it
+    /// throws is somebody else's code failing, so it is reported rather than let escape. Work
+    /// with no handler is reported done too, because the router holds its room until then.
     /// </summary>
-    private async Task AnswerAsync(Func<InboundCall, Task> handler, InboundCall call)
+    private async Task HandleAsync(string workId, Func<Task>? handler, string unhandled)
     {
-        try
+        if (handler is null)
         {
-            await handler(call).ConfigureAwait(false);
-        }
-        catch (Exception failure)
-        {
-            await TellAsync(Frames.Of("rejected", ("call_id", call.CallId), ("reason", failure.Message))).ConfigureAwait(false);
+            await DoneAsync(workId, unhandled).ConfigureAwait(false);
             return;
         }
-        await TellAsync(Frames.Of("accepted", ("call_id", call.CallId))).ConfigureAwait(false);
+        Interlocked.Increment(ref _handling);
+        Track(async () =>
+        {
+            string? failed = null;
+            try
+            {
+                await handler().ConfigureAwait(false);
+            }
+            catch (Exception failure)
+            {
+                failed = failure.Message;
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _handling);
+            }
+            await DoneAsync(workId, failed).ConfigureAwait(false);
+        });
     }
 
-    /// <summary>
-    /// Runs the handler for one message. Nothing is reported back: accepting and rejecting are
-    /// about a caller waiting on a line, and there is no line here.
-    /// </summary>
-    private static async Task ReplyAsync(Func<InboundMessage, Task> handler, InboundMessage message)
-    {
-        try
-        {
-            await handler(message).ConfigureAwait(false);
-        }
-        catch (Exception)
-        {
-            // A message nobody answered is the handler's to log; the worker carries on.
-        }
-    }
+    private Task DoneAsync(string workId, string? error) => TellAsync(error is null
+        ? Frames.Of("done", ("work_id", workId))
+        : Frames.Of("done", ("work_id", workId), ("error", error)));
 
     /// <summary>Tells the router how this process is doing, on a timer.</summary>
     private async Task ReportAsync(CancellationToken cancellationToken)

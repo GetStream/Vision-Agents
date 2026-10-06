@@ -9,6 +9,7 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // transcriptLimit is how much of a conversation is read back at once. Stream caps a page
@@ -64,7 +65,7 @@ type Read struct {
 // wrong to. Reading never creates the channel, so asking about a call leaves nothing behind.
 func (r *Reader) Transcript(ctx context.Context, read Read) ([]Spoken, error) {
 	if read.Channel == "" {
-		return nil, errors.New("chatlog: a channel is required")
+		return nil, stack.Wrap(errors.New("chatlog: a channel is required"))
 	}
 
 	one, limit := 1, transcriptLimit
@@ -74,7 +75,7 @@ func (r *Reader) Transcript(ctx context.Context, read Read) ([]Spoken, error) {
 		MessageLimit:     &limit,
 	})
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	if len(response.Data.Channels) == 0 {
 		return []Spoken{}, nil

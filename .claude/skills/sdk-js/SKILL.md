@@ -160,12 +160,12 @@ Hence the conditional-spread style throughout `agent.ts`:
 A boolean tests `=== undefined`, because `false` is a value somebody chose. A string tests
 truthiness, because an empty target means the same as no target.
 
-An absent skill list and an empty one differ: absent leaves the built-in set, `useSkills:
-false` or `skills: []` sends `skills: []` and turns delegation off.
+An absent skill list and an empty one differ: absent leaves the built-in set, `skills: []`
+sends `skills: []` and turns delegation off. Both live on the agent config, written by `sync`.
 
 ## A backend rule the caller cannot guess gets a function, not a doc note
 
-`conversation.ts` is the pattern. Holding a text conversation has two rules that are nowhere in
+Holding a text conversation is the example. It has two rules that are nowhere in
 the spec and both load-bearing: the channel is the backend's to name, so a first open passes no
 `conversation_id` and a resume passes the one the first was given; and a resume has to come back
 as the same `agent_id`, because the backend checks a conversation is reopened by whoever held it.
@@ -179,7 +179,7 @@ Naming the channel on a first open reads like the obvious thing — it makes `ag
 outright, because a resume reads the channel without creating it. What follows is that a session
 a browser opened cannot be driven by writing into its channel: the hook looks for a session
 whose `agent_id` is the channel, the backend named the channel something else, and the write
-lands nowhere. Chat is the transcript; `respond` over the session socket is the way in.
+lands nowhere. Chat is the transcript; `responses.create` is the way in.
 
 ## Check a claim about the backend against the backend
 
@@ -232,9 +232,12 @@ runs has to be publicly reachable.
   worker rather than queueing behind it.
 - Handlers run on their own, never awaited in the read loop. Answering one caller in line
   leaves the next listening to a ringing phone.
-- A call is reported `accepted` or `rejected` with the reason; **a message is not**. Accepting
-  and rejecting are about a caller waiting on a line, and there is no line for a message.
-- A message only arrives when no agent is running on its channel. `sessionFor` keeps one
+- Every call and message is reported `done` with its `work_id`, with an `error` when it failed
+  or had no handler: that is what gives the worker its room back. `active` and `handles` go on
+  the handshake.
+- A message with a `sessionId` was written to a running session whose agent leaves text to
+  dispatch; `answer` has the model reply there, as the server acting for the writer. Any other
+  message only arrives when no agent is running on its channel. `sessionFor` keeps one
   session per channel for the same reason: the session that answered the last message is the
   one that knows what has been said.
 - `load` reports only `active_agents` and a round trip this side measured. Host CPU and memory
@@ -296,10 +299,3 @@ Reject it if it:
 `sessions.query`, `sessions.search`, `responses.list` and `items.list` take a `cursor` and return
 the page, `{items, has_more, next_cursor}`. `items.unwind` follows `next_cursor` until `has_more`
 is false. See the `pagination` skill.
-
-## Pending: session update (Go is done)
-
-The Go SDK moved to `PATCH /v1/agents/sessions/{id}` (`updateSession`), which changes title,
-description, custom, instructions, models and voice in one call. Regenerate, then expose
-`session.update(...)` and `agent.sessions.update(id, ...)`; drop `updateSettings`. See "Updating a session" in the `sdk` skill. The `/settings` and
-`/instructions` endpoints are deprecated.

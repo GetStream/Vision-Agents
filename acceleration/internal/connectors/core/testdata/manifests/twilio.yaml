@@ -1,0 +1,22 @@
+# Stress-test row 9 (Twilio) of «Stress test: 12 awkward providers» in
+# acceleration/docs/connectors/architecture.md on connectors/planning. Vendor source, opened
+# October 1, 2026:
+#   [requests] https://www.twilio.com/docs/usage/requests-to-twilio
+id: twilio
+revision: 1
+name: Twilio
+inputs:
+  # The account the API key belongs to: row 9. [requests] does not state the SID's format;
+  # AC plus 32 hex digits is the shape of Twilio's examples elsewhere. # unverified
+  - name: account_sid
+    pattern: AC[0-9a-fA-F]{32}
+endpoints:
+  # /2010-04-01/Accounts/{AccountSid}/ on api.twilio.com: [requests]; row 9.
+  api_base: https://api.twilio.com/2010-04-01/Accounts/{account_sid}
+# HTTP Basic with an API key SID and secret: [requests]; row 9.
+schemes: [basic]
+# Operations (Messages.json, form bodies) are the http source's own data, not this schema:
+# row 9; T25 in acceleration/docs/connectors/subtasks.md.
+sources:
+  - kind: http
+    endpoint: api_base

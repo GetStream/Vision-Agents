@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Puller advances a provider's upstream stream by one chunk.
@@ -131,7 +133,7 @@ func (s *Stream) Current() Event { return s.current }
 
 // Err is the provider failure that ended the stream, or nil. A stream that was closed
 // part-way through did not fail: it was abandoned.
-func (s *Stream) Err() error { return s.err }
+func (s *Stream) Err() error { return stack.Wrap(s.err) }
 
 // Response is the whole answer. It is settled once Next has returned false, and reports
 // what had arrived so far before then.
@@ -149,7 +151,7 @@ func (s *Stream) Close() error {
 			s.closeErr = s.puller.Close()
 		}
 	})
-	return s.closeErr
+	return stack.Wrap(s.closeErr)
 }
 
 // Screen has a judgement of what the response was asked run beside it. The verdict channel
@@ -202,11 +204,11 @@ func Collect(stream *Stream) (Response, error) {
 	for stream.Next() {
 	}
 	if err := stream.Err(); err != nil {
-		return stream.Response(), err
+		return stream.Response(), stack.Wrap(err)
 	}
 	response := stream.Response()
 	if response.Status == StatusCancelled {
-		return response, errors.New("llm: the response was abandoned before it finished")
+		return response, stack.Wrap(errors.New("llm: the response was abandoned before it finished"))
 	}
 	return response, nil
 }

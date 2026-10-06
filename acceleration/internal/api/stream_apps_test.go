@@ -84,7 +84,7 @@ func (s *StreamAppsSuite) TestAClaimJoinsEachChannelInItsOwnApp() {
 	// A guest's conversations may span the time before and after the customer had an app
 	// of its own, and each is joined where it is.
 	guest := guestPrefix + s.utils.uuid()
-	s.Require().NoError(s.store.RecordGuest(context.Background(), &store.GuestUser{
+	s.Require().NoError(s.store.RecordGuest(context.Background(), &store.User{
 		ID: guest, CustomerID: s.customerID(), Name: "Guest",
 	}))
 	before, after := "support-"+s.utils.uuid(), "support-"+s.utils.uuid()
@@ -179,7 +179,7 @@ func (s *StreamAppsSuite) TestASessionRecordsTheAppItWasCreatedIn() {
 	// The rows a session leaves behind say which app it was in, so what is finished or read
 	// back later is done there, wherever the customer acts by then.
 	call := s.utils.callID()
-	created := s.serverClient.createSession(CreateSessionRequest{CallId: &call})
+	created := s.serverClient.createSession(CreateSessionRequest{CallId: &call, CallType: pointerTo("agent")})
 
 	s.Require().Eventually(func() bool {
 		stored, err := s.store.StoredSession(context.Background(), s.customerID(), created.Id)
@@ -196,7 +196,7 @@ func (s *StreamAppsSuite) TestAnInboundCallOnALegacyNumberJoinsTheDeploymentApps
 	// land in the deployment's app, and that is where the agent has to be.
 	call := s.attached(0)
 
-	created := s.serverClient.createSession(CreateSessionRequest{CallId: &call})
+	created := s.serverClient.createSession(CreateSessionRequest{CallId: &call, CallType: pointerTo("agent")})
 
 	s.Equal(int64(0), s.pinOf(created.Id))
 }
@@ -204,7 +204,7 @@ func (s *StreamAppsSuite) TestAnInboundCallOnALegacyNumberJoinsTheDeploymentApps
 func (s *StreamAppsSuite) TestAnInboundCallOnANumberInTheCustomersAppJoinsThere() {
 	call := s.attached(4242)
 
-	created := s.serverClient.createSession(CreateSessionRequest{CallId: &call})
+	created := s.serverClient.createSession(CreateSessionRequest{CallId: &call, CallType: pointerTo("agent")})
 
 	s.Equal(int64(4242), s.pinOf(created.Id))
 }

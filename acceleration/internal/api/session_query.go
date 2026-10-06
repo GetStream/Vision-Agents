@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -29,13 +31,16 @@ func (*SessionQuery) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma
 
 // SessionFilter narrows a session query. Fields are ANDed.
 type SessionFilter struct {
-	Text      *TextMatch `json:"text,omitempty" doc:"Full text over the title, description, project and agent name. Sorted by relevance, and not combined with project_id."`
-	ProjectID *Equals    `json:"project_id,omitempty"`
-	Agent     *Equals    `json:"agent,omitempty" doc:"The agent name the session was opened against."`
-	AgentID   *Equals    `json:"agent_id,omitempty" doc:"The agent id the session was created with, which names its transcript channel."`
-	UserID    *Equals    `json:"user_id,omitempty" doc:"Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for."`
-	Modality  *Equals    `json:"modality,omitempty" doc:"text, voice or video: how the user took part."`
-	State     *Equals    `json:"state,omitempty" doc:"live or ended, as each session reports its state."`
+	Text      *TextMatch         `json:"text,omitempty" doc:"Full text over the title, description, project and agent name. Sorted by relevance, and not combined with project_id."`
+	ProjectID *Equals            `json:"project_id,omitempty"`
+	ConfigID  *Equals            `json:"config_id,omitempty" doc:"The agent config the session ran under. Empty for a session that spelled itself out."`
+	Agent     *Equals            `json:"agent,omitempty" doc:"The agent name the session was opened against."`
+	AgentID   *Equals            `json:"agent_id,omitempty" doc:"The agent id the session was created with, which names its transcript channel."`
+	UserID    *Equals            `json:"user_id,omitempty" doc:"Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for."`
+	Modality  *Equals            `json:"modality,omitempty" doc:"text, voice or video: how the user took part."`
+	State     *Equals            `json:"state,omitempty" doc:"live or ended, as each session reports its state."`
+	CreatedAt *TimeRange         `json:"created_at,omitempty" doc:"When the session started."`
+	Custom    *map[string]string `json:"custom,omitempty" doc:"The session's custom object holds every one of these pairs, which is how a caller finds again what it labelled."`
 }
 
 func (*SessionFilter) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -52,6 +57,35 @@ type TextMatch struct {
 func (*TextMatch) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.AdditionalProperties = false
 	return schema
+}
+
+// TimeRange bounds a time field. The window is half open, so two windows that meet share
+// no session and a list paged over both counts each one once.
+type TimeRange struct {
+	Gte *time.Time `json:"$gte,omitempty" doc:"At or after this RFC3339 time."`
+	Lt  *time.Time `json:"$lt,omitempty" doc:"Strictly before this RFC3339 time."`
+}
+
+func (*TimeRange) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.AdditionalProperties = false
+	return schema
+}
+
+// window is the range as two bounds, refusing one that could hold nothing.
+func (t *TimeRange) window() (after, before time.Time, err error) {
+	if t == nil {
+		return time.Time{}, time.Time{}, nil
+	}
+	if t.Gte != nil {
+		after = *t.Gte
+	}
+	if t.Lt != nil {
+		before = *t.Lt
+	}
+	if !after.IsZero() && !before.IsZero() && !after.Before(before) {
+		return time.Time{}, time.Time{}, stack.Wrap(errors.New("created_at $gte must be before $lt, or the window holds nothing"))
+	}
+	return after, before, nil
 }
 
 // Equals matches one value exactly, written bare or as {"$eq": value}.
@@ -136,7 +170,8 @@ func (s *Server) registerSessionQuery(api huma.API) {
 			"- every session, sorted by `updated_at`\n" +
 			"- a text search, `{\"text\": {\"$q\": \"billing\"}}`, sorted by `relevance`\n" +
 			"- one project's, `{\"project_id\": \"health\"}`, sorted by `updated_at`\n\n" +
-			"`agent`, `agent_id`, `user_id`, `modality` and `state` narrow any of them. A backend gets its customer's " +
+			"`agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and " +
+			"`custom` narrow any of them. A backend gets its customer's " +
 			"sessions; an end user gets their own, whatever they ask for, and an anonymous " +
 			"caller who named nobody gets none.\n\n" +
 			"The search reads what a person named the conversation, not what was said in it. " +
@@ -208,6 +243,7 @@ func sessionQueryOf(ctx context.Context, sent SessionQuery) (sessionQuery, error
 		query.sort = SessionSortRelevance
 	}
 	query.filter.Project = string(value(filter.ProjectID))
+	query.filter.ConfigID = string(value(filter.ConfigID))
 	query.filter.AgentName = string(value(filter.Agent))
 	query.filter.AgentID = string(value(filter.AgentID))
 	query.filter.Modality = string(value(filter.Modality))
@@ -218,24 +254,32 @@ func sessionQueryOf(ctx context.Context, sent SessionQuery) (sessionQuery, error
 	case Ended:
 		query.filter.State = store.SessionClosed
 	}
+	if filter.Custom != nil {
+		query.filter.Custom = *filter.Custom
+	}
+	after, before, err := filter.CreatedAt.window()
+	if err != nil {
+		return sessionQuery{}, err
+	}
+	query.filter.After, query.filter.Before = after, before
 
 	switch {
 	case query.filter.Modality != "" && !SessionModality(query.filter.Modality).Valid():
-		return sessionQuery{}, errors.New("modality is text, voice or video")
+		return sessionQuery{}, stack.Wrap(errors.New("modality is text, voice or video"))
 	case state != "" && !state.Valid():
-		return sessionQuery{}, errors.New("state is live or ended")
+		return sessionQuery{}, stack.Wrap(errors.New("state is live or ended"))
 	case query.text != "" && query.filter.Project != "":
-		return sessionQuery{}, errors.New("a text search covers every project, so it cannot be combined with project_id")
+		return sessionQuery{}, stack.Wrap(errors.New("a text search covers every project, so it cannot be combined with project_id"))
 	case len(sent.Sort) > 0 && sent.Sort[0].Field != query.sort:
 		if query.text != "" {
-			return sessionQuery{}, errors.New("a text search is sorted by relevance")
+			return sessionQuery{}, stack.Wrap(errors.New("a text search is sorted by relevance"))
 		}
-		return sessionQuery{}, errors.New("only a text search is sorted by relevance")
+		return sessionQuery{}, stack.Wrap(errors.New("only a text search is sorted by relevance"))
 	}
 
 	if requested := string(value(filter.UserID)); requested != "" {
 		if KindFrom(ctx) != auth.KindServer {
-			return sessionQuery{}, errors.New("only a server-side caller may list another user's sessions")
+			return sessionQuery{}, stack.Wrap(errors.New("only a server-side caller may list another user's sessions"))
 		}
 		query.filter.UserID = requested
 	}
@@ -246,7 +290,7 @@ func sessionQueryOf(ctx context.Context, sent SessionQuery) (sessionQuery, error
 	}
 	if cursor != nil {
 		if cursor.Sort != query.sort {
-			return sessionQuery{}, errBadCursor
+			return sessionQuery{}, stack.Wrap(errBadCursor)
 		}
 		query.filter.Cursor = &cursor.SessionPosition
 	}
@@ -261,4 +305,11 @@ func sessionPageOf(found []session.Found, limit int, sort SessionSortField) Sess
 		rendered.NextCursor = encodeCursor(sessionCursor{kept[len(kept)-1].Position(), sort})
 	}
 	return rendered
+}
+
+// SessionPage is the SessionPage schema.
+type SessionPage struct {
+	HasMore    bool      `json:"has_more"`
+	Items      []Session `json:"items" nullable:"false"`
+	NextCursor *string   "json:\"next_cursor,omitempty\" doc:\"Pass as `cursor` for the next page. Absent on the last one.\""
 }

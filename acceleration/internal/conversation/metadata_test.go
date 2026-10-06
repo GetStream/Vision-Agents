@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 )
 
 // DisplaySuite covers what a conversation's Chat messages show end users: the steps of the
@@ -26,8 +27,7 @@ func TestDisplaySuite(t *testing.T) {
 
 func (s *DisplaySuite) SetupTest() {
 	db, client := newChat(s.T())
-	service, err := NewForChat(s.T().TempDir(), client)
-	s.Require().NoError(err)
+	service := NewForChat(client)
 	s.T().Cleanup(service.Close)
 	s.db, s.service = db, service
 }
@@ -194,6 +194,29 @@ func (s *DisplaySuite) TestAVisibleToolsCitationsReachChatAndAHiddenOnesDoNot() 
 	s.NotContains(raw, "internal")
 }
 
+func (s *DisplaySuite) TestAnApprovalReachesTheCommandsReply() {
+	c := s.open("athena")
+	c.DescribeTools(map[string]ToolDisplay{"athena_device_location": {Title: "Checking your location", Client: true,
+		Approval: &ToolApproval{Title: "Share your location?", ReasonArgument: "purpose"}}})
+	_, err := c.BeginCommand("command-a", "What's the weather here?", "ios-1")
+	s.Require().NoError(err)
+	c.BindTurn("command-a", "turn-a")
+	c.Observe(agent.Responding{TurnID: "turn-a"})
+	c.Observe(agent.ToolStarted{ID: "toolu_01A", TurnID: "turn-a", Tool: "athena_device_location",
+		Arguments: `{"purpose":"to check the weather"}`, StartedAt: time.Now().UTC()})
+	part := current(c).Parts[0]
+	s.Equal("awaiting_approval", part.Status)
+	s.Equal("employee", part.TargetUserID)
+	s.Equal("ios-1", part.TargetClientID)
+	s.Equal("to check the weather", part.Approval.Reason)
+
+	c.Observe(agent.ToolApprovalDecided{ID: "toolu_01A", TurnID: "turn-other", Allowed: true})
+	s.Equal("awaiting_approval", current(c).Parts[0].Status, "an answer for another turn changes nothing")
+	c.Observe(agent.ToolApprovalDecided{ID: "toolu_01A", TurnID: "turn-a", Allowed: true})
+	s.Equal("awaiting_client", current(c).Parts[0].Status)
+	s.Equal("allowed", current(c).Parts[0].Approval.Decision)
+}
+
 func (s *DisplaySuite) TestRevisionsIgnoreDuplicateLateAndCrossCommandEvents() {
 	c := s.open("athena")
 	_, err := c.BeginCommand("command-a", "First question", "")
@@ -357,6 +380,63 @@ func (s *DisplaySuite) TestAVisibleToolsStoredArtifactIsAttachedToTheReplyAndRes
 	s.Require().NoError(err)
 	s.Require().Len(page.Messages, 2)
 	s.Equal([]ArtifactAttachment{{Type: "canvas", ArtifactID: "canvas_01", Revision: 1, Title: "Analysis"}}, page.Messages[1].Artifacts)
+}
+
+func (s *DisplaySuite) TestALoginAPluginAsksForIsAttachedToTheReplyAndRestored() {
+	c := s.open("on_call")
+	c.AcceptLogins([]string{"google_calendar"})
+	receipt, err := c.BeginCommand("command-a", "When am I free?", "")
+	s.Require().NoError(err)
+	calendar, ok := plugins.Lookup("google_calendar")
+	s.Require().True(ok)
+	logo := (&plugins.Auth{PublicURL: "https://router.example"}).LogoURL(calendar.ID)
+	asking := plugins.AuthorizationResult(calendar, "https://accounts.google.com/o/oauth2/v2/auth?state=s1", logo)
+
+	// Shown whether or not the tool's steps are: nobody can finish a login they never see.
+	c.Observe(agent.ToolStarted{ID: "list", Tool: "google_calendar__list_tools", StartedAt: time.Now().UTC()})
+	c.Observe(agent.ToolRan{ID: "list", Tool: "google_calendar__list_tools", Result: asking})
+	// A tool of somebody else's that answers the same is not a plugin asking for its login.
+	c.Observe(agent.ToolStarted{ID: "own", Tool: "weather", StartedAt: time.Now().UTC()})
+	c.Observe(agent.ToolRan{ID: "own", Tool: "weather", Result: strings.ReplaceAll(asking, "s1", "s2")})
+	// Nor is a server that has no login, whatever its tool is called.
+	notes := plugins.Plugin{ID: "notes", Name: "notes", ByURL: true}
+	c.Observe(agent.ToolStarted{ID: "notes", Tool: "notes__list_tools", StartedAt: time.Now().UTC()})
+	c.Observe(agent.ToolRan{ID: "notes", Tool: "notes__list_tools",
+		Result: plugins.AuthorizationResult(notes, "https://evil.example/authorize?state=s3", "")})
+	c.Observe(agent.Responded{})
+	saved(s.T(), c)
+
+	raw := s.raw(receipt.AssistantMessageID)
+	s.NotContains(raw, "state=s2")
+	s.NotContains(raw, "state=s3")
+	var reply struct {
+		Attachments []map[string]any `json:"attachments"`
+	}
+	s.Require().NoError(json.Unmarshal([]byte(raw), &reply))
+	s.Require().NotEmpty(reply.Attachments)
+	button := reply.Attachments[len(reply.Attachments)-1]
+	s.Equal(plugins.AuthorizationType, button["type"])
+	s.Equal("Connect Google Calendar", button["title"])
+	s.Equal(map[string]any{
+		"plugin_id":     "google_calendar",
+		"authorize_url": "https://accounts.google.com/o/oauth2/v2/auth?state=s1",
+	}, button["custom"])
+	// Chat's own fields, so a client that has never heard of this type still shows a card
+	// with the plugin's logo, what it is for and a link somebody can press.
+	s.Equal(calendar.Description, button["text"])
+	s.Equal(logo, button["thumb_url"])
+	s.Equal("https://accounts.google.com/o/oauth2/v2/auth?state=s1", button["title_link"])
+	c.Release()
+	page, err := s.service.HistoryForCaller(s.T().Context(), "customer", "on_call", c.CID(), "", "employee")
+	s.Require().NoError(err)
+	s.Require().Len(page.Messages, 2)
+	s.Equal([]plugins.Authorization{{
+		Type: plugins.AuthorizationType, PluginID: "google_calendar", Title: "Connect Google Calendar",
+		AuthorizeURL: "https://accounts.google.com/o/oauth2/v2/auth?state=s1",
+		Text:         calendar.Description,
+		ThumbURL:     logo,
+		TitleLink:    "https://accounts.google.com/o/oauth2/v2/auth?state=s1",
+	}}, page.Messages[1].Authorizations)
 }
 
 func (s *DisplaySuite) open(agentID string) *Conversation {
