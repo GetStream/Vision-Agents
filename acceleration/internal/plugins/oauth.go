@@ -14,6 +14,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Auth is the OAuth 2.1 + PKCE client used to connect a hosted MCP server.
@@ -80,7 +82,7 @@ func (a *Auth) StartAuthorize(ctx context.Context, plugin Plugin, instance strin
 		return Pending{}, err
 	}
 	if meta.AuthorizationEndpoint == "" || meta.TokenEndpoint == "" {
-		return Pending{}, fmt.Errorf("plugins: %s did not advertise oauth endpoints", plugin.ID)
+		return Pending{}, stack.Wrap(fmt.Errorf("plugins: %s did not advertise oauth endpoints", plugin.ID))
 	}
 
 	clientID := ""
@@ -95,13 +97,13 @@ func (a *Auth) StartAuthorize(ctx context.Context, plugin Plugin, instance strin
 		clientID = registered.ClientID
 	}
 	if clientID == "" && plugin.ByURL {
-		return Pending{}, fmt.Errorf("plugins: %s does not advertise dynamic client registration", plugin.Name)
+		return Pending{}, stack.Wrap(fmt.Errorf("plugins: %s does not advertise dynamic client registration", plugin.Name))
 	}
 	if clientID == "" {
-		return Pending{}, fmt.Errorf(
+		return Pending{}, stack.Wrap(fmt.Errorf(
 			"plugins: %s needs %s_MCP_CLIENT_ID (it does not advertise dynamic registration)",
 			plugin.Name, strings.ToUpper(plugin.ID),
-		)
+		))
 	}
 
 	verifier, challenge, err := pkce()
@@ -189,7 +191,7 @@ func (a *Auth) Exchange(ctx context.Context, pending Pending, code string) (Toke
 // Refresh renews an access token. Empty refresh token is a no-op miss.
 func (a *Auth) Refresh(ctx context.Context, pluginID, tokenEndpoint, clientID, refreshToken string) (Token, error) {
 	if refreshToken == "" || tokenEndpoint == "" {
-		return Token{}, fmt.Errorf("plugins: nothing to refresh")
+		return Token{}, stack.Wrap(fmt.Errorf("plugins: nothing to refresh"))
 	}
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
@@ -198,24 +200,24 @@ func (a *Auth) Refresh(ctx context.Context, pluginID, tokenEndpoint, clientID, r
 	setClientSecret(form, pluginID, clientID)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {
-		return Token{}, err
+		return Token{}, stack.Wrap(err)
 	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response, err := a.client().Do(request)
 	if err != nil {
-		return Token{}, err
+		return Token{}, stack.Wrap(err)
 	}
 	defer response.Body.Close()
 	raw, err := io.ReadAll(response.Body)
 	if err != nil {
-		return Token{}, err
+		return Token{}, stack.Wrap(err)
 	}
 	var body tokenResponse
 	if err := json.Unmarshal(raw, &body); err != nil {
-		return Token{}, err
+		return Token{}, stack.Wrap(err)
 	}
 	if body.AccessToken == "" {
-		return Token{}, fmt.Errorf("plugins: refresh: %s", or(body.ErrorDesc, "no access token"))
+		return Token{}, stack.Wrap(fmt.Errorf("plugins: refresh: %s", or(body.ErrorDesc, "no access token")))
 	}
 	token := Token{AccessToken: body.AccessToken, RefreshToken: or(body.RefreshToken, refreshToken)}
 	if body.ExpiresIn > 0 {
@@ -289,11 +291,11 @@ func (a *Auth) NeedsLogin(ctx context.Context, endpoint string) (bool, error) {
 	}
 	response, err := unauthenticated(ctx, transport, endpoint)
 	if err != nil {
-		return false, err
+		return false, stack.Wrap(err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode >= http.StatusInternalServerError {
-		return false, fmt.Errorf("plugins: %s: %s", endpoint, response.Status)
+		return false, stack.Wrap(fmt.Errorf("plugins: %s: %s", endpoint, response.Status))
 	}
 	return response.StatusCode == http.StatusUnauthorized && response.Header.Get("WWW-Authenticate") != "", nil
 }
@@ -358,7 +360,7 @@ func (a *Auth) discoverServer(ctx context.Context, transport *http.Client, issue
 		}
 		return meta, nil
 	}
-	return authServer{}, fmt.Errorf("plugins: oauth discovery: %w", failure)
+	return authServer{}, stack.Wrap(fmt.Errorf("plugins: oauth discovery: %w", failure))
 }
 
 func (a *Auth) register(ctx context.Context, transport *http.Client, endpoint string) (registration, error) {
@@ -370,31 +372,31 @@ func (a *Auth) register(ctx context.Context, transport *http.Client, endpoint st
 		"token_endpoint_auth_method": "none",
 	})
 	if err != nil {
-		return registration{}, err
+		return registration{}, stack.Wrap(err)
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(payload)))
 	if err != nil {
-		return registration{}, err
+		return registration{}, stack.Wrap(err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	response, err := transport.Do(request)
 	if err != nil {
-		return registration{}, fmt.Errorf("plugins: register: %w", err)
+		return registration{}, stack.Wrap(fmt.Errorf("plugins: register: %w", err))
 	}
 	defer response.Body.Close()
 	raw, err := io.ReadAll(response.Body)
 	if err != nil {
-		return registration{}, err
+		return registration{}, stack.Wrap(err)
 	}
 	if response.StatusCode >= 300 {
-		return registration{}, fmt.Errorf("plugins: register: %s", strings.TrimSpace(string(raw)))
+		return registration{}, stack.Wrap(fmt.Errorf("plugins: register: %s", strings.TrimSpace(string(raw))))
 	}
 	var body registration
 	if err := json.Unmarshal(raw, &body); err != nil {
-		return registration{}, err
+		return registration{}, stack.Wrap(err)
 	}
 	if body.ClientID == "" {
-		return registration{}, fmt.Errorf("plugins: register: no client id")
+		return registration{}, stack.Wrap(fmt.Errorf("plugins: register: no client id"))
 	}
 	return body, nil
 }
@@ -417,18 +419,18 @@ func setClientSecret(form url.Values, pluginID, clientID string) {
 func getJSON(ctx context.Context, transport *http.Client, url string, target any) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	request.Header.Set("Accept", "application/json")
 	response, err := transport.Do(request)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode >= 300 {
-		return fmt.Errorf("%s: %s", url, response.Status)
+		return stack.Wrap(fmt.Errorf("%s: %s", url, response.Status))
 	}
-	return json.NewDecoder(response.Body).Decode(target)
+	return stack.Wrap(json.NewDecoder(response.Body).Decode(target))
 }
 
 // resourceMetadataLink is the resource_metadata the server's WWW-Authenticate names when it
@@ -455,17 +457,21 @@ func unauthenticated(ctx context.Context, transport *http.Client, endpoint strin
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint,
 		strings.NewReader(`{"jsonrpc":"2.0","id":0,"method":"ping"}`))
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json, text/event-stream")
-	return transport.Do(request)
+	response, err := transport.Do(request)
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	return response, nil
 }
 
 func pkce() (verifier, challenge string, err error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
-		return "", "", err
+		return "", "", stack.Wrap(err)
 	}
 	verifier = base64.RawURLEncoding.EncodeToString(raw)
 	sum := sha256.Sum256([]byte(verifier))
@@ -475,7 +481,7 @@ func pkce() (verifier, challenge string, err error) {
 func randomHex(n int) (string, error) {
 	raw := make([]byte, n)
 	if _, err := rand.Read(raw); err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 	return hex.EncodeToString(raw), nil
 }

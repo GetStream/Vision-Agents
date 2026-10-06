@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/inworld"
 )
 
@@ -52,13 +53,13 @@ func (i *Inworld) List(ctx context.Context) ([]Library, error) {
 	address := strings.TrimSuffix(i.options.BaseURL, "/") + "/voices/v1/voices"
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	request.Header.Set("Authorization", "Basic "+i.options.APIKey)
 
 	response, err := i.client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("voices: inworld list: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("voices: inworld list: %w", err))
 	}
 	defer response.Body.Close()
 
@@ -78,7 +79,7 @@ func (i *Inworld) List(ctx context.Context) ([]Library, error) {
 		} `json:"voices"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&listed); err != nil {
-		return nil, fmt.Errorf("voices: inworld list: decode: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("voices: inworld list: decode: %w", err))
 	}
 
 	found := make([]Library, 0, len(listed.Voices))
@@ -118,13 +119,13 @@ func (i *Inworld) Preview(ctx context.Context, id string) (Speech, error) {
 		"?voice_id=" + url.QueryEscape(id) + "&model_id=" + url.QueryEscape(inworld.DefaultModel)
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
-		return Speech{}, err
+		return Speech{}, stack.Wrap(err)
 	}
 	request.Header.Set("Authorization", "Basic "+i.options.APIKey)
 
 	response, err := i.client.Do(request)
 	if err != nil {
-		return Speech{}, fmt.Errorf("voices: inworld preview: %w", err)
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: inworld preview: %w", err))
 	}
 	defer response.Body.Close()
 
@@ -135,14 +136,14 @@ func (i *Inworld) Preview(ctx context.Context, id string) (Speech, error) {
 		AudioContent string `json:"audioContent"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&preview); err != nil {
-		return Speech{}, fmt.Errorf("voices: inworld preview: decode: %w", err)
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: inworld preview: decode: %w", err))
 	}
 	audio, err := base64.StdEncoding.DecodeString(preview.AudioContent)
 	if err != nil {
-		return Speech{}, fmt.Errorf("voices: inworld preview: decode audio: %w", err)
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: inworld preview: decode audio: %w", err))
 	}
 	if len(audio) == 0 {
-		return Speech{}, fmt.Errorf("voices: inworld has no sample of %s", id)
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: inworld has no sample of %s", id))
 	}
 	return Speech{Audio: audio, ContentType: "audio/mpeg"}, nil
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -88,10 +89,10 @@ func (r *Runner) Start(ctx context.Context, customerID, id string) error {
 		return err
 	}
 	if campaign.ConfigID == "" {
-		return errors.New("campaign: a campaign needs an agent config to make its calls with")
+		return stack.Wrap(errors.New("campaign: a campaign needs an agent config to make its calls with"))
 	}
 	if campaign.FromNumber == "" {
-		return errors.New("campaign: a campaign needs one of your numbers to call from")
+		return stack.Wrap(errors.New("campaign: a campaign needs one of your numbers to call from"))
 	}
 	// The config is read once, here, rather than per call: a campaign is one agent
 	// ringing many people, and editing it halfway through should not change who they
@@ -104,7 +105,7 @@ func (r *Runner) Start(ctx context.Context, customerID, id string) error {
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
-		return errors.New("campaign: the runner is shut down")
+		return stack.Wrap(errors.New("campaign: the runner is shut down"))
 	}
 	if _, already := r.running[campaign.ID]; already {
 		r.mu.Unlock()

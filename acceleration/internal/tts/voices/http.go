@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // defaultTimeout bounds a clone. It is generous because the providers read the whole
@@ -36,23 +38,23 @@ func (f *form) field(name, value string) error {
 	if value == "" {
 		return nil
 	}
-	return f.writer.WriteField(name, value)
+	return stack.Wrap(f.writer.WriteField(name, value))
 }
 
 // file adds a recording under a field name.
 func (f *form) file(field string, sample Sample) error {
 	part, err := f.writer.CreateFormFile(field, sample.Name)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	_, err = part.Write(sample.Content)
-	return err
+	return stack.Wrap(err)
 }
 
 // done closes the body and reports the content type that describes it.
 func (f *form) done() (io.Reader, string, error) {
 	if err := f.writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", stack.Wrap(err)
 	}
 	return &f.body, f.writer.FormDataContentType(), nil
 }
@@ -77,18 +79,18 @@ func speak(
 ) (Speech, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return Speech{}, err
+		return Speech{}, stack.Wrap(err)
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return Speech{}, err
+		return Speech{}, stack.Wrap(err)
 	}
 	request.Header = header
 	request.Header.Set("Content-Type", "application/json")
 
 	response, err := httpClient.Do(request)
 	if err != nil {
-		return Speech{}, fmt.Errorf("voices: %s speak: %w", provider, err)
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: %s speak: %w", provider, err))
 	}
 	defer response.Body.Close()
 
@@ -97,10 +99,10 @@ func speak(
 	}
 	audio, err := io.ReadAll(response.Body)
 	if err != nil {
-		return Speech{}, fmt.Errorf("voices: %s speak: %w", provider, err)
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: %s speak: %w", provider, err))
 	}
 	if len(audio) == 0 {
-		return Speech{}, fmt.Errorf("voices: %s answered with no audio", provider)
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: %s answered with no audio", provider))
 	}
 	return Speech{Audio: audio, ContentType: contentType}, nil
 }
@@ -117,7 +119,7 @@ func fetchPreview(
 ) (Speech, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return Speech{}, err
+		return Speech{}, stack.Wrap(err)
 	}
 	if header != nil {
 		request.Header = header
@@ -125,7 +127,7 @@ func fetchPreview(
 
 	response, err := httpClient.Do(request)
 	if err != nil {
-		return Speech{}, fmt.Errorf("voices: %s preview: %w", provider, err)
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: %s preview: %w", provider, err))
 	}
 	defer response.Body.Close()
 
@@ -134,10 +136,10 @@ func fetchPreview(
 	}
 	audio, err := io.ReadAll(response.Body)
 	if err != nil {
-		return Speech{}, fmt.Errorf("voices: %s preview: %w", provider, err)
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: %s preview: %w", provider, err))
 	}
 	if len(audio) == 0 {
-		return Speech{}, fmt.Errorf("voices: %s answered with no audio", provider)
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: %s answered with no audio", provider))
 	}
 	// Only a label that claims to be audio is believed: ElevenLabs serves its samples from
 	// a bucket that calls every one of them text/plain, and a browser handed that plays
@@ -163,6 +165,6 @@ func labelTags(labels map[string]string, keys ...string) []string {
 // is the only thing that makes a rejected clone actionable.
 func refused(provider string, response *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
-	return fmt.Errorf("voices: %s refused the voice (http %d): %s",
-		provider, response.StatusCode, bytes.TrimSpace(body))
+	return stack.Wrap(fmt.Errorf("voices: %s refused the voice (http %d): %s",
+		provider, response.StatusCode, bytes.TrimSpace(body)))
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -480,7 +481,7 @@ func (s *Server) upsertSkills(ctx context.Context, customerID, configID string, 
 		// repeat the config id per skill and it is filled in here.
 		skill.ConfigId = configID
 		if message, ok := skillComplaint(skill); !ok {
-			return errors.New(message)
+			return stack.Wrap(errors.New(message))
 		}
 		names = append(names, strings.TrimSpace(skill.Name))
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -756,8 +757,8 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 		parentID = parent.Live.ID()
 		wasText = spec.Text
 		if spec.Incognito {
-			return session.Spec{}, errors.New(
-				"an incognito session is not recorded, so there is nothing to fork from")
+			return session.Spec{}, stack.Wrap(errors.New(
+				"an incognito session is not recorded, so there is nothing to fork from"))
 		}
 		if spec.ConversationID != "" {
 			recall = &session.Recall{AgentID: spec.AgentID, ConversationID: spec.ConversationID}
@@ -777,7 +778,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 			recall = &session.Recall{AgentID: row.AgentID, ConversationID: row.ConversationID}
 		}
 	default:
-		return session.Spec{}, errors.New("there is nothing to fork")
+		return session.Spec{}, stack.Wrap(errors.New("there is nothing to fork"))
 	}
 
 	// A config named on the fork replaces the parent's models wholesale rather than merging
@@ -813,9 +814,9 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 	spec.CallID = value(request.CallId)
 	switch {
 	case wasText && spec.CallID != "":
-		return session.Spec{}, errors.New("a text session cannot be forked into a call")
+		return session.Spec{}, stack.Wrap(errors.New("a text session cannot be forked into a call"))
 	case !wasText && spec.CallID == "":
-		return session.Spec{}, errors.New("forking a voice session needs a call to join")
+		return session.Spec{}, stack.Wrap(errors.New("forking a voice session needs a call to join"))
 	}
 
 	// History comes across by default: the usual reason to fork is to carry on from what was
@@ -846,11 +847,11 @@ func (s *Server) recordedHistory(ctx context.Context, parent session.Found, requ
 	responseID := value(request.ResponseId)
 	switch {
 	case responseID != "" && !carry:
-		return nil, errForkNeedsHistory
+		return nil, stack.Wrap(errForkNeedsHistory)
 	case responseID == "" && (!carry || recall != nil):
 		return nil, nil
 	case s.store == nil && responseID != "":
-		return nil, errNoRecords
+		return nil, stack.Wrap(errNoRecords)
 	case s.store == nil:
 		return nil, nil
 	}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Disposition says what to do with a stable transcript revision.
@@ -156,10 +157,10 @@ func newFlow(model *llmrouter.Session, emitter *Emitter, logger *slog.Logger) *f
 
 func (f *flow) Decide(turn FlowTurn) error {
 	if strings.TrimSpace(turn.ID) == "" {
-		return errors.New("harness: a flow candidate id is required")
+		return stack.Wrap(errors.New("harness: a flow candidate id is required"))
 	}
 	if strings.TrimSpace(turn.Text) == "" {
-		return errors.New("harness: flow candidate text is required")
+		return stack.Wrap(errors.New("harness: flow candidate text is required"))
 	}
 
 	deadline := flowDeadline

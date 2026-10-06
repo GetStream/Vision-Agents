@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -193,7 +194,7 @@ func Open(secrets *auth.Sealer, stored store.ChannelAccount) (Account, error) {
 		AccountID: stored.AccountID,
 	}
 	if secrets == nil || len(stored.SecretsSealed) == 0 {
-		return account, errors.New("channels: this line has no stored credentials")
+		return account, stack.Wrap(errors.New("channels: this line has no stored credentials"))
 	}
 	raw, err := secrets.OpenWithAADVersion(stored.SecretsSealed,
 		[]byte(stored.CustomerID), stored.SecretsKEKVersion)
@@ -202,7 +203,7 @@ func Open(secrets *auth.Sealer, stored store.ChannelAccount) (Account, error) {
 	}
 	var opened Secrets
 	if err := json.Unmarshal([]byte(raw), &opened); err != nil {
-		return account, err
+		return account, stack.Wrap(err)
 	}
 	account.Token = opened.Token
 	account.Signing = opened.Signing
@@ -458,7 +459,7 @@ func linkCode() (string, error) {
 	for i := range digits {
 		drawn, err := rand.Int(rand.Reader, big.NewInt(10))
 		if err != nil {
-			return "", fmt.Errorf("channels: minting a code: %w", err)
+			return "", stack.Wrap(fmt.Errorf("channels: minting a code: %w", err))
 		}
 		digits[i] = byte('0' + drawn.Int64())
 	}

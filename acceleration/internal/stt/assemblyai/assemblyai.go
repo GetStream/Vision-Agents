@@ -33,6 +33,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -175,7 +176,7 @@ func New(options Options) (*STT, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, fmt.Errorf("assemblyai: api key is required (set %s)", apiKeyEnvVar)
+		return nil, stack.Wrap(fmt.Errorf("assemblyai: api key is required (set %s)", apiKeyEnvVar))
 	}
 	if options.Model == "" {
 		options.Model = DefaultModel
@@ -184,7 +185,7 @@ func New(options Options) (*STT, error) {
 		options.URL = DefaultURL
 	}
 	if !strings.HasPrefix(options.URL, "ws://") && !strings.HasPrefix(options.URL, "wss://") {
-		return nil, fmt.Errorf("assemblyai: url must be ws:// or wss://, got %s", options.URL)
+		return nil, stack.Wrap(fmt.Errorf("assemblyai: url must be ws:// or wss://, got %s", options.URL))
 	}
 	if options.Mode == "" {
 		options.Mode = DefaultMode
@@ -192,18 +193,18 @@ func New(options Options) (*STT, error) {
 	switch options.Mode {
 	case ModeMinLatency, ModeBalanced, ModeMaxAccuracy:
 	default:
-		return nil, fmt.Errorf("assemblyai: mode must be %s, %s or %s, got %s",
-			ModeMinLatency, ModeBalanced, ModeMaxAccuracy, options.Mode)
+		return nil, stack.Wrap(fmt.Errorf("assemblyai: mode must be %s, %s or %s, got %s",
+			ModeMinLatency, ModeBalanced, ModeMaxAccuracy, options.Mode))
 	}
 	options.Keyterms = stt.CleanKeyterms(options.Keyterms)
 	if len(options.Keyterms) > maxKeyterms {
-		return nil, fmt.Errorf("assemblyai: at most %d keyterms, got %d",
-			maxKeyterms, len(options.Keyterms))
+		return nil, stack.Wrap(fmt.Errorf("assemblyai: at most %d keyterms, got %d",
+			maxKeyterms, len(options.Keyterms)))
 	}
 	for _, term := range options.Keyterms {
 		if len([]rune(term)) > maxKeytermRunes {
-			return nil, fmt.Errorf("assemblyai: keyterms are at most %d characters, got %q",
-				maxKeytermRunes, term)
+			return nil, stack.Wrap(fmt.Errorf("assemblyai: keyterms are at most %d characters, got %q",
+				maxKeytermRunes, term))
 		}
 	}
 	if options.HandshakeTimeout == 0 {
@@ -230,7 +231,7 @@ func (s *STT) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
-		return errors.New("assemblyai: already started")
+		return stack.Wrap(errors.New("assemblyai: already started"))
 	}
 	s.started = true
 	s.mu.Unlock()
@@ -241,9 +242,9 @@ func (s *STT) Start(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, s.endpoint(), header)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("assemblyai: dial: %w (http %d)", err, response.StatusCode)
+			return stack.Wrap(fmt.Errorf("assemblyai: dial: %w (http %d)", err, response.StatusCode))
 		}
-		return fmt.Errorf("assemblyai: dial: %w", err)
+		return stack.Wrap(fmt.Errorf("assemblyai: dial: %w", err))
 	}
 	s.conn = conn
 
@@ -350,36 +351,36 @@ func (s *STT) endpoint() string {
 // rather than as a refused upgrade.
 func (s *STT) handshake() error {
 	if err := s.conn.SetReadDeadline(time.Now().Add(s.options.HandshakeTimeout)); err != nil {
-		return fmt.Errorf("assemblyai: read handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("assemblyai: read handshake: %w", err))
 	}
 	_, raw, err := s.conn.ReadMessage()
 	if err != nil {
-		return fmt.Errorf("assemblyai: read handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("assemblyai: read handshake: %w", err))
 	}
 	if err := s.conn.SetReadDeadline(time.Time{}); err != nil {
-		return fmt.Errorf("assemblyai: read handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("assemblyai: read handshake: %w", err))
 	}
 
 	var message serverMessage
 	if err := json.Unmarshal(raw, &message); err != nil {
-		return fmt.Errorf("assemblyai: decode handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("assemblyai: decode handshake: %w", err))
 	}
 	switch message.Type {
 	case eventBegin:
 	case eventError:
-		return fmt.Errorf("assemblyai: session refused: %s", message.failure())
+		return stack.Wrap(fmt.Errorf("assemblyai: session refused: %s", message.failure()))
 	default:
-		return fmt.Errorf("assemblyai: expected %q, got %q", eventBegin, message.Type)
+		return stack.Wrap(fmt.Errorf("assemblyai: expected %q, got %q", eventBegin, message.Type))
 	}
 
 	applied := message.Configuration
 	if applied.Model != s.options.Model {
-		return fmt.Errorf("assemblyai: asked for model %s and the server opened %s",
-			s.options.Model, applied.Model)
+		return stack.Wrap(fmt.Errorf("assemblyai: asked for model %s and the server opened %s",
+			s.options.Model, applied.Model))
 	}
 	if applied.Mode != s.options.Mode {
-		return fmt.Errorf("assemblyai: asked for mode %s and the server applied %s",
-			s.options.Mode, applied.Mode)
+		return stack.Wrap(fmt.Errorf("assemblyai: asked for mode %s and the server applied %s",
+			s.options.Mode, applied.Mode))
 	}
 	return nil
 }

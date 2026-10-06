@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Manifest is one connector's definition as data: what a scheme, a tool source and the resolver
@@ -504,7 +506,7 @@ func (m Manifest) Validate() error {
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("manifest %q: %w", m.ID, errors.Join(errs...))
+		return stack.Wrap(fmt.Errorf("manifest %q: %w", m.ID, errors.Join(errs...)))
 	}
 	return nil
 }
@@ -515,12 +517,12 @@ func (m Manifest) Validate() error {
 // it is.
 func (m Manifest) Resolve(scheme string, inputs, metadata map[string]string) (ResolvedManifest, error) {
 	if !slices.Contains(m.Schemes, scheme) {
-		return ResolvedManifest{}, fmt.Errorf("manifest %q: scheme %q is not one of %v", m.ID, scheme, m.Schemes)
+		return ResolvedManifest{}, stack.Wrap(fmt.Errorf("manifest %q: scheme %q is not one of %v", m.ID, scheme, m.Schemes))
 	}
 	resolved := map[string]string{}
 	for _, name := range slices.Sorted(maps.Keys(inputs)) {
 		if !slices.ContainsFunc(m.Inputs, func(in Input) bool { return in.Name == name }) {
-			return ResolvedManifest{}, fmt.Errorf("manifest %q: input %q is not declared", m.ID, name)
+			return ResolvedManifest{}, stack.Wrap(fmt.Errorf("manifest %q: input %q is not declared", m.ID, name))
 		}
 	}
 	for _, in := range m.Inputs {
@@ -529,16 +531,16 @@ func (m Manifest) Resolve(scheme string, inputs, metadata map[string]string) (Re
 			value = in.Default
 		}
 		if value == "" {
-			return ResolvedManifest{}, fmt.Errorf("manifest %q: input %q is required", m.ID, in.Name)
+			return ResolvedManifest{}, stack.Wrap(fmt.Errorf("manifest %q: input %q is required", m.ID, in.Name))
 		}
 		if err := in.check(value); err != nil {
-			return ResolvedManifest{}, fmt.Errorf("manifest %q: %w", m.ID, err)
+			return ResolvedManifest{}, stack.Wrap(fmt.Errorf("manifest %q: %w", m.ID, err))
 		}
 		resolved[in.Name] = value
 	}
 	for _, name := range slices.Sorted(maps.Keys(metadata)) {
 		if !slices.ContainsFunc(m.Capture, func(rule CaptureRule) bool { return rule.Name == name }) {
-			return ResolvedManifest{}, fmt.Errorf("manifest %q: metadata %q is not captured by this manifest", m.ID, name)
+			return ResolvedManifest{}, stack.Wrap(fmt.Errorf("manifest %q: metadata %q is not captured by this manifest", m.ID, name))
 		}
 	}
 
@@ -546,7 +548,7 @@ func (m Manifest) Resolve(scheme string, inputs, metadata map[string]string) (Re
 	for _, role := range slices.Sorted(maps.Keys(m.Endpoints)) {
 		endpoint, complete, err := m.render(m.Endpoints[role], resolved, metadata)
 		if err != nil {
-			return ResolvedManifest{}, fmt.Errorf("manifest %q: endpoints.%s: %w", m.ID, role, err)
+			return ResolvedManifest{}, stack.Wrap(fmt.Errorf("manifest %q: endpoints.%s: %w", m.ID, role, err))
 		}
 		if complete {
 			endpoints[role] = endpoint
@@ -658,10 +660,10 @@ func (m ResolvedManifest) Apply(query url.Values, tokenResponse json.RawMessage)
 // check is whether a value is allowed for this input.
 func (in Input) check(value string) error {
 	if len(in.Enum) > 0 && !slices.Contains(in.Enum, value) {
-		return fmt.Errorf("input %q: %q is not one of %v", in.Name, value, in.Enum)
+		return stack.Wrap(fmt.Errorf("input %q: %q is not one of %v", in.Name, value, in.Enum))
 	}
 	if in.Pattern != "" && !regexp.MustCompile(`^(?:`+in.Pattern+`)$`).MatchString(value) {
-		return fmt.Errorf("input %q: %q does not match %s", in.Name, value, in.Pattern)
+		return stack.Wrap(fmt.Errorf("input %q: %q does not match %s", in.Name, value, in.Pattern))
 	}
 	return nil
 }
@@ -670,7 +672,7 @@ func (in Input) check(value string) error {
 // declares, and whether the template can only become an https URL.
 func (m Manifest) checkTemplate(template string, inputs map[string]Input, captures map[string]CaptureRule) error {
 	if strings.ContainsAny(placeholder.ReplaceAllString(template, ""), "{}") {
-		return fmt.Errorf("%q has a brace outside a {name} placeholder", template)
+		return stack.Wrap(fmt.Errorf("%q has a brace outside a {name} placeholder", template))
 	}
 	matches := placeholder.FindAllStringSubmatchIndex(template, -1)
 	// authorityEnd is where the host and port end: the first slash after https://, or the
@@ -685,10 +687,10 @@ func (m Manifest) checkTemplate(template string, inputs map[string]Input, captur
 	case len(matches) > 0 && matches[0][0] == 0:
 		authorityEnd = matches[0][1]
 		if authorityEnd < len(template) && template[authorityEnd] != '/' {
-			return fmt.Errorf("%q: a placeholder that is the whole origin is followed by a path or nothing", template)
+			return stack.Wrap(fmt.Errorf("%q: a placeholder that is the whole origin is followed by a path or nothing", template))
 		}
 	default:
-		return fmt.Errorf("%q does not start with https:// or a placeholder", template)
+		return stack.Wrap(fmt.Errorf("%q does not start with https:// or a placeholder", template))
 	}
 	for _, match := range matches {
 		name := template[match[2]:match[3]]
@@ -696,20 +698,20 @@ func (m Manifest) checkTemplate(template string, inputs map[string]Input, captur
 		if isCaptured {
 			rule, declared := captures[captured]
 			if !declared {
-				return fmt.Errorf("{%s}: %q is not a captured name", name, captured)
+				return stack.Wrap(fmt.Errorf("{%s}: %q is not a captured name", name, captured))
 			}
 			if rule.KeepPath {
-				return fmt.Errorf("{%s}: capture %q keeps its path, so it is a whole URL and never part of a template", name, captured)
+				return stack.Wrap(fmt.Errorf("{%s}: capture %q keeps its path, so it is a whole URL and never part of a template", name, captured))
 			}
 			if match[0] < authorityEnd {
 				if rule.From == FromCallbackQuery {
-					return fmt.Errorf("{%s} would pick the host from the callback query, which the browser controls", name)
+					return stack.Wrap(fmt.Errorf("{%s} would pick the host from the callback query, which the browser controls", name))
 				}
 				if match[0] != 0 {
-					return fmt.Errorf("{%s} is in the host: a captured value is either the whole origin or outside the host", name)
+					return stack.Wrap(fmt.Errorf("{%s} is in the host: a captured value is either the whole origin or outside the host", name))
 				}
 				if len(rule.HostSuffixes) == 0 {
-					return fmt.Errorf("{%s} is the whole origin, so capture %q needs host_suffixes", name, captured)
+					return stack.Wrap(fmt.Errorf("{%s} is the whole origin, so capture %q needs host_suffixes", name, captured))
 				}
 			}
 			continue
@@ -717,10 +719,10 @@ func (m Manifest) checkTemplate(template string, inputs map[string]Input, captur
 		_, input := inputs[name]
 		_, isVar := m.Vars[name]
 		if !input && !isVar {
-			return fmt.Errorf("{%s} is not a declared input, a vars entry or a captured name", name)
+			return stack.Wrap(fmt.Errorf("{%s} is not a declared input, a vars entry or a captured name", name))
 		}
 		if match[0] == 0 {
-			return fmt.Errorf("{%s}: only a captured value with host_suffixes can be the whole origin; write https://{%s}", name, name)
+			return stack.Wrap(fmt.Errorf("{%s}: only a captured value with host_suffixes can be the whole origin; write https://{%s}", name, name))
 		}
 	}
 	return nil
@@ -751,15 +753,15 @@ func (m Manifest) render(template string, inputs, metadata map[string]string) (r
 		if match[0] == 0 {
 			i := slices.IndexFunc(m.Capture, func(rule CaptureRule) bool { return metadataPrefix+rule.Name == name })
 			if i < 0 {
-				return "", false, fmt.Errorf("{%s}: only a captured value with host_suffixes can be the whole origin", name)
+				return "", false, stack.Wrap(fmt.Errorf("{%s}: only a captured value with host_suffixes can be the whole origin", name))
 			}
 			if value, err = httpsUnder(value, m.Capture[i].HostSuffixes, false); err != nil {
-				return "", false, fmt.Errorf("{%s}: %w", name, err)
+				return "", false, stack.Wrap(fmt.Errorf("{%s}: %w", name, err))
 			}
 		} else if !unreserved.MatchString(value) {
-			return "", false, fmt.Errorf("{%s}: %q has characters outside RFC 3986 unreserved", name, value)
+			return "", false, stack.Wrap(fmt.Errorf("{%s}: %q has characters outside RFC 3986 unreserved", name, value))
 		} else if isDotSegment(value) {
-			return "", false, fmt.Errorf("{%s}: %q is a dot segment (RFC 3986 section 3.3), which removes part of the path", name, value)
+			return "", false, stack.Wrap(fmt.Errorf("{%s}: %q is a dot segment (RFC 3986 section 3.3), which removes part of the path", name, value))
 		}
 		b.WriteString(value)
 	}
@@ -770,7 +772,7 @@ func (m Manifest) render(template string, inputs, metadata map[string]string) (r
 	parsed, err := url.Parse(rendered)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
 		parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", false, fmt.Errorf("%q is not an https URL without userinfo, query or fragment", rendered)
+		return "", false, stack.Wrap(fmt.Errorf("%q is not an https URL without userinfo, query or fragment", rendered))
 	}
 	return rendered, true, nil
 }
@@ -785,26 +787,26 @@ func httpsUnder(value string, suffixes []string, keepPath bool) (string, error) 
 	if err != nil || parsed.Scheme != "https" || parsed.Opaque != "" || parsed.User != nil ||
 		parsed.Host == "" || parsed.Port() != "" || parsed.RawQuery != "" || parsed.ForceQuery ||
 		strings.Contains(value, "#") {
-		return "", fmt.Errorf("%q is not an https URL without userinfo, port, query or fragment", value)
+		return "", stack.Wrap(fmt.Errorf("%q is not an https URL without userinfo, port, query or fragment", value))
 	}
 	path := strings.TrimSuffix(parsed.EscapedPath(), "/")
 	if !keepPath && path != "" {
-		return "", fmt.Errorf("%q is not an https origin of a host alone", value)
+		return "", stack.Wrap(fmt.Errorf("%q is not an https origin of a host alone", value))
 	}
 	// Checked on the decoded path, since %2e%2e is a dot segment too (RFC 3986 section 6.2.2.2).
 	if slices.ContainsFunc(strings.Split(parsed.Path, "/"), isDotSegment) {
-		return "", fmt.Errorf("%q has a dot segment in its path (RFC 3986 section 3.3)", value)
+		return "", stack.Wrap(fmt.Errorf("%q has a dot segment in its path (RFC 3986 section 3.3)", value))
 	}
 	host := strings.ToLower(parsed.Hostname())
 	if _, err := netip.ParseAddr(host); err == nil {
-		return "", fmt.Errorf("%q is an IP address, not a host name", value)
+		return "", stack.Wrap(fmt.Errorf("%q is an IP address, not a host name", value))
 	}
 	for _, suffix := range suffixes {
 		if strings.HasSuffix(host, suffix) && len(host) > len(suffix) {
 			return "https://" + host + path, nil
 		}
 	}
-	return "", fmt.Errorf("%q is not under %v", value, suffixes)
+	return "", stack.Wrap(fmt.Errorf("%q is not under %v", value, suffixes))
 }
 
 // isDotSegment is whether a value is a path segment that moves up or stays put when a path

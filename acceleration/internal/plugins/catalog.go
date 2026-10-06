@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // The logos are our own plain marks, not the vendors' artwork, so a deployment that has
@@ -169,7 +171,7 @@ func (p Plugin) Configured(options Options) (Plugin, error) {
 	supported := p.ScopesSupported
 	if options.Readonly {
 		if p.ReadonlyURL == "" {
-			return Plugin{}, fmt.Errorf("plugins: %s has no read-only endpoint", p.Name)
+			return Plugin{}, stack.Wrap(fmt.Errorf("plugins: %s has no read-only endpoint", p.Name))
 		}
 		p.URL = p.ReadonlyURL
 		p.Scopes = p.ReadonlyScopes
@@ -178,7 +180,7 @@ func (p Plugin) Configured(options Options) (Plugin, error) {
 	if len(options.Scopes) > 0 {
 		for _, scope := range options.Scopes {
 			if len(supported) > 0 && !slices.Contains(supported, scope) {
-				return Plugin{}, fmt.Errorf("plugins: %s does not accept the scope %q", p.Name, scope)
+				return Plugin{}, stack.Wrap(fmt.Errorf("plugins: %s does not accept the scope %q", p.Name, scope))
 			}
 		}
 		p.Scopes = options.Scopes
@@ -190,7 +192,7 @@ func (p Plugin) Configured(options Options) (Plugin, error) {
 	if len(options.Toolsets) > 0 {
 		for _, toolset := range options.Toolsets {
 			if !slices.Contains(p.Toolsets, toolset) {
-				return Plugin{}, fmt.Errorf("plugins: %s has no toolset %q", p.Name, toolset)
+				return Plugin{}, stack.Wrap(fmt.Errorf("plugins: %s has no toolset %q", p.Name, toolset))
 			}
 		}
 		p.URL += "?toolsets=" + strings.Join(options.Toolsets, ",")
@@ -210,9 +212,9 @@ func (p Plugin) Endpoint(instance string) (string, error) {
 	host = strings.TrimSuffix(host, "/")
 	if host == "" {
 		if p.InstanceHint != "" {
-			return "", fmt.Errorf("plugins: %s needs an instance url: %s", p.Name, p.InstanceHint)
+			return "", stack.Wrap(fmt.Errorf("plugins: %s needs an instance url: %s", p.Name, p.InstanceHint))
 		}
-		return "", fmt.Errorf("plugins: %s needs an instance url", p.Name)
+		return "", stack.Wrap(fmt.Errorf("plugins: %s needs an instance url", p.Name))
 	}
 	return strings.ReplaceAll(p.URL, "{instance}", host), nil
 }

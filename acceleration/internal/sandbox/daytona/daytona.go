@@ -18,6 +18,7 @@ import (
 	"github.com/daytona/clients/sdk-go/pkg/types"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 const apiKeyEnvVar = "DAYTONA_API_KEY"
@@ -59,7 +60,7 @@ func New(o Options) (*Sandbox, error) {
 		o.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if o.APIKey == "" {
-		return nil, errors.New("daytona: DAYTONA_API_KEY is required")
+		return nil, stack.Wrap(errors.New("daytona: DAYTONA_API_KEY is required"))
 	}
 	if o.Timeout <= 0 {
 		o.Timeout = defaultTimeout
@@ -75,7 +76,7 @@ func New(o Options) (*Sandbox, error) {
 	}
 	c, err := sdk.NewClientWithConfig(&types.DaytonaConfig{APIKey: o.APIKey, APIUrl: o.APIURL, HTTPClient: o.HTTPClient})
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	return &Sandbox{client: c, gate: make(chan struct{}, 1), timeout: o.Timeout, runTimeout: o.RunTimeout, config: o.Config}, nil
 }

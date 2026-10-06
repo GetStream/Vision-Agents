@@ -10,6 +10,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // judgeInstructions is what the judging model is told.
@@ -49,7 +50,7 @@ type judgeVerdict struct {
 // every turn.
 func newJudge(ctx context.Context, policy Policy, deps Deps) (Guardrail, error) {
 	if deps.LLM == nil {
-		return nil, errors.New("guardrail: this deployment routes no llm, so it cannot judge a turn")
+		return nil, stack.Wrap(errors.New("guardrail: this deployment routes no llm, so it cannot judge a turn"))
 	}
 
 	target := policy.Target

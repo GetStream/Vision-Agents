@@ -12,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -76,7 +77,7 @@ func (s *Service) AddSample(ctx context.Context, customerID, voiceID string, sam
 		return err
 	}
 	if len(sample.Content) == 0 {
-		return errors.New("voices: a recording with no audio in it is not a recording")
+		return stack.Wrap(errors.New("voices: a recording with no audio in it is not a recording"))
 	}
 
 	key := sampleKey(voice, sample.Name)
@@ -122,7 +123,7 @@ func (s *Service) Prepare(ctx context.Context, customerID, voiceID string, provi
 		sort.Strings(providers)
 	}
 	if len(providers) == 0 {
-		return errors.New("voices: this deployment has no provider that can be given a voice")
+		return stack.Wrap(errors.New("voices: this deployment has no provider that can be given a voice"))
 	}
 
 	for _, provider := range providers {
@@ -187,7 +188,7 @@ func (s *Service) Providers() []string {
 // Speak says a line in the voice through one provider it is ready with.
 func (s *Service) Speak(ctx context.Context, customerID, voiceID, provider, text string) (Speech, error) {
 	if strings.TrimSpace(text) == "" {
-		return Speech{}, errors.New("voices: there is nothing to say")
+		return Speech{}, stack.Wrap(errors.New("voices: there is nothing to say"))
 	}
 	cloner, err := s.cloners.Cloner(provider)
 	if err != nil {
@@ -282,7 +283,7 @@ func (s *Service) request(ctx context.Context, voice store.Voice) (Request, erro
 		return Request{}, err
 	}
 	if len(stored) == 0 {
-		return Request{}, errors.New("voices: add a recording before preparing the voice")
+		return Request{}, stack.Wrap(errors.New("voices: add a recording before preparing the voice"))
 	}
 
 	samples := make([]Sample, 0, len(stored))

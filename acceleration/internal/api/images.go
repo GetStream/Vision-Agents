@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // imageDeadline bounds one generation. A queued provider can hold a job for minutes, and
@@ -77,7 +78,7 @@ func (s *Server) generateImage(ctx context.Context, request *generateImageReques
 func imageRequestOf(body *ImageGenerationRequest) (imagegen.Request, error) {
 	sent := value(body.Options)
 	if sent.N != nil && *sent.N < 1 {
-		return imagegen.Request{}, fmt.Errorf("n must be between 1 and %d", imagegen.MaxImages)
+		return imagegen.Request{}, stack.Wrap(fmt.Errorf("n must be between 1 and %d", imagegen.MaxImages))
 	}
 	drawing := imagegen.Request{
 		Prompt:         body.Prompt,
@@ -92,7 +93,7 @@ func imageRequestOf(body *ImageGenerationRequest) (imagegen.Request, error) {
 		w, widthErr := strconv.Atoi(width)
 		h, heightErr := strconv.Atoi(height)
 		if widthErr != nil || heightErr != nil || w < 1 || h < 1 {
-			return imagegen.Request{}, fmt.Errorf("size %q is not a width and a height such as 1024x1024", size)
+			return imagegen.Request{}, stack.Wrap(fmt.Errorf("size %q is not a width and a height such as 1024x1024", size))
 		}
 		drawing.Width, drawing.Height = w, h
 	}

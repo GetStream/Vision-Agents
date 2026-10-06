@@ -11,6 +11,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -93,7 +94,7 @@ func (s *Server) createGuestUser(ctx context.Context, request *createGuestUserRe
 
 	client, err := getstream.NewClient(s.streamKey, s.streamSecret)
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	role := guestRole
@@ -102,13 +103,13 @@ func (s *Server) createGuestUser(ctx context.Context, request *createGuestUserRe
 			userID: {ID: userID, Name: &name, Role: &role, Custom: value(body.Custom)},
 		},
 	}); err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	expiresAt := time.Now().UTC().Add(guestTokenValidity)
 	token, err := client.CreateToken(userID, getstream.WithExpiration(guestTokenValidity))
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 
 	// Recorded after the token is minted, so a guest that could not be given one leaves no
@@ -209,7 +210,7 @@ func (s *Server) addToGuestChannels(ctx context.Context, customerID, guestID, us
 
 	client, err := getstream.NewClient(s.streamKey, s.streamSecret)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 
 	var failures []error
@@ -227,7 +228,7 @@ func (s *Server) addToGuestChannels(ctx context.Context, customerID, guestID, us
 		}
 	}
 	if len(failures) > 0 {
-		return errors.Join(failures...)
+		return stack.Wrap(errors.Join(failures...))
 	}
 	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -93,7 +94,7 @@ func (s *Service) Create(ctx context.Context, useCase *store.UseCase, numbers []
 // the assignment as it was.
 func (s *Service) Update(ctx context.Context, useCase *store.UseCase, numbers []string) error {
 	if !Editable(useCase.Status) {
-		return fmt.Errorf("%w: a %s use case cannot be edited", ErrLocked, useCase.Status)
+		return stack.Wrap(fmt.Errorf("%w: a %s use case cannot be edited", ErrLocked, useCase.Status))
 	}
 	if err := s.store.UpdateUseCase(ctx, useCase); err != nil {
 		return err
@@ -106,7 +107,7 @@ func (s *Service) Update(ctx context.Context, useCase *store.UseCase, numbers []
 
 func (s *Service) assign(ctx context.Context, useCase store.UseCase, numbers []string) error {
 	if err := s.store.AssignNumbers(ctx, useCase.CustomerID, useCase.ID, numbers); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalid, err)
+		return stack.Wrap(fmt.Errorf("%w: %w", ErrInvalid, err))
 	}
 	return nil
 }
@@ -118,7 +119,7 @@ func (s *Service) Delete(ctx context.Context, customerID, id string) error {
 		return err
 	}
 	if !Deletable(useCase.Status) {
-		return fmt.Errorf("%w: a %s use case cannot be deleted", ErrLocked, useCase.Status)
+		return stack.Wrap(fmt.Errorf("%w: a %s use case cannot be deleted", ErrLocked, useCase.Status))
 	}
 	return s.store.DeleteUseCase(ctx, customerID, id)
 }
@@ -130,17 +131,17 @@ func (s *Service) Submit(ctx context.Context, customerID, id string) (store.UseC
 		return store.UseCase{}, err
 	}
 	if !Editable(useCase.Status) {
-		return store.UseCase{}, fmt.Errorf("%w: a %s use case cannot be submitted", ErrLocked, useCase.Status)
+		return store.UseCase{}, stack.Wrap(fmt.Errorf("%w: a %s use case cannot be submitted", ErrLocked, useCase.Status))
 	}
 	profile, err := s.store.BusinessProfile(ctx, customerID)
 	if errors.Is(err, store.ErrNoBusinessProfile) {
-		return store.UseCase{}, fmt.Errorf("%w: save a business profile first", ErrInvalid)
+		return store.UseCase{}, stack.Wrap(fmt.Errorf("%w: save a business profile first", ErrInvalid))
 	}
 	if err != nil {
 		return store.UseCase{}, err
 	}
 	if err := errors.Join(ValidateProfile(profile), ValidateUseCase(useCase)); err != nil {
-		return store.UseCase{}, err
+		return store.UseCase{}, stack.Wrap(err)
 	}
 
 	from := useCase.Status
@@ -158,7 +159,7 @@ func (s *Service) Review(ctx context.Context, id, decision, notes, reviewer stri
 		return store.UseCase{}, err
 	}
 	if useCase.Status != Submitted {
-		return store.UseCase{}, fmt.Errorf("%w: only a submitted use case is reviewed, this one is %s", ErrLocked, useCase.Status)
+		return store.UseCase{}, stack.Wrap(fmt.Errorf("%w: only a submitted use case is reviewed, this one is %s", ErrLocked, useCase.Status))
 	}
 	log := &store.ReviewLog{Actor: ActorStaff, ActorName: reviewer, Notes: notes}
 	switch decision {
@@ -174,7 +175,7 @@ func (s *Service) Review(ctx context.Context, id, decision, notes, reviewer stri
 		useCase.Status = VendorPending
 		useCase.Vendor = s.registrar.Name()
 	default:
-		return store.UseCase{}, fmt.Errorf("%w: decision %q", ErrInvalid, decision)
+		return store.UseCase{}, stack.Wrap(fmt.Errorf("%w: decision %q", ErrInvalid, decision))
 	}
 	if err := s.store.MoveUseCase(ctx, &useCase, Submitted, log); err != nil {
 		return store.UseCase{}, err

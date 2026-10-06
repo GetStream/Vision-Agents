@@ -9,6 +9,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Session is a selected search provider attached to one customer. It answers questions and
@@ -53,7 +54,7 @@ func (s *Session) Search(ctx context.Context, query search.Query) (search.Result
 	}
 	next, found, fallbackErr := s.fallback(ctx, query, config)
 	if fallbackErr != nil {
-		return search.Result{}, errors.Join(fmt.Errorf("%s: %w", config.Name(), err), fallbackErr)
+		return search.Result{}, stack.Wrap(errors.Join(fmt.Errorf("%s: %w", config.Name(), err), fallbackErr))
 	}
 	s.moveTo(config, next)
 	return found, nil

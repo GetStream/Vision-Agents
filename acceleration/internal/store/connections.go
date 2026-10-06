@@ -13,6 +13,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // The two owners a connection can have (architecture doc, one-way door 8). An app-owned
@@ -163,20 +164,20 @@ func ConnectionLimit(asked int) int {
 // schemes exist is decided by whoever built it, and a test can register its own.
 func (s *Store) CreateConnectorConnection(ctx context.Context, registry core.Registry, connection *ConnectorConnection) error {
 	if connection.CustomerID == "" || connection.ConnectorID == "" {
-		return errors.New("store: a customer and a connector id are required")
+		return stack.Wrap(errors.New("store: a customer and a connector id are required"))
 	}
 	if !validOwner(connection.OwnerType, connection.OwnerID) {
-		return fmt.Errorf("store: owner %q with id %q: an app owner has no id and a user owner has one", connection.OwnerType, connection.OwnerID)
+		return stack.Wrap(fmt.Errorf("store: owner %q with id %q: an app owner has no id and a user owner has one", connection.OwnerType, connection.OwnerID))
 	}
 	if _, found := registry.Schemes[connection.AuthScheme]; !found {
-		return fmt.Errorf("%w: auth scheme %q", ErrUnregisteredScheme, connection.AuthScheme)
+		return stack.Wrap(fmt.Errorf("%w: auth scheme %q", ErrUnregisteredScheme, connection.AuthScheme))
 	}
 	if _, found := registry.Schemes[connection.TLSScheme]; connection.TLSScheme != "" && !found {
-		return fmt.Errorf("%w: tls scheme %q", ErrUnregisteredScheme, connection.TLSScheme)
+		return stack.Wrap(fmt.Errorf("%w: tls scheme %q", ErrUnregisteredScheme, connection.TLSScheme))
 	}
 	// The stored credentials' AAD binds the connection id, which does not exist until this returns.
 	if len(connection.CredentialsSealed) > 0 {
-		return errors.New("store: credentials are saved onto a connection after it exists, not with it")
+		return stack.Wrap(errors.New("store: credentials are saved onto a connection after it exists, not with it"))
 	}
 	// Definitions are never updated or deleted, so a revision found here stays.
 	definition, err := s.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, connection.DefinitionRevision)
@@ -184,12 +185,12 @@ func (s *Store) CreateConnectorConnection(ctx context.Context, registry core.Reg
 		return err
 	}
 	if !slices.Contains(definition.Manifest.Schemes, connection.AuthScheme) {
-		return fmt.Errorf("%w: %s revision %d does not list auth scheme %q", ErrSchemeNotAllowed,
-			connection.ConnectorID, connection.DefinitionRevision, connection.AuthScheme)
+		return stack.Wrap(fmt.Errorf("%w: %s revision %d does not list auth scheme %q", ErrSchemeNotAllowed,
+			connection.ConnectorID, connection.DefinitionRevision, connection.AuthScheme))
 	}
 	if connection.TLSScheme != "" && !slices.Contains(definition.Manifest.Schemes, connection.TLSScheme) {
-		return fmt.Errorf("%w: %s revision %d does not list tls scheme %q", ErrSchemeNotAllowed,
-			connection.ConnectorID, connection.DefinitionRevision, connection.TLSScheme)
+		return stack.Wrap(fmt.Errorf("%w: %s revision %d does not list tls scheme %q", ErrSchemeNotAllowed,
+			connection.ConnectorID, connection.DefinitionRevision, connection.TLSScheme))
 	}
 
 	// Truncated to what Postgres keeps, so the row handed back is the row a read returns.
@@ -215,7 +216,7 @@ func (s *Store) CreateConnectorConnection(ctx context.Context, registry core.Reg
 		connection.CachedTools = []ConnectorTool{}
 	}
 	if _, err := s.db.NewInsert().Model(connection).Exec(ctx); err != nil {
-		return fmt.Errorf("store: create connector connection: %w", err)
+		return stack.Wrap(fmt.Errorf("store: create connector connection: %w", err))
 	}
 	return nil
 }
@@ -223,7 +224,7 @@ func (s *Store) CreateConnectorConnection(ctx context.Context, registry core.Reg
 // ConnectorConnection returns one live connection of the customer's.
 func (s *Store) ConnectorConnection(ctx context.Context, customerID, id string) (ConnectorConnection, error) {
 	if customerID == "" || id == "" {
-		return ConnectorConnection{}, errors.New("store: a customer and a connection id are required")
+		return ConnectorConnection{}, stack.Wrap(errors.New("store: a customer and a connection id are required"))
 	}
 	var connection ConnectorConnection
 	err := s.db.NewSelect().Model(&connection).
@@ -232,10 +233,10 @@ func (s *Store) ConnectorConnection(ctx context.Context, customerID, id string) 
 		Where("deleted_at IS NULL").
 		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ConnectorConnection{}, fmt.Errorf("%w: %s", ErrNoConnectorConnection, id)
+		return ConnectorConnection{}, stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorConnection, id))
 	}
 	if err != nil {
-		return ConnectorConnection{}, fmt.Errorf("store: connector connection: %w", err)
+		return ConnectorConnection{}, stack.Wrap(fmt.Errorf("store: connector connection: %w", err))
 	}
 	return connection, nil
 }
@@ -244,10 +245,10 @@ func (s *Store) ConnectorConnection(ctx context.Context, customerID, id string) 
 // than ConnectionLimit(filter.Limit).
 func (s *Store) ConnectorConnectionsByOwner(ctx context.Context, customerID string, filter ConnectionFilter) ([]ConnectorConnection, error) {
 	if customerID == "" {
-		return nil, errors.New("store: a customer id is required")
+		return nil, stack.Wrap(errors.New("store: a customer id is required"))
 	}
 	if !validOwner(filter.OwnerType, filter.OwnerID) {
-		return nil, fmt.Errorf("store: owner %q with id %q: an app owner has no id and a user owner has one", filter.OwnerType, filter.OwnerID)
+		return nil, stack.Wrap(fmt.Errorf("store: owner %q with id %q: an app owner has no id and a user owner has one", filter.OwnerType, filter.OwnerID))
 	}
 	connections := []ConnectorConnection{}
 	query := s.db.NewSelect().Model(&connections).
@@ -266,7 +267,7 @@ func (s *Store) ConnectorConnectionsByOwner(ctx context.Context, customerID stri
 		Limit(ConnectionLimit(filter.Limit) + 1).
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("store: list connector connections: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: list connector connections: %w", err))
 	}
 	return connections, nil
 }
@@ -276,7 +277,7 @@ func (s *Store) ConnectorConnectionsByOwner(ctx context.Context, customerID stri
 // first (ConnectorConnectionReferenced).
 func (s *Store) DeleteConnectorConnection(ctx context.Context, customerID, id string) error {
 	if customerID == "" || id == "" {
-		return errors.New("store: a customer and a connection id are required")
+		return stack.Wrap(errors.New("store: a customer and a connection id are required"))
 	}
 	now := time.Now().UTC()
 	result, err := s.db.NewUpdate().Model((*ConnectorConnection)(nil)).
@@ -291,14 +292,14 @@ func (s *Store) DeleteConnectorConnection(ctx context.Context, customerID, id st
 		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: delete connector connection: %w", err)
+		return stack.Wrap(fmt.Errorf("store: delete connector connection: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: delete connector connection: %w", err)
+		return stack.Wrap(fmt.Errorf("store: delete connector connection: %w", err))
 	}
 	if affected == 0 {
-		return fmt.Errorf("%w: %s", ErrNoConnectorConnection, id)
+		return stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorConnection, id))
 	}
 	return nil
 }
@@ -313,7 +314,7 @@ func (s *Store) DeleteConnectorConnection(ctx context.Context, customerID, id st
 // index of its own.
 func (s *Store) ConnectorConnectionReferenced(ctx context.Context, customerID, id string) (bool, error) {
 	if customerID == "" || id == "" {
-		return false, errors.New("store: a customer and a connection id are required")
+		return false, stack.Wrap(errors.New("store: a customer and a connection id are required"))
 	}
 	var referenced bool
 	err := s.db.QueryRowContext(ctx, `
@@ -326,10 +327,10 @@ SELECT EXISTS (
 FROM connector_connections AS cc
 WHERE cc.customer_id = ? AND cc.id = ? AND cc.deleted_at IS NULL`, customerID, id).Scan(&referenced)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, fmt.Errorf("%w: %s", ErrNoConnectorConnection, id)
+		return false, stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorConnection, id))
 	}
 	if err != nil {
-		return false, fmt.Errorf("store: connector connection references: %w", err)
+		return false, stack.Wrap(fmt.Errorf("store: connector connection references: %w", err))
 	}
 	return referenced, nil
 }

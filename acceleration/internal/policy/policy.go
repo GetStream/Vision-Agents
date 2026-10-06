@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 )
@@ -86,7 +87,7 @@ func (e *Enforcer) Admit(ctx context.Context, customerID string) (routing.Admiss
 	ctx, span := tracer.Start(ctx, "policy.admit")
 	defer span.End()
 	decided := e.decide(ctx, customerID)
-	return routing.Admission{DataPolicy: decided.floor, Models: decided.models, Tags: decided.tags}, decided.refusal
+	return routing.Admission{DataPolicy: decided.floor, Models: decided.models, Tags: decided.tags}, stack.Wrap(decided.refusal)
 }
 
 // Join records that an app was seen under an organization, which is what an organization's
@@ -208,9 +209,9 @@ func (e *Enforcer) over(ctx context.Context, scope store.PolicyScope, id string,
 	if spent < budget.LimitMicros {
 		return nil, nil
 	}
-	return fmt.Errorf("%w: the %s's %s budget of $%.2f is spent; it resets at %s",
+	return stack.Wrap(fmt.Errorf("%w: the %s's %s budget of $%.2f is spent; it resets at %s",
 		ErrBudgetSpent, scope, budget.Interval, float64(budget.LimitMicros)/1e6,
-		resets.Format(time.RFC3339)), nil
+		resets.Format(time.RFC3339))), nil
 }
 
 // forget drops one customer's decision so the next request reads it again.

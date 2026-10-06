@@ -32,6 +32,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -337,7 +338,7 @@ func New(settings Options) (*STS, error) {
 		settings.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if settings.APIKey == "" {
-		return nil, fmt.Errorf("gemini: api key is required (set %s)", apiKeyEnvVar)
+		return nil, stack.Wrap(fmt.Errorf("gemini: api key is required (set %s)", apiKeyEnvVar))
 	}
 	if settings.Model == "" {
 		settings.Model = DefaultModel
@@ -349,7 +350,7 @@ func New(settings Options) (*STS, error) {
 		settings.URL = DefaultURL
 	}
 	if !strings.HasPrefix(settings.URL, "ws://") && !strings.HasPrefix(settings.URL, "wss://") {
-		return nil, fmt.Errorf("gemini: url must be ws:// or wss://, got %s", settings.URL)
+		return nil, stack.Wrap(fmt.Errorf("gemini: url must be ws:// or wss://, got %s", settings.URL))
 	}
 	if settings.HandshakeTimeout == 0 {
 		settings.HandshakeTimeout = 30 * time.Second
@@ -389,7 +390,7 @@ func (s *STS) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
-		return errors.New("gemini: already started")
+		return stack.Wrap(errors.New("gemini: already started"))
 	}
 	s.started = true
 	s.mu.Unlock()
@@ -414,9 +415,9 @@ func (s *STS) connect(ctx context.Context, handle string) (*websocket.Conn, erro
 	conn, response, err := dialer.DialContext(ctx, s.endpoint(), nil)
 	if err != nil {
 		if response != nil {
-			return nil, fmt.Errorf("gemini: dial: %w (http %d)", err, response.StatusCode)
+			return nil, stack.Wrap(fmt.Errorf("gemini: dial: %w (http %d)", err, response.StatusCode))
 		}
-		return nil, fmt.Errorf("gemini: dial: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("gemini: dial: %w", err))
 	}
 	if err := s.handshake(conn, handle); err != nil {
 		conn.Close()
@@ -463,7 +464,7 @@ func (s *STS) SendFrame(frame llm.ImagePart) error {
 // SetInstructions is refused: the Live API takes its system instruction at setup and
 // nowhere else, and pretending otherwise would leave the caller believing the model had
 // been told something it had not.
-func (s *STS) SetInstructions(string) error { return sts.ErrInstructionsFixed }
+func (s *STS) SetInstructions(string) error { return stack.Wrap(sts.ErrInstructionsFixed) }
 
 // SetTools is refused for the same reason as SetInstructions.
 func (s *STS) SetTools([]llm.Tool) error { return sts.ErrToolsFixed }
@@ -556,29 +557,29 @@ func (s *STS) endpoint() string {
 func (s *STS) handshake(conn *websocket.Conn, handle string) error {
 	payload, err := json.Marshal(clientMessage{Setup: s.setup(handle)})
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
-		return fmt.Errorf("gemini: send setup: %w", err)
+		return stack.Wrap(fmt.Errorf("gemini: send setup: %w", err))
 	}
 
 	if err := conn.SetReadDeadline(time.Now().Add(s.options.HandshakeTimeout)); err != nil {
-		return fmt.Errorf("gemini: read setup: %w", err)
+		return stack.Wrap(fmt.Errorf("gemini: read setup: %w", err))
 	}
 	_, raw, err := conn.ReadMessage()
 	if err != nil {
-		return fmt.Errorf("gemini: read setup: %w", err)
+		return stack.Wrap(fmt.Errorf("gemini: read setup: %w", err))
 	}
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
-		return fmt.Errorf("gemini: read setup: %w", err)
+		return stack.Wrap(fmt.Errorf("gemini: read setup: %w", err))
 	}
 
 	var message serverMessage
 	if err := json.Unmarshal(raw, &message); err != nil {
-		return fmt.Errorf("gemini: decode setup: %w", err)
+		return stack.Wrap(fmt.Errorf("gemini: decode setup: %w", err))
 	}
 	if message.SetupComplete == nil {
-		return fmt.Errorf("gemini: setup rejected: %s", strings.TrimSpace(string(raw)))
+		return stack.Wrap(fmt.Errorf("gemini: setup rejected: %s", strings.TrimSpace(string(raw))))
 	}
 	return nil
 }
@@ -653,20 +654,20 @@ func (s *STS) send(frame clientMessage) error {
 	conn, started, closed := s.conn, s.started, s.closed
 	s.mu.Unlock()
 	if closed {
-		return errors.New("gemini: session closed")
+		return stack.Wrap(errors.New("gemini: session closed"))
 	}
 	if !started || conn == nil {
-		return errors.New("gemini: not started")
+		return stack.Wrap(errors.New("gemini: not started"))
 	}
 
 	payload, err := json.Marshal(frame)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
-		return fmt.Errorf("gemini: write: %w", err)
+		return stack.Wrap(fmt.Errorf("gemini: write: %w", err))
 	}
 	return nil
 }

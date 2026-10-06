@@ -16,6 +16,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -36,7 +37,7 @@ type Registry = routing.Registry[Provider]
 // It takes a constructor's two results so a registry entry stays one line.
 func Started[P llm.LLM](provider P, err error) (Provider, error) {
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	return started{LLM: provider}, nil
 }
@@ -104,7 +105,7 @@ func New(options Options) (*Router, error) {
 		Validate: func(provider Provider, config routing.ProviderConfig) error {
 			for _, modality := range config.InputModalities {
 				if !provider.Capabilities().Accepts(modality) {
-					return fmt.Errorf("%s declares unsupported input modality %s", config.Name(), modality)
+					return stack.Wrap(fmt.Errorf("%s declares unsupported input modality %s", config.Name(), modality))
 				}
 			}
 			return nil
@@ -153,7 +154,7 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 		var failures []error
 		for _, candidate := range candidates {
 			if ctx.Err() != nil {
-				return nil, ctx.Err()
+				return nil, stack.Wrap(ctx.Err())
 			}
 			if candidate.Config.Name() == config.Name() {
 				continue
@@ -174,7 +175,7 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 			child := newSession(provider, selected, core.Owner(), r.Recorder(), r.quota)
 			if !session.addChild(child) {
 				_ = child.Close()
-				return nil, errors.New("llmrouter: session is closed")
+				return nil, stack.Wrap(errors.New("llmrouter: session is closed"))
 			}
 			stream, err := child.create(ctx, params)
 			if err != nil {
@@ -188,7 +189,7 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 				}
 			}), nil
 		}
-		return nil, errors.Join(append(failures, errors.New("llmrouter: no fallback provider available"))...)
+		return nil, stack.Wrap(errors.Join(append(failures, errors.New("llmrouter: no fallback provider available"))...))
 	}
 	return session, nil
 }

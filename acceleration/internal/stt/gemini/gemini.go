@@ -27,6 +27,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -198,7 +199,7 @@ func New(options Options) (*STT, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, fmt.Errorf("gemini: api key is required (set %s)", apiKeyEnvVar)
+		return nil, stack.Wrap(fmt.Errorf("gemini: api key is required (set %s)", apiKeyEnvVar))
 	}
 	if options.Model == "" {
 		options.Model = DefaultModel
@@ -207,16 +208,16 @@ func New(options Options) (*STT, error) {
 		options.URL = DefaultURL
 	}
 	if !strings.HasPrefix(options.URL, "ws://") && !strings.HasPrefix(options.URL, "wss://") {
-		return nil, fmt.Errorf("gemini: url must be ws:// or wss://, got %s", options.URL)
+		return nil, stack.Wrap(fmt.Errorf("gemini: url must be ws:// or wss://, got %s", options.URL))
 	}
 	if len(options.Keyterms) > stt.MaxKeyterms {
-		return nil, fmt.Errorf("gemini: at most %d keyterms, got %d", stt.MaxKeyterms, len(options.Keyterms))
+		return nil, stack.Wrap(fmt.Errorf("gemini: at most %d keyterms, got %d", stt.MaxKeyterms, len(options.Keyterms)))
 	}
 	switch options.Mode {
 	case "", ModeVerbatim, ModeSmart:
 	default:
-		return nil, fmt.Errorf("gemini: mode must be %s or %s, got %s",
-			ModeVerbatim, ModeSmart, options.Mode)
+		return nil, stack.Wrap(fmt.Errorf("gemini: mode must be %s or %s, got %s",
+			ModeVerbatim, ModeSmart, options.Mode))
 	}
 	if options.HandshakeTimeout == 0 {
 		options.HandshakeTimeout = 30 * time.Second
@@ -243,7 +244,7 @@ func (s *STT) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
-		return errors.New("gemini: already started")
+		return stack.Wrap(errors.New("gemini: already started"))
 	}
 	s.started = true
 	s.mu.Unlock()
@@ -252,9 +253,9 @@ func (s *STT) Start(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, s.endpoint(), nil)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("gemini: dial: %w (http %d)", err, response.StatusCode)
+			return stack.Wrap(fmt.Errorf("gemini: dial: %w (http %d)", err, response.StatusCode))
 		}
-		return fmt.Errorf("gemini: dial: %w", err)
+		return stack.Wrap(fmt.Errorf("gemini: dial: %w", err))
 	}
 	s.conn = conn
 
@@ -364,26 +365,26 @@ func (s *STT) handshake() error {
 		InputAudioTranscription: s.transcription(),
 	}}
 	if err := s.send(frame); err != nil {
-		return fmt.Errorf("gemini: send setup: %w", err)
+		return stack.Wrap(fmt.Errorf("gemini: send setup: %w", err))
 	}
 
 	if err := s.conn.SetReadDeadline(time.Now().Add(s.options.HandshakeTimeout)); err != nil {
-		return fmt.Errorf("gemini: read setup: %w", err)
+		return stack.Wrap(fmt.Errorf("gemini: read setup: %w", err))
 	}
 	_, raw, err := s.conn.ReadMessage()
 	if err != nil {
-		return fmt.Errorf("gemini: read setup: %w", err)
+		return stack.Wrap(fmt.Errorf("gemini: read setup: %w", err))
 	}
 	if err := s.conn.SetReadDeadline(time.Time{}); err != nil {
-		return fmt.Errorf("gemini: read setup: %w", err)
+		return stack.Wrap(fmt.Errorf("gemini: read setup: %w", err))
 	}
 
 	var message serverMessage
 	if err := json.Unmarshal(raw, &message); err != nil {
-		return fmt.Errorf("gemini: decode setup: %w", err)
+		return stack.Wrap(fmt.Errorf("gemini: decode setup: %w", err))
 	}
 	if message.SetupComplete == nil {
-		return fmt.Errorf("gemini: setup rejected: %s", strings.TrimSpace(string(raw)))
+		return stack.Wrap(fmt.Errorf("gemini: setup rejected: %s", strings.TrimSpace(string(raw))))
 	}
 	return nil
 }
@@ -423,12 +424,12 @@ func (s *STT) flush(patience time.Duration) {
 func (s *STT) send(frame clientMessage) error {
 	payload, err := json.Marshal(frame)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.conn.WriteMessage(websocket.TextMessage, payload)
+	return stack.Wrap(s.conn.WriteMessage(websocket.TextMessage, payload))
 }
 
 // readLoop translates server frames into events until the connection ends.

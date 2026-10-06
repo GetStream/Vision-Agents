@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -110,7 +111,7 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 		var failures []error
 		for _, candidate := range candidates {
 			if ctx.Err() != nil {
-				return nil, search.Result{}, ctx.Err()
+				return nil, search.Result{}, stack.Wrap(ctx.Err())
 			}
 			if candidate.Config.Name() == failed.Name() {
 				continue
@@ -133,7 +134,7 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 			}
 			return next, found, nil
 		}
-		return nil, search.Result{}, errors.Join(append(failures, errors.New("searchrouter: no fallback provider available"))...)
+		return nil, search.Result{}, stack.Wrap(errors.Join(append(failures, errors.New("searchrouter: no fallback provider available"))...))
 	}
 	return session, nil
 }

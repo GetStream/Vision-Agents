@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ProviderName is the stable name used in routing config and stats.
@@ -49,7 +50,7 @@ func New(options Options) (*openaicompat.LLM, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("gemma: " + apiKeyEnvVar + " is required")
+		return nil, stack.Wrap(errors.New("gemma: " + apiKeyEnvVar + " is required"))
 	}
 	if options.Model == "" {
 		options.Model = defaultModel
@@ -58,7 +59,7 @@ func New(options Options) (*openaicompat.LLM, error) {
 		options.BaseURL = os.Getenv(baseURLEnvVar)
 	}
 	if options.BaseURL == "" {
-		return nil, errors.New("gemma: " + baseURLEnvVar + " is required: see deploy/gemma-4")
+		return nil, stack.Wrap(errors.New("gemma: " + baseURLEnvVar + " is required: see deploy/gemma-4"))
 	}
 
 	return openaicompat.New(openaicompat.Options{

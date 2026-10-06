@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 const (
@@ -110,8 +111,8 @@ func New(options Options) (*Provider, error) {
 		options.ApplicationID = os.Getenv(applicationIDEnvVar)
 	}
 	if options.AccountID == "" || options.Username == "" || options.Password == "" {
-		return nil, errors.New("bandwidth: " + accountIDEnvVar + ", " + usernameEnvVar +
-			" and " + passwordEnvVar + " are required")
+		return nil, stack.Wrap(errors.New("bandwidth: " + accountIDEnvVar + ", " + usernameEnvVar +
+			" and " + passwordEnvVar + " are required"))
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
@@ -146,20 +147,20 @@ func New(options Options) (*Provider, error) {
 // inventory.
 func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
 	if search.Country == "" {
-		return nil, errors.New("bandwidth: a country is required to search for numbers")
+		return nil, stack.Wrap(errors.New("bandwidth: a country is required to search for numbers"))
 	}
 	if country := strings.ToUpper(search.Country); country != "US" && country != "CA" {
-		return nil, fmt.Errorf("bandwidth: only the north american inventory is wrapped here, not %s", country)
+		return nil, stack.Wrap(fmt.Errorf("bandwidth: only the north american inventory is wrapped here, not %s", country))
 	}
 	if search.Type != "" && search.Type != phone.Local {
-		return nil, fmt.Errorf("bandwidth: only local numbers are wrapped here, not %s", search.Type)
+		return nil, stack.Wrap(fmt.Errorf("bandwidth: only local numbers are wrapped here, not %s", search.Type))
 	}
 	if search.AreaCode == "" && search.Locality == "" && search.AdministrativeArea == "" {
-		return nil, errors.New("bandwidth: a search needs an area code, a city or a state")
+		return nil, stack.Wrap(errors.New("bandwidth: a search needs an area code, a city or a state"))
 	}
 	// Bandwidth requires a state alongside a city, because a city name is not unique.
 	if search.Locality != "" && search.AdministrativeArea == "" {
-		return nil, errors.New("bandwidth: searching a city needs the state it is in")
+		return nil, stack.Wrap(errors.New("bandwidth: searching a city needs the state it is in"))
 	}
 
 	// enableTNDetail is what turns a bare list of numbers into ones that say where they
@@ -219,11 +220,11 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 // the order is accepted rather than when the number is usable.
 func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Number, error) {
 	if order.E164 == "" {
-		return phone.Number{}, errors.New("bandwidth: a number is required")
+		return phone.Number{}, stack.Wrap(errors.New("bandwidth: a number is required"))
 	}
 	if p.siteID == "" {
-		return phone.Number{}, errors.New("bandwidth: " + siteIDEnvVar +
-			" is required to order a number, since an order is billed to a site")
+		return phone.Number{}, stack.Wrap(errors.New("bandwidth: " + siteIDEnvVar +
+			" is required to order a number, since an order is billed to a site"))
 	}
 
 	request := orderRequest{
@@ -253,7 +254,7 @@ func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Numb
 // a number back as another kind of order rather than as a delete.
 func (p *Provider) ReleaseNumber(ctx context.Context, e164 string) error {
 	if e164 == "" {
-		return errors.New("bandwidth: a number is required")
+		return stack.Wrap(errors.New("bandwidth: a number is required"))
 	}
 
 	request := disconnectRequest{
@@ -273,8 +274,8 @@ func (p *Provider) ReleaseNumber(ctx context.Context, e164 string) error {
 // configuration this does not create. Buying the number does not need it, so this says what
 // is missing rather than half-doing it.
 func (p *Provider) ConfigureInbound(context.Context, phone.Inbound) error {
-	return fmt.Errorf("%w: bandwidth numbers are bought here but bridged elsewhere",
-		phone.ErrNotImplemented)
+	return stack.Wrap(fmt.Errorf("%w: bandwidth numbers are bought here but bridged elsewhere",
+		phone.ErrNotImplemented))
 }
 
 // Dial calls a person and has Bandwidth fetch, on answer, the BXML that bridges them to the
@@ -286,16 +287,16 @@ func (p *Provider) ConfigureInbound(context.Context, phone.Inbound) error {
 // trunk, which is what makes an extension behind a menu reachable.
 func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dialed, error) {
 	if err := outbound.Validate(); err != nil {
-		return phone.Dialed{}, fmt.Errorf("bandwidth: %w", err)
+		return phone.Dialed{}, stack.Wrap(fmt.Errorf("bandwidth: %w", err))
 	}
 	if outbound.AnswerURL == "" {
-		return phone.Dialed{}, errors.New(
-			"bandwidth: fetches its call plan when the person answers, so it needs somewhere to fetch it from")
+		return phone.Dialed{}, stack.Wrap(errors.New(
+			"bandwidth: fetches its call plan when the person answers, so it needs somewhere to fetch it from"))
 	}
 	if p.applicationID == "" {
-		return phone.Dialed{}, fmt.Errorf(
+		return phone.Dialed{}, stack.Wrap(fmt.Errorf(
 			"bandwidth: placing a call needs %s, which buying a number does not",
-			applicationIDEnvVar)
+			applicationIDEnvVar))
 	}
 
 	request := callRequest{
@@ -342,7 +343,7 @@ func (p *Provider) Answer(bridge phone.Bridge, initialDigits string) (phone.Plan
 
 // SendDigits is not wrapped for Bandwidth, since nothing here places a Bandwidth call.
 func (p *Provider) SendDigits(context.Context, string, string) error {
-	return fmt.Errorf("%w: bandwidth", phone.ErrNotImplemented)
+	return stack.Wrap(fmt.Errorf("%w: bandwidth", phone.ErrNotImplemented))
 }
 
 // Supports is a country, an area code, a city and a state, which makes this and Telnyx the
@@ -379,12 +380,12 @@ func (p *Provider) Client() *http.Client { return p.client }
 func (p *Provider) doVoice(ctx context.Context, method, path string, payload, into any) error {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("bandwidth: encode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("bandwidth: encode %s: %w", path, err))
 	}
 
 	request, err := http.NewRequestWithContext(ctx, method, p.voiceBaseURL+path, bytes.NewReader(encoded))
 	if err != nil {
-		return fmt.Errorf("bandwidth: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("bandwidth: %s: %w", path, err))
 	}
 	request.SetBasicAuth(p.username, p.password)
 	request.Header.Set("Content-Type", "application/json")
@@ -392,20 +393,20 @@ func (p *Provider) doVoice(ctx context.Context, method, path string, payload, in
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("bandwidth: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("bandwidth: %s: %w", path, err))
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return fmt.Errorf("bandwidth: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail)))
+		return stack.Wrap(fmt.Errorf("bandwidth: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return fmt.Errorf("bandwidth: decode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("bandwidth: decode %s: %w", path, err))
 	}
 	return nil
 }
@@ -420,14 +421,14 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 	if body != nil {
 		encoded, err := xml.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("bandwidth: encode %s: %w", path, err)
+			return stack.Wrap(fmt.Errorf("bandwidth: encode %s: %w", path, err))
 		}
 		payload = strings.NewReader(xml.Header + string(encoded))
 	}
 
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, payload)
 	if err != nil {
-		return fmt.Errorf("bandwidth: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("bandwidth: %s: %w", path, err))
 	}
 	request.SetBasicAuth(p.username, p.password)
 	request.Header.Set("Accept", "application/xml")
@@ -437,20 +438,20 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("bandwidth: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("bandwidth: %s: %w", path, err))
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return fmt.Errorf("bandwidth: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail)))
+		return stack.Wrap(fmt.Errorf("bandwidth: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := xml.NewDecoder(response.Body).Decode(into); err != nil {
-		return fmt.Errorf("bandwidth: decode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("bandwidth: decode %s: %w", path, err))
 	}
 	return nil
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/redis/rueidis"
 	"github.com/redis/rueidis/rueidisaside"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 )
@@ -140,7 +141,7 @@ func read[T any](ctx context.Context, s *Store, name string, load func(context.C
 	})
 	switch {
 	case refused != nil:
-		return value, refused
+		return value, stack.Wrap(refused)
 	case err != nil:
 		s.logger.Error("could not read configuration from redis, reading postgres",
 			"key", name, "error", err)
@@ -148,7 +149,7 @@ func read[T any](ctx context.Context, s *Store, name string, load func(context.C
 	}
 
 	if err := json.Unmarshal([]byte(encoded), &value); err != nil {
-		return value, fmt.Errorf("appconfig: decode %s: %w", name, err)
+		return value, stack.Wrap(fmt.Errorf("appconfig: decode %s: %w", name, err))
 	}
 	return value, nil
 }

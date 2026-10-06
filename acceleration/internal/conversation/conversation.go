@@ -22,6 +22,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/google/uuid"
 )
@@ -199,10 +200,10 @@ const SessionCommandTrigger = "session_commands"
 func New() (*Service, error) {
 	client, err := getstream.NewClient(os.Getenv("STREAM_API_KEY"), os.Getenv("STREAM_API_SECRET"))
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	if os.Getenv("STREAM_API_KEY") == "" || os.Getenv("STREAM_API_SECRET") == "" {
-		return nil, errors.New("Stream Chat credentials are required for persistent conversations")
+		return nil, stack.Wrap(errors.New("Stream Chat credentials are required for persistent conversations"))
 	}
 	return newService(client), nil
 }
@@ -265,14 +266,14 @@ func (s *Service) OpenForCallerWithVoice(ctx context.Context, customer, agentID,
 // A channel that already exists keeps what it has: it was stamped when it was made.
 func (s *Service) OpenForCallerWithCustom(ctx context.Context, customer, agentID, cid, caller, voiceAgent string, custom map[string]any, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
 	if voiceAgent != "" && !validAuthorID.MatchString(voiceAgent) {
-		return nil, nil, false, errors.New("invalid voice transcript author")
+		return nil, nil, false, stack.Wrap(errors.New("invalid voice transcript author"))
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil, nil, false, errors.New("conversation service is closed")
+		return nil, nil, false, stack.Wrap(errors.New("conversation service is closed"))
 	}
 	var scope memory.Scope
 	if len(scopes) > 0 {
@@ -284,27 +285,27 @@ func (s *Service) OpenForCallerWithCustom(ctx context.Context, customer, agentID
 	}
 	id := strings.TrimPrefix(cid, "agent:")
 	if cid != "agent:"+id || !validID.MatchString(id) {
-		return nil, nil, false, errors.New("invalid conversation channel")
+		return nil, nil, false, stack.Wrap(errors.New("invalid conversation channel"))
 	}
 	if c := s.all[cid]; c != nil {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		if c.data.Customer != customer || (agentID != "" && c.data.Agent != agentID) || c.data.Owner == "" && caller != "" {
-			return nil, nil, false, errors.New("conversation belongs to another customer or agent")
+			return nil, nil, false, stack.Wrap(errors.New("conversation belongs to another customer or agent"))
 		}
 		agentID = c.data.Agent
 		if c.active {
-			return nil, nil, false, errors.New("conversation is already open")
+			return nil, nil, false, stack.Wrap(errors.New("conversation is already open"))
 		}
 		page, err := s.history(ctx, customer, agentID, cid, "", caller, c.data.Pending, voiceAgent)
 		if err != nil {
-			return nil, nil, false, err
+			return nil, nil, false, stack.Wrap(err)
 		}
 		if !sameMemoryScope(page.memoryScope, scope) {
-			return nil, nil, false, errors.New("conversation belongs to another memory scope; reopen with its original organization")
+			return nil, nil, false, stack.Wrap(errors.New("conversation belongs to another memory scope; reopen with its original organization"))
 		}
 		if c.data.Owner != caller && !page.shared {
-			return nil, nil, false, errors.New("conversation belongs to another user")
+			return nil, nil, false, stack.Wrap(errors.New("conversation belongs to another user"))
 		}
 		c.data.Owner = caller
 		c.shared = page.shared
@@ -319,21 +320,21 @@ func (s *Service) OpenForCallerWithCustom(ctx context.Context, customer, agentID
 		}
 		_, err := s.client.UpdateUsers(ctx, &getstream.UpdateUsersRequest{Users: map[string]getstream.UserRequest{agentID: {ID: agentID}, userID: {ID: userID}}})
 		if err != nil {
-			return nil, nil, false, err
+			return nil, nil, false, stack.Wrap(err)
 		}
 		stamped := channelCustom(custom)
 		maps.Copy(stamped, map[string]any{"support_customer_id": customer, "support_agent_id": agentID, "support_memory_scope": scope, "support_owner_id": caller, TriggerField: SessionCommandTrigger})
 		_, err = s.client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &agentID, Members: []getstream.ChannelMemberRequest{{UserID: agentID}, {UserID: userID}}, Custom: stamped}})
 		if err != nil {
-			return nil, nil, false, err
+			return nil, nil, false, stack.Wrap(err)
 		}
 	}
 	page, err := s.history(ctx, customer, agentID, cid, "", caller, nil, voiceAgent)
 	if err != nil {
-		return nil, nil, false, err
+		return nil, nil, false, stack.Wrap(err)
 	}
 	if !sameMemoryScope(page.memoryScope, scope) {
-		return nil, nil, false, errors.New("conversation belongs to another memory scope; reopen with its original organization")
+		return nil, nil, false, stack.Wrap(errors.New("conversation belongs to another memory scope; reopen with its original organization"))
 	}
 	if agentID == "" {
 		agentID = page.agent
@@ -393,7 +394,7 @@ func (s *Service) ContextForCaller(ctx context.Context, customer, agentID, cid, 
 		return nil, false, nil
 	}
 	if len(voiceAgent) > 1 || (len(voiceAgent) == 1 && voiceAgent[0] != "" && !validAuthorID.MatchString(voiceAgent[0])) {
-		return nil, false, errors.New("invalid voice transcript author")
+		return nil, false, stack.Wrap(errors.New("invalid voice transcript author"))
 	}
 	page, err := s.history(ctx, customer, agentID, cid, "", caller, s.pending(cid), voiceAgent...)
 	if err != nil {
@@ -433,7 +434,7 @@ func channelCustom(custom map[string]any) map[string]any {
 func (s *Service) Describe(ctx context.Context, cid, title, description string) error {
 	id := strings.TrimPrefix(cid, "agent:")
 	if cid != "agent:"+id || !validID.MatchString(id) {
-		return errors.New("invalid conversation channel")
+		return stack.Wrap(errors.New("invalid conversation channel"))
 	}
 	set := map[string]any{}
 	if title != "" {
@@ -446,7 +447,7 @@ func (s *Service) Describe(ctx context.Context, cid, title, description string) 
 		return nil
 	}
 	_, err := s.client.Chat().UpdateChannelPartial(ctx, "agent", id, &getstream.UpdateChannelPartialRequest{Set: set, Unset: []string{}})
-	return err
+	return stack.Wrap(err)
 }
 
 // ownedBy reads server-owned channel metadata. Explicit member access still
@@ -454,27 +455,27 @@ func (s *Service) Describe(ctx context.Context, cid, title, description string) 
 // A channel with no owner is a backend-owned demo, which no end user may claim.
 func ownedBy(custom map[string]any, customer, agentID, caller string) error {
 	if custom["support_customer_id"] != customer || (agentID != "" && custom["support_agent_id"] != agentID) {
-		return errors.New("conversation belongs to another customer or agent")
+		return stack.Wrap(errors.New("conversation belongs to another customer or agent"))
 	}
 	rawOwner, bound := custom["support_owner_id"]
 	owner, valid := rawOwner.(string)
 	if bound && !valid {
-		return errors.New("conversation has invalid ownership metadata")
+		return stack.Wrap(errors.New("conversation has invalid ownership metadata"))
 	}
 	if mode, present := custom["support_access"]; present {
 		switch mode {
 		case "members":
 			if owner == "" || caller == "" {
-				return errors.New("shared conversations require a verified user")
+				return stack.Wrap(errors.New("shared conversations require a verified user"))
 			}
 			return nil
 		case "owner":
 		default:
-			return errors.New("conversation has invalid access metadata")
+			return stack.Wrap(errors.New("conversation has invalid access metadata"))
 		}
 	}
 	if owner != caller {
-		return errors.New("conversation belongs to another user")
+		return stack.Wrap(errors.New("conversation belongs to another user"))
 	}
 	return nil
 }
@@ -485,13 +486,13 @@ func ownedBy(custom map[string]any, customer, agentID, caller string) error {
 func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, caller, commandID string) (CommandReceipt, error) {
 	id := strings.TrimPrefix(cid, "agent:")
 	if cid != "agent:"+id || !validID.MatchString(id) || !validCommandID.MatchString(commandID) {
-		return CommandReceipt{}, ErrCommandNotFound
+		return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
 	}
 	s.mu.Lock()
 	closed, open := s.closed, s.all[cid]
 	s.mu.Unlock()
 	if closed {
-		return CommandReceipt{}, errors.New("conversation service is closed")
+		return CommandReceipt{}, stack.Wrap(errors.New("conversation service is closed"))
 	}
 
 	lookup, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -502,14 +503,14 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 	r, err := s.client.Chat().GetOrCreateChannel(lookup, "agent", id, &getstream.GetOrCreateChannelRequest{
 		State: &state, Messages: &getstream.MessagePaginationParams{Limit: &limit}})
 	if err != nil {
-		return CommandReceipt{}, err
+		return CommandReceipt{}, stack.Wrap(err)
 	}
 	if err := ownedBy(r.Data.Channel.Custom, customer, agentID, caller); err != nil {
-		return CommandReceipt{}, ErrCommandNotFound
+		return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
 	}
 	if caller != "" {
 		if r.Data.Channel.Custom[TriggerField] != SessionCommandTrigger {
-			return CommandReceipt{}, ErrCommandNotFound
+			return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
 		}
 		member := false
 		for _, candidate := range r.Data.Members {
@@ -519,7 +520,7 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 			}
 		}
 		if !member {
-			return CommandReceipt{}, ErrCommandNotFound
+			return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
 		}
 	}
 
@@ -535,7 +536,7 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 	}
 	record, known := commandsIn(stored)[commandID]
 	if !known || record.Initiator != caller {
-		return CommandReceipt{}, ErrCommandNotFound
+		return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
 	}
 	return record.CommandReceipt, nil
 }
@@ -576,7 +577,7 @@ func (s *Service) history(ctx context.Context, customer, agentID, cid, before, c
 	defer cancel()
 	id := strings.TrimPrefix(cid, "agent:")
 	if cid != "agent:"+id || !validID.MatchString(id) {
-		return Page{}, errors.New("invalid conversation channel")
+		return Page{}, stack.Wrap(errors.New("invalid conversation channel"))
 	}
 	limit := 100
 	state := true
@@ -587,15 +588,15 @@ func (s *Service) history(ctx context.Context, customer, agentID, cid, before, c
 	// Query without Data: a resume must never create or overwrite a channel's ownership.
 	r, err := s.client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{State: &state, Messages: params})
 	if err != nil {
-		return Page{}, err
+		return Page{}, stack.Wrap(err)
 	}
 	stored, _ := r.Data.Channel.Custom["support_agent_id"].(string)
 	if err := ownedBy(r.Data.Channel.Custom, customer, agentID, caller); err != nil {
-		return Page{}, err
+		return Page{}, stack.Wrap(err)
 	}
 	if caller != "" {
 		if r.Data.Channel.Custom[TriggerField] != SessionCommandTrigger {
-			return Page{}, errors.New("conversation is not a session-command channel")
+			return Page{}, stack.Wrap(errors.New("conversation is not a session-command channel"))
 		}
 		member := false
 		for _, candidate := range r.Data.Members {
@@ -605,17 +606,17 @@ func (s *Service) history(ctx context.Context, customer, agentID, cid, before, c
 			}
 		}
 		if !member {
-			return Page{}, errors.New("conversation caller is not a channel member")
+			return Page{}, stack.Wrap(errors.New("conversation caller is not a channel member"))
 		}
 	}
 	p := Page{agent: stored, shared: r.Data.Channel.Custom["support_access"] == "members", empty: len(r.Data.Messages) == 0, Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
 	if raw, ok := r.Data.Channel.Custom["support_memory_scope"]; ok {
 		b, err := json.Marshal(raw)
 		if err != nil {
-			return Page{}, err
+			return Page{}, stack.Wrap(err)
 		}
 		if err := json.Unmarshal(b, &p.memoryScope); err != nil {
-			return Page{}, err
+			return Page{}, stack.Wrap(err)
 		}
 	}
 	for _, m := range r.Data.Messages {
@@ -776,11 +777,11 @@ func (c *Conversation) CheckCaller(ctx context.Context, caller string) error {
 	shared, customer, agentID, cid, owner := c.shared, c.data.Customer, c.data.Agent, c.data.CID, c.data.Owner
 	c.mu.Unlock()
 	if owner != caller {
-		return ErrCommandNotFound
+		return stack.Wrap(ErrCommandNotFound)
 	}
 	if shared {
 		if _, err := c.service.HistoryForCaller(ctx, customer, agentID, cid, "", caller); err != nil {
-			return ErrCommandNotFound
+			return stack.Wrap(ErrCommandNotFound)
 		}
 	}
 	return nil
@@ -821,11 +822,11 @@ func (c *Conversation) Command(id string) (CommandReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.active || !validCommandID.MatchString(id) {
-		return CommandReceipt{}, ErrCommandNotFound
+		return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
 	}
 	record, ok := c.data.Commands[id]
 	if !ok || record.Initiator != c.data.Owner {
-		return CommandReceipt{}, ErrCommandNotFound
+		return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
 	}
 	return record.CommandReceipt, nil
 }
@@ -837,25 +838,25 @@ func (c *Conversation) BeginCommand(id, text, clientID string) (CommandReceipt, 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.active {
-		return CommandReceipt{}, errors.New("conversation is not open")
+		return CommandReceipt{}, stack.Wrap(errors.New("conversation is not open"))
 	}
 	if !validCommandID.MatchString(id) || text == "" || len(text) > 1024*1024 {
-		return CommandReceipt{}, errors.New("invalid command ID or text")
+		return CommandReceipt{}, stack.Wrap(errors.New("invalid command ID or text"))
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(text)))
 	if previous, ok := c.data.Commands[id]; ok {
 		if previous.Initiator != c.data.Owner {
-			return CommandReceipt{}, ErrCommandNotFound
+			return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
 		}
 		if previous.Digest != digest {
-			return CommandReceipt{}, ErrCommandConflict
+			return CommandReceipt{}, stack.Wrap(ErrCommandConflict)
 		}
 		receipt := previous.CommandReceipt
 		receipt.Duplicate = true
 		return receipt, nil
 	}
 	if c.data.Current != nil && c.data.Current.FinishedAt == nil {
-		return CommandReceipt{}, errors.New("a response is already running")
+		return CommandReceipt{}, stack.Wrap(errors.New("a response is already running"))
 	}
 	now := time.Now().UTC()
 	if !validClientID.MatchString(clientID) {
@@ -888,7 +889,7 @@ func (c *Conversation) receipt(id, caller string) (CommandReceipt, error) {
 	defer c.mu.Unlock()
 	record, known := c.data.Commands[id]
 	if !known || record.Initiator != caller {
-		return CommandReceipt{}, ErrCommandNotFound
+		return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
 	}
 	return record.CommandReceipt, nil
 }
@@ -930,11 +931,11 @@ func (c *Conversation) CancelCommand(id string) (CommandReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.active {
-		return CommandReceipt{}, ErrCommandNotFound
+		return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
 	}
 	record, ok := c.data.Commands[id]
 	if !ok || record.Initiator != c.data.Owner {
-		return CommandReceipt{}, ErrCommandNotFound
+		return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
 	}
 	m := c.data.Current
 	if m != nil && m.CommandID == id {
@@ -949,7 +950,7 @@ func (c *Conversation) CancelCommand(id string) (CommandReceipt, error) {
 	case "completed", "cancelled", "interrupted", "failed":
 		return record.CommandReceipt, nil
 	default:
-		return CommandReceipt{}, ErrCommandNotFound
+		return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
 	}
 }
 

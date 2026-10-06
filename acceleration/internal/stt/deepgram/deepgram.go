@@ -20,6 +20,7 @@ import (
 	interfacesv2 "github.com/deepgram/deepgram-go-sdk/v3/pkg/client/interfaces/v2"
 	listenv2 "github.com/deepgram/deepgram-go-sdk/v3/pkg/client/listen/v2"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -91,13 +92,13 @@ func New(options Options) (*STT, error) {
 		options.APIKey = os.Getenv("DEEPGRAM_API_KEY")
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("deepgram: api key is required (set DEEPGRAM_API_KEY)")
+		return nil, stack.Wrap(errors.New("deepgram: api key is required (set DEEPGRAM_API_KEY)"))
 	}
 	if options.Model == "" {
 		options.Model = DefaultModel
 	}
 	if len(options.LanguageHints) > 0 && options.Model != MultilingualModel {
-		return nil, fmt.Errorf("deepgram: language hints require model %s, got %s", MultilingualModel, options.Model)
+		return nil, stack.Wrap(fmt.Errorf("deepgram: language hints require model %s, got %s", MultilingualModel, options.Model))
 	}
 	logger := options.Logger
 	if logger == nil {
@@ -117,7 +118,7 @@ func (s *STT) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
-		return errors.New("deepgram: already started")
+		return stack.Wrap(errors.New("deepgram: already started"))
 	}
 	s.started = true
 	s.mu.Unlock()
@@ -142,10 +143,10 @@ func (s *STT) Start(ctx context.Context) error {
 		&callbacks{stt: s},
 	)
 	if err != nil {
-		return fmt.Errorf("deepgram: create client: %w", err)
+		return stack.Wrap(fmt.Errorf("deepgram: create client: %w", err))
 	}
 	if !client.Connect() {
-		return errors.New("deepgram: connect failed")
+		return stack.Wrap(errors.New("deepgram: connect failed"))
 	}
 
 	s.client = client

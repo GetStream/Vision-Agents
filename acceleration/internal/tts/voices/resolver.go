@@ -9,6 +9,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -56,7 +57,7 @@ func (r *Resolver) ResolveVoice(ctx context.Context, customerID, provider, voice
 
 	externalID, err := r.store.ReadyVoiceBinding(ctx, customerID, own.ID, provider)
 	if errors.Is(err, store.ErrNoVoice) {
-		return "", routing.ErrVoiceNotPrepared
+		return "", stack.Wrap(routing.ErrVoiceNotPrepared)
 	}
 	if err != nil {
 		return "", err
@@ -67,7 +68,7 @@ func (r *Resolver) ResolveVoice(ctx context.Context, customerID, provider, voice
 // notTheirs is what a voice asked for with the prefix and not found under it comes back
 // as. Unlike a bare name there is no second reading of it to fall back to.
 func notTheirs(voice string) error {
-	return fmt.Errorf("voices: %q is not one of this customer's voices", voice)
+	return stack.Wrap(fmt.Errorf("voices: %q is not one of this customer's voices", voice))
 }
 
 // own finds the customer's voice by id, and failing that by the name they gave it, since

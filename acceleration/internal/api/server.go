@@ -51,6 +51,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
@@ -461,8 +462,8 @@ func (s *Server) Handler() http.Handler {
 		Repanic:         false,
 		WaitForDelivery: false,
 	})
-	served := instrumented.Handle(withTrace(withTiming(withCORS(s.corsOrigins,
-		s.onOwningNode(s.withCustomer(s.withRequestLog(s.withQuota(s.withServerSide(handler)))))))))
+	served := instrumented.Handle(withRequestID(withTrace(withTiming(withCORS(s.corsOrigins,
+		s.onOwningNode(s.withCustomer(s.withRequestLog(s.withQuota(s.withServerSide(handler))))))))))
 	if s.directory == nil {
 		return served
 	}
@@ -608,6 +609,9 @@ func withTrace(next http.Handler) http.Handler {
 // nobody reads all of, and a server error that only appears in it is a server error nobody
 // notices.
 //
+// The error a handler returned is logged on the same line, with its stack, since its
+// answer names only the request id.
+//
 // A panic is logged with its stack and answered with a 500 here, then panicked again so
 // Sentry still reports it. Sentry recovers without writing a status, which net/http sends
 // as an empty 200, and a request that panicked would otherwise leave no line at all.
@@ -615,6 +619,8 @@ func (s *Server) withRequestLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		recorder := &loggedResponse{ResponseWriter: w}
+		failure := &requestFailure{}
+		r = r.WithContext(context.WithValue(r.Context(), requestFailureContextKey{}, failure))
 		defer func() {
 			recovered := recover()
 			if recovered == nil {
@@ -625,6 +631,7 @@ func (s *Server) withRequestLog(next http.Handler) http.Handler {
 				customer, _ := CustomerFrom(r.Context())
 				s.logger.Error("a request panicked",
 					"method", r.Method, "path", r.URL.Path, "customer", customer,
+					"request_id", RequestIDFrom(r.Context()),
 					"panic", fmt.Sprint(recovered), "stack", string(debug.Stack()))
 				if recorder.code == 0 && recorder.written == 0 && !recorder.hijacked {
 					http.Error(recorder, `{"error":"internal error"}`, http.StatusInternalServerError)
@@ -643,9 +650,16 @@ func (s *Server) withRequestLog(next http.Handler) http.Handler {
 			"status", recorder.status(),
 			"duration", time.Since(started).Round(time.Millisecond),
 			"customer", customer,
+			"request_id", RequestIDFrom(r.Context()),
 		}
 		if recorder.written > 0 {
 			fields = append(fields, "bytes", recorder.written)
+		}
+		if failure.err != nil {
+			fields = append(fields, "error", failure.err.Error())
+		}
+		if failure.trace != "" {
+			fields = append(fields, "stack", failure.trace)
 		}
 		if recorder.status() >= http.StatusInternalServerError {
 			s.logger.Error("served a request", fields...)
@@ -885,7 +899,7 @@ func withCORS(allowed []string, next http.Handler) http.Handler {
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", corsRequestHeaders)
 			w.Header().Set("Access-Control-Allow-Methods", corsMethods)
-			w.Header().Set("Access-Control-Expose-Headers", "Server-Timing")
+			w.Header().Set("Access-Control-Expose-Headers", "Server-Timing, "+RequestIDHeader)
 			w.Header().Set("Access-Control-Max-Age", "600")
 		}
 		// A preflight asks whether the real request would be allowed and carries nothing
@@ -1429,7 +1443,7 @@ func parseTagFilter(raw *[]string) (map[string]string, error) {
 	for _, entry := range *raw {
 		key, value, found := strings.Cut(entry, ":")
 		if !found || key == "" {
-			return nil, fmt.Errorf("tag %q must be written key:value", entry)
+			return nil, stack.Wrap(fmt.Errorf("tag %q must be written key:value", entry))
 		}
 		tags[key] = value
 	}

@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Sample is one recording, held rather than streamed because the providers all want it as
@@ -76,7 +78,7 @@ func (r *Registry) Cloner(provider string) (Cloner, error) {
 
 	cloner, ok := r.cloners[provider]
 	if !ok {
-		return nil, fmt.Errorf("voices: %s cannot be given a voice of your own", provider)
+		return nil, stack.Wrap(fmt.Errorf("voices: %s cannot be given a voice of your own", provider))
 	}
 	return cloner, nil
 }
@@ -96,14 +98,14 @@ func (r *Registry) Providers() []string {
 // Validate reports what is wrong with a request, if anything.
 func (r Request) Validate() error {
 	if r.Name == "" {
-		return errors.New("voices: a voice needs a name")
+		return stack.Wrap(errors.New("voices: a voice needs a name"))
 	}
 	if len(r.Samples) == 0 {
-		return errors.New("voices: a voice needs at least one recording to be cloned from")
+		return stack.Wrap(errors.New("voices: a voice needs at least one recording to be cloned from"))
 	}
 	for _, sample := range r.Samples {
 		if len(sample.Content) == 0 {
-			return errors.New("voices: a recording with no audio in it cannot be cloned")
+			return stack.Wrap(errors.New("voices: a recording with no audio in it cannot be cloned"))
 		}
 	}
 	return nil
