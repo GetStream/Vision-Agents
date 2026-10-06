@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2cc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -65,6 +67,9 @@ type fixture struct {
 	clock  *clock
 	// revision is the definition revision connections are made from.
 	revision int
+	// clientRemoved makes the operator's client lookup find nothing, as after its record
+	// or variables are gone.
+	clientRemoved atomic.Bool
 }
 
 // database is the resolver's own test database, emptied and migrated, as the store suite
@@ -114,7 +119,7 @@ func (f *fixture) router(client *http.Client) *resolver.Resolver {
 	credentials, err := pgsealed.New(db, f.sealer)
 	require.NoError(f.tb, err)
 	r, err := resolver.New(resolver.Config{Store: db, Credentials: credentials,
-		Schemes: map[string]core.Scheme{oauth2code.Name: f.scheme(client)}, Now: f.clock.Now})
+		Schemes: map[string]core.Scheme{oauth2code.Name: f.scheme(client), oauth2cc.Name: f.clientCredentials(client)}, Now: f.clock.Now})
 	require.NoError(f.tb, err)
 	return r
 }
@@ -126,12 +131,19 @@ func (f *fixture) scheme(client *http.Client) *oauth2code.Scheme {
 		PublicEndpoint: loopbackOrPublic,
 		Now:            f.clock.Now,
 		Clients: func(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, method core.ClientRegistrationMethod) (oauth2code.Client, bool, error) {
-			if method != core.ClientOperator {
+			if method != core.ClientOperator || f.clientRemoved.Load() {
 				return oauth2code.Client{}, false, nil
 			}
 			return oauth2code.Client{ID: f.srv.ClientID, Secret: f.srv.ClientSecret}, true, nil
 		},
 	})
+	require.NoError(f.tb, err)
+	return scheme
+}
+
+// clientCredentials is oauth2_client_credentials on the fixture's clock.
+func (f *fixture) clientCredentials(client *http.Client) *oauth2cc.Scheme {
+	scheme, err := oauth2cc.New(oauth2cc.Config{HTTP: client, PublicEndpoint: loopbackOrPublic, Now: f.clock.Now})
 	require.NoError(f.tb, err)
 	return scheme
 }
@@ -234,9 +246,14 @@ func (f *fixture) due() {
 	f.clock.Add(fakeprovider.AccessTTL + time.Second)
 }
 
-// works is whether the fake's MCP endpoint takes a tool call carrying credential.
+// works is whether the fake's MCP endpoint takes a tool call carrying credential, wrapped by
+// the scheme that issued it.
 func (f *fixture) works(credential core.AccessCredential) bool {
-	client := &http.Client{Transport: f.scheme(f.srv.Client()).Wrap(f.srv.Client().Transport, credential)}
+	var scheme core.Scheme = f.scheme(f.srv.Client())
+	if credential.Scheme == oauth2cc.Name {
+		scheme = f.clientCredentials(f.srv.Client())
+	}
+	client := &http.Client{Transport: scheme.Wrap(f.srv.Client().Transport, credential)}
 	request, err := http.NewRequest(http.MethodPost, f.srv.URL+fakeprovider.PathMCP,
 		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"text":"hi"}}}`))
 	require.NoError(f.tb, err)

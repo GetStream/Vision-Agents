@@ -286,6 +286,9 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 			panic(http.ErrAbortHandler)
 		}
 	}
+	if r.PostForm.Get("grant_type") == "client_credentials" {
+		s.clientCredentialsGrants++
+	}
 	if s.is(Unavailable) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
@@ -307,6 +310,12 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 		s.exchange(w, r, c)
 	case "refresh_token":
 		s.refreshGrant(w, r, c)
+	case "client_credentials":
+		if !s.is(ClientCredentials) {
+			s.tokenError(w, http.StatusBadRequest, "unsupported_grant_type", "invalid_grant_type")
+			return
+		}
+		s.clientCredentialsGrant(w, r, c)
 	default:
 		// RFC 6749 §5.2; Slack names it invalid_grant_type (oauth.v2.access errors).
 		s.tokenError(w, http.StatusBadRequest, "unsupported_grant_type", "invalid_grant_type")
@@ -459,6 +468,25 @@ func (s *Server) refreshGrant(w http.ResponseWriter, r *http.Request, c *client)
 	writeToken(w, body)
 }
 
+// clientCredentialsGrant is RFC 6749 §4.4. Each one is a grant of its own, so revoking its
+// access token (RFC 7009) ends that token and no other. Call it with mu held.
+func (s *Server) clientCredentialsGrant(w http.ResponseWriter, r *http.Request, c *client) {
+	if c.secret == "" {
+		// §4.4: «The client credentials grant type MUST only be used by confidential
+		// clients»; §5.2 names the refusal unauthorized_client.
+		s.tokenError(w, http.StatusBadRequest, "unauthorized_client", "")
+		return
+	}
+	if resource := r.PostForm.Get("resource"); resource != "" && resource != s.resource() {
+		s.tokenError(w, http.StatusBadRequest, "invalid_target", "") // RFC 8707 §2.2
+		return
+	}
+	// §4.4.2: scope is OPTIONAL. The fake has no client policy to narrow it by, so what is
+	// asked for is granted.
+	g := &grant{clientID: c.id, scopes: split(r.PostForm.Get("scope"), " "), account: s.account}
+	writeToken(w, s.shape(s.issue(g, false), g))
+}
+
 // issue hands out an access token for g and, when rotate is set, a new refresh token that
 // retires the current one. Call it with mu held.
 func (s *Server) issue(g *grant, rotate bool) map[string]any {
@@ -489,6 +517,9 @@ func (s *Server) issue(g *grant, rotate bool) map[string]any {
 func (s *Server) shape(body map[string]any, g *grant) map[string]any {
 	if s.is(CommaScopes) {
 		body = s.slackShape(body, g)
+	}
+	if s.is(IdentityURL) {
+		body["id"] = s.IdentityURL
 	}
 	if s.is(CallbackRealmID) {
 		// The refresh token's lifetime in seconds. oauth-jsclient README lists

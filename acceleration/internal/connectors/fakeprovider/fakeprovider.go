@@ -148,6 +148,19 @@ const (
 	// document's client_id (§4), its redirect_uris (§4.2) and that it holds no shared secret
 	// (§4.1). The document is fetched again on every authorize; §5.2 only allows caching.
 	ClientMetadataDocuments Personality = "client_metadata_documents"
+	// ClientCredentials lets the token endpoint take grant_type=client_credentials (RFC 6749
+	// §4.4) from a client that authenticates with its secret (§4.4.2: «The client MUST
+	// authenticate»; §4.4: only for confidential clients), and answers an access token alone
+	// (§4.4.3: «A refresh token SHOULD NOT be included»). Without it the grant gets
+	// unsupported_grant_type, as from a server that does not offer it (§5.2).
+	ClientCredentials Personality = "client_credentials"
+	// IdentityURL adds id, the identity URL IdentityURL holds, to every token response, as
+	// Salesforce does: its Mobile SDK reads id from each token endpoint response
+	// (SalesforceMobileSDK-Android OAuth2.java:1332 at 863835e9, cited in
+	// providers/salesforce.yaml), and core's recorded response has one
+	// (core/testdata/recorded/salesforce.token.json). That the client credentials response
+	// carries it too is unverified.
+	IdentityURL Personality = "identity_url"
 )
 
 // tokenEndpoint are the personalities that decide what the token endpoint does; at most one
@@ -164,11 +177,13 @@ type Server struct {
 	ClientID     string
 	ClientSecret string
 	// TeamID and UserID are the workspace and user CommaScopes reports; RealmID is what
-	// CallbackRealmID reports; Shop is the shop SignedCallback names. All synthetic.
-	TeamID  string
-	UserID  string
-	RealmID string
-	Shop    string
+	// CallbackRealmID reports; Shop is the shop SignedCallback names; IdentityURL is the id
+	// IdentityURL reports. All synthetic.
+	TeamID      string
+	UserID      string
+	RealmID     string
+	Shop        string
+	IdentityURL string
 
 	t      testing.TB
 	server *httptest.Server
@@ -182,6 +197,9 @@ type Server struct {
 	refresh       map[string]*refreshToken
 	hits          map[string]int
 	refreshes     int
+	// clientCredentialsGrants counts the client_credentials grants that reached the token
+	// endpoint.
+	clientCredentialsGrants int
 	// refreshScope is the scope parameter of the last refresh grant, and refreshScopeSent
 	// whether it had one at all.
 	refreshScope     string
@@ -245,12 +263,17 @@ type refreshToken struct {
 func New(t testing.TB, personalities ...Personality) *Server {
 	t.Helper()
 	s := &Server{
-		ClientID:      synthetic("client"),
-		ClientSecret:  synthetic("secret"),
-		TeamID:        "T" + strings.ToUpper(synthetic("team")[5:15]),
-		UserID:        "U" + strings.ToUpper(synthetic("user")[5:15]),
-		RealmID:       syntheticDigits(16),
-		Shop:          "fake-" + synthetic("shop")[5:13] + ".myshopify.com",
+		ClientID:     synthetic("client"),
+		ClientSecret: synthetic("secret"),
+		TeamID:       "T" + strings.ToUpper(synthetic("team")[5:15]),
+		UserID:       "U" + strings.ToUpper(synthetic("user")[5:15]),
+		RealmID:      syntheticDigits(16),
+		Shop:         "fake-" + synthetic("shop")[5:13] + ".myshopify.com",
+		// The shape of core's recorded identity URL (core/testdata/recorded/salesforce.token.json):
+		// login.salesforce.com, then an org id (00D) and a user id (005), 18 characters each.
+		// Nothing dials it; a manifest only captures it.
+		IdentityURL: "https://login.salesforce.com/id/00D" + strings.ToUpper(synthetic("org")[4:19]) +
+			"/005" + strings.ToUpper(synthetic("user")[5:20]),
 		t:             t,
 		personalities: map[Personality]bool{},
 		clients:       map[string]*client{},
@@ -351,6 +374,14 @@ func (s *Server) Refreshes() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.refreshes
+}
+
+// ClientCredentialsGrants is how many client_credentials grants reached the token endpoint,
+// whatever their outcome.
+func (s *Server) ClientCredentialsGrants() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.clientCredentialsGrants
 }
 
 // RefreshScope is the scope parameter the last refresh grant carried, and whether it

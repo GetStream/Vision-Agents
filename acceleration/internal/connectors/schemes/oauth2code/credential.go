@@ -97,10 +97,20 @@ func (s *Scheme) Wrap(base http.RoundTripper, c core.AccessCredential) http.Roun
 	var secret struct {
 		AccessToken string `json:"access_token"`
 	}
-	if c.Scheme != Name || json.Unmarshal(c.Secret(), &secret) != nil || secret.AccessToken == "" {
+	if c.Scheme != Name || json.Unmarshal(c.Secret(), &secret) != nil {
 		return refuse{}
 	}
-	return bearer{base: base, authorization: "Bearer " + secret.AccessToken}
+	return Bearer(base, secret.AccessToken)
+}
+
+// Bearer is the RoundTripper that puts accessToken on a clone of every request as a bearer
+// token (RFC 6750 section 2.1), for this scheme's Wrap and another OAuth scheme's (oauth2cc).
+// An empty accessToken fails every request instead of sending it without one.
+func Bearer(base http.RoundTripper, accessToken string) http.RoundTripper {
+	if accessToken == "" {
+		return refuse{}
+	}
+	return bearer{base: base, authorization: "Bearer " + accessToken}
 }
 
 // Revoke asks the provider to revoke the grant (RFC 7009) at the manifest's revoke
