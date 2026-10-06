@@ -339,27 +339,21 @@ func (s *Server) deleteConnection(ctx context.Context, request *deleteConnection
 	if err != nil {
 		return nil, err
 	}
-	// The check and the delete are two statements. Nothing writes bindings yet, so no bind
-	// can land between them; once one does (AI-842), make the unforced delete one statement
-	// that refuses a bound row, or a bind in between leaves the binding this 409 prevents.
-	if !request.Force {
-		referenced, err := s.store.ConnectorConnectionReferenced(ctx, connection.CustomerID, connection.ID)
-		if errors.Is(err, store.ErrNoConnectorConnection) {
-			return nil, huma.Error404NotFound(noSuchConnection)
-		}
-		if err != nil {
-			return nil, err
-		}
-		// 409: the request conflicts with the state of the resource, which the caller can
-		// change and retry (RFC 9110 section 15.5.10).
-		if referenced {
-			return nil, huma.Error409Conflict("an agent config binds this connection as its fixed connection: " +
-				"unbind it first, or delete with force=true")
-		}
+	// Unforced, the store checks for a binding in the same statement that deletes, so no
+	// bind can land between a check and the delete.
+	if request.Force {
+		err = s.store.DeleteConnectorConnection(ctx, connection.CustomerID, connection.ID)
+	} else {
+		err = s.store.DeleteUnboundConnectorConnection(ctx, connection.CustomerID, connection.ID)
 	}
-	err = s.store.DeleteConnectorConnection(ctx, connection.CustomerID, connection.ID)
 	if errors.Is(err, store.ErrNoConnectorConnection) {
 		return nil, huma.Error404NotFound(noSuchConnection)
+	}
+	// 409: the request conflicts with the state of the resource, which the caller can
+	// change and retry (RFC 9110 section 15.5.10).
+	if errors.Is(err, store.ErrConnectorConnectionBound) {
+		return nil, huma.Error409Conflict("an agent config binds this connection as its fixed connection: " +
+			"unbind it first, or delete with force=true")
 	}
 	if err != nil {
 		return nil, err
