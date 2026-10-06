@@ -157,3 +157,9 @@ func TestTheStateHashIsNotTheState(t *testing.T) {
 	require.NotContains(t, hash, "bearer-state")
 	require.Equal(t, hash, AuthorizationStateHash("bearer-state"), "the same state finds the same row")
 }
+
+func TestAHandoffWithoutTheBlobItReadIsRefused(t *testing.T) {
+	err := (&Store{}).HandOffConnectorAuthorizationAttempt(context.Background(), "attempt", nil, []byte("sealed"), 1)
+
+	require.ErrorContains(t, err, "the blob it read")
+}

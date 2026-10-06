@@ -190,6 +190,8 @@ type Server struct {
 	lostOnce bool
 	// metadataClient fetches client metadata documents under ClientMetadataDocuments.
 	metadataClient *http.Client
+	// account is the user the next consent is by: UserID until SwitchAccount.
+	account string
 }
 
 type client struct {
@@ -210,6 +212,9 @@ type grant struct {
 	// user marks the grant of the Slack user token CommaScopes issues beside the bot token's
 	// when user_scope was asked.
 	user bool
+	// account is the user who consented, which CommaScopes reports as authed_user.id on the
+	// exchange and on every refresh of this grant.
+	account string
 }
 
 type authorizationCode struct {
@@ -254,6 +259,7 @@ func New(t testing.TB, personalities ...Personality) *Server {
 		refresh:       map[string]*refreshToken{},
 		hits:          map[string]int{},
 	}
+	s.account = s.UserID
 	s.clients[s.ClientID] = &client{
 		id: s.ClientID, secret: s.ClientSecret,
 		methods:   []string{"client_secret_basic", "client_secret_post"},
@@ -313,6 +319,17 @@ func (s *Server) FetchClientMetadataWith(c *http.Client) {
 	// CIMD §5: «MUST NOT automatically follow HTTP redirects».
 	fetch.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	s.metadataClient = &fetch
+}
+
+// SwitchAccount makes every later consent be by another user of the same workspace, as a
+// person who signs in to the provider as someone else between two consents is. It returns
+// that user's id, synthetic like UserID, which keeps naming the first one. Grants already
+// made keep the user who made them. Call it from the test goroutine.
+func (s *Server) SwitchAccount() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.account = "U" + strings.ToUpper(synthetic("user")[5:15])
+	return s.account
 }
 
 // Advance moves the server's clock, so expiry and grace windows pass without sleeping.

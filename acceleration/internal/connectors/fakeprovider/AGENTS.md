@@ -17,6 +17,7 @@ That is the whole setup. The server closes when the test ends (`t.Cleanup`). It 
 - `srv.FetchClientMetadataWith(c)`: the client `ClientMetadataDocuments` fetches a client_id URL with, such as the `Client()` of the test's own TLS server that serves the document. Fetching from loopback is the testing exception CIMD §8.6 allows; production code never does it.
 - `srv.Use(...)` to switch personalities mid-test, `srv.Advance(d)` to move the server's clock past expiry or grace, `srv.Hits(path)` and `srv.Refreshes()` to count what reached it, `srv.RefreshScope()` for the `scope` the last refresh carried and whether it carried one.
 - `TeamID`, `UserID`, `RealmID`, `Shop`: the synthetic identities the vendor-shaped personalities report.
+- `srv.SwitchAccount()`: every later consent is by another user of the same workspace (its id is returned; `UserID` keeps the first). Grants already made keep their user. For an account-switch test (T17).
 
 **Egress.** The server listens on loopback, which `egress.NewClient` refuses by design. Do not point an egress client at it and do not add a way around that: tests here use `srv.Client()`, and tests of the egress policy keep using egress's own seams (`internal/egress/AGENTS.md`).
 

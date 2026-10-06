@@ -468,6 +468,38 @@ RETURNING caa.*`, AuthorizationStateHash(state)).Scan(ctx, &attempt)
 	return attempt, nil
 }
 
+// HandOffConnectorAuthorizationAttempt replaces an open attempt's sealed blob with sealed,
+// only while the row still holds previous, the blob the caller read. A seal has a fresh
+// random nonce (auth.Sealer.SealWithAAD), so no two seals are equal: of any number of
+// handoffs racing from the same read exactly one replaces it, as of racing callbacks one
+// consumes it.
+func (s *Store) HandOffConnectorAuthorizationAttempt(ctx context.Context, id string, previous, sealed []byte, kekVersion int) error {
+	if id == "" || len(previous) == 0 || len(sealed) == 0 || kekVersion < 1 {
+		return errors.New("store: a handoff needs an attempt id, the blob it read and a new one under a key version of 1 or more")
+	}
+	result, err := s.db.NewRaw(`
+UPDATE connector_authorization_attempts AS caa
+SET attempt_sealed = ?, kek_version = ?
+WHERE caa.id = ?
+  AND caa.attempt_sealed = ?
+  AND caa.consumed_at IS NULL
+  AND caa.expires_at > now()
+  AND EXISTS (SELECT 1 FROM connector_connections AS cc
+              WHERE cc.id = caa.connection_id AND cc.customer_id = caa.customer_id AND cc.deleted_at IS NULL)`,
+		sealed, kekVersion, id, previous).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: hand off authorization attempt: %w", err)
+	}
+	replaced, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: hand off authorization attempt: %w", err)
+	}
+	if replaced == 0 {
+		return ErrNoAuthorizationAttempt
+	}
+	return nil
+}
+
 // AuthorizationStateHash is how an OAuth state is stored and looked up: hashed, so the
 // table never holds the bearer value a callback presents.
 func AuthorizationStateHash(state string) string {
