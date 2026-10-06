@@ -8,19 +8,19 @@ func (s *StoreSuite) TestReleasingACallReturnsItsResourceAndIsIdempotent() {
 		CallType: "default", CallID: "call-1", CustomerID: "acme",
 	}))
 
-	released, err := s.store.ReleaseCallResources(s.ctx, "default", "call-1")
+	released, err := s.store.ReleaseCallResourcesInApp(s.ctx, AppScope{Unpinned: true}, "default", "call-1")
 	s.Require().NoError(err)
 	s.Require().Len(released, 1)
 	s.Equal("trunk-1", released[0].TrunkID)
 	s.Equal("route-1", released[0].RouteID)
 
-	again, err := s.store.ReleaseCallResources(s.ctx, "default", "call-1")
+	again, err := s.store.ReleaseCallResourcesInApp(s.ctx, AppScope{Unpinned: true}, "default", "call-1")
 	s.Require().NoError(err)
 	s.Empty(again, "a retried delivery finds nothing left to release")
 }
 
 func (s *StoreSuite) TestReleasingAnUnknownCallReturnsNothing() {
-	released, err := s.store.ReleaseCallResources(s.ctx, "default", "nobody-called")
+	released, err := s.store.ReleaseCallResourcesInApp(s.ctx, AppScope{Unpinned: true}, "default", "nobody-called")
 	s.Require().NoError(err)
 	s.Empty(released)
 }
@@ -35,7 +35,7 @@ func (s *StoreSuite) TestATransferAddsASecondTrunkToTheSameCall() {
 		CallType: "default", CallID: "call-1", CustomerID: "acme",
 	}))
 
-	released, err := s.store.ReleaseCallResources(s.ctx, "default", "call-1")
+	released, err := s.store.ReleaseCallResourcesInApp(s.ctx, AppScope{Unpinned: true}, "default", "call-1")
 	s.Require().NoError(err)
 	s.Require().Len(released, 2, "both the call's own trunk and the transfer's trunk are released")
 

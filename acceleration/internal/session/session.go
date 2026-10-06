@@ -737,7 +737,7 @@ func (s *Session) Describe(ctx context.Context, labels Labels) {
 		s.records.Described(s.spec.CustomerID, s.id, title, description, custom)
 	}
 	if s.naming != nil && s.spec.ConversationID != "" {
-		if err := s.naming.service.Describe(ctx, s.spec.ConversationID, title, description); err != nil {
+		if err := s.naming.service.Describe(ctx, s.spec.CustomerID, s.spec.ConversationID, title, description); err != nil {
 			s.logger.Warn("could not rename the conversation's channel",
 				"session", s.id, "conversation", s.spec.ConversationID, "error", err)
 		}

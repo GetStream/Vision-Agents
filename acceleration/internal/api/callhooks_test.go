@@ -195,7 +195,7 @@ func (s *CallHooksSuite) hold(callType, callID string) {
 		PurchasedAt: time.Now().UTC(),
 	}))
 	s.Require().NoError(s.store.AttachNumber(
-		ctx, s.customerID(), s.e164, "trunk-"+s.utils.uuid(), callType, callID))
+		ctx, s.customerID(), s.e164, store.NumberAttachment{TrunkID: "trunk-" + s.utils.uuid(), CallType: callType, CallID: callID}))
 }
 
 // arrive delivers a signed call.session_started for one call, as Stream would.

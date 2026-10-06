@@ -32,12 +32,12 @@ func TestCallHookIntegrationSuite(t *testing.T) {
 }
 
 func (s *CallHookIntegrationSuite) SetupSuite() {
-	if os.Getenv(apiKeyEnvVar) == "" || os.Getenv(apiSecretEnvVar) == "" {
-		s.T().Skipf("%s and %s must be set", apiKeyEnvVar, apiSecretEnvVar)
+	if os.Getenv("STREAM_API_KEY") == "" || os.Getenv("STREAM_API_SECRET") == "" {
+		s.T().Skip("STREAM_API_KEY and STREAM_API_SECRET must be set")
 	}
 
 	s.ctx = context.Background()
-	stream, err := NewStream(StreamOptions{})
+	stream, err := NewStream(StreamOptions{APIKey: os.Getenv("STREAM_API_KEY"), APISecret: os.Getenv("STREAM_API_SECRET")})
 	s.Require().NoError(err)
 	s.stream = stream
 

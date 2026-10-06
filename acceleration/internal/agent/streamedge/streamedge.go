@@ -11,7 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
+	"net/http"
 	"slices"
 	"sync"
 	"time"
@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/getstream-go-webrtc/audio/opus"
 	audiortc "github.com/GetStream/getstream-go-webrtc/audio/rtc"
 	"github.com/GetStream/getstream-go-webrtc/track"
+	getstream "github.com/GetStream/getstream-go/v5"
 	sfu_events "github.com/GetStream/protocol/protobuf/video/sfu/event"
 	sfu_models "github.com/GetStream/protocol/protobuf/video/sfu/models"
 	"github.com/GetStream/protocol/protobuf/video/sfu/signal_rpc"
@@ -31,12 +32,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/emit"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
-)
-
-const (
-	apiKeyEnvVar    = "STREAM_API_KEY"
-	apiSecretEnvVar = "STREAM_API_SECRET"
-	userTokenEnvVar = "STREAM_USER_TOKEN"
 )
 
 // defaultCallType is the call type an agent joins under.
@@ -51,8 +46,9 @@ const audioBuffer = 10
 // would hold up every other event the SFU is trying to report.
 const attendanceBuffer = 32
 
-// Options configures an Edge. The credentials fall back to the environment, which is how
-// every other provider in this service is configured.
+// Options configures an Edge. The credentials are whoever builds the edge's to give: the
+// router gives the identity of the Stream app the session is pinned to, and nothing is read
+// from the environment, which would make every call the deployment's.
 type Options struct {
 	// CallID is the call to join.
 	CallID string
@@ -61,13 +57,17 @@ type Options struct {
 	// User is the identity the agent joins as.
 	User User
 
-	// APIKey defaults to STREAM_API_KEY.
+	// APIKey is the app's key.
 	APIKey string
-	// APISecret defaults to STREAM_API_SECRET. It mints the agent's token, which is why a
-	// server-side agent needs no token of its own.
+	// APISecret mints the agent's token, which is why a server-side agent needs no token
+	// of its own.
 	APISecret string
-	// UserToken defaults to STREAM_USER_TOKEN and is used in preference to a secret.
+	// UserToken is a fixed token used in preference to a secret.
 	UserToken string
+	// BaseURL is the Stream API the app is reached at, and HTTPClient what reaches it.
+	// Empty leaves both to the SDK.
+	BaseURL    string
+	HTTPClient *http.Client
 
 	Logger *slog.Logger
 }
@@ -120,19 +120,10 @@ func New(options Options) (*Edge, error) {
 		options.CallType = defaultCallType
 	}
 	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APISecret == "" {
-		options.APISecret = os.Getenv(apiSecretEnvVar)
-	}
-	if options.UserToken == "" {
-		options.UserToken = os.Getenv(userTokenEnvVar)
-	}
-	if options.APIKey == "" {
-		return nil, stack.Wrap(fmt.Errorf("streamedge: %s is not set", apiKeyEnvVar))
+		return nil, stack.Wrap(errors.New("streamedge: an api key is required"))
 	}
 	if options.APISecret == "" && options.UserToken == "" {
-		return nil, stack.Wrap(fmt.Errorf("streamedge: set %s or %s", userTokenEnvVar, apiSecretEnvVar))
+		return nil, stack.Wrap(errors.New("streamedge: a secret or a user token is required"))
 	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
@@ -324,7 +315,14 @@ func (e *Edge) connect() (*rtc.Client, error) {
 		return client, nil
 	}
 
-	client, err := rtc.NewRTCClient(e.options.APIKey, e.options.APISecret, rtc.WithUser(user))
+	options := []rtc.ClientOption{rtc.WithUser(user)}
+	if e.options.BaseURL != "" {
+		options = append(options, getstream.WithBaseUrl(e.options.BaseURL))
+	}
+	if e.options.HTTPClient != nil {
+		options = append(options, getstream.WithHTTPClient(e.options.HTTPClient))
+	}
+	client, err := rtc.NewRTCClient(e.options.APIKey, e.options.APISecret, options...)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("streamedge: connect: %w", err))
 	}

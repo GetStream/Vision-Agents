@@ -12,7 +12,7 @@ import (
 
 func TestAnImageIsUploadedToTheChannelAsTheAgent(t *testing.T) {
 	db, client := newChat(t)
-	s := newService(client)
+	s := NewForChat(client)
 	defer s.Close()
 	c, _, _, err := s.Open(context.Background(), "customer", "artist", "")
 	require.NoError(t, err)
@@ -31,7 +31,7 @@ func TestAnImageIsUploadedToTheChannelAsTheAgent(t *testing.T) {
 
 func TestAFileThatIsNotAnImageIsUploadedAsAFile(t *testing.T) {
 	db, client := newChat(t)
-	s := newService(client)
+	s := NewForChat(client)
 	defer s.Close()
 	c, _, _, err := s.Open(context.Background(), "customer", "artist", "")
 	require.NoError(t, err)
@@ -47,7 +47,7 @@ func TestAFileThatIsNotAnImageIsUploadedAsAFile(t *testing.T) {
 
 func TestAnEmptyFileIsNotUploaded(t *testing.T) {
 	db, client := newChat(t)
-	s := newService(client)
+	s := NewForChat(client)
 	defer s.Close()
 	c, _, _, err := s.Open(context.Background(), "customer", "artist", "")
 	require.NoError(t, err)
@@ -62,7 +62,7 @@ func TestAnEmptyFileIsNotUploaded(t *testing.T) {
 
 func TestARenderIsAttachedToTheReplyAndComesBackWithItsHistory(t *testing.T) {
 	db, client := newChat(t)
-	s := newService(client)
+	s := NewForChat(client)
 	defer s.Close()
 	c, _, _, err := s.Open(context.Background(), "customer", "artist", "")
 	require.NoError(t, err)
@@ -95,7 +95,7 @@ func TestARenderIsAttachedToTheReplyAndComesBackWithItsHistory(t *testing.T) {
 	require.Equal(t, "teapot.png", image["title"])
 
 	// Somebody coming back later, on a replica that never saw it, still sees the render.
-	cold := newService(client)
+	cold := NewForChat(client)
 	defer cold.Close()
 	page, err := cold.History(context.Background(), "customer", "artist", c.CID(), "")
 	require.NoError(t, err)
@@ -106,7 +106,7 @@ func TestARenderIsAttachedToTheReplyAndComesBackWithItsHistory(t *testing.T) {
 
 func TestFilesForWorkTheReplyNeverStartedAreNotAttached(t *testing.T) {
 	_, client := newChat(t)
-	s := newService(client)
+	s := NewForChat(client)
 	defer s.Close()
 	c, _, _, err := s.Open(context.Background(), "customer", "artist", "")
 	require.NoError(t, err)

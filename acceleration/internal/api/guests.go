@@ -43,8 +43,22 @@ func (s *Server) createGuestUser(ctx context.Context, request *createGuestUserRe
 	if !ok {
 		return nil, huma.Error401Unauthorized(missingCustomer().Error)
 	}
-	if s.streamKey == "" || s.streamSecret == "" {
+	bound, mintable, err := s.streamFor(ctx, customerID)
+	if elsewhere(err) {
+		return nil, huma.Error400BadRequest("this app's Stream app is disconnected, so no guest can be made in it")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !mintable {
 		return nil, huma.Error400BadRequest(noStreamKeys)
+	}
+	// An app that registered its own Stream app decides whether guests are made in it.
+	if !bound.Identity.MintsGuests() {
+		return nil, huma.Error403Forbidden("this app does not admit guests")
+	}
+	if bound, err = s.minting(ctx, bound); err != nil {
+		return nil, err
 	}
 
 	body := GuestUserRequest{}
@@ -92,11 +106,7 @@ func (s *Server) createGuestUser(ctx context.Context, request *createGuestUserRe
 		}
 	}
 
-	client, err := getstream.NewClient(s.streamKey, s.streamSecret)
-	if err != nil {
-		return nil, stack.Wrap(err)
-	}
-
+	client := bound.Client
 	role := guestRole
 	if _, err := client.UpdateUsers(ctx, &getstream.UpdateUsersRequest{
 		Users: map[string]getstream.UserRequest{
@@ -195,7 +205,7 @@ func (s *Server) claimGuestUser(ctx context.Context, request *claimGuestUserRequ
 // addToGuestChannels puts the real account into the transcripts the guest was talking in, so
 // the conversations a claim just moved are readable by the person they moved to.
 func (s *Server) addToGuestChannels(ctx context.Context, customerID, guestID, userID string) error {
-	if s.streamKey == "" || s.streamSecret == "" {
+	if s.stream == nil {
 		return nil
 	}
 
@@ -208,18 +218,23 @@ func (s *Server) addToGuestChannels(ctx context.Context, customerID, guestID, us
 		return err
 	}
 
-	client, err := getstream.NewClient(s.streamKey, s.streamSecret)
-	if err != nil {
-		return stack.Wrap(err)
-	}
-
 	var failures []error
 	for _, one := range moved {
 		channel := transcriptChannel(one)
 		if channel == "" {
 			continue
 		}
-		_, err := client.Chat().UpdateChannel(ctx, chatlog.ChannelType, channel,
+		// Each conversation is joined in the app it was held in, which for a guest who
+		// talked before their app had an identity of its own is the deployment's.
+		bound, err := s.streamForApp(ctx, customerID, one.StreamAppPK, false)
+		if _, refused := refusal(err, "", ""); refused {
+			continue
+		}
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		_, err = bound.Client.Chat().UpdateChannel(ctx, chatlog.ChannelType, channel,
 			&getstream.UpdateChannelRequest{
 				AddMembers: []getstream.ChannelMemberRequest{{UserID: userID}},
 			})

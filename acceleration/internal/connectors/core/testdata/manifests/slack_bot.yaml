@@ -1,0 +1,96 @@
+# A Slack bot as an inbound channel and a tool, the shape T35 (subtasks.md on
+# connectors/planning) builds: the customer's own Slack app, a bot token, events to the app's
+# own Request URL. The stress-test fixture slack.yaml is the same install without a channel.
+# Slack's pages, opened October 6, 2026:
+#   [install]  https://docs.slack.dev/authentication/installing-with-oauth
+#   [verify]   https://docs.slack.dev/authentication/verifying-requests-from-slack
+#   [handshake] https://docs.slack.dev/reference/events/url_verification
+#   [im]       https://docs.slack.dev/reference/events/message.im
+#   [threads]  https://docs.slack.dev/messaging/retrieving-messages
+#   [post]     https://docs.slack.dev/reference/methods/chat.postMessage
+#   [created]  https://docs.slack.dev/reference/events/channel_created
+#   [mention]  https://docs.slack.dev/reference/events/app_mention
+id: slack_bot
+revision: 1
+name: Slack bot
+endpoints:
+  # [install]
+  authorize: https://slack.com/oauth/v2/authorize
+  token: https://slack.com/api/oauth.v2.access
+  # The Web API base the http tool source and the proxy call: [post] is a method under it.
+  api_base: https://slack.com/api
+schemes: [oauth2_code]
+client:
+  # Stream's app for Stream's own agents, the customer's app for the rest: architecture doc,
+  # «Decisions, 2026-10-05», item 4. T40 adds managed.
+  registration: [operator, customer]
+  auth_method: client_secret_post
+  env: SLACK
+scopes:
+  # chat:write for [post]; im:history for [im].
+  list: [chat:write, im:history]
+  separator: ","
+capture:
+  # [install] response shape.
+  - name: team_id
+    from: token_response
+    path: $.team.id
+# The workspace: T35 («identity = the Slack team»).
+identity: [team_id]
+# Whether Slack's hosted MCP server takes a bot token is unverified (T35), so tools go over the
+# Web API.
+sources:
+  - kind: http
+    endpoint: api_base
+channel:
+  verifier:
+    # [verify]: HMAC-SHA256 of v0:{timestamp}:{body} with the app's signing secret, hex, after
+    # v0= in X-Slack-Signature; the timestamp in X-Slack-Request-Timestamp, refused when it is
+    # more than five minutes from now.
+    kind: hmac_header
+    # The signing secret is the customer's Slack app's (T40).
+    secret: provider_app
+    header: X-Slack-Signature
+    algorithm: sha256
+    encoding: hex
+    prefix: v0=
+    signed: "v0:{timestamp}:{body}"
+    timestamp_header: X-Slack-Request-Timestamp
+    max_age: 5m
+  # [verify] signs the raw JSON body; [im] is JSON.
+  format: json
+  # [handshake]: {"type": "url_verification", "challenge": "..."}.
+  challenge: $.challenge
+  messages:
+    # [im]: a message is event.type message. The customer's app may subscribe to other events
+    # on the same Request URL: channel_created, whose event.channel is an object ([created]),
+    # or app_mention, which «is not a message like the message.* event types» ([mention]) but
+    # carries the same post's user, text, ts and channel.
+    match:
+      $.event.type: message
+    # Messages an app posts carry bot_id ([threads], «such as user or bot_id»), so the bot's
+    # own replies are not read back as a person's.
+    skip_if_present: [$.event.bot_id]
+    # [im]: team_id on the envelope.
+    provider_unit_id: $.team_id
+    thread_key:
+      # Channel and thread: channels doc, «Other channels», the Slack row.
+      - name: channel
+        path: $.event.channel
+      # A reply carries thread_ts, the parent's ts; a message that starts a thread has none,
+      # and its own ts is the thread's ([threads]).
+      - name: thread_ts
+        path: $.event.thread_ts
+        fallback: $.event.ts
+    # [im]
+    author_id: $.event.user
+    provider_message_id: $.event.ts
+    text: $.event.text
+  reply:
+    # [post]: POST, JSON accepted, the token as a bearer header (the scheme's).
+    url: https://slack.com/api/chat.postMessage
+    body:
+      channel: "{thread.channel}"
+      # [post]: thread_ts makes the message a reply in that thread.
+      thread_ts: "{thread.thread_ts}"
+      text: "{text}"

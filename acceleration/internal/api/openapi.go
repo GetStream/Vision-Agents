@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -115,6 +116,15 @@ func init() {
 		}
 		details := make([]string, 0, len(errs))
 		for _, err := range errs {
+			// A detail names the value it refused. The value of a secret is the secret, and
+			// for a field missing or unexpected the value is the whole object around it,
+			// whatever else it carries. Only a single value at a field that is not a
+			// secret is repeated back.
+			var detail *huma.ErrorDetail
+			if errors.As(err, &detail) && (strings.Contains(strings.ToLower(detail.Location), "secret") || !scalar(detail.Value)) {
+				details = append(details, detail.Message+" ("+detail.Location+")")
+				continue
+			}
 			details = append(details, err.Error())
 		}
 		if len(details) > 0 {
@@ -125,15 +135,29 @@ func init() {
 	huma.NewErrorWithContext = answerFailure
 }
 
+// scalar reports whether a value is one thing rather than an object or a list of them.
+func scalar(value any) bool {
+	if value == nil {
+		return true
+	}
+	switch reflect.ValueOf(value).Kind() {
+	case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Pointer, reflect.Interface:
+		return false
+	}
+	return true
+}
+
 // apiError is how a Huma operation reports a failure, in the {"error": "..."} shape the
 // generated operations and the sockets answer with.
 type apiError struct {
 	status  int
+	headers http.Header
 	Message string `json:"error"`
 }
 
-func (e *apiError) Error() string  { return e.Message }
-func (e *apiError) GetStatus() int { return e.status }
+func (e *apiError) Error() string           { return e.Message }
+func (e *apiError) GetStatus() int          { return e.status }
+func (e *apiError) GetHeaders() http.Header { return e.headers }
 
 // Schema documents the error as the Error schema rather than one of its own.
 func (*apiError) Schema(registry huma.Registry) *huma.Schema {
@@ -246,6 +270,8 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	api.UseMiddleware(requireCustomer(api))
 	s.registerHealth(api)
 	s.registerPolicies(api)
+	s.registerSettings(api)
+	s.registerStreamCredentials(api)
 	s.registerSessionQuery(api)
 	s.registerSessionUpdate(api)
 	s.registerSessionStop(api)

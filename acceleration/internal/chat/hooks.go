@@ -9,15 +9,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	getstream "github.com/GetStream/getstream-go/v5"
-)
-
-const (
-	apiKeyEnvVar    = "STREAM_API_KEY"
-	apiSecretEnvVar = "STREAM_API_SECRET"
 )
 
 // MessageHookPath is where the router receives the message events Stream sends. It is here
@@ -37,9 +31,7 @@ const webhookHookType = "webhook"
 // StreamOptions configures the client. The credentials fall back to the environment, the
 // way the rest of the service reads them.
 type StreamOptions struct {
-	// APIKey defaults to STREAM_API_KEY.
-	APIKey string
-	// APISecret defaults to STREAM_API_SECRET.
+	APIKey    string
 	APISecret string
 }
 
@@ -50,14 +42,8 @@ type Stream struct {
 
 // NewStream validates the credentials and returns a Stream.
 func NewStream(options StreamOptions) (*Stream, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APISecret == "" {
-		options.APISecret = os.Getenv(apiSecretEnvVar)
-	}
 	if options.APIKey == "" || options.APISecret == "" {
-		return nil, errors.New("chat: " + apiKeyEnvVar + " and " + apiSecretEnvVar + " are required")
+		return nil, errors.New("chat: a stream api key and secret are required")
 	}
 
 	client, err := getstream.NewClient(options.APIKey, options.APISecret)

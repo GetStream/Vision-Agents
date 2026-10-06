@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -35,6 +34,10 @@ type Store struct {
 	// shapes is what each table an export carries looks like, read from the catalogue
 	// once rather than kept in a list here that a migration could leave behind.
 	shapes tableShapes
+	// pins says how Stream app pins cross between deployments, once the router has said.
+	pins pinsHolder
+	// deliveriesPruned is when hook deliveries were last forgotten, in Unix nanoseconds.
+	deliveriesPruned atomic.Int64
 }
 
 // Open connects to Postgres using a pgdriver DSN, for example
@@ -908,18 +911,20 @@ func (s *Store) ReleaseNumber(ctx context.Context, customerID, e164 string, at t
 //
 // The call is recorded as well as the trunk because an inbound call arrives over a webhook
 // that names the call, so without it there is nothing to attribute the call to.
-func (s *Store) AttachNumber(ctx context.Context, customerID, e164, trunkID, callType, callID string) error {
+func (s *Store) AttachNumber(ctx context.Context, customerID, e164 string, attached NumberAttachment) error {
 	if customerID == "" || e164 == "" {
 		return stack.Wrap(errors.New("store: a customer and a number are required"))
 	}
-	if trunkID == "" {
+	if attached.TrunkID == "" {
 		return stack.Wrap(errors.New("store: a trunk id is required"))
 	}
 
 	result, err := s.db.NewUpdate().Model((*PhoneNumber)(nil)).
-		Set("stream_trunk_id = ?", trunkID).
-		Set("stream_call_id = ?", callID).
-		Set("stream_call_type = ?", callType).
+		Set("stream_trunk_id = ?", attached.TrunkID).
+		Set("stream_route_id = ?", nullable(attached.RouteID)).
+		Set("stream_app_pk = ?", nullablePin(attached.StreamAppPK)).
+		Set("stream_call_id = ?", attached.CallID).
+		Set("stream_call_type = ?", attached.CallType).
 		Where("customer_id = ?", customerID).
 		Where("e164 = ?", e164).
 		Where("released_at IS NULL").
@@ -935,6 +940,25 @@ func (s *Store) AttachNumber(ctx context.Context, customerID, e164, trunkID, cal
 		return stack.Wrap(fmt.Errorf("store: %s is not a number %s holds", e164, customerID))
 	}
 	return nil
+}
+
+// NumberAttachment is what attaching a number made in Stream, and where its calls go.
+type NumberAttachment struct {
+	TrunkID string
+	RouteID string
+	// StreamAppPK is the app the trunk and route were made in, zero for the deployment's.
+	StreamAppPK int64
+	CallType    string
+	CallID      string
+}
+
+// nullablePin stores the deployment's own app as NULL, as every pin written before apps
+// had identities reads.
+func nullablePin(app int64) any {
+	if app == 0 {
+		return nil
+	}
+	return app
 }
 
 // CustomerNumbers returns the numbers a customer holds, newest first. Released numbers
@@ -976,55 +1000,6 @@ func (s *Store) Number(ctx context.Context, customerID, e164 string) (PhoneNumbe
 	}
 	if err != nil {
 		return PhoneNumber{}, stack.Wrap(fmt.Errorf("store: number: %w", err))
-	}
-	return number, nil
-}
-
-// NumberByCall returns the number whose callers land in a Stream call.
-//
-// This is the way back from an arriving call to the customer whose call it is: the webhook
-// that reports one is app-wide and names the call rather than the number or the customer.
-//
-// A number attached before the call was recorded is found by the "phone-<e164>" the default
-// routing rule names, which is derivable rather than stored. Without that fallback every
-// number already in service would have to be attached again to answer a call.
-func (s *Store) NumberByCall(ctx context.Context, callType, callID string) (PhoneNumber, error) {
-	if callID == "" {
-		return PhoneNumber{}, errors.New("store: a call id is required")
-	}
-	if callType == "" {
-		callType = "agent"
-	}
-
-	var number PhoneNumber
-	err := s.db.NewSelect().Model(&number).
-		Where("stream_call_id = ?", callID).
-		Where("stream_call_type = ?", callType).
-		Where("released_at IS NULL").
-		Limit(1).
-		Scan(ctx)
-	if err == nil {
-		return number, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return PhoneNumber{}, fmt.Errorf("store: number by call: %w", err)
-	}
-
-	e164, named := strings.CutPrefix(callID, "phone-")
-	if !named {
-		return PhoneNumber{}, fmt.Errorf("store: no number reaches call %s:%s", callType, callID)
-	}
-	err = s.db.NewSelect().Model(&number).
-		Where("e164 = ?", e164).
-		Where("stream_trunk_id IS NOT NULL").
-		Where("released_at IS NULL").
-		Limit(1).
-		Scan(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
-		return PhoneNumber{}, fmt.Errorf("store: no number reaches call %s:%s", callType, callID)
-	}
-	if err != nil {
-		return PhoneNumber{}, fmt.Errorf("store: number by call: %w", err)
 	}
 	return number, nil
 }

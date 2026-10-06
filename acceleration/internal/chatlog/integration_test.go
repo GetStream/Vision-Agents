@@ -33,8 +33,8 @@ func TestChatlogIntegrationSuite(t *testing.T) {
 }
 
 func (s *ChatlogIntegrationSuite) SetupSuite() {
-	if os.Getenv(apiKeyEnvVar) == "" || os.Getenv(apiSecretEnvVar) == "" {
-		s.T().Skip(apiKeyEnvVar + " and " + apiSecretEnvVar + " not set")
+	if os.Getenv("STREAM_API_KEY") == "" || os.Getenv("STREAM_API_SECRET") == "" {
+		s.T().Skip("STREAM_API_KEY and STREAM_API_SECRET not set")
 	}
 
 	s.ctx = context.Background()
@@ -42,8 +42,10 @@ func (s *ChatlogIntegrationSuite) SetupSuite() {
 	s.agentID = fmt.Sprintf("chatlog-test-%d", time.Now().UnixNano())
 
 	log, err := New(Options{
-		AgentID: s.agentID,
-		Agent:   User{ID: "agent-" + s.agentID, Name: "Test Agent"},
+		AgentID:   s.agentID,
+		Agent:     User{ID: "agent-" + s.agentID, Name: "Test Agent"},
+		APIKey:    os.Getenv("STREAM_API_KEY"),
+		APISecret: os.Getenv("STREAM_API_SECRET"),
 	})
 	s.Require().NoError(err)
 	s.log = log
