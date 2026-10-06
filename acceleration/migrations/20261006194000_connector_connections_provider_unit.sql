@@ -17,7 +17,9 @@
 --
 -- NULL for every connection whose events URL names the customer, so the store writes the
 -- column only through store.SetConnectorConnectionProviderUnit, which refuses any other
--- connector. It is not a secret: every delivery carries it. So record_data_change copies it
+-- connector. NULL too for a connection that is not connected: a save that ends its grant
+-- empties it (store.saveAtRevision), so a revoked holder does not keep a number another
+-- customer's consent proves. It is not a secret: every delivery carries it. So record_data_change copies it
 -- as it is, and an import forces it to NULL instead (store.dataTable.identity), because
 -- only a consent proves a unit is the customer's.
 ALTER TABLE connector_connections ADD COLUMN provider_unit_id TEXT;

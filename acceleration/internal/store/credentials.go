@@ -146,8 +146,16 @@ func (s *Store) saveAtRevision(ctx context.Context, conn bun.IConn, connection *
 	if connection.GrantedScopes == nil {
 		connection.GrantedScopes = []string{}
 	}
+	// A save that leaves the connection anything but connected frees its provider unit
+	// (SetConnectorConnectionProviderUnit says why); one that keeps it connected, such as a
+	// refresh, keeps the unit the row holds. The row's, not the caller's copy, which may
+	// predate the unit.
+	if connection.Status != ConnectionConnected {
+		connection.ProviderUnitID = ""
+	}
 	result, err := s.db.NewUpdate().Conn(conn).Model(connection).
 		Column(credentialColumns...).
+		Set("provider_unit_id = CASE WHEN ? = ? THEN cc.provider_unit_id END", connection.Status, ConnectionConnected).
 		Where("id = ?", connection.ID).
 		Where("customer_id = ?", connection.CustomerID).
 		Where("revision = ?", expected).

@@ -76,6 +76,10 @@ var ErrProviderUnitTaken = errors.New("store: another connection of this connect
 // so the URL already names the customer and the connection takes no provider unit id.
 var ErrNoSharedWebhook = errors.New("store: the connector's events are not routed by provider unit")
 
+// ErrConnectorConnectionNotConnected says a connection is pending, needs a reconnect or was
+// disconnected, so it holds no provider unit: only a connected one does.
+var ErrConnectorConnectionNotConnected = errors.New("store: the connector connection is not connected")
+
 // providerUnitIndex is the unique index ErrProviderUnitTaken stands for
 // (20261006194000_connector_connections_provider_unit.sql).
 const providerUnitIndex = "connector_connections_provider_unit_idx"
@@ -109,7 +113,8 @@ type ConnectorConnection struct {
 	Status        string            `bun:"status,notnull"`
 	GrantedScopes []string          `bun:"granted_scopes,type:jsonb,notnull"`
 	// ProviderUnitID is the routing key of a shared webhook, such as a WhatsApp
-	// phone_number_id: empty unless SetConnectorConnectionProviderUnit wrote it.
+	// phone_number_id: empty unless SetConnectorConnectionProviderUnit wrote it, and emptied
+	// when the connection stops being connected (saveAtRevision).
 	ProviderUnitID string `bun:"provider_unit_id,nullzero"`
 	// Revision advances with every new stored credentials, which are sealed against it.
 	Revision int `bun:"revision,notnull"`
@@ -289,10 +294,17 @@ func (s *Store) ConnectorConnectionByProviderUnit(ctx context.Context, connector
 }
 
 // SetConnectorConnectionProviderUnit stores the provider unit a consent proved is the
-// customer's on one live connection of theirs, replacing any it held. Of two connections of
-// one connector, only the first to store a unit holds it: the second gets
-// ErrProviderUnitTaken until the first is deleted. A connector whose events URL names the
-// customer gets ErrNoSharedWebhook (sharedWebhook).
+// customer's on one live, connected connection of theirs, replacing any it held. Of two
+// connections of one connector, only the first to store a unit holds it: the second gets
+// ErrProviderUnitTaken until the first is deleted or stops being connected. A connector whose
+// events URL names the customer gets ErrNoSharedWebhook (sharedWebhook).
+//
+// Only a connected connection holds a unit, because a grant that ended proves nothing about
+// the unit any more: a WhatsApp number can move to another business account, whose consent
+// must then be able to take it (Meta, «Clients can migrate their business phone numbers
+// between WhatsApp Business Accounts (WABAs)»; whether the number's id stays the same is
+// unverified, the page does not say,
+// https://developers.facebook.com/docs/whatsapp/business-management-api/guides/migrate-phone-to-different-waba).
 func (s *Store) SetConnectorConnectionProviderUnit(ctx context.Context, customerID, id, providerUnitID string) error {
 	if customerID == "" || id == "" || providerUnitID == "" {
 		return stack.Wrap(errors.New("store: a customer, a connection id and a provider unit id are required"))
@@ -309,12 +321,19 @@ func (s *Store) SetConnectorConnectionProviderUnit(ctx context.Context, customer
 	if !sharedWebhook(definition) {
 		return stack.Wrap(fmt.Errorf("%w: %s revision %d", ErrNoSharedWebhook, connection.ConnectorID, connection.DefinitionRevision))
 	}
+	if connection.Status != ConnectionConnected {
+		return stack.Wrap(fmt.Errorf("%w: %s is %s", ErrConnectorConnectionNotConnected, id, connection.Status))
+	}
 	result, err := s.db.NewUpdate().Model((*ConnectorConnection)(nil)).
 		Set("provider_unit_id = ?", providerUnitID).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("cc.customer_id = ?", customerID).
 		Where("cc.id = ?", id).
 		Where("cc.deleted_at IS NULL").
+		// Checked again here: a save that ends the grant may commit after the read above.
+		// Under READ COMMITTED an UPDATE that waited on the row re-checks its WHERE against
+		// the row as committed (https://www.postgresql.org/docs/current/transaction-iso.html#XACT-READ-COMMITTED).
+		Where("cc.status = ?", ConnectionConnected).
 		Exec(ctx)
 	if constraint(err) == providerUnitIndex {
 		return stack.Wrap(fmt.Errorf("%w: %s unit %s", ErrProviderUnitTaken, connection.ConnectorID, providerUnitID))
@@ -326,9 +345,9 @@ func (s *Store) SetConnectorConnectionProviderUnit(ctx context.Context, customer
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: set provider unit: %w", err))
 	}
-	// Deleted since it was read.
+	// Deleted or no longer connected since it was read.
 	if affected == 0 {
-		return stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorConnection, id))
+		return stack.Wrap(fmt.Errorf("%w: %s", ErrConnectorConnectionChanged, id))
 	}
 	return nil
 }

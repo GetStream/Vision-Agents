@@ -872,8 +872,8 @@ channel:
 var ownLineManifest = strings.Replace(strings.Replace(lineManifest, "id: line", "id: own_line", 1),
 	"secret: operator", "secret: provider_app", 1)
 
-// lineConnection creates an app-owned connection of the customer's to a built-in channel
-// connector, seeding it from raw first.
+// lineConnection creates a connected, app-owned connection of the customer's to a built-in
+// channel connector, seeding it from raw first.
 func (s *StoreSuite) lineConnection(customerID, raw string) ConnectorConnection {
 	manifest := parsed(s.T(), raw)
 	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, fstest.MapFS{manifest.ID + ".yaml": {Data: []byte(raw)}}))
@@ -881,7 +881,18 @@ func (s *StoreSuite) lineConnection(customerID, raw string) ConnectorConnection 
 	connection.CustomerID = customerID
 	connection.ConnectorID = manifest.ID
 	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, testSchemes, connection))
+	s.moveTo(*connection, ConnectionConnected)
 	return *connection
+}
+
+// moveTo saves a new status onto a connection the way the credential store does, under its
+// lock: a consent moves it to connected, a revocation to needs_reauthorization.
+func (s *StoreSuite) moveTo(connection ConnectorConnection, status string) {
+	s.Require().NoError(s.store.WithLockedConnectorConnection(s.ctx, connection.CustomerID, connection.ID,
+		func(locked *ConnectorConnection, _ func() error) (bool, error) {
+			locked.Status = status
+			return true, nil
+		}))
 }
 
 func (s *StoreSuite) TestAConnectionIsFoundByItsConnectorAndProviderUnitWithoutItsCustomer() {
@@ -932,6 +943,75 @@ func (s *StoreSuite) TestDeletingAConnectionFreesItsProviderUnit() {
 	found, err := s.store.ConnectorConnectionByProviderUnit(s.ctx, "line", "unit-1")
 	s.Require().NoError(err)
 	s.Equal(second.ID, found.ID)
+}
+
+func (s *StoreSuite) TestARevokedConnectionFreesItsProviderUnitForTheNextConsent() {
+	revoked := s.lineConnection("acme-app", lineManifest)
+	next := s.lineConnection("other-app", lineManifest)
+	s.Require().NoError(s.store.SetConnectorConnectionProviderUnit(s.ctx, "acme-app", revoked.ID, "unit-1"))
+
+	s.moveTo(revoked, ConnectionNeedsReauthorization)
+
+	_, err := s.store.ConnectorConnectionByProviderUnit(s.ctx, "line", "unit-1")
+	s.ErrorIs(err, ErrNoConnectorConnection, "an ended grant is not routed to")
+	s.Require().NoError(s.store.SetConnectorConnectionProviderUnit(s.ctx, "other-app", next.ID, "unit-1"))
+	found, err := s.store.ConnectorConnectionByProviderUnit(s.ctx, "line", "unit-1")
+	s.Require().NoError(err)
+	s.Equal(next.ID, found.ID)
+
+	s.moveTo(revoked, ConnectionConnected)
+	err = s.store.SetConnectorConnectionProviderUnit(s.ctx, "acme-app", revoked.ID, "unit-1")
+	s.ErrorIs(err, ErrProviderUnitTaken, "a reconnect proves the unit again, and it is taken now")
+}
+
+func (s *StoreSuite) TestASaveThatStaysConnectedKeepsTheProviderUnitTheRowHolds() {
+	connection := s.lineConnection("acme-app", lineManifest)
+	readBefore, err := s.store.ConnectorConnection(s.ctx, "acme-app", connection.ID)
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.SetConnectorConnectionProviderUnit(s.ctx, "acme-app", connection.ID, "unit-1"))
+
+	// A refresh that read the row before the unit was stored.
+	readBefore.Revision++
+	readBefore.CredentialsSealed = []byte("refreshed")
+	readBefore.CredentialsKEKVersion = 1
+	s.Require().NoError(s.store.SaveConnectorConnectionAtRevision(s.ctx, &readBefore, readBefore.Revision-1))
+
+	found, err := s.store.ConnectorConnectionByProviderUnit(s.ctx, "line", "unit-1")
+	s.Require().NoError(err)
+	s.Equal(connection.ID, found.ID)
+}
+
+func (s *StoreSuite) TestAConnectionThatIsNotConnectedTakesNoProviderUnit() {
+	connection := s.lineConnection("acme-app", lineManifest)
+	s.moveTo(connection, ConnectionPending)
+
+	err := s.store.SetConnectorConnectionProviderUnit(s.ctx, "acme-app", connection.ID, "unit-1")
+
+	s.ErrorIs(err, ErrConnectorConnectionNotConnected)
+	_, err = s.store.ConnectorConnectionByProviderUnit(s.ctx, "line", "unit-1")
+	s.ErrorIs(err, ErrNoConnectorConnection)
+}
+
+// A revocation's save holds the row while the unit is being set: the set read the connection
+// as connected, waits for the row, and then finds the grant ended.
+func (s *StoreSuite) TestARevocationThatCommitsWhileTheUnitIsSetWins() {
+	connection := s.lineConnection("acme-app", lineManifest)
+	held := s.begin()
+	_, err := held.ExecContext(s.ctx, "UPDATE connector_connections SET status = ?, provider_unit_id = NULL WHERE id = ?",
+		ConnectionNeedsReauthorization, connection.ID)
+	s.Require().NoError(err)
+
+	setter := s.router()
+	set := make(chan error, 1)
+	go func() { set <- setter.SetConnectorConnectionProviderUnit(s.ctx, "acme-app", connection.ID, "unit-1") }()
+	// The two seconds and the ten milliseconds are assertTheWaitEnded's (credentials_test.go).
+	s.Require().Eventually(func() bool { return s.waitingForALock() == 1 },
+		2*time.Second, 10*time.Millisecond, "the set waits for the row")
+	s.Require().NoError(held.Commit())
+
+	s.ErrorIs(<-set, ErrConnectorConnectionChanged)
+	_, err = s.store.ConnectorConnectionByProviderUnit(s.ctx, "line", "unit-1")
+	s.ErrorIs(err, ErrNoConnectorConnection)
 }
 
 func (s *StoreSuite) TestTheSameProviderUnitUnderAnotherConnectorIsAllowed() {
