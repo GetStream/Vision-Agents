@@ -7,22 +7,42 @@ description: >-
   and client regeneration, x-client-accessible operations, SDK order,
   migrations). Use when the user gives a PR number (123, #123), a
   github.com/.../pull/123 link, or asks to review, check or look at a pull
-  request. Prefer it over code-review for a GitHub PR; not for a local diff
-  with no PR.
-argument-hint: "[pr-url-or-number]"
+  request. Shows the findings here or posts them as inline PR comments, and approves a
+  PR with no findings. Prefer it over code-review for a GitHub PR; not for a
+  local diff with no PR.
+argument-hint: "<pr-url-or-number> [show|post]"
+arguments: [pr, mode]
 ---
 
 # PR review
 
-Review the pull request. Do not edit, commit, push, or comment on GitHub unless the user asks.
+Review the pull request. Do not edit, commit, or push. Post to GitHub only as
+[Post to the PR](#post-to-the-pr) says.
 
 `$SKILL` below is `"$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.agents/skills/pr-review"`.
 
+## Where to post
+
+The second argument picks where the findings go. Here it is "$mode"; empty means it was not given.
+
+- `show`: write the review in this conversation. Post nothing to GitHub.
+- `post`: write it here, then submit it on the PR as one review with inline comments.
+
+If it is neither and the user's message does not say, ask with AskUserQuestion before you
+resolve the PR, so the rest of the review runs without a stop. Ask one question, header `Findings`,
+with these options:
+
+- `Show here (Recommended)`: the findings stay in this conversation.
+- `Post to the PR`: one review on GitHub with a comment on each line. A PR with no findings is
+  approved.
+
 ## Resolve the PR
 
-Take the URL or number the user gave. From the repo root:
+Take the URL or number from `$pr`. If it is empty, take it from the user's message. From the repo
+root:
 
 ```bash
+gh api user --jq .login
 gh pr view <url-or-number> --json number,url,title,body,state,isDraft,mergeable,isCrossRepository,author,baseRefName,headRefName,headRefOid,commits
 gh pr checks <number> || true
 gh pr view <number> --comments
@@ -156,8 +176,8 @@ for an SDK.
 
 ## Report
 
-Write the review in the terminal. Post it to GitHub only if the user asks, as a draft with
-`gh pr review`.
+Write the review in the terminal in both modes. For `post`, then do
+[Post to the PR](#post-to-the-pr).
 
 Give each finding a severity:
 
@@ -202,3 +222,39 @@ rewrite.
 ```
 
 Close with a short note of what you checked and found sound, only where a reader would otherwise assume you ignored it.
+
+## Post to the PR
+
+Only when the mode is `post`. Submit one review at `headRefOid`. Never leave a pending review.
+
+- A finding on a line in the diff is an inline comment on that line: its severity, the broken
+  behavior, and the check that showed it.
+- A finding with no line in the diff (design, CI, a file the PR did not touch) goes in the review
+  body.
+- The body ends with the verdict line.
+
+Pick `event` from the findings and the PR `author` against the `gh api user` login:
+
+| Findings | Author | `event` | `body` |
+| --- | --- | --- | --- |
+| None | Someone else | `APPROVE` | `No findings at <short headRefOid>.` and the checked-and-sound note |
+| None | You | `COMMENT` | The same. GitHub rejects an approval of your own PR |
+| Any, Nit included | Anyone | `COMMENT` | Findings with no diff line, then the verdict |
+
+```bash
+gh api repos/{owner}/{repo}/pulls/<number>/reviews --method POST --input - <<'EOF'
+{
+  "commit_id": "<headRefOid>",
+  "event": "COMMENT",
+  "body": "**Verdict:** request changes, for the `deletePolicy` blocker.",
+  "comments": [
+    {"path": "acceleration/internal/api/policies.go", "line": 88, "side": "RIGHT",
+     "body": "**Blocker:** `deletePolicy` is now `x-client-accessible`, so ..."}
+  ]
+}
+EOF
+```
+
+`gh api` fills `{owner}` and `{repo}` from the checkout. A 422 that says a line could not be
+resolved means that line is not in the diff: move the finding to the body and submit again. Print
+the `html_url` from the response.

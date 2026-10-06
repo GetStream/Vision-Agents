@@ -36,6 +36,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -219,6 +220,9 @@ type Options struct {
 	// Connectors holds the adapters connectors are built from. A custom connector may only
 	// name a scheme registered here, so with none registered every custom one is refused.
 	Connectors core.Registry
+	// ConnectorSecrets is the keyring connector consents and credentials are sealed under.
+	// Absent when connectors are off, in which case no consent can be started.
+	ConnectorSecrets *auth.Sealer
 	// TrustedProxies are the ranges this deployment's own proxies sit in, and they decide
 	// how much of X-Forwarded-For is believed when working out who a request is from.
 	// Empty means none of it is, and the connection's own address is used.
@@ -268,7 +272,11 @@ type Server struct {
 	quota         *quota.Limiter
 	policies      *policy.Enforcer
 	connectors    core.Registry
-	trusted       []netip.Prefix
+	// connectorSecrets seals consent attempts; credentials stores what a consent got. Both
+	// are nil when connectors are off.
+	connectorSecrets *auth.Sealer
+	credentials      core.CredentialStore
+	trusted          []netip.Prefix
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
 	serverSide *http.ServeMux
@@ -391,6 +399,13 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		popularity:   newPopularity(options.Store, logger),
 		logger:       logger,
 	}
+	if options.Store != nil && options.ConnectorSecrets != nil {
+		credentials, err := pgsealed.New(options.Store, options.ConnectorSecrets)
+		if err != nil {
+			return nil, err
+		}
+		server.connectorSecrets, server.credentials = options.ConnectorSecrets, credentials
+	}
 	serverSide, err := serverSideRoutes(server.newAPI(chi.NewRouter()).OpenAPI())
 	if err != nil {
 		return nil, err
@@ -436,6 +451,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
 	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
+	mux.HandleFunc("GET "+connectorLaunchPath+"{id}", s.serveConnectorLaunch)
+	mux.HandleFunc("POST "+connectorLaunchPath+"{id}", s.handOffConnectorLaunch)
+	mux.HandleFunc("GET "+ConnectorCallbackPath, s.finishConnectorConsent)
+	mux.HandleFunc("GET "+ConnectorClientMetadataPath, s.serveConnectorClientMetadata)
 	mux.HandleFunc("GET /v1/agents/plugins/{plugin_id}/logo", s.servePluginLogo)
 	mux.HandleFunc("POST "+plugins.EventsPath+"{token}", s.receivePluginEvent)
 	mux.HandleFunc("GET "+channels.HookPath+"{token}", s.receiveChannelMessage)

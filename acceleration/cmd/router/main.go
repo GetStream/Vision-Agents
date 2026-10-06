@@ -32,6 +32,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/apikey"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
@@ -275,24 +278,39 @@ func newConnectorSealer(settings config.Config) (*auth.Sealer, error) {
 const connectorHTTPTimeout = 10 * time.Second
 
 // newConnectorRegistry is the connector adapters this deployment has: none when connectors
-// are off, so no connection and no custom connector can name a scheme, and oauth2_code when
-// they are on. It follows the sealer: without a keyring no attempt or grant can be sealed,
+// are off, so no connection and no custom connector can name a scheme, and oauth2_code,
+// api_key, bearer and none when they are on. A new scheme is one more entry in the list
+// below. It follows the sealer: without a keyring no attempt or grant can be sealed,
 // so a scheme registered without one would take connections nothing could ever authorize.
 //
-// ClientMetadataURL is left empty, which turns CIMD off. The client metadata document it
-// would name is served by the consent flow (AI-844), and a client_id URL that answers 404
-// fails every consent that tries it. Until then a client.registration naming cimd falls through to
-// the next source it names. Clients is nil too, so no operator or customer client is found until
-// client records exist (AI-846); only dcr can supply a client.
+// ClientMetadataURL is where the API serves the router's client metadata document
+// (api.ConnectorClientMetadataPath under public_url), and empty, which turns CIMD off, when
+// public_url is not https: CIMD section 3 allows only an https client_id URL. Clients is nil, so
+// no operator or customer client is found until client records exist (AI-846); only cimd and
+// dcr can supply a client.
 func newConnectorRegistry(settings config.Config) (core.Registry, error) {
 	if !settings.Connectors.Enabled {
 		return core.Registry{}, nil
 	}
-	scheme, err := oauth2code.New(oauth2code.Config{HTTP: egress.NewClient(connectorHTTPTimeout, nil)})
+	code, err := oauth2code.New(connectorSchemeConfig(settings))
 	if err != nil {
 		return core.Registry{}, err
 	}
-	return core.Registry{Schemes: map[string]core.Scheme{scheme.Name(): scheme}}, nil
+	schemes := map[string]core.Scheme{}
+	for _, scheme := range []core.Scheme{code, apikey.New(), bearer.New(), none.New()} {
+		schemes[scheme.Name()] = scheme
+	}
+	return core.Registry{Schemes: schemes}, nil
+}
+
+// connectorSchemeConfig is the oauth2code.Config newConnectorRegistry starts the scheme with.
+// A test runs it against a loopback fake by replacing HTTP and PublicEndpoint, which egress
+// refuses loopback for, and keeps the rest.
+func connectorSchemeConfig(settings config.Config) oauth2code.Config {
+	return oauth2code.Config{
+		HTTP:              egress.NewClient(connectorHTTPTimeout, nil),
+		ClientMetadataURL: api.ConnectorClientMetadataURL(settings.PublicURL),
+	}
 }
 
 // newAuthenticator builds the authenticator the deployment's mode asks for.
@@ -360,7 +378,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 
 	// Checked before anything is opened, so a deployment that turned connectors on without
 	// a keyring is refused at startup rather than on its first connection.
-	if _, err := newConnectorSealer(settings); err != nil {
+	connectorSecrets, err := newConnectorSealer(settings)
+	if err != nil {
 		return err
 	}
 	connectors, err := newConnectorRegistry(settings)
@@ -844,40 +863,41 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 
 	options := api.Options{
-		Routers:        routers,
-		Voices:         voiceService,
-		VoiceLibrary:   buildLibrary(logger),
-		KnowledgeURLs:  pages,
-		Store:          pgStore,
-		Configs:        configs,
-		Users:          endUsers,
-		Live:           liveClient,
-		Phone:          telephony,
-		Sessions:       sessions,
-		Relay:          sessionRelay,
-		Directory:      directory,
-		Streams:        streams,
-		Transcripts:    transcripts,
-		Campaigns:      campaigns,
-		Simulations:    simulations,
-		PluginEvents:   events,
-		DLC:            registrations,
-		Gate:           dlcGate,
-		OpsKey:         settings.Auth.OpsKey,
-		Dispatch:       workers,
-		Quota:          limiter,
-		Policies:       policies,
-		Connectors:     connectors,
-		TrustedProxies: trustedProxies,
-		AuthMode:       authMode,
-		DataRetention:  settings.DataMove.Retention,
-		StreamSecret:   settings.Stream.APISecret,
-		StreamKey:      settings.Stream.APIKey,
-		CORSOrigins:    settings.CORSOrigins,
-		PublicURL:      settings.PublicURL,
-		DashboardURL:   settings.DashboardURL,
-		Auth:           authenticator,
-		Logger:         logger,
+		Routers:          routers,
+		Voices:           voiceService,
+		VoiceLibrary:     buildLibrary(logger),
+		KnowledgeURLs:    pages,
+		Store:            pgStore,
+		Configs:          configs,
+		Users:            endUsers,
+		Live:             liveClient,
+		Phone:            telephony,
+		Sessions:         sessions,
+		Relay:            sessionRelay,
+		Directory:        directory,
+		Streams:          streams,
+		Transcripts:      transcripts,
+		Campaigns:        campaigns,
+		Simulations:      simulations,
+		PluginEvents:     events,
+		DLC:              registrations,
+		Gate:             dlcGate,
+		OpsKey:           settings.Auth.OpsKey,
+		Dispatch:         workers,
+		Quota:            limiter,
+		Policies:         policies,
+		Connectors:       connectors,
+		ConnectorSecrets: connectorSecrets,
+		TrustedProxies:   trustedProxies,
+		AuthMode:         authMode,
+		DataRetention:    settings.DataMove.Retention,
+		StreamSecret:     settings.Stream.APISecret,
+		StreamKey:        settings.Stream.APIKey,
+		CORSOrigins:      settings.CORSOrigins,
+		PublicURL:        settings.PublicURL,
+		DashboardURL:     settings.DashboardURL,
+		Auth:             authenticator,
+		Logger:           logger,
 	}
 	if options.StreamSecret == "" {
 		logger.Warn("no stream.api_secret set, so inbound calls cannot be dispatched: "+

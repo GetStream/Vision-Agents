@@ -170,6 +170,11 @@ type RouterSuite struct {
 	// connectors is what connector adapters the router has, for a suite about connectors to
 	// set before it starts the harness. Empty has none.
 	connectors core.Registry
+	// publicURL and dashboardURL are the router's ROUTER_PUBLIC_URL and DASHBOARD_BASE_URL,
+	// for a suite about connector consents to set before it starts the harness. Empty leaves
+	// them unset, as a deployment that never set them has.
+	publicURL    string
+	dashboardURL string
 
 	// pluginMCP is where every plugin's MCP server is reached, for a suite about plugin
 	// events to set before it starts the harness. Nil reaches the real ones.
@@ -313,12 +318,16 @@ func (s *RouterSuite) SetupSuite() {
 		Dispatch:      s.dispatch,
 		Policies:      policies,
 		Connectors:    s.connectors,
-		Quota:         limiter,
-		StreamKey:     suiteStreamKey,
-		StreamSecret:  suiteStreamSecret,
-		DataRetention: time.Hour,
-		PluginHTTP:    s.mcpTransport(),
-		Logger:        logger,
+		// Connector consents and credentials seal under the suite's key.
+		ConnectorSecrets: s.sealer,
+		PublicURL:        s.publicURL,
+		DashboardURL:     s.dashboardURL,
+		Quota:            limiter,
+		StreamKey:        suiteStreamKey,
+		StreamSecret:     suiteStreamSecret,
+		DataRetention:    time.Hour,
+		PluginHTTP:       s.mcpTransport(),
+		Logger:           logger,
 	})
 	s.Require().NoError(err)
 	listener.Config.Handler = server.Handler()

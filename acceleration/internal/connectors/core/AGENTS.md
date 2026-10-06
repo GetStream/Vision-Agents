@@ -17,7 +17,7 @@ One word, one meaning, in code, docs and API alike. A name follows the Go auth l
 | stored credentials | The long-lived secrets one scheme keeps for a connection, sealed as one blob | `StoredCredentials` (`scheme.go`), column `credentials_sealed` | `cloud.google.com/go/auth` `Credentials` (holds the JSON and its `TokenProvider`), Nango's connection `credentials` |
 | access credential | The short-lived credential one request carries | `AccessCredential`, from `Scheme.Retrieve(ctx, stored, m)` (`scheme.go`) | The value: `aws-sdk-go-v2` `aws.Credentials` (with `SessionToken` and `Expires`), Azure `azcore.AccessToken`. The method: `aws.CredentialsProvider.Retrieve(ctx)`, a verb because a stateless `Scheme` may refresh over the network |
 | credential request | What one call asks of a credential: audience, scopes, deadline | `CredentialRequest` (`resolver.go`), passed to `Resolver.Resolve` | Says what it is |
-| credential state | The part of a connection that changes under the lock: stored credentials, revision, status, expiry | `CredentialState` (`resolver.go`) | Not "grant", which names `ToolGrant` and the OAuth grant |
+| credential state | The part of a connection that changes under the lock: stored credentials, revision, status, expiry, and the account id, metadata and scopes the consent found | `CredentialState` (`resolver.go`) | Not "grant", which names `ToolGrant` and the OAuth grant |
 | credential store | The locked, revisioned storage behind the resolver | `CredentialStore.Update` (`resolver.go`), `credentialstores/pgsealed` | Not "backend", which the API docs use for the customer's server |
 | account info | What a consent learned that is public: account id, metadata, scopes | `AccountInfo` (`scheme.go`), from `Scheme.Complete` and `ResolvedManifest.Apply` | Says what it is |
 | binding | What one agent config may use from one connector: which connection, and the exact tool grants | `Binding` with `Selection` `fixed` or `session`, `ToolGrant` (`source.go`), agent config `connectors[]` | `Selection` matches the API schema `AgentConnectorSelection`: it says how the connection is chosen, not what kind it is |
@@ -39,6 +39,25 @@ One word, one meaning, in code, docs and API alike. A name follows the Go auth l
 - **Endpoint roles are names, not an enum.** Any lowercase identifier is a role; the ones adapters read are listed on `Manifest.Endpoints`. `resource` is the RFC 8707 resource indicator `oauth2_code` sends when a manifest pins its endpoints (`internal/connectors/schemes/oauth2code/AGENTS.md`); it renders like any endpoint, so it is https with no query or fragment, which RFC 8707 §2 allows.
 - **No YAML anchors or aliases.** `ParseManifest` refuses them, so a manifest a customer uploads cannot expand one node into many.
 - **Manifest enums are closed and say where their values come from.** A new `from`, `auth_method`, `per`, `alg`, separator or hook point is a change to `manifest.go` with its source beside it, and fixtures in `testdata/manifests/` follow the same rule per field. Scheme and source names are not enums here: they are registry names, checked by whoever holds the `Registry`.
+
+## Verifier
+
+`Verifier.Verify(r, body, m)` (`signal.go`) checks one inbound provider request and returns a `VerifiedEvent`. The events endpoint (T26) acts on it; the channel bridge (AI-866) reads its messages.
+
+| Term | What it is | In code | Reader |
+| --- | --- | --- | --- |
+| verified event | Everything one verified request says | `VerifiedEvent` | the events endpoint |
+| signal | What happened to the grants of one account: revoked, uninstalled, rotated | `VerifiedEvent.Signals`, `Signal` | `Resolver.Invalidate` |
+| inbound message | One message a person sent on an external thread | `VerifiedEvent.Messages`, `InboundMessage` | the channel bridge |
+| provider unit | The customer's own unit at the provider that received a message: a workspace, a team, a bot, a business phone number | `InboundMessage.ProviderUnitID` | the bridge maps it to a connection |
+| thread key | The id of one external thread within one provider unit, built by the verifier, never parsed | `InboundMessage.ThreadKey` | the bridge maps it to a thread channel |
+| provider message id | The provider's id for one message: WhatsApp `messages[].id`, Slack `event.ts`, Twilio `MessageSid` | `InboundMessage.ProviderMessageID` | the bridge finds the message's entry in `Raw` by it and drops retried deliveries by it |
+| challenge | The value a handshake request asks the endpoint to send back | `VerifiedEvent.Challenge` | the endpoint answers 200 `text/plain` with it |
+
+- **An error means nothing happens.** A request that fails verification returns an error and the endpoint acts on no part of it. A verified request the verifier has no mapping for returns a zero `VerifiedEvent`, not an error, and so does a verified body the verifier cannot parse.
+- **Slices, not single values.** One revocation event can name several tokens, and one delivery can batch several messages, so `Signals` and `Messages` are slices. A handshake sets only `Challenge`.
+- **The raw body is bytes.** `body` is read once, before anything parses it, because a signature covers those exact bytes. `InboundMessage.Raw` is that body unchanged, shared by every message of a batch, and `[]byte`, not `json.RawMessage`, because some providers post a form. `ProviderMessageID` tells the messages of a batch apart.
+- **Ids stay the provider's.** A `Signal` names an account and an `InboundMessage` names a provider unit, an author and a message, all as the provider sends them. Mapping them and the thread key to a connection, a thread channel or a Stream Chat user is the reader's job, not the verifier's.
 
 ## Tests
 
