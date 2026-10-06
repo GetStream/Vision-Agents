@@ -6,16 +6,24 @@ import "net/http"
 // verification changes nothing, so the inbound endpoint needs no API auth.
 type Verifier interface {
 	Name() string
-	// Verify checks r and body against m and returns what the request says. An error means
-	// the request is not proven to come from the provider, and the endpoint acts on nothing.
-	// A verified request the verifier has no mapping for, or cannot parse, is a zero
-	// VerifiedEvent, not an error. body is the raw request body, read once by the endpoint before anything parses
-	// it, because a signature is over those exact bytes.
-	Verify(r *http.Request, body []byte, m ResolvedManifest) (VerifiedEvent, error)
+	// Verify checks r and body against m's channel.verifier with secret and returns what the
+	// request says. An error means the request is not proven to come from the provider, and
+	// the endpoint acts on nothing. A verified request the verifier has no mapping for, or
+	// cannot parse, is a zero VerifiedEvent, not an error. body is the raw request body, read
+	// once by the endpoint before anything parses it, because a signature is over those exact
+	// bytes.
+	//
+	// m is the connector's manifest, not a ResolvedManifest: a request is verified before
+	// anything picks a connection, since one provider app can serve many (ChannelRule.Read).
+	// secret is the one channel.verifier.secret names, found by the route the request came
+	// in on: the operator's on a connector's route, the customer's provider app's on a
+	// provider app's route (T38). The verifier never looks it up, so one verifier serves
+	// both routes.
+	Verify(r *http.Request, body []byte, m Manifest, secret []byte) (VerifiedEvent, error)
 }
 
 // VerifiedEvent is what one verified inbound request says. Each part has one reader: Signals
-// go to Resolver.Invalidate, Messages go to the channel bridge, Challenge goes back to the
+// go to Resolver.Revoke, Messages go to the channel bridge, Challenge goes back to the
 // provider. Any part may be empty. Signals and Messages may each hold more than one: one
 // revocation event can name several tokens, and one delivery can batch several messages.
 type VerifiedEvent struct {
@@ -27,21 +35,36 @@ type VerifiedEvent struct {
 	Challenge string
 }
 
-// SignalKind is what an inbound event says happened to a grant.
+// SignalKind is what an inbound event says happened to a grant. Each one ends it: the stored
+// credentials no longer work, and only a reconnect gets new ones.
 type SignalKind string
 
 const (
-	SignalRevoked     SignalKind = "revoked"
+	// SignalRevoked is a grant the account or its admin revoked, such as Slack tokens_revoked.
+	SignalRevoked SignalKind = "revoked"
+	// SignalUninstalled is the provider app removed from the account, which ends every grant
+	// it gave, such as Slack app_uninstalled.
 	SignalUninstalled SignalKind = "uninstalled"
-	SignalRotated     SignalKind = "rotated"
+	// SignalRotated is the account's credentials changed at the provider, such as a password
+	// reset that ends its sessions (Google RISC, architecture doc «Incidents and provider
+	// quirks»), so the stored ones are no longer accepted.
+	SignalRotated SignalKind = "rotated"
 )
 
-// Signal is what a verified request says about the grants of one account. It names the account, not a
-// connection, because the provider knows only its own ids.
+// signalKinds are the kinds a manifest's channel.signals may name.
+var signalKinds = []SignalKind{SignalRevoked, SignalUninstalled, SignalRotated}
+
+// Signal is what a verified request says about the grants of an account. It names the
+// account, not a connection, because the provider knows only its own ids.
 type Signal struct {
 	ConnectorID string
-	AccountID   string
-	Kind        SignalKind
+	// Identity is the identity parts the event names, by their names in the manifest's
+	// identity, with the values the provider sent. Every part names one account. Fewer parts
+	// name every account that has them, such as a workspace uninstall that names the team and
+	// no user. They are parts, not a joined account id, so a reader matches each one and never
+	// splits an id.
+	Identity map[string]string
+	Kind     SignalKind
 }
 
 // InboundMessage is one message a person sent on an external thread, named by the provider's

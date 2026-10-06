@@ -1,6 +1,6 @@
 # internal/connectors/resolver
 
-The `core.Resolver` the router uses: the one door to a connection's access credential. `Resolve` reads the connection, hands out a cached credential while the row still allows it, and otherwise gets one through the connection's scheme under the credential store's lock, with the checkpoint before any refresh. It moves the connection's status by what the scheme answered. `Invalidate` is the caller's way to say a provider refused the credential. It replaces the prototype's `connectors.ResolveCredentials` (`internal/connectors/runtime.go:26-153` on `codex/connector-support` at `cf62af0d`), which refreshed on the tool call's context. `cmd/router/resolver.go` builds it over `pgsealed`. Request wrapping is `core.Transports` (T13, `core/AGENTS.md`, «Transport»), which `TransportSuite` here runs over this resolver; rate limiting (T28) is not here.
+The `core.Resolver` the router uses: the one door to a connection's access credential. `Resolve` reads the connection, hands out a cached credential while the row still allows it, and otherwise gets one through the connection's scheme under the credential store's lock, with the checkpoint before any refresh. It moves the connection's status by what the scheme answered. `Invalidate` is the caller's way to say a provider refused the credential; `Revoke` is a verified provider event saying the grant ended. It replaces the prototype's `connectors.ResolveCredentials` (`internal/connectors/runtime.go:26-153` on `codex/connector-support` at `cf62af0d`), which refreshed on the tool call's context. `cmd/router/resolver.go` builds it over `pgsealed`. Request wrapping is `core.Transports` (T13, `core/AGENTS.md`, «Transport»), which `TransportSuite` here runs over this resolver; rate limiting (T28) is not here.
 
 ## Flow
 
@@ -34,6 +34,11 @@ Invalidate(ref, rejected, why)    why is invalid_grant or scope_required, else r
   rejected had expired                     -> nothing more
   under the lock, connected and the stored revision still rejected.Revision
                                            -> needs_reauthorization; otherwise nothing more
+
+Revoke(ref, why)                  why is revoked, uninstalled or rotated, else refused
+  drop the cache entry
+  under the lock, connected                -> needs_reauthorization, the why's last_error
+                                              (any revision); otherwise nothing more
 ```
 
 ## Cache
@@ -53,11 +58,12 @@ Invalidate(ref, rejected, why)    why is invalid_grant or scope_required, else r
 - **A deleted connection does not resolve, even from the cache.** Check: `go test -tags integration -run 'TestResolverSuite/(TestADeleted|TestAnotherCustomers)' ./internal/connectors/resolver`.
 - **The cache is keyed by revision.** Check: `go test -tags integration -run TestResolverSuite/TestAReconnect ./internal/connectors/resolver`.
 - **`Invalidate` writes the status, not only the cache, and only for the grant behind the refused credential.** RFC 6750 §3.1 answers `invalid_token` for a token «expired, revoked, malformed, or invalid for other reasons». A refused credential that had expired, or whose revision the stored credentials have moved past (another router renewed them), leaves the status alone. Example: router B resolves at revision 4; router A renews to 5; the provider refuses B's old token; B's `Invalidate` drops its cache entry and the connection stays `connected`. Check: `go test -tags integration -run TestResolverSuite/TestInvalidate ./internal/connectors/resolver`.
+- **`Revoke` is a provider ending the grant, so it checks no revision.** The events endpoint (`internal/api/connector_events.go`) calls it for each connection of the account a verified `core.Signal` names. `Invalidate` with a zero credential is not the same call: its revision check would leave a connected connection connected. Revoke runs under the lock, so a refresh in flight on another router commits first and the revocation is the last write. Example: router A renews Alice's Slack token to revision 5; Slack sends `tokens_revoked` for her; `Revoke` moves the row to `needs_reauthorization` at revision 5, and every router's next `Resolve` reads it and fails with `ErrNotConnected` without asking Slack. A pending, disconnected or already `needs_reauthorization` connection keeps its status. Check: `go test -tags integration -run TestResolverSuite/TestRevoke ./internal/connectors/resolver`.
 - **The revision is the credential store's.** The resolver reads the committed one from `state` after `Update` (`core.CredentialStore`); it never numbers revisions itself.
 - **Outcomes map to statuses as in the flow.** Check: `go test -tags integration -run 'TestResolverSuite/(TestARejected|TestAProvider|TestAPending)' ./internal/connectors/resolver`.
 - **Never parse a scheme's error text.** The outcome is read with `errors.As` on `*core.OutcomeError` (`core/AGENTS.md`). Check: `grep -n 'Error()' internal/connectors/resolver/resolver.go` prints nothing.
 - **Secrets never print.** Nothing here logs, and the errors it returns wrap the scheme's `*core.OutcomeError`, which carries no secret (`core/contracttest` checks every scheme). Tests read a token only through `fixture.token` and compare two with `==`, not `Equal`, so a failure prints no token. Check: `grep -n 'slog\|log\.' internal/connectors/resolver/resolver.go` prints nothing.
-- **Every hardcoded value says where it comes from**, beside it: `retrieveTimeout`, `maxAge`, the `last_error` texts. Status strings are the store's constants.
+- **Every hardcoded value says where it comes from**, beside it: `retrieveTimeout`, `maxAge`, the `last_error` texts (`revokedErrors` for `Revoke`). Status strings are the store's constants.
 
 ## Tests
 

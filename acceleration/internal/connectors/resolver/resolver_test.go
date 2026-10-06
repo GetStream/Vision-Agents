@@ -29,6 +29,8 @@ const (
 	lostRefresh            = "A credential refresh did not finish durably; reconnect the account"
 	rejectedGrant          = "The provider rejected the grant; reconnect the account"
 	temporarilyUnavailable = "The provider could not renew the credential just now; the next call tries again"
+	revoked                = "The provider says the grant was revoked; reconnect the account"
+	uninstalled            = "The provider says its app was uninstalled from the account; reconnect the account"
 )
 
 // ResolverSuite runs the resolver against Postgres and the fake provider, each router with
@@ -270,6 +272,56 @@ func (s *ResolverSuite) TestInvalidateRefusesAnOutcomeThatEndsNoGrant() {
 	s.Equal(store.ConnectionConnected, s.f.stored(ref).Status)
 	_, err = r.Resolve(s.f.ctx, ref, core.CredentialRequest{})
 	s.NoError(err)
+}
+
+// A revocation from another router reaches this one's next Resolve, which reads the row and
+// fails without a request to the provider, though this router still holds the credential.
+func (s *ResolverSuite) TestRevokeOnAnotherRouterFailsTheNextResolveHereFast() {
+	ref := s.f.connected()
+	here := s.f.router(s.f.srv.Client())
+	_, err := here.Resolve(s.f.ctx, ref, core.CredentialRequest{})
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.f.router(s.f.srv.Client()).Revoke(s.f.ctx, ref, core.SignalRevoked))
+
+	stored := s.f.stored(ref)
+	s.Equal(store.ConnectionNeedsReauthorization, stored.Status)
+	s.Equal(revoked, stored.LastError)
+	_, err = here.Resolve(s.f.ctx, ref, core.CredentialRequest{})
+	s.ErrorIs(err, resolver.ErrNotConnected)
+	s.Zero(s.f.srv.Refreshes(), "nothing reached the provider")
+}
+
+// Invalidate keeps a connection whose stored credentials moved past the refused one; Revoke
+// names no credential, so a renewal on another router does not save the grant.
+func (s *ResolverSuite) TestRevokeEndsAGrantAnotherRouterJustRenewed() {
+	ref := s.f.connected()
+	s.f.due()
+	renewed, err := s.f.router(s.f.srv.Client()).Resolve(s.f.ctx, ref, core.CredentialRequest{})
+	s.Require().NoError(err)
+	s.Require().Equal(1, s.f.srv.Refreshes())
+
+	s.Require().NoError(s.f.router(s.f.srv.Client()).Revoke(s.f.ctx, ref, core.SignalUninstalled))
+
+	stored := s.f.stored(ref)
+	s.Equal(renewed.Revision, stored.Revision, "the stored credentials stay; only the status moves")
+	s.Equal(store.ConnectionNeedsReauthorization, stored.Status)
+	s.Equal(uninstalled, stored.LastError)
+}
+
+func (s *ResolverSuite) TestRevokeLeavesAPendingConnectionPending() {
+	ref := s.f.pending()
+
+	s.Require().NoError(s.f.router(s.f.srv.Client()).Revoke(s.f.ctx, ref, core.SignalRevoked))
+
+	s.Equal(store.ConnectionPending, s.f.stored(ref).Status)
+}
+
+func (s *ResolverSuite) TestRevokeRefusesAKindThatIsNoSignal() {
+	ref := s.f.connected()
+
+	s.Error(s.f.router(s.f.srv.Client()).Revoke(s.f.ctx, ref, core.SignalKind("paused")))
+	s.Equal(store.ConnectionConnected, s.f.stored(ref).Status)
 }
 
 func (s *ResolverSuite) TestRoutersResolvingADueCredentialAtOnceRefreshItOnce() {

@@ -45,9 +45,9 @@ type fakeEvent struct {
 
 func (fakeVerifier) Name() string { return "fake_hmac" }
 
-func (fakeVerifier) Verify(r *http.Request, body []byte, m ResolvedManifest) (VerifiedEvent, error) {
+func (fakeVerifier) Verify(r *http.Request, body []byte, m Manifest, secret []byte) (VerifiedEvent, error) {
 	got, err := hex.DecodeString(r.Header.Get(fakeSignatureHeader))
-	if err != nil || !hmac.Equal(got, fakeSign(body)) {
+	if err != nil || !hmac.Equal(got, fakeSign(secret, body)) {
 		return VerifiedEvent{}, errFakeSignature
 	}
 	var event fakeEvent
@@ -61,11 +61,11 @@ func (fakeVerifier) Verify(r *http.Request, body []byte, m ResolvedManifest) (Ve
 	}
 	var verified VerifiedEvent
 	for _, account := range event.Revoked {
-		verified.Signals = append(verified.Signals, Signal{ConnectorID: m.ConnectorID, AccountID: account, Kind: SignalRevoked})
+		verified.Signals = append(verified.Signals, Signal{ConnectorID: m.ID, Identity: map[string]string{"account": account}, Kind: SignalRevoked})
 	}
 	for _, message := range event.Messages {
 		verified.Messages = append(verified.Messages, InboundMessage{
-			ConnectorID:       m.ConnectorID,
+			ConnectorID:       m.ID,
 			ProviderUnitID:    event.Unit,
 			ThreadKey:         message.Thread,
 			AuthorID:          message.From,
@@ -77,8 +77,8 @@ func (fakeVerifier) Verify(r *http.Request, body []byte, m ResolvedManifest) (Ve
 	return verified, nil
 }
 
-func fakeSign(body []byte) []byte {
-	mac := hmac.New(sha256.New, []byte(fakeSecret))
+func fakeSign(secret, body []byte) []byte {
+	mac := hmac.New(sha256.New, secret)
 	mac.Write(body)
 	return mac.Sum(nil)
 }
@@ -90,7 +90,7 @@ func fakeSign(body []byte) []byte {
 type VerifierSuite struct {
 	suite.Suite
 	verifier Verifier
-	manifest ResolvedManifest
+	manifest Manifest
 }
 
 func TestVerifierSuite(t *testing.T) {
@@ -99,17 +99,17 @@ func TestVerifierSuite(t *testing.T) {
 
 func (s *VerifierSuite) SetupTest() {
 	s.verifier = fakeVerifier{}
-	s.manifest = ResolvedManifest{ConnectorID: "fake"}
+	s.manifest = Manifest{ID: "fake"}
 }
 
 func (s *VerifierSuite) TestOneEventCarriesASignalAndAMessage() {
 	body := []byte(`{"type":"event","unit":"W1","revoked":["A1"],"messages":[{"id":"m1","thread":"C1:100.1","from":"P1","text":"hello"}]}`)
 
-	verified, err := s.verifier.Verify(s.signed(body), body, s.manifest)
+	verified, err := s.verifier.Verify(s.signed(body), body, s.manifest, []byte(fakeSecret))
 
 	s.Require().NoError(err)
 	s.Equal(VerifiedEvent{
-		Signals: []Signal{{ConnectorID: "fake", AccountID: "A1", Kind: SignalRevoked}},
+		Signals: []Signal{{ConnectorID: "fake", Identity: map[string]string{"account": "A1"}, Kind: SignalRevoked}},
 		Messages: []InboundMessage{{
 			ConnectorID:       "fake",
 			ProviderUnitID:    "W1",
@@ -127,7 +127,7 @@ func (s *VerifierSuite) TestOneEventCarriesASignalAndAMessage() {
 func (s *VerifierSuite) TestABatchedDeliveryTellsItsMessagesApartByProviderMessageID() {
 	body := []byte(`{"type":"event","unit":"W1","messages":[{"id":"m1","thread":"t1","from":"P1","text":""},{"id":"m2","thread":"t1","from":"P1","text":""}]}`)
 
-	verified, err := s.verifier.Verify(s.signed(body), body, s.manifest)
+	verified, err := s.verifier.Verify(s.signed(body), body, s.manifest, []byte(fakeSecret))
 
 	s.Require().NoError(err)
 	s.Empty(verified.Signals)
@@ -140,7 +140,7 @@ func (s *VerifierSuite) TestABatchedDeliveryTellsItsMessagesApartByProviderMessa
 func (s *VerifierSuite) TestAHandshakeAnswersWithItsChallengeOnly() {
 	body := []byte(`{"type":"handshake","challenge":"c-123"}`)
 
-	verified, err := s.verifier.Verify(s.signed(body), body, s.manifest)
+	verified, err := s.verifier.Verify(s.signed(body), body, s.manifest, []byte(fakeSecret))
 
 	s.Require().NoError(err)
 	s.Equal(VerifiedEvent{Challenge: "c-123"}, verified)
@@ -149,7 +149,7 @@ func (s *VerifierSuite) TestAHandshakeAnswersWithItsChallengeOnly() {
 func (s *VerifierSuite) TestAVerifiedBodyItCannotReadIsAZeroEventNotAnError() {
 	body := []byte(`{"type":"event","unit":1}`)
 
-	verified, err := s.verifier.Verify(s.signed(body), body, s.manifest)
+	verified, err := s.verifier.Verify(s.signed(body), body, s.manifest, []byte(fakeSecret))
 
 	s.Require().NoError(err)
 	s.Zero(verified)
@@ -158,9 +158,9 @@ func (s *VerifierSuite) TestAVerifiedBodyItCannotReadIsAZeroEventNotAnError() {
 func (s *VerifierSuite) TestABadSignatureYieldsNothingToActOn() {
 	body := []byte(`{"type":"event","unit":"W1","revoked":["A1"],"messages":[{"thread":"t1","from":"P1","text":"hello"}]}`)
 	request := s.signed(body)
-	request.Header.Set(fakeSignatureHeader, hex.EncodeToString(fakeSign([]byte("other body"))))
+	request.Header.Set(fakeSignatureHeader, hex.EncodeToString(fakeSign([]byte(fakeSecret), []byte("other body"))))
 
-	verified, err := s.verifier.Verify(request, body, s.manifest)
+	verified, err := s.verifier.Verify(request, body, s.manifest, []byte(fakeSecret))
 
 	s.ErrorIs(err, errFakeSignature)
 	s.Zero(verified)
@@ -169,6 +169,6 @@ func (s *VerifierSuite) TestABadSignatureYieldsNothingToActOn() {
 // signed is the request the fake provider would send with body.
 func (s *VerifierSuite) signed(body []byte) *http.Request {
 	request := httptest.NewRequest(http.MethodPost, "/events/fake", bytes.NewReader(body))
-	request.Header.Set(fakeSignatureHeader, hex.EncodeToString(fakeSign(body)))
+	request.Header.Set(fakeSignatureHeader, hex.EncodeToString(fakeSign([]byte(fakeSecret), body)))
 	return request
 }

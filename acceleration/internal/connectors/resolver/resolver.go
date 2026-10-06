@@ -53,6 +53,15 @@ const (
 	temporarilyUnavailable = "The provider could not renew the credential just now; the next call tries again"
 )
 
+// revokedErrors is what LastError says after Revoke, one for each signal kind. New wording,
+// like missingScope: the prototype read no provider events. Each says what the provider said
+// and that a reconnect is what helps.
+var revokedErrors = map[core.SignalKind]string{
+	core.SignalRevoked:     "The provider says the grant was revoked; reconnect the account",
+	core.SignalUninstalled: "The provider says its app was uninstalled from the account; reconnect the account",
+	core.SignalRotated:     "The provider says the account's credentials changed; reconnect the account",
+}
+
 // ErrNotConnected says the connection's status is not connected: it is pending a consent, it
 // needs a reconnect, or it was disconnected. Only the person who owns it can fix that.
 var ErrNotConnected = errors.New("resolver: the connection is not connected")
@@ -178,6 +187,31 @@ func (r *Resolver) Invalidate(ctx context.Context, ref core.ConnectionRef, rejec
 	}
 	return stack.Wrap(r.credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
 		if state.Status != store.ConnectionConnected || state.Revision != rejected.Revision {
+			return false, nil
+		}
+		state.Status, state.LastError = store.ConnectionNeedsReauthorization, lastError
+		return true, nil
+	}))
+}
+
+// Revoke moves a connected connection to needs_reauthorization and drops its cached
+// credential, because the provider said the grant ended (a verified core.Signal of kind why).
+// A connection that is not connected keeps its status: pending has no grant to end, and
+// needs_reauthorization and disconnected already say what a revocation would.
+//
+// It names no credential, unlike Invalidate, and checks no revision: the provider ended the
+// grant itself, so stored credentials another router renewed a moment ago end with it. It
+// runs under the credential store's lock, so a refresh in flight on another router commits
+// first and the status this writes is the last one. Invalidate with a zero credential is not
+// the same call: its revision check would leave the status alone.
+func (r *Resolver) Revoke(ctx context.Context, ref core.ConnectionRef, why core.SignalKind) error {
+	lastError, known := revokedErrors[why]
+	if !known {
+		return stack.Wrap(fmt.Errorf("resolver: %q is not a signal that ends a grant", why))
+	}
+	r.drop(ref)
+	return stack.Wrap(r.credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+		if state.Status != store.ConnectionConnected {
 			return false, nil
 		}
 		state.Status, state.LastError = store.ConnectionNeedsReauthorization, lastError

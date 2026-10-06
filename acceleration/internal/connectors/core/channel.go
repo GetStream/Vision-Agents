@@ -3,7 +3,6 @@ package core
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"maps"
 	"net/url"
@@ -17,20 +16,43 @@ import (
 )
 
 // ChannelRule is the manifest's channel block: how a provider's inbound request is proven to
-// be the provider's, where it keeps each message, and how a reply goes back. A connector has
-// sources, a channel, or both; an inbound channel is never a kind of tool (channels doc,
-// «Where connectors are in this design»). The verifier reads Verifier, Read reads Format,
-// Challenge and Messages, and the channel bridge sends with ResolvedManifest.Reply.
+// be the provider's, and what it says: messages a person wrote, with how a reply goes back,
+// signals about grants, or both. A connector has sources, a channel, or both; an inbound
+// channel is never a kind of tool (channels doc, «Where connectors are in this design»). The
+// verifier reads Verifier, Read reads Format, Challenge, Messages and Signals, and the channel
+// bridge sends with ResolvedManifest.Reply. A block with signals and no messages is a
+// connector the provider tells about its grants and nobody writes to, such as a user-token
+// Slack app's tokens_revoked.
 type ChannelRule struct {
 	Verifier VerifierRule `yaml:"verifier" json:"verifier"`
 	// Format is how the inbound body is read: a JSON object, or a form whose fields are read as
 	// the members of one flat object.
 	Format BodyFormat `yaml:"format" json:"format"`
 	// Challenge is the path of the value a handshake asks the endpoint to send back. A body
-	// that has it is a handshake and carries no messages.
-	Challenge string      `yaml:"challenge,omitempty" json:"challenge,omitempty"`
-	Messages  MessageRule `yaml:"messages" json:"messages"`
-	Reply     ReplyRule   `yaml:"reply" json:"reply"`
+	// that has it is a handshake and carries no messages and no signals.
+	Challenge string `yaml:"challenge,omitempty" json:"challenge,omitempty"`
+	// Messages and Reply are set together, or both left out when the block reads only signals.
+	Messages MessageRule `yaml:"messages,omitempty" json:"messages,omitzero"`
+	Reply    ReplyRule   `yaml:"reply,omitempty" json:"reply,omitzero"`
+	// Signals are the events that say a grant ended, each read into one Signal per account.
+	Signals []SignalRule `yaml:"signals,omitempty" json:"signals,omitempty"`
+}
+
+// SignalRule is one kind of event that says what happened to the grants of an account, and
+// where the event names the account.
+type SignalRule struct {
+	Kind SignalKind `yaml:"kind" json:"kind"`
+	// Match is values the event must have, compared as exact strings, as messages.match is.
+	// It is required: a rule without one would read every delivery as a revocation.
+	Match map[string]string `yaml:"match" json:"match"`
+	// Each is the path of every account one event names, ending in [*], such as every user
+	// whose token a revocation lists. Empty means the event names one. A [*] in an identity
+	// path stands for the same element as the [*] at the same place in Each.
+	Each string `yaml:"each,omitempty" json:"each,omitempty"`
+	// Identity is the path of each identity part the event names, by its name in the
+	// manifest's identity. It names every part, or fewer for an event about every account
+	// that has them (Signal.Identity).
+	Identity map[string]string `yaml:"identity" json:"identity"`
 }
 
 // VerifierRule names the verifier that checks an inbound request and the parameters it reads.
@@ -83,6 +105,13 @@ type MessageRule struct {
 	Text string `yaml:"text" json:"text"`
 }
 
+// IsZero is whether the block declares no messages, so encoding/json (omitzero) and yaml.v3
+// (omitempty) leave it out.
+func (rule MessageRule) IsZero() bool {
+	return rule.Each == "" && len(rule.Match) == 0 && len(rule.SkipIfPresent) == 0 && rule.ProviderUnitID == "" &&
+		len(rule.ThreadKey) == 0 && rule.AuthorID == "" && rule.ProviderMessageID == "" && rule.Text == ""
+}
+
 // ThreadKeyPart is one named part of a thread key.
 type ThreadKeyPart struct {
 	Name string `yaml:"name" json:"name"`
@@ -108,6 +137,11 @@ type ReplyRule struct {
 	Window Duration `yaml:"window,omitempty" json:"window,omitzero"`
 	// AfterWindow is the body sent once Window has passed, such as an approved template.
 	AfterWindow map[string]any `yaml:"after_window,omitempty" json:"after_window,omitempty"`
+}
+
+// IsZero is whether the block declares no reply, as MessageRule.IsZero.
+func (rule ReplyRule) IsZero() bool {
+	return rule.URL == "" && len(rule.Body) == 0 && rule.Window == 0 && len(rule.AfterWindow) == 0
 }
 
 // VerifierKind is the registered verifier a channel uses.
@@ -186,9 +220,10 @@ var (
 
 // ChannelEvent is what ChannelRule.Read found in one verified body.
 type ChannelEvent struct {
-	// Challenge is set for a handshake, which carries no messages.
+	// Challenge is set for a handshake, which carries no messages and no signals.
 	Challenge string
 	Messages  []ChannelMessage
+	Signals   []Signal
 }
 
 // ChannelMessage is one message of a body: the InboundMessage a verifier returns, and the
@@ -308,7 +343,7 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 			fail(field, "%q: a form is flat, so a path is $.<field>", path)
 			return
 		}
-		if err := correlated(steps, each); err != nil {
+		if err := correlated(steps, each, "messages.each"); err != nil {
 			fail(field, "%q: %v", path, err)
 		}
 	}
@@ -333,7 +368,14 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 	if msgs.ProviderUnitID != "" {
 		checkPath("channel.messages.provider_unit_id", msgs.ProviderUnitID)
 	}
-	if len(msgs.ThreadKey) == 0 {
+	hasMessages, hasReply := !msgs.IsZero(), !c.Reply.IsZero()
+	switch {
+	case !hasMessages && hasReply:
+		fail("channel.messages", "is empty: a reply goes back to the thread a message came from")
+	case !hasMessages && len(c.Signals) == 0:
+		fail("channel", "reads neither messages nor signals")
+	}
+	if hasMessages && len(msgs.ThreadKey) == 0 {
 		fail("channel.messages.thread_key", "is empty")
 	}
 	parts := map[string]bool{}
@@ -350,9 +392,12 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 			checkPath(field+".fallback", part.Fallback)
 		}
 	}
-	checkPath("channel.messages.author_id", msgs.AuthorID)
-	checkPath("channel.messages.provider_message_id", msgs.ProviderMessageID)
-	checkPath("channel.messages.text", msgs.Text)
+	if hasMessages {
+		checkPath("channel.messages.author_id", msgs.AuthorID)
+		checkPath("channel.messages.provider_message_id", msgs.ProviderMessageID)
+		checkPath("channel.messages.text", msgs.Text)
+	}
+	m.checkSignals(fail)
 
 	for _, name := range []string{replyText, replyProviderUnitID} {
 		if _, clash := inputs[name]; clash {
@@ -368,6 +413,9 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 	}
 	if msgs.ProviderUnitID != "" {
 		extra[replyProviderUnitID] = true
+	}
+	if !hasMessages && !hasReply {
+		return
 	}
 	if c.Reply.URL == "" {
 		fail("channel.reply.url", "is empty")
@@ -388,6 +436,66 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 		fail("channel.reply.after_window", "is set exactly when window is: it is what is sent once the window has passed")
 	}
 	m.checkBody(fail, "channel.reply.after_window", c.Reply.AfterWindow, inputs, captures, extra)
+}
+
+// checkSignals reports every problem in channel.signals, each naming its field. Paths follow
+// the messages rules: lookup only, a form is flat, and a [*] stands where the rule's each has
+// one.
+func (m Manifest) checkSignals(fail func(field, format string, args ...any)) {
+	format := m.Channel.Format
+	for i, rule := range m.Channel.Signals {
+		field := fmt.Sprintf("channel.signals[%d]", i)
+		if !slices.Contains(signalKinds, rule.Kind) {
+			fail(field+".kind", "%q is not one of %v", rule.Kind, signalKinds)
+		}
+		var each []pathStep
+		if rule.Each != "" {
+			if steps, err := parsePath(rule.Each); err != nil {
+				fail(field+".each", "%v", err)
+			} else if steps[len(steps)-1].index != wildcard {
+				fail(field+".each", "%q does not end in [*]", rule.Each)
+			} else if format == FormatForm {
+				fail(field+".each", "a form is flat, so it names one account")
+			} else {
+				each = steps
+			}
+		}
+		checkPath := func(at, path string) {
+			steps, err := parsePath(path)
+			if err != nil {
+				fail(at, "%v", err)
+				return
+			}
+			if format == FormatForm && (len(steps) != 1 || steps[0].index != noIndex) {
+				fail(at, "%q: a form is flat, so a path is $.<field>", path)
+				return
+			}
+			if err := correlated(steps, each, field+".each"); err != nil {
+				fail(at, "%q: %v", path, err)
+			}
+		}
+		if len(rule.Match) == 0 {
+			fail(field+".match", "is empty: without one every delivery would be this signal")
+		}
+		for _, path := range slices.Sorted(maps.Keys(rule.Match)) {
+			checkPath(field+".match."+path, path)
+			if strings.Contains(path, "[*]") {
+				fail(field+".match."+path, "a match is about the whole event, not one of its accounts")
+			}
+			if rule.Match[path] == "" {
+				fail(field+".match."+path, "is empty")
+			}
+		}
+		if len(rule.Identity) == 0 {
+			fail(field+".identity", "is empty: a signal names the account it is about")
+		}
+		for _, name := range slices.Sorted(maps.Keys(rule.Identity)) {
+			if !slices.Contains(m.Identity, name) {
+				fail(field+".identity."+name, "%q is not one of identity %v", name, m.Identity)
+			}
+			checkPath(field+".identity."+name, rule.Identity[name])
+		}
+	}
 }
 
 // checkBody is whether every string in a body template names only what a reply can fill,
@@ -427,13 +535,14 @@ func (m Manifest) checkBody(fail func(field, format string, args ...any), field 
 	}
 }
 
-// Read reads the messages, or the handshake challenge, of one verified inbound body by the
-// block's paths, naming connectorID on each message. It needs no connection: a webhook that
-// one provider app shares among customers is read before its provider unit picks the
+// Read reads the messages and signals, or the handshake challenge, of one verified inbound
+// body by the block's paths, naming connectorID on each. It needs no connection: a webhook
+// that one provider app shares among customers is read before its provider unit picks the
 // connection (T39). A message without an author, an id, a thread key part or a declared
 // provider unit, one that differs from match, or one with a skip_if_present path is not
-// read: a provider posts other events to the same URL. An error means the body does not have
-// the shape the block describes.
+// read: a provider posts other events to the same URL. A signal is read for each element of
+// its each whose identity parts are all there, when the event has its match. An error means
+// the body does not have the shape the block describes.
 func (c ChannelRule) Read(connectorID string, body []byte) (ChannelEvent, error) {
 	root, err := decodeBody(c.Format, body)
 	if err != nil {
@@ -449,25 +558,79 @@ func (c ChannelRule) Read(connectorID string, body []byte) (ChannelEvent, error)
 		}
 	}
 
-	bindings := [][]int{nil}
-	if c.Messages.Each != "" {
-		if bindings, err = enumerate(root, c.Messages.Each); err != nil {
-			return ChannelEvent{}, err
+	var event ChannelEvent
+	if !c.Messages.IsZero() {
+		bindings := [][]int{nil}
+		if c.Messages.Each != "" {
+			if bindings, err = enumerate(root, c.Messages.Each); err != nil {
+				return ChannelEvent{}, err
+			}
+		}
+		for _, bound := range bindings {
+			message, ok, err := c.Messages.read(root, bound)
+			if err != nil {
+				return ChannelEvent{}, err
+			}
+			if ok {
+				message.ConnectorID = connectorID
+				message.Raw = body
+				event.Messages = append(event.Messages, message)
+			}
 		}
 	}
-	var event ChannelEvent
-	for _, bound := range bindings {
-		message, ok, err := c.Messages.read(root, bound)
+	for _, rule := range c.Signals {
+		signals, err := rule.read(root, connectorID)
 		if err != nil {
 			return ChannelEvent{}, err
 		}
-		if ok {
-			message.ConnectorID = connectorID
-			message.Raw = body
-			event.Messages = append(event.Messages, message)
+		// Elements of each that name the same account, such as every bot of one workspace,
+		// are one signal.
+		for _, signal := range signals {
+			if !slices.ContainsFunc(event.Signals, func(read Signal) bool {
+				return read.Kind == signal.Kind && maps.Equal(read.Identity, signal.Identity)
+			}) {
+				event.Signals = append(event.Signals, signal)
+			}
 		}
 	}
 	return event, nil
+}
+
+// read reads the signals one rule finds in a body: none when the body differs from match,
+// else one for each element of each whose identity parts are all there.
+func (rule SignalRule) read(root any, connectorID string) ([]Signal, error) {
+	for _, path := range slices.Sorted(maps.Keys(rule.Match)) {
+		value, found, err := readPath(root, path, nil)
+		if err != nil || !found || value != rule.Match[path] {
+			return nil, err
+		}
+	}
+	bindings := [][]int{nil}
+	if rule.Each != "" {
+		var err error
+		if bindings, err = enumerate(root, rule.Each); err != nil {
+			return nil, err
+		}
+	}
+	var signals []Signal
+	for _, bound := range bindings {
+		identity := make(map[string]string, len(rule.Identity))
+		for name, path := range rule.Identity {
+			value, found, err := readPath(root, path, bound)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				identity = nil
+				break
+			}
+			identity[name] = value
+		}
+		if identity != nil {
+			signals = append(signals, Signal{ConnectorID: connectorID, Identity: identity, Kind: rule.Kind})
+		}
+	}
+	return signals, nil
 }
 
 // read reads the message at one binding of the each path. ok is false when the message is
@@ -538,8 +701,8 @@ func (rule MessageRule) read(root any, bound []int) (message ChannelMessage, ok 
 // value from a message goes into the URL only as unreserved characters, as an input does; in
 // the body it is a JSON string, escaped by encoding/json.
 func (m ResolvedManifest) Reply(r ReplyValues) (string, []byte, error) {
-	if m.Channel == nil {
-		return "", nil, stack.Wrap(fmt.Errorf("manifest %q has no channel block", m.ConnectorID))
+	if m.Channel == nil || m.Channel.Reply.IsZero() {
+		return "", nil, stack.Wrap(fmt.Errorf("manifest %q has no channel reply", m.ConnectorID))
 	}
 	reply := m.Channel.Reply
 	values := map[string]string{replyText: r.Text}
@@ -667,8 +830,9 @@ func parsePath(path string) ([]pathStep, error) {
 }
 
 // correlated is whether every [*] of a path stands where the each path has one, after the
-// same members, so the path reads the same element the each path does.
-func correlated(steps, each []pathStep) error {
+// same members, so the path reads the same element the each path does. eachField names the
+// each path in the error.
+func correlated(steps, each []pathStep, eachField string) error {
 	end := -1
 	for i, step := range steps {
 		if step.index == wildcard {
@@ -679,10 +843,10 @@ func correlated(steps, each []pathStep) error {
 		return nil
 	}
 	if len(each) == 0 {
-		return errors.New("has [*] but messages.each is empty, so there is no element for it to be")
+		return fmt.Errorf("has [*] but %s is empty, so there is no element for it to be", eachField)
 	}
 	if end >= len(each) || !slices.Equal(steps[:end+1], each[:end+1]) {
-		return errors.New("its [*] is not where messages.each has one, after the same members")
+		return fmt.Errorf("its [*] is not where %s has one, after the same members", eachField)
 	}
 	return nil
 }
