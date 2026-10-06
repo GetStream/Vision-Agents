@@ -47,7 +47,7 @@ Keep the AI-816 data model (Connector → Connection → Binding → Grant) and 
 - A broker may come later and must not be the core. The doc's «Build our own layer or use a broker» puts a broker only behind the credential resolver boundary (`connector-design.md:409`) and decides on data after a month of Slack and Linear in production.
 - Channels are out of scope. «iMessage: a channel, not a connector» and «Decide separately» make this split. Inbound provider events about a grant (a revoked token) are not a channel and are in scope. Where a channel's transport lives was decided on October 5: the channel bridge in the Router writes to Stream Chat («Decisions, 2026-10-05», one-way door 9 and the two-way door «Where a channel's transport lives»).
 - The AI-816 prototype on `codex/connector-support` is an example, not an accepted design. It can be redone. Where this doc cites its code, the path is on that branch under `acceleration/`.
-- Router has no production deployment, only staging. Plugins have zero rows there («Where plugins run today» in the competitor doc). So the plugin import code and the irreversible migration are not needed.
+- Router has no production deployment, only staging. Plugins had zero rows there on October 1. Since then the plugin system grew, so plugins now move onto connectors with a migration command (see «Plugins move onto connectors»).
 
 **Sources used.** The competitor doc as a whole, with its «Appendix: fact check» as the source of truth where the text disagrees. The branch code: `internal/mcp/{catalog.go,connectors.yaml,oauth.go,mcp.go}`, `internal/connectors/{runtime.go,secrets.go}`, `internal/store/connectors.go`, `internal/session/{connector_tools.go,mcp_tools.go}`, `internal/api/connectors.go`, and the five migrations dated 2026-09-29. The two design docs on the branch, `connector-design.md` and `connector-handover.md`. Facts that come from outside these are marked **outside the document** with a way to verify them.
 
@@ -434,7 +434,7 @@ The branch is a prototype and can be redone. Most of it should not be. What foll
 | Connector API enum | `auth_mode: oauth_dcr \| oauth_preconfigured \| oauth_customer_credentials \| none \| bearer \| api_key` (`api/connectors.go:969-1008`) | `schemes[]` and `client_policy` from the manifest. Additive in OpenAPI; old values map to new ones |
 | BYO client | `oauth_client_id` and `oauth_client_secret` per authorize body, sealed into each grant (`api/connectors.go:319-353,843-853`) | An OAuth client record per (app, connector); the attempt references it. Rotating a customer secret then touches one row |
 | Callback | Reads `state`, `iss`, `error`, `code` only (`api/connectors.go:762-817`) | Passes the full query to `Scheme.Complete` for `capture` and the `BeforeComplete` hook |
-| Plugin import | `connectorimport/` and the irreversible migration `20260929210000` | Delete the import. Keep the drop. Staging has 0 plugin rows («Where plugins run today»), and Router has no production |
+| Plugin import | `connectorimport/` and the irreversible migration `20260929210000` | Rewrite the import as `router plugins migrate` (T61, «Plugins move onto connectors»), then drop (T23). Staging had 0 plugin rows on October 1 («Where plugins run today»), and Router has no production |
 
 **Add.**
 
@@ -463,6 +463,35 @@ The branch is a prototype and can be redone. Most of it should not be. What foll
 8. `stream_app_pk` pins and a message hook in each customer app (tenancy).
 
 **Package layout.** `internal/connectors/core` (model, resolver, dispatcher, attempts, policy, records), `internal/connectors/schemes/<name>`, `internal/connectors/sources/<kind>`, `internal/connectors/credentialstores/<name>`, `internal/connectors/signals/<name>`, `internal/connectors/providers` (YAML manifests and the hook files). `internal/mcp` shrinks to the MCP source. `internal/connectors` on the branch becomes `core`.
+
+## Plugins move onto connectors
+
+Decided October 6: the plugin system moves onto connectors, then goes. Since October 1 it grew: 14 catalog plugins, logins in the chat, an OAuth client per agent config, MCP Events. So the removal (T23) is no longer a plain drop. Each plugin part gets its connector counterpart first, then its rows move, then the plugin code goes. Facts below are from `accelerate` at `04075105` (October 6).
+
+| Plugin part (where it is now) | Connector counterpart | State |
+| --- | --- | --- |
+| Catalog of 14 plugins (`internal/plugins/plugins.yaml`) | Built-in manifests (`internal/connectors/providers/*.yaml`) | 7 exist: calcom, calendly, github, gong, linear, salesforce, slack. 7 missing: shopify, sentry, hubspot, google_calendar, google_drive, google_docs, gmail (T58) |
+| `agent_configs.agent_plugins`: the company connects once | Binding with `connection.type: fixed`, an app-owned connection (T20) | Merged (#735) |
+| `agent_configs.user_plugins`: each person connects their own | Binding with `connection.type: session`, the verified end user's own connection (T20, T22) | Field merged; session wiring is T21, T22 |
+| `agent_plugin_connections` (`user_id` empty = the app's, set = a person's). Tokens in plain `TEXT` columns `access_token`, `refresh_token` | `connector_connections`, owner `app` or `user`. Tokens sealed in `credentials_sealed` (T7, T8) | Merged. Rows move with T61 |
+| `agent_plugin_clients`: one OAuth client per (customer, agent config, plugin), secret sealed | `connector_oauth_clients`: one per (app, connector) (T19, T40) | Merged (#758, #763). Rows move with T61 |
+| Env `<PLUGIN_ID>_MCP_CLIENT_ID` / `_SECRET` | Env `<client.env>_MCP_CLIENT_ID` / `_SECRET` | Same names already. Slack plugin and Slack connector read the same `SLACK_MCP_*`, so the Slack app must list both callback URLs until T23 |
+| Login in the chat: the reply carries a `plugin_authorization` attachment, and the agent carries on after the login (`conversation/authorizations.go`, `plugins/user.go`) | The same attachment shape, carrying a connector authorization (T17's launch URL) | Not built: T59 |
+| MCP Events: `agent_configs.plugin_events`, tables `agent_plugin_event_subscriptions` and `agent_plugin_event_deliveries`, `POST /v1/agents/plugins/events/{token}` | Subscriptions keyed by connection, on the MCP source (T14) | Not built: T60 |
+| 8 plugin API paths (`/v1/agents/plugins*`, `/v1/agents/configs/{id}/plugins*`) | Connectors (T15), connections (T16), authorizations (T17), OAuth client (T19) | Merged; Volt moves to them |
+| Volt setup page `tools/apps/<plugin_id>`: setup steps, redirect URI, client form | The same page over a connector | Volt repo, after T19 and T58 |
+
+**Decisions.**
+
+1. **One OAuth client per app and connector, not per agent config.** The connector model keeps one client per (app, connector) (#758). Example: two agent configs of one app hold different Slack client ids. The migration keeps the most recently updated one and reports the other. An app that truly needs two Slack apps gets a second connector definition.
+2. **Tokens move sealed, by a Go command, not by SQL.** Plugin tokens are plain text today. Sealing needs the keyring, and the AAD binds the connection id and revision (T8). So a router command (`router plugins migrate`) writes each row as an `oauth2_code` connection: access token, refresh token, expiry, client reference. It is idempotent and reports every row it cannot map (an unknown plugin, a missing manifest).
+3. **Configs move with their connections.** An `agent_plugins` entry becomes a `fixed` binding to the moved app connection. A `user_plugins` entry becomes a `session` binding. Tool grants copy over; a plugin entry with no tool list grants all tools, as it does today.
+4. **Event subscriptions are not moved.** They are re-created on the connection after T60: a subscription signs with its own secret, and the server issues a new one on subscribe.
+5. **New provider work goes into connector manifests**, not the plugin catalog, from now on. Plugin code takes fixes only until T23.
+
+**Order.** T58 manifests → T21, T22 session wiring and T59 login in the chat → T60 MCP Events → T61 migration command → Volt on connector endpoints → T23 removal.
+
+**Staging rows are `unverified`.** There were 0 rows on October 1. Thierry reports per-user Slack, Google and Gong logins working end to end (his Slack post, October 6). Count before T61: `SELECT count(*) FILTER (WHERE user_id = '') AS app, count(*) FILTER (WHERE user_id <> '') AS person FROM agent_plugin_connections;` plus `SELECT count(*) FROM agent_plugin_clients;`.
 
 ## Validation plan before writing code
 
@@ -504,7 +533,7 @@ The plan proves the extension points before the product code exists. Each spike 
 4. **More secret kinds.** Private keys, certificates and AWS keys join OAuth grants under the same KEK. A leak of the database plus the key is worse than today. Same envelope, same AAD; KMS is a credential store behind the interface when the time comes. Static egress IPs and a maximum grant age stay on the P2 list.
 5. **Provider drift.** MCP removed sessions and deprecated DCR in one revision («What MCP is»). Slack changed its Marketplace rule in September. Manifests have revisions and connections pin them, so a drift is a new revision and a reconnect, not a release.
 6. **Scope pressure from channels.** Thierry's interest is Slack, WhatsApp and iMessage as channels. On October 1 he named Linq and Chatbase as the omni-channel-plus-connector products that «grew more than we did», and widened the list to «slack, whatsapp, rcs, texting, imessage, maybe telegram». The design shares the base and keeps the first build narrow. Decided October 5: the channel bridge runs in the Router and writes to Stream Chat, and a new channel is a manifest with a `channel` block, not new Router code. The old cost of the bridge, one Slack bot token in two places, is gone: both Slack tokens live in the Router. Keep the «channel or tool» line from the competitor doc in the API docs.
-7. **Staging only.** Router has no production deployment, so migrations are cheap and the plugin import can go. The other side: the KEK keyring and a public HTTPS URL for callbacks must exist in staging before any live OAuth test (`connector-handover.md:139-142`).
+7. **Staging only.** Router has no production deployment, so migrations are cheap. Staging plugin rows still move (T61), because plugins kept growing after October 1. The other side: the KEK keyring and a public HTTPS URL for callbacks must exist in staging before any live OAuth test (`connector-handover.md:139-142`).
 8. **Facts from outside the competitor doc.** The eight vendor claims in the stress test were checked against vendor pages and SDK source on October 1, 2026; the list is in «Sources and evidence». Three corrected the first draft: Shopify offline tokens for new public apps now expire and come with a 90-day refresh token; Microsoft signs certificate assertions with PS256, not RS256; QuickBooks moved from a rolling 100-day refresh token to an absolute five-year cap in November 2025. None changed the design; each changed one manifest field. Two sources resisted a direct read: Intuit's docs portal renders client-side, so Intuit's SDK source was used, and Intuit's policy post refused the fetch, so it is quoted from Intuit's own search snippet.
 9. **Account identity stays unknown for some providers.** Live Slack and Linear returned no stable id (`connector-handover.md:190-192`). Where the manifest cannot name a source, `account_id` is empty and reconnect cannot prove it is the same account. The design keeps the branch's rule: ask the user to confirm and report identity as unverified (`connector-design.md:190`).
 

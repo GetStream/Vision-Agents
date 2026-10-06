@@ -4,7 +4,7 @@ Oct 1, 2026 · @Kanat Kiialbaev
 
 Exported from Claude Docs on 2026-10-05 (https://claude.ai/code/artifact/e4d97114-1334-4181-beab-c5721909c201). The Claude Doc is the source of truth; this copy is a snapshot.
 
-33 subtasks in 7 phases, each one PR, in the order they can land, plus 21 subtasks (T37 to T57) added on October 5 from the channel decisions. Status on October 6: 17 merged on accelerate (T1 to T11, T15 to T17, T20, T32, T37). They implement [Accelerate connectors: architecture design](architecture.md) on top of the code that exists today. Connector-layer subtasks are Linear sub-issues of [AI-816](https://linear.app/stream/issue/AI-816/basic-connectorsmcp-support); the channel bridge and the omni-channel conversation have their own parent issues, AI-866 and AI-867. Each subtask's Linear number follows its title.
+33 subtasks in 7 phases, each one PR, in the order they can land, plus 21 subtasks (T37 to T57) added on October 5 from the channel decisions, plus 4 subtasks (T58 to T61) added on October 6 to move plugins onto connectors. Status on October 6: 17 merged on accelerate (T1 to T11, T15 to T17, T20, T32, T37). They implement [Accelerate connectors: architecture design](architecture.md) on top of the code that exists today. Connector-layer subtasks are Linear sub-issues of [AI-816](https://linear.app/stream/issue/AI-816/basic-connectorsmcp-support); the channel bridge and the omni-channel conversation have their own parent issues, AI-866 and AI-867. Each subtask's Linear number follows its title.
 
 ## Ground rules
 
@@ -14,7 +14,7 @@ Exported from Claude Docs on 2026-10-05 (https://claude.ai/code/artifact/e4d9711
 - **New endpoints use Huma, not `legacy.yaml`.** The prototype registered its connector endpoints through the generated oapi-codegen server (`ListConnectorsRequestObject` and friends in `internal/api/connectors.go`). AGENTS.md forbids adding to `legacy.yaml`, so the API phase ports the handlers to `huma.Register`.
 - **Go first, SDKs later.** AGENTS.md: SDK changes start with Go; the other SDKs follow in their own PRs. Each API PR regenerates `openapi.yaml` and the Go SDK only.
 - **Every PR keeps `go vet ./...` and `go test ./...` green** (`.github/workflows/ci.yml:78-98`), adds its own tests against real local servers and a temporary database, never mocks (AGENTS.md), and leaves the router startable with the feature off until the session wiring lands.
-- **Nothing is deployed to production.** Router runs only on staging, where `agent_plugin_connections` has 0 rows (competitor doc, «Where plugins run today»). So there is no plugin import and the plugin removal is a plain drop.
+- **Nothing is deployed to production.** Router runs only on staging, where `agent_plugin_connections` had 0 rows on October 1 (competitor doc, «Where plugins run today»). Plugins grew after that, so their rows move onto connectors with a command (T61) before the removal (T23).
 - **Channels are a later layer, not part of these 33 PRs.** Thierry on October 1: «the omni channel/connector concept will be important», naming Linq and Chatbase; later that day: «AI requires a good way to integrate slack, whatsapp, rcs, texting, imessage, maybe telegram». The transport is now decided as a proposal (channels doc, October 5): a channel bridge in the Router writes each external thread into its own thread channel in Stream Chat, one episode card goes to the person's omni-channel, and Router's existing message hook answers. T34 to T57 implement it: the connector-layer part in Phase 7 under AI-816, the bridge and the conversation under AI-866 and AI-867. One rule still holds now: T26's inbound endpoint and verifier registry are built so the channel bridge reuses them.
 - **Each subtask lists:** title, description, scope, out of scope, dependencies, acceptance criteria. Titles are written for Linear.
 
@@ -258,15 +258,40 @@ Four PRs. After T21 an agent on staging can call a Slack or Linear tool; after T
 
 ### T23. Remove the plugin system · [AI-859](https://linear.app/stream/issue/AI-859)
 
-- **Description.** Delete `internal/plugins`, `session/plugin_tools.go` and `attachPlugins`, the five plugin operations from `api/legacy.yaml:1061-1177` and their handlers in `api/plugins.go`, the `plugins` fields of the config schemas, and the SDK surfaces that reference them. Migration drops `agent_plugin_connections` and `agent_configs.plugins` (branch `20260929210000`). No import: staging has 0 rows.
-- **Scope.** Deletions, one migration, OpenAPI and Go SDK regen, the Python plugin's `folder.py` and `config.py` plugin fields.
-- **Out of scope.** Any new behavior.
-- **Dependencies.** T21 (so an agent always has a tool path), T22.
-- **Acceptance.** `grep -rn plugin_id acceleration/` finds nothing outside the migration's down block; `legacy.yaml` is smaller and the OpenAPI freshness test passes; the dashboard's plugin calls, if any remain, get 404 and are tracked in the Volt repo.
+- **Rewritten October 6.** Plugins move onto connectors first (architecture doc, «Plugins move onto connectors»), so this is the last step, not a plain drop.
+- **Description.** Delete `internal/plugins`, `internal/pluginevents`, `session/plugin_tools.go`, `session/plugin_clients.go` and `attachPlugins`, the plugin operations (`listPlugins`, `listConfigPlugins`, `authorizePlugin`, `disconnectPlugin`, the plugin client operations, `getPluginLogo`, `pluginOAuthCallback`, `receivePluginEvent`) and their handlers in `api/plugins.go` and `api/handwritten.go`, the `plugin_authorization` attachment once T59 replaces it, and the SDK surfaces that reference them. One migration drops `agent_plugin_connections`, `agent_plugin_clients`, `agent_plugin_event_subscriptions`, `agent_plugin_event_deliveries` and the columns `agent_configs.agent_plugins`, `user_plugins`, `plugin_events`.
+- **Scope.** Deletions, one migration, OpenAPI and Go SDK regen, the Python plugin's `folder.py` and `config.py` plugin fields, `.claude/skills/plugin/SKILL.md`.
+- **Out of scope.** Any new behavior; moving rows (T61).
+- **Dependencies.** T21, T22 (an agent always has a tool path), T59, T60, T61 (rows moved), and Volt on connector endpoints.
+- **Acceptance.** `grep -rn plugin_id acceleration/` finds nothing outside the migration's down block; the OpenAPI freshness test passes; `router plugins migrate` reported 0 unmapped rows on staging before the drop.
 
-## Phase 6: proof of the design and hardening
+### T58. Manifests for the plugins with no connector
 
-Ten PRs that can run in any order once their dependencies are in. The first two are the proof the design asked for: a second scheme and a second source that touch no file in `core`.
+- **Description.** Built-in manifests for the 7 catalog plugins with no connector: shopify, sentry, hubspot, google_calendar, google_drive, google_docs, gmail. Each copies the plugin's endpoints, scopes, setup steps and client env from `internal/plugins/plugins.yaml` and checks them against the vendor page, as T32 did. Google's three share one OAuth client env.
+- **Scope.** `internal/connectors/providers/*.yaml`, the consent test per manifest.
+- **Dependencies.** T4, T32 (pattern).
+- **Acceptance.** Every plugin id in `plugins.yaml` has a connector id; each new manifest loads and its consent test passes against the fake provider.
+
+### T59. Login in the chat for connectors
+
+- **Description.** When a tool call needs the person's own connection (a `session` binding with none connected, or one in `needs_reauthorization`), the reply carries an authorization attachment with T17's launch URL, as the plugin's `plugin_authorization` does today (`conversation/authorizations.go`). After the callback the agent carries on with the request, as `8e450afd` does for plugins.
+- **Scope.** `conversation`, `session`, the attachment schema, OpenAPI and Go SDK regen.
+- **Dependencies.** T17, T21, T22.
+- **Acceptance.** «Tell Nash a joke on Slack» with no Slack connection shows the attachment; after consent the agent sends the message with no second ask.
+
+### T60. MCP Events over connections
+
+- **Description.** Port the plugin MCP Events client (`internal/plugins/events.go`, `internal/pluginevents`): subscriptions keyed by connection, deliveries checked with the subscription's own Standard Webhooks secret, on the MCP source (T14). The deliveries endpoint stays separate from provider events (T26), which verify with the provider app's secret.
+- **Scope.** The events client, store tables keyed by connection, the deliveries route, tests.
+- **Dependencies.** T14, T21.
+- **Acceptance.** An event from a connected MCP server reaches the agent; a delivery signed with another subscription's secret is refused.
+
+### T61. Move plugin rows onto connectors
+
+- **Description.** `router plugins migrate`, a Go command, not SQL: sealing needs the keyring, and the AAD binds connection id and revision (T8). It writes each `agent_plugin_connections` row as an `oauth2_code` connection (owner `app` when `user_id` is empty, else `user`) with its tokens sealed; each `agent_plugin_clients` row as a `connector_oauth_clients` record, the most recently updated one when two configs of one app differ; each `agent_plugins` entry as a `fixed` binding and each `user_plugins` entry as a `session` binding. It is idempotent and reports every row it cannot map. Event subscriptions are not moved; T60 re-creates them.
+- **Scope.** The command, a dry-run flag that prints the plan, integration tests on a copy of plugin rows.
+- **Dependencies.** T58, T20, T19, T40, T8.
+- **Acceptance.** A dry run on staging lists every row and its target; a real run then leaves every migrated agent's tools working through connectors with no new login; a second run changes nothing. Staging row counts are `unverified` now (0 on October 1); count them first (architecture doc, «Plugins move onto connectors»).
 
 ### T24. Scheme oauth2\_client\_credentials · [AI-847](https://linear.app/stream/issue/AI-847)
 
