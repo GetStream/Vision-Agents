@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"math"
 	"time"
 
@@ -44,10 +45,13 @@ func (a *Agent) eotCandidateSnapshotLocked(gate *eotGate) (candidate, bool) {
 }
 
 type eotResult struct {
-	gate    *eotGate
-	score   EOTScore
-	err     error
-	latency time.Duration
+	gate            *eotGate
+	score           EOTScore
+	err             error
+	errorClass      eotFailureClass
+	attempts        int
+	budgetExhausted bool
+	latency         time.Duration
 }
 
 func (a *Agent) cancelEOTPreviews(gates []*eotGate) {
@@ -131,7 +135,11 @@ func (a *Agent) registerEOTGateLocked(ready candidate, current *harness.Harness,
 			old.cancel()
 		}
 	}
-	ctx, cancel := context.WithTimeout(p.ctx, eotGateLimit)
+	budget := eotGateLimit
+	if a.options.EOTMode == EOTModePrimary {
+		budget = eotPrimaryLimit
+	}
+	ctx, cancel := context.WithTimeout(p.ctx, budget)
 	gate := &eotGate{
 		candidateID:   ready.ID,
 		participantID: ready.Participant.ID,
@@ -162,14 +170,153 @@ func (a *Agent) startEOT(gate *eotGate, pcm []byte) {
 	go func() {
 		defer a.running.Done()
 		defer gate.pipeline.running.Done()
-		started := time.Now()
-		score, err := a.options.EOT.Score(gate.ctx, gate.candidateID, pcm)
-		result := eotResult{gate: gate, score: score, err: err, latency: time.Since(started)}
+		score, err, attempts, failureClass, latency, budgetExhausted := scoreEOTAttempts(gate.ctx, a.options.EOT, gate.candidateID, pcm, gate.primary)
+		result := eotResult{
+			gate: gate, score: score, err: err, errorClass: failureClass,
+			attempts: attempts, budgetExhausted: budgetExhausted, latency: latency,
+		}
 		select {
 		case gate.pipeline.eotResults <- result:
 		case <-gate.pipeline.ctx.Done():
 		}
 	}()
+}
+
+func scoreEOTAttempts(ctx context.Context, client *EOTClient, requestID string, pcm []byte, primary bool) (EOTScore, error, int, eotFailureClass, time.Duration, bool) {
+	started := time.Now()
+	budget := eotGateLimit
+	if primary {
+		budget = eotPrimaryLimit
+	}
+	maxDeadline := started.Add(budget)
+	if parentDeadline, ok := ctx.Deadline(); !ok || parentDeadline.After(maxDeadline) {
+		bounded, cancel := context.WithDeadline(ctx, maxDeadline)
+		defer cancel()
+		ctx = bounded
+	}
+	maxAttempts := 1
+	if primary {
+		maxAttempts += eotPrimaryRetryLimit
+	}
+	var lastScore EOTScore
+	var lastErr error
+	var lastClass eotFailureClass
+	attempts := 0
+	budgetExhausted := false
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				budgetExhausted = true
+				if lastErr == nil {
+					lastErr = &eotAttemptError{class: eotFailureTimeout}
+					lastClass = eotFailureTimeout
+				}
+			} else {
+				lastErr = &eotAttemptError{class: eotFailureCanceled}
+				lastClass = eotFailureCanceled
+			}
+			break
+		}
+
+		attemptLimit := eotGateLimit
+		if attempt > 0 {
+			attemptLimit = eotPrimaryRetryWindow
+		}
+		if deadline, ok := ctx.Deadline(); ok {
+			remaining := time.Until(deadline)
+			if remaining < attemptLimit {
+				attemptLimit = remaining
+			}
+		}
+		if attemptLimit <= 0 {
+			budgetExhausted = true
+			if lastErr == nil {
+				lastErr = &eotAttemptError{class: eotFailureTimeout}
+				lastClass = eotFailureTimeout
+			}
+			break
+		}
+
+		attemptCtx, cancel := context.WithTimeout(ctx, attemptLimit)
+		lastScore, lastErr = client.Score(attemptCtx, requestID, pcm)
+		cancel()
+		attempts++
+		if lastErr == nil {
+			return lastScore, nil, attempts, "", time.Since(started), false
+		}
+		var retryAfter time.Duration
+		var hasRetryAfter bool
+		lastClass, retryAfter, hasRetryAfter = eotErrorMetadata(lastErr)
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			budgetExhausted = true
+			if lastClass == eotFailureCanceled {
+				lastErr = &eotAttemptError{class: eotFailureTimeout}
+				lastClass = eotFailureTimeout
+			}
+			break
+		}
+		if errors.Is(ctx.Err(), context.Canceled) {
+			lastErr = &eotAttemptError{class: eotFailureCanceled}
+			lastClass = eotFailureCanceled
+			break
+		}
+		failure, typed := lastErr.(*eotAttemptError)
+		if !primary || ctx.Err() != nil || attempts >= maxAttempts ||
+			!typed || !failure.retryable() {
+			break
+		}
+
+		delay := 25 * time.Millisecond
+		if attempt == 1 {
+			delay = 50 * time.Millisecond
+		}
+		if hasRetryAfter && retryAfter > delay {
+			delay = retryAfter
+		}
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < delay+eotPrimaryMinRetryWindow {
+			break
+		}
+		if !waitEOTRetry(ctx, delay, nil) {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				budgetExhausted = true
+			} else {
+				lastErr = &eotAttemptError{class: eotFailureCanceled}
+				lastClass = eotFailureCanceled
+			}
+			return EOTScore{}, lastErr, attempts, lastClass, time.Since(started), budgetExhausted
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			budgetExhausted = true
+			break
+		}
+		if errors.Is(ctx.Err(), context.Canceled) {
+			lastErr = &eotAttemptError{class: eotFailureCanceled}
+			lastClass = eotFailureCanceled
+			break
+		}
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < eotPrimaryMinRetryWindow {
+			break
+		}
+	}
+	if lastErr == nil {
+		lastErr = &eotAttemptError{class: eotFailureUnknown}
+		lastClass = eotFailureUnknown
+	}
+	return EOTScore{}, lastErr, attempts, lastClass, time.Since(started), budgetExhausted
+}
+
+func waitEOTRetry(ctx context.Context, delay time.Duration, onWait func()) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	if onWait != nil {
+		onWait()
+	}
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func (a *Agent) cancelEOTGate(candidateID string) {
@@ -258,10 +405,14 @@ func (a *Agent) refreshedPrimaryFlowTurnLocked(gate *eotGate, speechPending bool
 	return turn
 }
 
-func (a *Agent) fallbackPrimaryEOT(gate *eotGate, reason string, latency time.Duration) {
+func (a *Agent) fallbackPrimaryEOT(gate *eotGate, reason string, latency time.Duration, attempts int, failureClass eotFailureClass, budgetExhausted bool) {
 	speechPending := a.speechPending()
 	a.mu.Lock()
 	if a.eotGates[gate.candidateID] != gate || gate.pipeline != a.pipe || gate.harness != a.harness {
+		a.mu.Unlock()
+		return
+	}
+	if errors.Is(gate.ctx.Err(), context.Canceled) {
 		a.mu.Unlock()
 		return
 	}
@@ -283,8 +434,13 @@ func (a *Agent) fallbackPrimaryEOT(gate *eotGate, reason string, latency time.Du
 	gate.cancel()
 	err := gate.harness.Decide(turn)
 	a.mu.Unlock()
-	a.logger.Info("primary EOT fell back to semantic flow", "candidate", gate.candidateID,
-		"reason", reason, "latency_ms", float64(latency)/float64(time.Millisecond))
+	attrs := []any{"candidate", gate.candidateID, "reason", reason, "attempts", attempts,
+		"aggregate_latency_ms", float64(latency) / float64(time.Millisecond),
+		"budget_exhausted", budgetExhausted}
+	if failureClass != "" {
+		attrs = append(attrs, "error_class", string(failureClass))
+	}
+	a.logger.Info("primary EOT fell back to semantic flow", attrs...)
 	if err != nil {
 		a.cancelPreview(gate.candidateID)
 		a.converse.Unasked(gate.candidateID)
@@ -300,6 +456,11 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 		a.mu.Unlock()
 		return
 	}
+	if errors.Is(gate.ctx.Err(), context.Canceled) {
+		// A superseded or otherwise canceled candidate must never trigger fallback.
+		a.mu.Unlock()
+		return
+	}
 	if gate.primary && (a.switching.Load() || gate.pipeline.ctx.Err() != nil) {
 		// The transition path owns invalidating and resettling this candidate.
 		a.mu.Unlock()
@@ -308,7 +469,7 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 	if result.err != nil {
 		if gate.primary {
 			a.mu.Unlock()
-			a.fallbackPrimaryEOT(gate, "service_unavailable", result.latency)
+			a.fallbackPrimaryEOT(gate, "service_unavailable", result.latency, result.attempts, result.errorClass, result.budgetExhausted)
 			return
 		}
 		delete(a.eotGates, gate.candidateID)
@@ -316,7 +477,10 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 		held := gate.held
 		a.mu.Unlock()
 		a.logger.Debug("acoustic endpoint score unavailable; using the flow decision",
-			"candidate", gate.candidateID, "reason", result.err.Error())
+			"candidate", gate.candidateID, "error_class", string(result.errorClass),
+			"attempts", result.attempts,
+			"aggregate_latency_ms", float64(result.latency)/float64(time.Millisecond),
+			"budget_exhausted", result.budgetExhausted)
 		if held != nil {
 			a.act(a.converse.Ruled(*held, a.floor()))
 		}
@@ -326,7 +490,7 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 		result.score.Probability < 0 || result.score.Probability > 1 {
 		if gate.primary {
 			a.mu.Unlock()
-			a.fallbackPrimaryEOT(gate, "invalid_score", result.latency)
+			a.fallbackPrimaryEOT(gate, "invalid_score", result.latency, result.attempts, eotFailureInvalidResponse, result.budgetExhausted)
 			return
 		}
 		delete(a.eotGates, gate.candidateID)
@@ -344,23 +508,27 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 	if gate.primary {
 		a.logger.Info("primary EOT score received", "candidate", gate.candidateID,
 			"probability", result.score.Probability, "threshold", threshold,
-			"samples", result.score.Samples, "latency_ms", float64(result.latency)/float64(time.Millisecond))
+			"samples", result.score.Samples, "attempts", result.attempts,
+			"aggregate_latency_ms", float64(result.latency)/float64(time.Millisecond),
+			"budget_exhausted", result.budgetExhausted)
 	} else {
 		a.logger.Debug("acoustic endpoint score received", "candidate", gate.candidateID,
 			"probability", result.score.Probability, "threshold", threshold,
-			"samples", result.score.Samples, "latency_ms", float64(result.latency)/float64(time.Millisecond))
+			"samples", result.score.Samples, "attempts", result.attempts,
+			"aggregate_latency_ms", float64(result.latency)/float64(time.Millisecond),
+			"budget_exhausted", result.budgetExhausted)
 	}
 	if result.score.Probability < threshold {
 		if gate.primary {
 			a.mu.Unlock()
 			if !a.primaryEOTEligible(gate) {
-				a.fallbackPrimaryEOT(gate, "candidate_or_floor_changed", result.latency)
+				a.fallbackPrimaryEOT(gate, "candidate_or_floor_changed", result.latency, result.attempts, "", false)
 				return
 			}
 			a.mu.Lock()
 			if !a.eotPrimaryStateLocked(gate) {
 				a.mu.Unlock()
-				a.fallbackPrimaryEOT(gate, "candidate_or_floor_changed", result.latency)
+				a.fallbackPrimaryEOT(gate, "candidate_or_floor_changed", result.latency, result.attempts, "", false)
 				return
 			}
 		}
@@ -380,13 +548,13 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 	if gate.primary {
 		a.mu.Unlock()
 		if !a.primaryEOTEligible(gate) {
-			a.fallbackPrimaryEOT(gate, "candidate_or_floor_changed", result.latency)
+			a.fallbackPrimaryEOT(gate, "candidate_or_floor_changed", result.latency, result.attempts, "", false)
 			return
 		}
 		a.mu.Lock()
 		if !a.eotPrimaryStateLocked(gate) {
 			a.mu.Unlock()
-			a.fallbackPrimaryEOT(gate, "candidate_or_floor_changed", result.latency)
+			a.fallbackPrimaryEOT(gate, "candidate_or_floor_changed", result.latency, result.attempts, "", false)
 			return
 		}
 		delete(a.eotGates, gate.candidateID)

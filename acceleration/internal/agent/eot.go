@@ -3,18 +3,21 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"math"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -22,15 +25,77 @@ import (
 )
 
 const (
-	eotModel       = "audioturn-stack16k-blend"
-	eotRelease     = "c4497ce3ba47"
-	eotSampleRate  = 16000
-	eotMaxSamples  = 16 * eotSampleRate
-	eotMinSamples  = 320
-	eotMaxBody     = eotMaxSamples * 2
-	eotClientLimit = 5 * time.Second
-	eotGateLimit   = 500 * time.Millisecond
+	eotModel                 = "audioturn-stack16k-blend"
+	eotRelease               = "c4497ce3ba47"
+	eotSampleRate            = 16000
+	eotMaxSamples            = 16 * eotSampleRate
+	eotMinSamples            = 320
+	eotMaxBody               = eotMaxSamples * 2
+	eotClientLimit           = 5 * time.Second
+	eotGateLimit             = 500 * time.Millisecond
+	eotPrimaryLimit          = time.Second
+	eotPrimaryRetryLimit     = 2
+	eotPrimaryRetryWindow    = 250 * time.Millisecond
+	eotPrimaryMinRetryWindow = 50 * time.Millisecond
 )
+
+type eotFailureClass string
+
+const (
+	eotFailureCanceled        eotFailureClass = "canceled"
+	eotFailureAuthentication  eotFailureClass = "authentication"
+	eotFailureInvalidRequest  eotFailureClass = "invalid_request"
+	eotFailureTimeout         eotFailureClass = "timeout"
+	eotFailureNetwork         eotFailureClass = "network"
+	eotFailureTLS             eotFailureClass = "tls"
+	eotFailurePermanentDNS    eotFailureClass = "permanent_dns"
+	eotFailureTransientHTTP   eotFailureClass = "transient_http"
+	eotFailurePermanentHTTP   eotFailureClass = "permanent_http"
+	eotFailureInvalidResponse eotFailureClass = "invalid_response"
+	eotFailureUnknown         eotFailureClass = "unknown"
+)
+
+// eotAttemptError retains only safe retry metadata. It deliberately discards transport,
+// response-body, token, and URL details before an error reaches logging or fallback code.
+type eotAttemptError struct {
+	class         eotFailureClass
+	retryAfter    time.Duration
+	hasRetryAfter bool
+}
+
+func (e *eotAttemptError) Error() string {
+	if e == nil {
+		return "agent: EOT request failed"
+	}
+	switch e.class {
+	case eotFailureAuthentication:
+		return "agent: EOT authentication failed"
+	case eotFailureInvalidRequest:
+		return "agent: invalid EOT request"
+	case eotFailureCanceled:
+		return "agent: EOT request canceled"
+	case eotFailureTimeout:
+		return "agent: EOT request timed out"
+	case eotFailureTransientHTTP, eotFailureNetwork:
+		return "agent: EOT service temporarily unavailable"
+	case eotFailureTLS, eotFailurePermanentDNS, eotFailurePermanentHTTP:
+		return "agent: EOT service unavailable"
+	default:
+		return "agent: invalid EOT response"
+	}
+}
+
+func (e *eotAttemptError) retryable() bool {
+	return e != nil && (e.class == eotFailureTimeout || e.class == eotFailureNetwork || e.class == eotFailureTransientHTTP)
+}
+
+func eotErrorMetadata(err error) (eotFailureClass, time.Duration, bool) {
+	var failure *eotAttemptError
+	if errors.As(err, &failure) {
+		return failure.class, failure.retryAfter, failure.hasRetryAfter
+	}
+	return eotFailureUnknown, 0, false
+}
 
 // EOTMode determines whether an acoustic score gates the semantic flow controller or
 // answers eligible quiet-floor completion candidates directly.
@@ -182,20 +247,20 @@ func isLoopbackHost(host string) bool {
 // method returns; it waits for net/http to close the request body before returning.
 func (c *EOTClient) Score(ctx context.Context, requestID string, pcm []byte) (EOTScore, error) {
 	if c == nil {
-		return EOTScore{}, errors.New("agent: EOT is disabled")
+		return EOTScore{}, &eotAttemptError{class: eotFailureInvalidRequest}
 	}
 	if requestID == "" || len(pcm)%2 != 0 || len(pcm) < eotMinSamples*2 || len(pcm) > eotMaxBody {
-		return EOTScore{}, errors.New("agent: invalid EOT request window")
+		return EOTScore{}, &eotAttemptError{class: eotFailureInvalidRequest}
 	}
 	token, err := c.token(ctx)
 	if err != nil {
-		return EOTScore{}, err
+		return EOTScore{}, &eotAttemptError{class: eotFailureAuthentication}
 	}
 	body := newEOTRequestBody(pcm)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint.String(), body)
 	if err != nil {
 		_ = body.Close()
-		return EOTScore{}, errors.New("agent: could not create EOT request")
+		return EOTScore{}, &eotAttemptError{class: eotFailureInvalidRequest}
 	}
 	request.ContentLength = int64(len(pcm))
 	request.Header.Set("Content-Type", "audio/pcm;rate=16000;channels=1;format=s16le")
@@ -207,26 +272,42 @@ func (c *EOTClient) Score(ctx context.Context, requestID string, pcm []byte) (EO
 	if err != nil {
 		// RoundTrippers may close request bodies asynchronously after returning an error.
 		<-body.closed
-		return EOTScore{}, errors.New("agent: EOT request failed")
+		return EOTScore{}, &eotAttemptError{class: classifyEOTTransportError(err)}
 	}
 	// Close the response before joining the upload body: RoundTrippers may finish an
 	// upload on another goroutine after the response arrives.
 	defer func() { <-body.closed }()
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return EOTScore{}, fmt.Errorf("agent: EOT service returned status %d", response.StatusCode)
+		class := eotFailurePermanentHTTP
+		switch response.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			class = eotFailureAuthentication
+		case http.StatusRequestTimeout, http.StatusTooManyRequests,
+			http.StatusInternalServerError, http.StatusBadGateway,
+			http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+			class = eotFailureTransientHTTP
+		}
+		failure := &eotAttemptError{class: class}
+		if response.StatusCode == http.StatusTooManyRequests || response.StatusCode == http.StatusServiceUnavailable {
+			failure.retryAfter, failure.hasRetryAfter = parseEOTRetryAfter(response.Header.Get("Retry-After"), time.Now())
+		}
+		return EOTScore{}, failure
 	}
 	responseBytes, err := io.ReadAll(io.LimitReader(response.Body, 16*1024+1))
-	if err != nil || len(responseBytes) > 16*1024 {
-		return EOTScore{}, errors.New("agent: invalid EOT response body")
+	if err != nil {
+		return EOTScore{}, &eotAttemptError{class: classifyEOTTransportError(err)}
+	}
+	if len(responseBytes) > 16*1024 {
+		return EOTScore{}, &eotAttemptError{class: eotFailureInvalidResponse}
 	}
 	var decoded eotResponse
 	decoder := json.NewDecoder(strings.NewReader(string(responseBytes)))
 	if err := decoder.Decode(&decoded); err != nil {
-		return EOTScore{}, errors.New("agent: invalid EOT response")
+		return EOTScore{}, &eotAttemptError{class: eotFailureInvalidResponse}
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
-		return EOTScore{}, errors.New("agent: trailing EOT response data")
+		return EOTScore{}, &eotAttemptError{class: eotFailureInvalidResponse}
 	}
 	wantedSamples := len(pcm) / 2
 	if decoded.RequestID == nil || *decoded.RequestID != requestID ||
@@ -238,13 +319,91 @@ func (c *EOTClient) Score(ctx context.Context, requestID string, pcm []byte) (EO
 		decoded.WindowSamples == nil || *decoded.WindowSamples != wantedSamples ||
 		!validProbability(*decoded.Probability) || !validProbability(*decoded.Wait) ||
 		math.Abs(*decoded.Wait-(1-*decoded.Probability)) > 1e-6 {
-		return EOTScore{}, errors.New("agent: EOT response did not match the request")
+		return EOTScore{}, &eotAttemptError{class: eotFailureInvalidResponse}
 	}
 	return EOTScore{Probability: *decoded.Probability, Samples: wantedSamples}, nil
 }
 
 func validProbability(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= 1
+}
+
+func classifyEOTTransportError(err error) eotFailureClass {
+	if err == nil {
+		return eotFailureUnknown
+	}
+	if errors.Is(err, context.Canceled) {
+		return eotFailureCanceled
+	}
+	var verifyErr *tls.CertificateVerificationError
+	var unknownAuthority x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var invalidCertificate x509.CertificateInvalidError
+	var recordErr tls.RecordHeaderError
+	if errors.As(err, &verifyErr) || errors.As(err, &unknownAuthority) ||
+		errors.As(err, &hostname) || errors.As(err, &invalidCertificate) || errors.As(err, &recordErr) {
+		return eotFailureTLS
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		if dnsErr.IsTimeout || dnsErr.IsTemporary {
+			return eotFailureNetwork
+		}
+		return eotFailurePermanentDNS
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return eotFailureTimeout
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ECONNABORTED) || errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ETIMEDOUT) {
+		return eotFailureNetwork
+	}
+	var networkErr net.Error
+	if errors.As(err, &networkErr) && (networkErr.Timeout() || networkErr.Temporary()) {
+		return eotFailureNetwork
+	}
+	return eotFailureUnknown
+}
+
+func parseEOTRetryAfter(value string, now time.Time) (time.Duration, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	digitsOnly := true
+	for i := 0; i < len(value); i++ {
+		if value[i] < '0' || value[i] > '9' {
+			digitsOnly = false
+			break
+		}
+	}
+	if digitsOnly {
+		seconds, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return 24 * time.Hour, true
+		}
+		if seconds < 0 {
+			return 0, false
+		}
+		if seconds > int64((24*time.Hour)/time.Second) {
+			return 24 * time.Hour, true
+		}
+		return time.Duration(seconds) * time.Second, true
+	}
+	when, err := http.ParseTime(value)
+	if err != nil {
+		return 0, false
+	}
+	delay := when.Sub(now)
+	if delay < 0 {
+		delay = 0
+	}
+	if delay > 24*time.Hour {
+		delay = 24 * time.Hour
+	}
+	return delay, true
 }
 
 func (c *EOTClient) token(ctx context.Context) (string, error) {

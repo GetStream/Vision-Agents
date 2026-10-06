@@ -72,10 +72,66 @@ func (s *AgentSuite) TestPrimaryEOTLowWaitsWithoutCallingSemanticController() {
 	s.Empty(s.flow.requests(), "a valid low EOT score must bypass the semantic flow model")
 	s.Empty(s.voice.spoken())
 	s.Zero(countOf[Responded](s.reported()))
-	s.GreaterOrEqual(requests.Load(), int64(1))
+	s.EqualValues(1, requests.Load(), "a valid low endpoint probability is a final score, not a transient failure")
 }
 
-func (s *AgentSuite) TestPrimaryEOTFailureStartsSemanticControllerAfterFailure() {
+func (s *AgentSuite) TestPrimaryEOTRetriesTransientFailureThenUsesHighScore() {
+	var requests atomic.Int64
+	s.primaryEOTServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := requests.Add(1)
+		pcm, err := io.ReadAll(r.Body)
+		if err != nil {
+			s.T().Errorf("read EOT audio: %v", err)
+			return
+		}
+		if count == 1 {
+			http.Error(w, "temporary", http.StatusServiceUnavailable)
+			return
+		}
+		writeEOTResponse(s.T(), w, r.Header.Get("X-Request-ID"), len(pcm)/2, 0.9)
+	}))
+	s.join(false)
+	participant := stt.Participant{ID: "caller", UserID: "caller", Name: "Caller"}
+	s.primaryCandidate(participant, "please find a table")
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 },
+		"a successful retry did not resolve the caller turn")
+	s.EqualValues(2, requests.Load())
+	s.Empty(s.flow.requests(), "a successful high score after a retry must not use semantic flow")
+}
+
+func (s *AgentSuite) TestPrimaryEOTRetriesTwiceThenTreatsLowScoreAsWait() {
+	var requests atomic.Int64
+	s.primaryEOTServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := requests.Add(1)
+		pcm, err := io.ReadAll(r.Body)
+		if err != nil {
+			s.T().Errorf("read EOT audio: %v", err)
+			return
+		}
+		if count <= 2 {
+			http.Error(w, "temporary", http.StatusServiceUnavailable)
+			return
+		}
+		writeEOTResponse(s.T(), w, r.Header.Get("X-Request-ID"), len(pcm)/2, 0.1)
+	}))
+	s.join(false)
+	participant := stt.Participant{ID: "caller", UserID: "caller", Name: "Caller"}
+	s.primaryCandidate(participant, "please find a table")
+
+	s.eventually(func() bool {
+		s.agent.converse.mu.Lock()
+		defer s.agent.converse.mu.Unlock()
+		_, waiting := s.agent.converse.waiting[participant.ID]
+		return waiting
+	}, "a valid low score following two transient failures did not leave the caller waiting")
+	s.EqualValues(3, requests.Load())
+	s.Empty(s.flow.requests())
+	s.Zero(countOf[Responded](s.reported()))
+	s.Empty(s.voice.spoken())
+}
+
+func (s *AgentSuite) TestPrimaryEOTExhaustsBoundedTransientRetriesBeforeSemanticFallback() {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var releaseOnce sync.Once
@@ -83,10 +139,12 @@ func (s *AgentSuite) TestPrimaryEOTFailureStartsSemanticControllerAfterFailure()
 	s.T().Cleanup(releaseEOT)
 	var requests atomic.Int64
 	s.primaryEOTServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
+		count := requests.Add(1)
 		_, _ = io.Copy(io.Discard, r.Body)
-		close(started)
-		<-release
+		if count == 1 {
+			close(started)
+			<-release
+		}
 		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
 	}))
 	s.join(false)
@@ -99,11 +157,11 @@ func (s *AgentSuite) TestPrimaryEOTFailureStartsSemanticControllerAfterFailure()
 	}
 	s.Empty(s.flow.requests(), "primary mode must not start semantic work before EOT fails")
 	releaseEOT()
-	s.eventually(func() bool { return len(s.flow.requests()) == 1 },
-		"an unavailable EOT service did not start semantic fallback")
+	s.eventually(func() bool { return len(s.flow.requests()) == 1 && requests.Load() == 3 },
+		"semantic fallback did not wait for all three bounded transient attempts")
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 },
 		"semantic fallback did not answer after EOT failed")
-	s.EqualValues(1, requests.Load(), "a failed primary EOT request must not retry before semantic fallback")
+	s.EqualValues(3, requests.Load(), "primary mode makes one initial request and at most two transient retries")
 }
 
 func (s *AgentSuite) TestPrimaryEOTWithoutAudioFallsBackToSemanticController() {

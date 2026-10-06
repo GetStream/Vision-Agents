@@ -1,4 +1,4 @@
-"""A console view of the measured path to the first audio packet."""
+"""A console view of the measured path through the first audio publish return."""
 
 from typing import Any
 
@@ -10,16 +10,21 @@ def render_turn(frame: dict[str, Any], calls: list[dict[str, Any]]) -> str:
     origin = "speech end" if spoken else "turn start"
     heading = f"voice latency DAG turn={frame.get('turn_id', '')}"
     if total:
-        heading += f" | {origin} -> first audio ~{total:,.0f} ms"
-    lines = [heading, f"  [{origin}]"]
+        heading += f" | {origin} -> first publish return ~{total:,.0f} ms"
+    lines = [
+        heading,
+        "  scope: publish return may include queued drain; "
+        "first RTP/client playback is unmeasured",
+        f"  [{origin}]",
+    ]
 
     stages = (
         ("stt_latency_ms", "STT"),
-        ("cadence_ms", "cadence"),
+        ("cadence_ms", "transcript -> candidate"),
         ("decision_ms", "decision"),
-        ("model_to_first_text_ms", "first speakable text"),
+        ("model_to_first_text_ms", "remaining reply wait after decision"),
         ("text_to_tts_ms", "TTS handoff"),
-        ("tts_to_audio_ms", "first audio"),
+        ("tts_to_audio_ms", "first publish return"),
     )
     for key, label in stages:
         duration = frame.get(key)
@@ -27,12 +32,15 @@ def render_turn(frame: dict[str, Any], calls: list[dict[str, Any]]) -> str:
             continue
         lines.extend(("       |", "       v", f"  [{label} {duration:,.0f} ms]"))
         if key == "decision_ms":
+            if any(call.get("purpose") == "reply" for call in calls):
+                lines.append("       +-- reply model calls may overlap this decision")
             lines.extend(_calls(calls, {"flow"}))
         elif key == "model_to_first_text_ms":
             lines.extend(_calls(calls, {"reply"}))
         elif key == "tts_to_audio_ms" and frame.get("tts_ttfb_ms"):
             lines.append(
-                f"       +-- TTS provider first byte {frame['tts_ttfb_ms']:,.0f} ms"
+                f"       +-- TTS provider first byte {frame['tts_ttfb_ms']:,.0f} ms "
+                "(included above)"
             )
 
     other = [call for call in calls if call.get("purpose") not in {"flow", "reply"}]
