@@ -184,7 +184,7 @@ var (
 	headerName = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
 )
 
-// ChannelEvent is what ReadChannel found in one verified body.
+// ChannelEvent is what ChannelRule.Read found in one verified body.
 type ChannelEvent struct {
 	// Challenge is set for a handshake, which carries no messages.
 	Challenge string
