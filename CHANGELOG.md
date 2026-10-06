@@ -457,6 +457,15 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### Every router response carries an `X-Request-Id`, and a 500 is logged with its stack
+
+The router answers every request with `X-Request-Id`, keeping one a proxy sent (printable
+ASCII, up to 128 characters) and minting a UUID otherwise; browsers can read it through
+`Access-Control-Expose-Headers`. The access log line carries the same `request_id`, the
+error a request failed with and, for a 5xx, the stack where that error entered the router.
+A 5xx body is now `{"error": "internal error"}` rather than the error's text: quote the
+request id to find the rest in the logs.
+
 ### An MCP server named by URL can log in, for the app or for each user
 
 The server decides whether it needs a login: saving a config asks each of its `mcp_servers`
