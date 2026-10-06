@@ -13,8 +13,9 @@ Resolve(ref, req)
     load      definition at the row's definition_revision (outside the lock)
     lock      CredentialStore.Update(ctx, ...)                    ctx bounds only the wait
     status    not connected -> ErrNotConnected
-    Retrieve  scheme.Retrieve(detached, ...)                      context.WithoutCancel + retrieveTimeout
-      checkpoint  core.Checkpoint, called by the scheme right before a refresh:
+    Retrieve  scheme.Retrieve(detached, ..., opts)                context.WithoutCancel + retrieveTimeout
+      ValidUntil  req.Deadline: the scheme renews a credential that expires before it
+      Checkpoint  called by the scheme right before a refresh:
                   commit needs_reauthorization + lostRefresh, lock still held
     outcome   nil              -> connected, last_error "", expiry, new credentials (revision + 1)
               invalid_grant    -> needs_reauthorization, rejectedGrant       ErrNotConnected
@@ -23,7 +24,7 @@ Resolve(ref, req)
               transient, other -> connected, temporarilyUnavailable          ErrTemporarilyUnavailable
               a credential beside the error -> handed out for this call, never cached
     CAS       the credential store's final commit at the revision it loaded
-    cache     only after a nil Retrieve, keyed by ref, at the revision committed
+    cache     only after a nil Retrieve, keyed by ref, at the revision the store left in state
 
 Invalidate(ref, why)    why is invalid_grant or scope_required, else refused
   drop the cache entry; under the lock, connected -> needs_reauthorization
@@ -35,7 +36,7 @@ Invalidate(ref, why)    why is invalid_grant or scope_required, else refused
 - **The row is read on every call.** A delete, a disconnect or an `Invalidate` on any router reaches every other router's next `Resolve`, with no window. A soft delete (`store.DeleteConnectorConnection`, #746) sets `deleted_at` and `disconnected` and moves no revision, so a revision check alone would miss it. A maximum age alone would leave a window of that age on every router. An `Invalidate` from the delete handler would reach only the router that served the delete. Example: Alice deletes her connection through router A while her session runs on router B, which cached her token a second earlier. B's next `Resolve` reads no live row and fails, so the deleted connection's token never leaves B again.
 - **A status other than connected is never served from the cache.** It goes to the lock, which is where a refresh in flight on another router (status `needs_reauthorization` by its checkpoint) ends: the waiter then sees the final state.
 - **maxAge (30 s) bounds what the row does not show**: a credential the scheme would now renew, and stored credentials under an old key that `pgsealed` rewraps on its next use.
-- **A credential that expires before `req.Deadline` is not served**, so a call never starts with a credential that dies during it.
+- **A credential that expires before `req.Deadline` is not served**: the call goes to the lock, and the scheme renews it for the deadline (`RetrieveOptions.ValidUntil`). The renewed one is cached, so the next call inside the window takes no lock. One exception: a credential this router renewed within `maxAge` is served while it has not expired, even when it expires before the deadline. It is as long as the provider issues them, so renewing again gives one no longer, and asking for that on every call would be a refresh per call. Then a call does start with a credential that dies during it; nothing can give it a longer one. Check: `go test -tags integration -run 'TestResolverSuite/(TestACachedCredentialThatExpiresBefore|TestACredentialThatExpiresBefore|TestACredentialRenewedForADeadline)' ./internal/connectors/resolver`.
 - Entries past `maxAge` are dropped at most once per `maxAge`, when a new one is put.
 
 ## Rules
@@ -46,6 +47,7 @@ Invalidate(ref, why)    why is invalid_grant or scope_required, else refused
 - **A deleted connection does not resolve, even from the cache.** Check: `go test -tags integration -run 'TestResolverSuite/(TestADeleted|TestAnotherCustomers)' ./internal/connectors/resolver`.
 - **The cache is keyed by revision.** Check: `go test -tags integration -run TestResolverSuite/TestAReconnect ./internal/connectors/resolver`.
 - **`Invalidate` writes the status, not only the cache.** Check: `go test -tags integration -run TestResolverSuite/TestInvalidate ./internal/connectors/resolver`.
+- **The revision is the credential store's.** The resolver reads the committed one from `state` after `Update` (`core.CredentialStore`); it never numbers revisions itself.
 - **Outcomes map to statuses as in the flow.** Check: `go test -tags integration -run 'TestResolverSuite/(TestARejected|TestAProvider|TestAPending)' ./internal/connectors/resolver`.
 - **Never parse a scheme's error text.** The outcome is read with `errors.As` on `*core.OutcomeError` (`core/AGENTS.md`). Check: `grep -n 'Error()' internal/connectors/resolver/resolver.go` prints nothing.
 - **Secrets never print.** Nothing here logs, and the errors it returns wrap the scheme's `*core.OutcomeError`, which carries no secret (`core/contracttest` checks every scheme). Tests read a token only through `fixture.token` and compare two with `==`, not `Equal`, so a failure prints no token. Check: `grep -n 'slog\|log\.' internal/connectors/resolver/resolver.go` prints nothing.

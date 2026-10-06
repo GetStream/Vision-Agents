@@ -165,8 +165,8 @@ func (s *SchemeContract) TestConcurrentResolvesCommitAtMostOneNewRevision() {
 	errs := make([]error, concurrency)
 	for i := range concurrency {
 		wg.Go(func() {
-			errs[i] = store.Update(s.ctx, s.subject.Ref, func(state *core.CredentialState, _ func() error) (bool, error) {
-				credential, next, err := s.subject.Scheme.Retrieve(s.ctx, state.Credentials, s.subject.Manifest)
+			errs[i] = store.Update(s.ctx, s.subject.Ref, func(state *core.CredentialState, checkpoint func() error) (bool, error) {
+				credential, next, err := s.subject.Scheme.Retrieve(s.ctx, state.Credentials, s.subject.Manifest, core.RetrieveOptions{Checkpoint: checkpoint})
 				if err != nil {
 					return false, err
 				}
@@ -204,7 +204,7 @@ func (s *SchemeContract) TestConcurrentRetrievesOfACredentialThatIsNotDueAllHand
 	errs := make([]error, concurrency)
 	for i := range concurrency {
 		wg.Go(func() {
-			_, again, err := s.subject.Scheme.Retrieve(s.ctx, stored, s.subject.Manifest)
+			_, again, err := s.subject.Scheme.Retrieve(s.ctx, stored, s.subject.Manifest, core.RetrieveOptions{})
 			unchanged[i], errs[i] = same(stored, again), err
 		})
 	}
@@ -215,6 +215,45 @@ func (s *SchemeContract) TestConcurrentRetrievesOfACredentialThatIsNotDueAllHand
 	}
 }
 
+// The resolver asks for a credential that still works when the call ends (ValidUntil). One
+// that expires before then is renewed, with at most one checkpoint, before the renewal
+// reached the provider; one that never expires outlives any call and comes back as stored.
+func (s *SchemeContract) TestACredentialThatExpiresBeforeValidUntilIsRenewed() {
+	stored := s.connect()
+	credential, _ := s.retrieve(stored)
+	validUntil := credential.ExpiresAt.Add(time.Second)
+	if credential.ExpiresAt.IsZero() {
+		// No time is past an expiry that never comes; a year from now stands in. A choice.
+		validUntil = time.Now().AddDate(1, 0, 0)
+	}
+	checkpoints, renewalsAtCheckpoint := 0, 0
+	renewed, next, err := s.subject.Scheme.Retrieve(s.ctx, stored, s.subject.Manifest, core.RetrieveOptions{
+		ValidUntil: validUntil,
+		Checkpoint: func() error {
+			checkpoints++
+			if s.subject.Renewals != nil {
+				renewalsAtCheckpoint = s.subject.Renewals()
+			}
+			return nil
+		},
+	})
+	s.Require().NoError(err)
+	s.remember(next)
+	if s.subject.Expire == nil {
+		s.True(same(stored, next), "a credential that never expires is not renewed")
+		s.Zero(checkpoints, "nothing that cannot be taken back was sent")
+		return
+	}
+	s.False(same(stored, next), "renewed, so the resolver persists the new stored credentials")
+	s.LessOrEqual(checkpoints, 1, "at most one checkpoint for one renewal")
+	if s.subject.Renewals != nil {
+		s.Equal(1, s.subject.Renewals(), "one renewal reached the provider")
+		s.Zero(renewalsAtCheckpoint, "the checkpoint came before the renewal left")
+	}
+	status, _ := s.wrapped(renewed)
+	s.True(ok(status), "the provider takes the renewed credential, got %d", status)
+}
+
 func (s *SchemeContract) TestStoredCredentialsItCannotReadAreRefusedWithoutQuotingThem() {
 	stored := s.connect()
 	unreadable := map[string]core.StoredCredentials{
@@ -223,7 +262,7 @@ func (s *SchemeContract) TestStoredCredentialsItCannotReadAreRefusedWithoutQuoti
 		"a cut-off payload":        {Scheme: stored.Scheme, Version: stored.Version, Payload: stored.Payload[:len(stored.Payload)-1]},
 	}
 	for name, bad := range unreadable {
-		_, _, err := s.subject.Scheme.Retrieve(s.ctx, bad, s.subject.Manifest)
+		_, _, err := s.subject.Scheme.Retrieve(s.ctx, bad, s.subject.Manifest, core.RetrieveOptions{})
 		s.Require().Error(err, "Retrieve of %s stored credentials", name)
 		s.say(err)
 		err = s.subject.Scheme.Revoke(s.ctx, bad, s.subject.Manifest)
@@ -389,7 +428,7 @@ func (s *SchemeContract) begin() core.BeginInput {
 }
 
 func (s *SchemeContract) retrieve(stored core.StoredCredentials) (core.AccessCredential, core.StoredCredentials) {
-	credential, again, err := s.subject.Scheme.Retrieve(s.ctx, stored, s.subject.Manifest)
+	credential, again, err := s.subject.Scheme.Retrieve(s.ctx, stored, s.subject.Manifest, core.RetrieveOptions{})
 	s.Require().NoError(err)
 	return credential, again
 }

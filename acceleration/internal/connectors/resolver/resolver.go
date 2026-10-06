@@ -95,6 +95,8 @@ type entry struct {
 	revision   int
 	credential core.AccessCredential
 	fetched    time.Time
+	// renewed says the Retrieve that fetched it renewed the stored credentials.
+	renewed bool
 }
 
 // New is a Resolver over cfg.
@@ -115,9 +117,10 @@ func New(cfg Config) (*Resolver, error) {
 // It reads the connection's row on every call, without the lock: a deleted connection is
 // store.ErrNoConnectorConnection at once, on every router, whatever is cached. A connected
 // row at the revision a cached credential came from gets that credential while it is younger
-// than maxAge and outlives req.Deadline. Anything else runs the scheme's Retrieve under the
-// credential store's lock, on a context of its own: a caller whose ctx ends during a refresh
-// gets ctx's error at once, and the refresh finishes and is committed without it.
+// than maxAge and outlives req.Deadline (or was renewed, see cached). Anything else runs the
+// scheme's Retrieve under the credential store's lock, asking for a credential that outlives
+// req.Deadline, on a context of its own: a caller whose ctx ends during a refresh gets ctx's
+// error at once, and the refresh finishes and is committed without it.
 func (r *Resolver) Resolve(ctx context.Context, ref core.ConnectionRef, req core.CredentialRequest) (core.AccessCredential, error) {
 	connection, err := r.store.ConnectorConnection(ctx, ref.CustomerID, ref.ConnectionID)
 	if err != nil {
@@ -136,7 +139,7 @@ func (r *Resolver) Resolve(ctx context.Context, ref core.ConnectionRef, req core
 	}
 	done := make(chan result, 1)
 	go func() {
-		credential, err := r.retrieve(ctx, ref, connection)
+		credential, err := r.retrieve(ctx, ref, connection, req.Deadline)
 		done <- result{credential, err}
 	}()
 	select {
@@ -172,10 +175,10 @@ func (r *Resolver) Invalidate(ctx context.Context, ref core.ConnectionRef, why c
 	}))
 }
 
-// retrieve gets an access credential through the connection's scheme under the credential
-// store's lock and commits what it learned. ctx only bounds the wait for the lock and the
-// reads; the scheme runs on a detached context.
-func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connection store.ConnectorConnection) (core.AccessCredential, error) {
+// retrieve gets an access credential that works until validUntil through the connection's
+// scheme under the credential store's lock and commits what it learned. ctx only bounds the
+// wait for the lock and the reads; the scheme runs on a detached context.
+func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connection store.ConnectorConnection, validUntil time.Time) (core.AccessCredential, error) {
 	scheme, found := r.schemes[connection.AuthScheme]
 	if !found {
 		return core.AccessCredential{}, stack.Wrap(fmt.Errorf("%w: %q", store.ErrUnregisteredScheme, connection.AuthScheme))
@@ -191,9 +194,12 @@ func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connect
 	var (
 		credential core.AccessCredential
 		failure    error
-		cached     *entry
+		cache      bool
+		before     core.CredentialState
+		committed  *core.CredentialState
 	)
 	err = r.credentials.Update(ctx, ref, func(state *core.CredentialState, checkpoint func() error) (bool, error) {
+		committed = state
 		if state.Status != store.ConnectionConnected {
 			failure = stack.Wrap(fmt.Errorf("%w: it is %s", ErrNotConnected, state.Status))
 			return false, nil
@@ -202,20 +208,21 @@ func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connect
 		if err != nil {
 			return false, err
 		}
-		before := *state
+		before = *state
 		checkpointed := false
 		detached, cancel := context.WithTimeout(context.WithoutCancel(ctx), retrieveTimeout)
 		defer cancel()
-		detached = core.WithCheckpoint(detached, func() error {
-			state.Status, state.LastError = store.ConnectionNeedsReauthorization, lostRefresh
-			if err := checkpoint(); err != nil {
-				return err
-			}
-			checkpointed = true
-			return nil
+		got, next, err := scheme.Retrieve(detached, state.Credentials, manifest, core.RetrieveOptions{
+			ValidUntil: validUntil,
+			Checkpoint: func() error {
+				state.Status, state.LastError = store.ConnectionNeedsReauthorization, lostRefresh
+				if err := checkpoint(); err != nil {
+					return err
+				}
+				checkpointed = true
+				return nil
+			},
 		})
-
-		got, next, err := scheme.Retrieve(detached, state.Credentials, manifest)
 		var outcome *core.OutcomeError
 		switch {
 		case err == nil:
@@ -223,13 +230,7 @@ func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connect
 			state.Status, state.LastError = store.ConnectionConnected, ""
 			// The credential store keeps microseconds, so the expiry is compared as stored.
 			state.ExpiresAt = got.ExpiresAt.UTC().Truncate(time.Microsecond)
-			revision := before.Revision
-			if !sameCredentials(next, before.Credentials) {
-				// The credential store seals new stored credentials for the next revision
-				// (core.CredentialState.Revision).
-				revision++
-			}
-			credential, cached = got, &entry{revision: revision, credential: got, fetched: r.now()}
+			credential, cache = got, true
 		case errors.As(err, &outcome):
 			state.Status, state.LastError, failure = statusAfter(outcome, err)
 			// A renewal that failed before the old access credential expired hands that one
@@ -250,8 +251,11 @@ func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connect
 	if failure != nil {
 		return core.AccessCredential{}, failure
 	}
-	if cached != nil {
-		r.put(ref, *cached)
+	// The credential store leaves state at the revision it committed (core.CredentialStore),
+	// so the cache never numbers revisions itself.
+	if cache {
+		r.put(ref, entry{revision: committed.Revision, credential: credential, fetched: r.now(),
+			renewed: committed.Revision != before.Revision})
 	}
 	return credential, nil
 }
@@ -275,7 +279,10 @@ func statusAfter(outcome *core.OutcomeError, err error) (status, lastError strin
 }
 
 // cached is the credential cached for ref at revision, while it is younger than maxAge and
-// does not expire before deadline (or now, when the call has none).
+// does not expire before deadline (or now, when the call has none). A credential this
+// router renewed within maxAge is handed out while it has not expired, even when it expires
+// before deadline: it is as long as the provider issues them, so renewing again would give
+// one no longer, and asking for that on every call would be a refresh per call.
 func (r *Resolver) cached(ref core.ConnectionRef, revision int, deadline time.Time) (core.AccessCredential, bool) {
 	now := r.now()
 	r.mu.Lock()
@@ -288,10 +295,10 @@ func (r *Resolver) cached(ref core.ConnectionRef, revision int, deadline time.Ti
 		deadline = now
 	}
 	expires := cached.credential.ExpiresAt
-	if !expires.IsZero() && !deadline.Before(expires) {
-		return core.AccessCredential{}, false
+	if expires.IsZero() || deadline.Before(expires) || (cached.renewed && now.Before(expires)) {
+		return cached.credential, true
 	}
-	return cached.credential, true
+	return core.AccessCredential{}, false
 }
 
 // put caches e for ref, replacing what an earlier revision left, and now and then drops

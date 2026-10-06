@@ -116,6 +116,51 @@ func (s *ResolverSuite) TestACachedCredentialThatExpiresBeforeTheCallsDeadlineIs
 	s.ErrorIs(err, context.DeadlineExceeded, "a credential that dies during the call goes back to the scheme")
 }
 
+func (s *ResolverSuite) TestACredentialThatExpiresBeforeTheCallsDeadlineIsRenewedForItAndThenCached() {
+	ref := s.f.connected()
+	r := s.f.router(s.f.srv.Client())
+	first, err := r.Resolve(s.f.ctx, ref, core.CredentialRequest{})
+	s.Require().NoError(err)
+	// Ten minutes into the token's hour, far outside oauth2code's one-minute margin, a call
+	// that runs past the token's expiry.
+	s.f.clock.Add(10 * time.Minute)
+	deadline := first.ExpiresAt.Add(time.Minute)
+
+	renewed, err := r.Resolve(s.f.ctx, ref, core.CredentialRequest{Deadline: deadline})
+	s.Require().NoError(err)
+	s.Equal(1, s.f.srv.Refreshes(), "renewed for the call, not for the margin")
+	s.True(renewed.ExpiresAt.After(deadline), "the call never starts with a credential that dies during it")
+	s.True(s.f.works(renewed))
+
+	s.f.hold(ref)
+	ctx, cancel := context.WithTimeout(s.f.ctx, blocked)
+	defer cancel()
+	again, err := r.Resolve(ctx, ref, core.CredentialRequest{Deadline: deadline})
+	s.Require().NoError(err, "the next call inside the window takes no lock")
+	s.True(s.f.token(renewed) == s.f.token(again), "the renewed token, from the cache")
+	s.Equal(1, s.f.srv.Refreshes())
+}
+
+func (s *ResolverSuite) TestACredentialRenewedForADeadlineNoTokenReachesIsServedFromTheCache() {
+	ref := s.f.connected()
+	r := s.f.router(s.f.srv.Client())
+	s.f.clock.Add(10 * time.Minute)
+	// Two hours: longer than any token the fake issues (fakeprovider.AccessTTL).
+	request := core.CredentialRequest{Deadline: s.f.clock.Now().Add(2 * time.Hour)}
+
+	renewed, err := r.Resolve(s.f.ctx, ref, request)
+	s.Require().NoError(err)
+	s.Equal(1, s.f.srv.Refreshes())
+
+	s.f.hold(ref)
+	ctx, cancel := context.WithTimeout(s.f.ctx, blocked)
+	defer cancel()
+	again, err := r.Resolve(ctx, ref, request)
+	s.Require().NoError(err, "renewing again gives no longer token, so the call takes no lock")
+	s.True(s.f.token(renewed) == s.f.token(again))
+	s.Equal(1, s.f.srv.Refreshes(), "one refresh, not one per call")
+}
+
 func (s *ResolverSuite) TestADeletedConnectionCannotBeResolvedFromTheCache() {
 	ref := s.f.connected()
 	r := s.f.router(s.f.srv.Client())
