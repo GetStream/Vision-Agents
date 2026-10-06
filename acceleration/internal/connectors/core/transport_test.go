@@ -485,6 +485,14 @@ func (r *memoryResolver) Invalidate(_ context.Context, _ core.ConnectionRef, rej
 }
 
 // renew is another router renewing the stored credentials.
+// Revoke ends the grant whatever revision it is at, as a verified provider event does.
+func (r *memoryResolver) Revoke(context.Context, core.ConnectionRef, core.SignalKind) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.connected = false
+	return nil
+}
+
 func (r *memoryResolver) renew(token string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
