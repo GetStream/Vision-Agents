@@ -24,7 +24,7 @@ func (s *Server) registerSessionDelete(api huma.API) {
 			"kept. The transcript a conversation in writing kept in Stream Chat is not deleted.\n\n" +
 			"To end a call and keep the conversation, stop the session instead.",
 		Responses:  map[string]*huma.Response{"204": {Description: "The session is deleted"}},
-		Errors:     []int{http.StatusUnauthorized, http.StatusNotFound},
+		Errors:     []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound},
 		Extensions: map[string]any{clientAccessibleExtension: true},
 	}, s.deleteSession)
 }
@@ -32,7 +32,7 @@ func (s *Server) registerSessionDelete(api huma.API) {
 // deleteSession deletes one of the caller's sessions and what it remembered.
 func (s *Server) deleteSession(ctx context.Context, request *deleteSessionRequest) (*struct{}, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if _, failure := s.storedOrLiveSession(ctx, request.ID); failure != nil {
 		return nil, failure

@@ -781,9 +781,14 @@ func (s *Server) refuseClientSide(w http.ResponseWriter, r *http.Request) bool {
 	}
 	s.logger.Debug("refused a client-side caller a server-side operation",
 		"method", r.Method, "path", r.URL.Path)
-	writeError(w, forbidden(coded{codeServerSideOnly, "this operation is server-side only: it needs " +
-		auth.AuthTypeHeader + ": " + auth.AuthTypeServer + " and a token carrying server: true"}))
+	writeError(w, serverSideOnly)
 	return true
+}
+
+var serverSideOnly = APIError{
+	Type: ErrorTypePermission, Code: codeServerSideOnly,
+	Message: "this operation is server-side only: it needs " + auth.AuthTypeHeader + ": " +
+		auth.AuthTypeServer + " and a token carrying server: true",
 }
 
 // withCustomer lifts the authenticated principal into the request context so handlers can
@@ -1055,7 +1060,7 @@ func (s *Server) getHealth(ctx context.Context, _ *struct{}) (*healthResponse, e
 // listProviders returns the providers configured for a modality and their live health.
 func (s *Server) listProviders(ctx context.Context, request *listProvidersRequest) (*listProvidersResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	router, ok := s.routerFor(request.Modality)
 	if !ok {
@@ -1086,7 +1091,7 @@ func (s *Server) listProviders(ctx context.Context, request *listProvidersReques
 // listRoutes returns the shortcuts offered as a choice and what each resolves to now.
 func (s *Server) listRoutes(ctx context.Context, request *listRoutesRequest) (*listRoutesResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	router, ok := s.routerFor(request.Modality)
 	if !ok {
@@ -1123,7 +1128,7 @@ func (s *Server) listRoutes(ctx context.Context, request *listRoutesRequest) (*l
 // resolveTarget explains which providers would serve a target, best first.
 func (s *Server) resolveTarget(ctx context.Context, request *resolveTargetRequest) (*resolveTargetResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	router, ok := s.routerFor(request.Modality)
 	if !ok {
@@ -1155,7 +1160,7 @@ func (s *Server) resolveTarget(ctx context.Context, request *resolveTargetReques
 func (s *Server) getStats(ctx context.Context, request *getStatsRequest) (*getStatsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	// Statistics are not limited to the routed modalities: memory and phone are recorded
 	// the same way and cost the same customer money.
@@ -1204,7 +1209,7 @@ func (s *Server) getStats(ctx context.Context, request *getStatsRequest) (*getSt
 func (s *Server) getTagStats(ctx context.Context, request *getTagStatsRequest) (*getTagStatsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if !request.To.After(request.From) {
 		return nil, invalidRequest("to must be after from")
@@ -1247,7 +1252,7 @@ func (s *Server) getTagStats(ctx context.Context, request *getTagStatsRequest) (
 func (s *Server) getTurnStats(ctx context.Context, request *getTurnStatsRequest) (*getTurnStatsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if !request.To.After(request.From) {
 		return nil, invalidRequest("to must be after from")
@@ -1294,7 +1299,7 @@ func (s *Server) getTurnStats(ctx context.Context, request *getTurnStatsRequest)
 func (s *Server) getSpend(ctx context.Context, request *getSpendRequest) (*getSpendResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if !request.To.After(request.From) {
 		return nil, invalidRequest("to must be after from")
@@ -1338,7 +1343,7 @@ func (s *Server) getSpend(ctx context.Context, request *getSpendRequest) (*getSp
 func (s *Server) getTagKeys(ctx context.Context, request *getTagKeysRequest) (*getTagKeysResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if !request.To.After(request.From) {
 		return nil, invalidRequest("to must be after from")
@@ -1383,7 +1388,7 @@ func (s *Server) getTagKeys(ctx context.Context, request *getTagKeysRequest) (*g
 func (s *Server) getActivity(ctx context.Context, request *getActivityRequest) (*getActivityResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if !request.To.After(request.From) {
 		return nil, invalidRequest("to must be after from")
@@ -1416,7 +1421,7 @@ func (s *Server) getActivity(ctx context.Context, request *getActivityRequest) (
 // runRollup aggregates request rows into a rollup table.
 func (s *Server) runRollup(ctx context.Context, request *runRollupRequest) (*runRollupResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -1539,12 +1544,16 @@ func providerPrice(price routing.Price) *ProviderPrice {
 	}
 }
 
-func missingCustomer() APIError {
-	return unauthenticated(coded{codeMissingCustomer, "the " + CustomerHeader + " header is required"})
+var missingCustomer = APIError{
+	Type: ErrorTypeAuthentication, Code: codeMissingCustomer,
+	Message: "the " + CustomerHeader + " header is required",
 }
 
 func unknownModality(modality Modality) APIError {
-	return notFound(coded{codeModalityNotRouted, "this deployment does not route " + string(modality)})
+	return APIError{
+		Type: ErrorTypeNotFound, Code: codeModalityNotRouted,
+		Message: "this deployment does not route " + string(modality),
+	}
 }
 
 // registerServer declares the operations served in server.go.

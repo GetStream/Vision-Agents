@@ -21,7 +21,7 @@ import (
 // listPhoneVendors reports every vendor and whether it can be used.
 func (s *Server) listPhoneVendors(ctx context.Context, _ *listPhoneVendorsRequest) (*listPhoneVendorsResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.phone == nil {
 		return &listPhoneVendorsResponse{Body: []PhoneVendor{}}, nil
@@ -56,10 +56,10 @@ func (s *Server) listPhoneVendors(ctx context.Context, _ *listPhoneVendorsReques
 // searchPhoneNumbers asks what is for sale, at one vendor or at every usable one.
 func (s *Server) searchPhoneNumbers(ctx context.Context, request *searchPhoneNumbersRequest) (*searchPhoneNumbersResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.phone == nil {
-		return nil, noTelephony()
+		return nil, noTelephony
 	}
 
 	// Voice is what an agent needs, so it is always required, on top of whatever else
@@ -162,10 +162,10 @@ func (s *Server) searchOffers(
 func (s *Server) listPhoneNumbers(ctx context.Context, request *listPhoneNumbersRequest) (*listPhoneNumbersResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.phone == nil {
-		return nil, noTelephony()
+		return nil, noTelephony
 	}
 
 	includeReleased := request.IncludeReleased.ptr() != nil && *request.IncludeReleased.ptr()
@@ -185,13 +185,13 @@ func (s *Server) listPhoneNumbers(ctx context.Context, request *listPhoneNumbers
 func (s *Server) buyPhoneNumber(ctx context.Context, request *buyPhoneNumberRequest) (*buyPhoneNumberResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
 	}
 	if s.phone == nil {
-		return nil, noTelephony()
+		return nil, noTelephony
 	}
 
 	tags := phoneTags(request.Body.Tags)
@@ -222,10 +222,10 @@ func (s *Server) buyPhoneNumber(ctx context.Context, request *buyPhoneNumberRequ
 func (s *Server) releasePhoneNumber(ctx context.Context, request *releasePhoneNumberRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.phone == nil {
-		return nil, noTelephony()
+		return nil, noTelephony
 	}
 
 	err := s.phone.Release(ctx, customerID, request.E164)
@@ -242,10 +242,10 @@ func (s *Server) releasePhoneNumber(ctx context.Context, request *releasePhoneNu
 func (s *Server) attachPhoneNumber(ctx context.Context, request *attachPhoneNumberRequest) (*attachPhoneNumberResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.phone == nil {
-		return nil, noTelephony()
+		return nil, noTelephony
 	}
 
 	attachment := phone.Attachment{CustomerID: customerID, E164: request.E164}
@@ -278,13 +278,13 @@ func (s *Server) attachPhoneNumber(ctx context.Context, request *attachPhoneNumb
 func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequest) (*placePhoneCallResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
 	}
 	if s.phone == nil {
-		return nil, noTelephony()
+		return nil, noTelephony
 	}
 
 	tags := phoneTags(request.Body.Tags)
@@ -369,13 +369,13 @@ func (s *Server) answerPhoneCall(w http.ResponseWriter, r *http.Request) {
 func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCallRequest) (*transferPhoneCallResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
 	}
 	if s.phone == nil {
-		return nil, noTelephony()
+		return nil, noTelephony
 	}
 
 	tags := phoneTags(request.Body.Tags)
@@ -408,13 +408,13 @@ func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCa
 // pressPhoneDigits presses digits on a call placed from here.
 func (s *Server) pressPhoneDigits(ctx context.Context, request *pressPhoneDigitsRequest) (*struct{}, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
 	}
 	if s.phone == nil {
-		return nil, noTelephony()
+		return nil, noTelephony
 	}
 
 	err := s.phone.SendDigits(ctx, request.Body.Vendor, request.VendorCallId, request.Body.Digits)
@@ -474,9 +474,7 @@ func phoneTags(tags *map[string]string) routing.Tags {
 	return routing.Tags(*tags)
 }
 
-func noTelephony() APIError {
-	return invalidRequest(coded{codeNotConfigured, "phone numbers are not available: no telephony configured"})
-}
+var noTelephony = notConfigured("phone numbers are not available: no telephony configured")
 
 // registerPhone declares the operations served in phone.go.
 func (s *Server) registerPhone(api huma.API) {

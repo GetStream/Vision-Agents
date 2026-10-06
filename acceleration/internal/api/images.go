@@ -23,7 +23,7 @@ import (
 const imageDeadline = 240 * time.Second
 
 // noImages is what the image path says on a deployment that does not generate images.
-var noImages = coded{codeNotConfigured, "this deployment does not generate images"}
+var noImages = notConfigured("this deployment does not generate images")
 
 // generateImage draws pictures from a prompt and returns them.
 //
@@ -36,10 +36,10 @@ var noImages = coded{codeNotConfigured, "this deployment does not generate image
 func (s *Server) generateImage(ctx context.Context, request *generateImageRequest) (*generateImageResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.streams == nil || s.streams.Image == nil {
-		return nil, notFound(noImages)
+		return nil, noImages
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")

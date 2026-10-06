@@ -157,7 +157,7 @@ func (s *PluginsSuite) TestTheLoginsOfAnAgentThatIsNotThereAreNotFound() {
 		"/v1/agents/configs/"+s.utils.uuid()+"/plugins", nil)
 
 	s.Equal(http.StatusNotFound, status)
-	s.Contains(failure, unknownConfig.message)
+	s.Contains(failure, unknownConfig.Message)
 }
 
 func (s *PluginsSuite) TestLoggingIntoSomethingThatIsNotAPluginIsRefused() {
@@ -166,8 +166,8 @@ func (s *PluginsSuite) TestLoggingIntoSomethingThatIsNotAPluginIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost,
 		"/v1/agents/configs/"+agent.Id+"/plugins/carrier-pigeon/authorize", nil)
 
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, unknownPlugin.message)
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, unknownPlugin.Message)
 }
 
 func (s *PluginsSuite) TestAPluginOnAHostOfItsOwnCannotBeLoggedIntoWithoutOne() {
@@ -185,7 +185,7 @@ func (s *PluginsSuite) TestLoggingInOnAnAgentThatIsNotThereIsNotFound() {
 		"/v1/agents/configs/"+s.utils.uuid()+"/plugins/slack/authorize", nil)
 
 	s.Equal(http.StatusNotFound, status)
-	s.Contains(failure, unknownConfig.message)
+	s.Contains(failure, unknownConfig.Message)
 }
 
 func (s *PluginsSuite) TestDisconnectingALoginNobodyMadeIsNotFound() {
@@ -203,8 +203,8 @@ func (s *PluginsSuite) TestDisconnectingSomethingThatIsNotAPluginIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodDelete,
 		"/v1/agents/configs/"+agent.Id+"/plugins/carrier-pigeon", nil)
 
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, unknownPlugin.message)
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, unknownPlugin.Message)
 }
 
 func (s *PluginsSuite) TestAnotherAppsAgentHoldsNoLoginsItCanSee() {

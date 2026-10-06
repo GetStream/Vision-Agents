@@ -18,7 +18,7 @@ func answered(t *testing.T, body []byte) ErrorDetail {
 }
 
 func TestAnAPIErrorIsAnsweredWithTheStatusOfItsTypeAndTheCodeItNames(t *testing.T) {
-	handler, _ := served(t, func() error { return notFound(unknownConfig) })
+	handler, _ := served(t, func() error { return unknownConfig })
 
 	response := postSync(handler, `{"name":"jean"}`)
 
@@ -41,7 +41,7 @@ func TestAnAPIErrorWithAComputedMessageHasTheCodeOfItsType(t *testing.T) {
 }
 
 func TestAnAPIErrorWrappedOnItsWayOutIsStillAnsweredAsItself(t *testing.T) {
-	handler, logged := served(t, func() error { return stack.Wrap(invalidRequest(noConfigs)) })
+	handler, logged := served(t, func() error { return stack.Wrap(noConfigs) })
 
 	response := postSync(handler, `{"name":"jean"}`)
 

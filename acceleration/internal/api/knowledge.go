@@ -16,15 +16,18 @@ import (
 
 // noKnowledge is what the paths say when the deployment has no knowledge provider. Filling
 // a base that nothing can read is not worth pretending to do.
-var noKnowledge = coded{codeNotConfigured, "knowledge is not available: no provider configured"}
+var noKnowledge = notConfigured("knowledge is not available: no provider configured")
 
 // noKnowledgeDocuments is what the document paths say on a deployment that cannot list
 // them: it takes a database to remember one and a knowledge base to remove it from.
-var noKnowledgeDocuments = coded{codeNotConfigured, "knowledge documents are not available: no database or no knowledge provider configured"}
+var noKnowledgeDocuments = notConfigured("knowledge documents are not available: no database or no knowledge provider configured")
 
 // unknownKnowledgeDocument is what a caller is told about a document that is not theirs,
 // which is the same thing they are told about one that never existed.
-var unknownKnowledgeDocument = coded{codeKnowledgeDocNotFound, "no such knowledge document"}
+var unknownKnowledgeDocument = APIError{
+	Type: ErrorTypeNotFound, Code: codeKnowledgeDocNotFound,
+	Message: "no such knowledge document",
+}
 
 // ingestKnowledge fills a knowledge base with what the business wrote down.
 //
@@ -34,10 +37,10 @@ var unknownKnowledgeDocument = coded{codeKnowledgeDocNotFound, "no such knowledg
 func (s *Server) ingestKnowledge(ctx context.Context, request *ingestKnowledgeRequest) (*ingestKnowledgeResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.knowledge == nil {
-		return nil, invalidRequest(noKnowledge)
+		return nil, noKnowledge
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -65,10 +68,10 @@ func (s *Server) ingestKnowledge(ctx context.Context, request *ingestKnowledgeRe
 func (s *Server) listKnowledgeDocuments(ctx context.Context, request *listKnowledgeDocumentsRequest) (*listKnowledgeDocumentsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.store == nil || s.knowledge == nil {
-		return nil, invalidRequest(noKnowledgeDocuments)
+		return nil, noKnowledgeDocuments
 	}
 
 	namespace := ""
@@ -92,15 +95,15 @@ func (s *Server) listKnowledgeDocuments(ctx context.Context, request *listKnowle
 func (s *Server) getKnowledgeDocument(ctx context.Context, request *getKnowledgeDocumentRequest) (*getKnowledgeDocumentResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.store == nil || s.knowledge == nil {
-		return nil, invalidRequest(noKnowledgeDocuments)
+		return nil, noKnowledgeDocuments
 	}
 
 	document, err := s.store.KnowledgeDocument(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, notFound(unknownKnowledgeDocument)
+		return nil, unknownKnowledgeDocument
 	}
 	read := indexedKnowledgeDocumentOf(document)
 	read.Text = &document.Text
@@ -111,15 +114,15 @@ func (s *Server) getKnowledgeDocument(ctx context.Context, request *getKnowledge
 func (s *Server) deleteKnowledgeDocument(ctx context.Context, request *deleteKnowledgeDocumentRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.store == nil || s.knowledge == nil {
-		return nil, invalidRequest(noKnowledgeDocuments)
+		return nil, noKnowledgeDocuments
 	}
 
 	document, err := s.store.KnowledgeDocument(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, notFound(unknownKnowledgeDocument)
+		return nil, unknownKnowledgeDocument
 	}
 	if err := s.removeKnowledgeDocument(ctx, document); err != nil {
 		return nil, err
@@ -131,15 +134,15 @@ func (s *Server) deleteKnowledgeDocument(ctx context.Context, request *deleteKno
 func (s *Server) listKnowledgeDocumentPassages(ctx context.Context, request *listKnowledgeDocumentPassagesRequest) (*listKnowledgeDocumentPassagesResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.store == nil || s.knowledge == nil {
-		return nil, invalidRequest(noKnowledgeDocuments)
+		return nil, noKnowledgeDocuments
 	}
 
 	document, err := s.store.KnowledgeDocument(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, notFound(unknownKnowledgeDocument)
+		return nil, unknownKnowledgeDocument
 	}
 	passages, err := s.knowledgePassages(ctx, customerID, document.Namespace, document.Source, document.Passages)
 	if err != nil {

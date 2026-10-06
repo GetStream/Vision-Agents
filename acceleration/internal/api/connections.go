@@ -17,17 +17,20 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-var noConnections = coded{codeNotConfigured, "connections are not available: no database configured"}
+var noConnections = notConfigured("connections are not available: no database configured")
 
 // connectorsOff is the answer to a create on a deployment with no scheme registered, which is
 // what cmd/router builds with connectors.enabled off (newConnectorRegistry).
-var connectorsOff = coded{codeNotConfigured, "connections cannot be created: connectors are not enabled on this deployment"}
+var connectorsOff = notConfigured("connections cannot be created: connectors are not enabled on this deployment")
 
 // noSuchConnection is the one answer for a connection the caller may not have: none was
 // made, it is another app's, another user's, or it was deleted. One answer, so a guessed id
 // learns nothing (architecture doc, PolicyContract: «a guessed connection id gives
 // not-found»).
-var noSuchConnection = coded{codeConnectionNotFound, "no such connection"}
+var noSuchConnection = APIError{
+	Type: ErrorTypeNotFound, Code: codeConnectionNotFound,
+	Message: "no such connection",
+}
 
 // Connection is one account at one connector, as a caller is shown it. Its stored
 // credentials are never part of it.
@@ -220,15 +223,15 @@ func (s *Server) registerConnections(api huma.API) {
 func (s *Server) createConnection(ctx context.Context, request *createConnectionRequest) (*connectionResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.store == nil {
-		return nil, invalidRequest(noConnections)
+		return nil, noConnections
 	}
 	// Before the body is read, so a deployment that cannot connect anything says so rather
 	// than naming an input or a scheme the caller never chose.
 	if len(s.connectors.Schemes) == 0 {
-		return nil, invalidRequest(connectorsOff)
+		return nil, connectorsOff
 	}
 	sent := request.Body
 	ownerID, err := ownerOf(ctx, sent.Owner)
@@ -284,10 +287,10 @@ func (s *Server) createConnection(ctx context.Context, request *createConnection
 func (s *Server) listConnections(ctx context.Context, request *listConnectionsRequest) (*listConnectionsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.store == nil {
-		return nil, invalidRequest(noConnections)
+		return nil, noConnections
 	}
 	ownerID := ""
 	if request.OwnerType == store.OwnerUser {
@@ -345,7 +348,7 @@ func (s *Server) deleteConnection(ctx context.Context, request *deleteConnection
 	if !request.Force {
 		referenced, err := s.store.ConnectorConnectionReferenced(ctx, connection.CustomerID, connection.ID)
 		if errors.Is(err, store.ErrNoConnectorConnection) {
-			return nil, notFound(noSuchConnection)
+			return nil, noSuchConnection
 		}
 		if err != nil {
 			return nil, err
@@ -359,7 +362,7 @@ func (s *Server) deleteConnection(ctx context.Context, request *deleteConnection
 	}
 	err = s.store.DeleteConnectorConnection(ctx, connection.CustomerID, connection.ID)
 	if errors.Is(err, store.ErrNoConnectorConnection) {
-		return nil, notFound(noSuchConnection)
+		return nil, noSuchConnection
 	}
 	if err != nil {
 		return nil, err
@@ -372,14 +375,14 @@ func (s *Server) deleteConnection(ctx context.Context, request *deleteConnection
 func (s *Server) reachableConnection(ctx context.Context, id string) (store.ConnectorConnection, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return store.ConnectorConnection{}, missingCustomer()
+		return store.ConnectorConnection{}, missingCustomer
 	}
 	if s.store == nil {
-		return store.ConnectorConnection{}, invalidRequest(noConnections)
+		return store.ConnectorConnection{}, noConnections
 	}
 	connection, err := s.store.ConnectorConnection(ctx, customerID, id)
 	if errors.Is(err, store.ErrNoConnectorConnection) || err == nil && !mayReach(ctx, connection) {
-		return store.ConnectorConnection{}, notFound(noSuchConnection)
+		return store.ConnectorConnection{}, noSuchConnection
 	}
 	if err != nil {
 		return store.ConnectorConnection{}, err

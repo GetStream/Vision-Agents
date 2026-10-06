@@ -19,7 +19,7 @@ import (
 func (s *Server) search(ctx context.Context, request *searchRequest) (*searchResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.streams == nil || s.streams.Search == nil {
 		return nil, notFound("this deployment does not route search")
@@ -33,7 +33,7 @@ func (s *Server) search(ctx context.Context, request *searchRequest) (*searchRes
 
 	config, err := s.routerOptions(ctx, customerID, value(request.Body.ConfigId))
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, err
 	}
 	held := config.Search.Merge(searchOptionsOf(request.Body.Options))
 

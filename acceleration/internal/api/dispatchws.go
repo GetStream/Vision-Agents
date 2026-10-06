@@ -30,7 +30,7 @@ const defaultCapacity = 4
 func (s *Server) dispatchCalls(w http.ResponseWriter, r *http.Request) {
 	customerID, ok := CustomerFrom(r.Context())
 	if !ok {
-		writeError(w, missingCustomer())
+		writeError(w, missingCustomer)
 		return
 	}
 	if s.refuseClientSide(w, r) {

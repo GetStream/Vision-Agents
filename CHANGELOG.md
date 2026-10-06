@@ -23,7 +23,11 @@ codes may be added. A failure that is not the caller's is a 500 of type `interna
 "something went wrong"; quote its `X-Request-Id`. Hand-written routes, the webhooks, an unknown
 route and a refused socket handshake answer with the same envelope, where some answered in plain
 text. A session on a node that cannot be reached is a 503 rather than a 502, and a failed data
-export or change read is a 500 rather than a 503 carrying the database's words. Every operation
+export or change read is a 500 rather than a 503 carrying the database's words. A code has one
+status wherever it is answered: a config, router config or plugin that does not exist is a 404
+even when the body names it (it was a 400 in some places), and a feature this deployment does not
+offer is a 400 `not_configured` (it was a 404 for sessions and recorded responses, a 410 on the
+10DLC webhook). Every operation
 declares its `500`. Go, Python (`plugins/stream`) and JavaScript read the new shape; the other
 SDKs follow.
 

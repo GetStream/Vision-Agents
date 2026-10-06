@@ -163,63 +163,58 @@ type ErrorDetail struct {
 	DocURL  string    `json:"doc_url" format:"uri" doc:"Where the code is explained."`
 }
 
-// coded is a message answered from more than one place, with the code that tells it apart.
-type coded struct {
-	code    string
-	message string
-}
-
-// newAPIError is a failure of errorType, with the code message names or else its type's.
-func newAPIError[M string | coded](errorType ErrorType, message M) APIError {
-	failure := APIError{Type: errorType}
-	switch message := any(message).(type) {
-	case coded:
-		failure.Code, failure.Message = message.code, message.message
-	case string:
-		failure.Message = message
-		for _, known := range errorTypes {
-			if known.errorType == errorType {
-				failure.Code = known.code
-			}
+// newAPIError is a failure of errorType with the code of its type. A failure a client
+// tells apart by more than its type is an APIError value of its own, with a code of its own.
+func newAPIError(errorType ErrorType, message string) APIError {
+	failure := APIError{Type: errorType, Message: message}
+	for _, known := range errorTypes {
+		if known.errorType == errorType {
+			failure.Code = known.code
 		}
 	}
 	return failure
 }
 
-func invalidRequest[M string | coded](message M) APIError {
+func invalidRequest(message string) APIError {
 	return newAPIError(ErrorTypeInvalidRequest, message)
 }
 
-func unauthenticated[M string | coded](message M) APIError {
+func unauthenticated(message string) APIError {
 	return newAPIError(ErrorTypeAuthentication, message)
 }
 
-func forbidden[M string | coded](message M) APIError {
+func forbidden(message string) APIError {
 	return newAPIError(ErrorTypePermission, message)
 }
 
-func notFound[M string | coded](message M) APIError {
+func notFound(message string) APIError {
 	return newAPIError(ErrorTypeNotFound, message)
 }
 
-func conflict[M string | coded](message M) APIError {
+func conflict(message string) APIError {
 	return newAPIError(ErrorTypeConflict, message)
 }
 
-func gone[M string | coded](message M) APIError {
+func gone(message string) APIError {
 	return newAPIError(ErrorTypeGone, message)
 }
 
-func payloadTooLarge[M string | coded](message M) APIError {
+func payloadTooLarge(message string) APIError {
 	return newAPIError(ErrorTypePayloadTooLarge, message)
 }
 
-func rateLimited[M string | coded](message M) APIError {
+func rateLimited(message string) APIError {
 	return newAPIError(ErrorTypeRateLimited, message)
 }
 
-func unavailable[M string | coded](message M) APIError {
+func unavailable(message string) APIError {
 	return newAPIError(ErrorTypeUnavailable, message)
+}
+
+// notConfigured is a feature this deployment does not offer: the caller asked for it, so
+// it is the request that cannot be served, whatever it says.
+func notConfigured(message string) APIError {
+	return APIError{Type: ErrorTypeInvalidRequest, Code: codeNotConfigured, Message: message}
 }
 
 // internalError is the answer to a failure that is not the caller's.

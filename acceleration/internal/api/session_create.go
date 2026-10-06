@@ -13,10 +13,10 @@ import (
 func (s *Server) createSession(ctx context.Context, request *createSessionRequest) (*createSessionResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.sessions == nil {
-		return nil, notFound(noSessions)
+		return nil, noSessions
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")

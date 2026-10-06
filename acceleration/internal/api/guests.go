@@ -41,10 +41,10 @@ const guestRole = "guest"
 func (s *Server) createGuestUser(ctx context.Context, request *createGuestUserRequest) (*createGuestUserResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.streamKey == "" || s.streamSecret == "" {
-		return nil, invalidRequest(noStreamKeys)
+		return nil, noStreamKeys
 	}
 
 	body := GuestUserRequest{}
@@ -140,7 +140,7 @@ func (s *Server) createGuestUser(ctx context.Context, request *createGuestUserRe
 func (s *Server) claimGuestUser(ctx context.Context, request *claimGuestUserRequest) (*claimGuestUserResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.store == nil {
 		return nil, notFound("this deployment records no guests, so there is nothing to claim")

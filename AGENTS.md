@@ -82,8 +82,10 @@ is never edited by hand.
   the rest, so what validates a request is also what documents it. A type's own description goes
   in a `TransformSchema` method, and a named string enum in a `Schema` method using `namedEnum`.
 - Fail with an `APIError` (`internal/api/apierror.go`): `invalidRequest(...)`, `notFound(...)`
-  and their siblings, whose type decides the status. A message answered from several places is a
-  `coded` value naming its code. Every failure is the `{"error": {"message", "type", "code",
+  and their siblings, whose type decides the status. A failure answered from several places is
+  an `APIError` value of its own (`unknownConfig`, `noSessions`, built with `notConfigured(...)`
+  for a feature the deployment lacks), returned as is: one code, one status, everywhere. Every
+  failure is the `{"error": {"message", "type", "code",
   "doc_url"}}` envelope; any other error an operation returns is a 500 saying only "something went
   wrong", logged with its stack. A request that fails validation is a 400 `validation_failed`.
 - An operation is server-side only unless it sets `Extensions: {"x-client-accessible": true}`.

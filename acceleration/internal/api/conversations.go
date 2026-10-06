@@ -11,10 +11,10 @@ import (
 func (s *Server) getConversationMessages(ctx context.Context, req *getConversationMessagesRequest) (*getConversationMessagesResponse, error) {
 	owner, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.sessions == nil {
-		return nil, invalidRequest(noSessions)
+		return nil, noSessions
 	}
 	service, err := s.sessions.Conversations()
 	if err != nil {
@@ -34,18 +34,18 @@ func (s *Server) getConversationMessages(ctx context.Context, req *getConversati
 func (s *Server) getConversationCommand(ctx context.Context, req *getConversationCommandRequest) (*getConversationCommandResponse, error) {
 	owner, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.sessions == nil {
-		return nil, notFound(noSessions)
+		return nil, noSessions
 	}
 	service, err := s.sessions.Conversations()
 	if err != nil {
-		return nil, notFound(unknownCommand)
+		return nil, unknownCommand
 	}
 	receipt, err := service.CommandForCaller(ctx, owner, req.AgentId, req.Cid, CallerFrom(ctx).UserID, req.CommandId)
 	if err != nil {
-		return nil, notFound(unknownCommand)
+		return nil, unknownCommand
 	}
 	return &getConversationCommandResponse{Body: receiptOf(receipt)}, nil
 }
@@ -75,7 +75,7 @@ func (s *Server) registerConversations(api huma.API) {
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The command's current receipt"},
 		},
-		Errors: []int{http.StatusUnauthorized, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound},
 	}, s.getConversationCommand)
 }
 

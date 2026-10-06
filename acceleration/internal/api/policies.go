@@ -14,9 +14,12 @@ import (
 )
 
 var (
-	noPolicies     = coded{codeNotConfigured, "policies are not available: no database configured"}
-	noOrganization = coded{codeMissingOrganization, "this request names no organization: it needs " +
-		"X-Stream-Organization-Id, or an API key belonging to one"}
+	noPolicies     = notConfigured("policies are not available: no database configured")
+	noOrganization = APIError{
+		Type: ErrorTypeInvalidRequest, Code: codeMissingOrganization,
+		Message: "this request names no organization: it needs X-Stream-Organization-Id, " +
+			"or an API key belonging to one",
+	}
 )
 
 // Policy is what an organization or an app decided about spend, data handling, prompt
@@ -132,10 +135,10 @@ func (s *Server) registerPolicies(api huma.API) {
 func (s *Server) getAppPolicy(ctx context.Context, _ *struct{}) (*policyResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.policies == nil {
-		return nil, invalidRequest(noPolicies)
+		return nil, noPolicies
 	}
 	policy, err := s.policyOf(ctx, store.ScopeApp, customerID)
 	if err != nil {
@@ -148,10 +151,10 @@ func (s *Server) getAppPolicy(ctx context.Context, _ *struct{}) (*policyResponse
 func (s *Server) updateAppPolicy(ctx context.Context, request *policyRequest) (*policyResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.policies == nil {
-		return nil, invalidRequest(noPolicies)
+		return nil, noPolicies
 	}
 	policy, err := s.savePolicy(ctx, store.ScopeApp, customerID, request.Body)
 	if err != nil {
@@ -163,14 +166,14 @@ func (s *Server) updateAppPolicy(ctx context.Context, request *policyRequest) (*
 // getOrganizationPolicy returns what the calling app's organization decided.
 func (s *Server) getOrganizationPolicy(ctx context.Context, _ *struct{}) (*policyResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.policies == nil {
-		return nil, invalidRequest(noPolicies)
+		return nil, noPolicies
 	}
 	organizationID := OrganizationFrom(ctx)
 	if organizationID == "" {
-		return nil, invalidRequest(noOrganization)
+		return nil, noOrganization
 	}
 	policy, err := s.policyOf(ctx, store.ScopeOrganization, organizationID)
 	if err != nil {
@@ -182,14 +185,14 @@ func (s *Server) getOrganizationPolicy(ctx context.Context, _ *struct{}) (*polic
 // updateOrganizationPolicy replaces what the calling app's organization decided.
 func (s *Server) updateOrganizationPolicy(ctx context.Context, request *policyRequest) (*policyResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.policies == nil {
-		return nil, invalidRequest(noPolicies)
+		return nil, noPolicies
 	}
 	organizationID := OrganizationFrom(ctx)
 	if organizationID == "" {
-		return nil, invalidRequest(noOrganization)
+		return nil, noOrganization
 	}
 	policy, err := s.savePolicy(ctx, store.ScopeOrganization, organizationID, request.Body)
 	if err != nil {

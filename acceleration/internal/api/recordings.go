@@ -21,11 +21,11 @@ import (
 
 // noRecordings is what the recording paths say on a deployment that does not run them.
 // They are jobs, so they need somewhere to keep one as well as something to route it to.
-var noRecordings = coded{codeNotConfigured, "this deployment does not run recordings"}
+var noRecordings = notConfigured("this deployment does not run recordings")
 
 // noRecordingStore is what they say without a database. A job whose result nobody could
 // come back for is worse than a refusal.
-var noRecordingStore = coded{codeNotConfigured, "recordings are not available: no database configured"}
+var noRecordingStore = notConfigured("recordings are not available: no database configured")
 
 // recordingDeadline bounds one job. Transcription runs far faster than real time, but a
 // feature-length recording is still minutes of work, and a job that hangs is a row that
@@ -39,13 +39,13 @@ const callbackTimeout = 30 * time.Second
 func (s *Server) transcribeRecording(ctx context.Context, request *transcribeRecordingRequest) (*transcribeRecordingResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.streams == nil || s.streams.Transcriptions == nil {
-		return nil, notFound(noRecordings)
+		return nil, noRecordings
 	}
 	if s.store == nil && (request.Body == nil || !truthy(request.Body.Inline)) {
-		return nil, invalidRequest(noRecordingStore)
+		return nil, noRecordingStore
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -53,7 +53,7 @@ func (s *Server) transcribeRecording(ctx context.Context, request *transcribeRec
 
 	config, err := s.routerOptions(ctx, customerID, value(request.Body.ConfigId))
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, err
 	}
 	held := config.STT.Merge(sttOptionsOf(request.Body.Options))
 	if err := held.Validate(); err != nil {
@@ -134,10 +134,10 @@ func (s *Server) transcribeRecording(ctx context.Context, request *transcribeRec
 func (s *Server) getTranscription(ctx context.Context, request *getTranscriptionRequest) (*getTranscriptionResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.store == nil {
-		return nil, invalidRequest(noRecordingStore)
+		return nil, noRecordingStore
 	}
 
 	job, err := s.store.Recording(ctx, customerID, request.Id)
@@ -151,13 +151,13 @@ func (s *Server) getTranscription(ctx context.Context, request *getTranscription
 func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest) (*recordSpeechResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.streams == nil || s.streams.Speech == nil {
-		return nil, notFound(noRecordings)
+		return nil, noRecordings
 	}
 	if s.store == nil && (request.Body == nil || !truthy(request.Body.Inline)) {
-		return nil, invalidRequest(noRecordingStore)
+		return nil, noRecordingStore
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
@@ -168,7 +168,7 @@ func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest)
 
 	config, err := s.routerOptions(ctx, customerID, value(request.Body.ConfigId))
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, err
 	}
 	held := config.TTS.Merge(ttsOptionsOf(request.Body.Options))
 	if held.Target == "" {
@@ -216,10 +216,10 @@ func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest)
 func (s *Server) getSpeech(ctx context.Context, request *getSpeechRequest) (*getSpeechResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.store == nil {
-		return nil, invalidRequest(noRecordingStore)
+		return nil, noRecordingStore
 	}
 
 	job, err := s.store.Recording(ctx, customerID, request.Id)

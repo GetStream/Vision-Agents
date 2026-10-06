@@ -22,7 +22,7 @@ import (
 func (s *Server) classify(ctx context.Context, request *classifyRequest) (*classifyResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.streams == nil || s.streams.LCM == nil {
 		return nil, notFound("this deployment does not route classification")

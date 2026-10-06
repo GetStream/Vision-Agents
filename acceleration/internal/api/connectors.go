@@ -18,7 +18,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-var noConnectors = coded{codeNotConfigured, "connector definitions are not available: no database configured"}
+var noConnectors = notConfigured("connector definitions are not available: no database configured")
 
 // mcpSource is both the tool source a custom definition runs and the endpoint role it runs
 // against, as the built-in manifests write them (internal/connectors/providers/slack.yaml
@@ -208,10 +208,10 @@ func (s *Server) registerConnectors(api huma.API) {
 func (s *Server) listConnectors(ctx context.Context, request *listConnectorsRequest) (*listConnectorsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.store == nil {
-		return nil, invalidRequest(noConnectors)
+		return nil, noConnectors
 	}
 	cursor, err := decodeCursor[store.ConnectorDefinitionPosition](&request.Cursor)
 	if err != nil {
@@ -245,10 +245,10 @@ func (s *Server) listConnectors(ctx context.Context, request *listConnectorsRequ
 func (s *Server) getConnector(ctx context.Context, request *getConnectorRequest) (*connectorResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.store == nil {
-		return nil, invalidRequest(noConnectors)
+		return nil, noConnectors
 	}
 	definition, err := s.store.LatestConnectorDefinition(ctx, customerID, request.ID)
 	if errors.Is(err, store.ErrNoConnectorDefinition) {
@@ -264,10 +264,10 @@ func (s *Server) getConnector(ctx context.Context, request *getConnectorRequest)
 func (s *Server) createConnector(ctx context.Context, request *createConnectorRequest) (*connectorResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.store == nil {
-		return nil, invalidRequest(noConnectors)
+		return nil, noConnectors
 	}
 	manifest, err := s.customManifest(ctx, request.Body)
 	if err != nil {

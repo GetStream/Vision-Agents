@@ -150,7 +150,7 @@ func (s *Server) watchRemoteSession(w http.ResponseWriter, r *http.Request, id s
 		// No node has it, or the node that has it will not let this caller watch. Both
 		// are answered the way a session that never existed is answered: a refusal would
 		// confirm the id is real.
-		writeError(w, notFound(unknownSession))
+		writeError(w, unknownSession)
 		return
 	case <-r.Context().Done():
 		return

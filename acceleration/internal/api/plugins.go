@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -13,17 +12,16 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/danielgtaylor/huma/v2"
 )
 
-var unknownPlugin = coded{codePluginNotFound, "no such plugin"}
+var unknownPlugin = APIError{Type: ErrorTypeNotFound, Code: codePluginNotFound, Message: "no such plugin"}
 
 // listPlugins returns the built-in catalog, optionally filtered.
 func (s *Server) listPlugins(ctx context.Context, request *listPluginsRequest) (*listPluginsResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 
 	found := plugins.Search(value(request.Q.ptr()))
@@ -40,7 +38,7 @@ func (s *Server) listPlugins(ctx context.Context, request *listPluginsRequest) (
 func (s *Server) servePluginLogo(w http.ResponseWriter, r *http.Request) {
 	raw, ok := plugins.Logo(r.PathValue("plugin_id"))
 	if !ok {
-		writeError(w, notFound(unknownPlugin))
+		writeError(w, unknownPlugin)
 		return
 	}
 	w.Header().Set("Content-Type", "image/svg+xml")
@@ -54,14 +52,14 @@ func (s *Server) servePluginLogo(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPluginsRequest) (*listConfigPluginsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.store == nil {
-		return nil, invalidRequest(noConfigs)
+		return nil, noConfigs
 	}
 	config, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, notFound(unknownConfig)
+		return nil, unknownConfig
 	}
 
 	conns, err := s.store.PluginConnections(ctx, customerID, request.Id)
@@ -115,37 +113,41 @@ func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPlugi
 // it has no login.
 func appPlugin(config store.AgentConfig, id string) (plugins.Plugin, error) {
 	if _, ok := plugins.Lookup(id); ok {
-		return session.ConfiguredPlugin(session.EntryFor(id, config.AgentPlugins, config.UserPlugins))
+		plugin, err := session.ConfiguredPlugin(session.EntryFor(id, config.AgentPlugins, config.UserPlugins))
+		if err != nil {
+			return plugins.Plugin{}, invalidRequest(err.Error())
+		}
+		return plugin, nil
 	}
 	for _, server := range config.MCPServers {
 		if server.Name != id || (server.NeedsLogin != nil && !*server.NeedsLogin) {
 			continue
 		}
 		if server.User {
-			return plugins.Plugin{}, stack.Wrap(fmt.Errorf("%s is connected by each end user, in the conversation", id))
+			return plugins.Plugin{}, invalidRequest(id + " is connected by each end user, in the conversation")
 		}
 		return session.ServerPlugin(server), nil
 	}
-	return plugins.Plugin{}, stack.Wrap(errors.New(unknownPlugin.message))
+	return plugins.Plugin{}, unknownPlugin
 }
 
 // authorizePlugin starts a plugin login and returns the URL the browser should open.
 func (s *Server) authorizePlugin(ctx context.Context, request *authorizePluginRequest) (*authorizePluginResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 
 	if s.store == nil {
-		return nil, invalidRequest(noConfigs)
+		return nil, noConfigs
 	}
 	config, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, notFound(unknownConfig)
+		return nil, unknownConfig
 	}
 	plugin, err := appPlugin(config, string(request.PluginId))
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, err
 	}
 
 	instance := ""
@@ -185,21 +187,21 @@ func (s *Server) authorizePlugin(ctx context.Context, request *authorizePluginRe
 func (s *Server) disconnectPlugin(ctx context.Context, request *disconnectPluginRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.store == nil {
-		return nil, invalidRequest(noConfigs)
+		return nil, noConfigs
 	}
 	config, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return nil, notFound(unknownConfig)
+		return nil, unknownConfig
 	}
 	named := func(server store.MCPServer) bool { return server.Name == string(request.PluginId) }
 	if _, ok := plugins.Lookup(string(request.PluginId)); !ok && !slices.ContainsFunc(config.MCPServers, named) {
-		return nil, invalidRequest(unknownPlugin)
+		return nil, unknownPlugin
 	}
 	if err := s.store.DeletePluginConnection(ctx, customerID, request.Id, string(request.PluginId)); err != nil {
-		return nil, notFound(unknownPlugin)
+		return nil, unknownPlugin
 	}
 	if err := s.store.RemoveConfigPlugin(ctx, customerID, request.Id, string(request.PluginId)); err != nil {
 		return nil, err
@@ -246,7 +248,7 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.store == nil {
-		writeError(w, invalidRequest(noConfigs))
+		writeError(w, noConfigs)
 		return
 	}
 

@@ -69,11 +69,11 @@ type frame map[string]any
 // returns a connection and a strict handler has to return a response.
 func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 	if _, ok := CustomerFrom(r.Context()); !ok {
-		writeError(w, missingCustomer())
+		writeError(w, missingCustomer)
 		return
 	}
 	if s.sessions == nil {
-		writeError(w, notFound(noSessions))
+		writeError(w, noSessions)
 		return
 	}
 	id := r.PathValue("id")
@@ -86,7 +86,7 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 			s.watchRemoteSession(w, r, id, OwnerFrom(r.Context()))
 			return
 		}
-		writeError(w, notFound(unknownSession))
+		writeError(w, unknownSession)
 		return
 	}
 

@@ -37,8 +37,8 @@ func (s *CampaignsSuite) TestACampaignNamingAConfigNobodyHasIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/campaigns",
 		map[string]any{"name": "may", "config_id": "nope", "from_number": s.utils.number()})
 
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "config")
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, unknownConfig.Message)
 }
 
 func (s *CampaignsSuite) TestContactsAreRungInTheOrderTheyWereAdded() {

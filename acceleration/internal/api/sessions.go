@@ -19,7 +19,7 @@ import (
 // noSessions is what every session path says on a deployment that only inspects routing.
 // It is a 404 rather than a 501 because the resource genuinely is not there: this router
 // runs no conversations, so it holds no sessions to find.
-var noSessions = coded{codeNotConfigured, "this deployment does not run sessions"}
+var noSessions = notConfigured("this deployment does not run sessions")
 
 // configFor resolves whichever way the caller addressed the agent.
 //
@@ -35,13 +35,13 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 	case id != "" && named != "":
 		return nil, invalidRequest("name an agent by config_id or by agent, not both")
 	case s.store == nil:
-		return nil, invalidRequest(noConfigs)
+		return nil, noConfigs
 	}
 
 	if id != "" {
 		found, err := s.configs.AgentConfig(ctx, customerID, id)
 		if err != nil {
-			return nil, notFound(unknownConfig)
+			return nil, unknownConfig
 		}
 		return &found, nil
 	}
@@ -63,10 +63,10 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (*forkSessionResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.sessions == nil {
-		return nil, notFound(noSessions)
+		return nil, noSessions
 	}
 
 	parent, failure := s.storedOrLiveSession(ctx, request.Id)
@@ -94,7 +94,7 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	switch {
 	case errors.Is(err, store.ErrUnknownResponse):
 		return nil, notFound(err.Error())
-	case errors.Is(err, errForkNeedsHistory), errors.Is(err, errNoRecords):
+	case errors.Is(err, errForkNeedsHistory):
 		return nil, invalidRequest(err.Error())
 	case err != nil:
 		return nil, err
@@ -195,7 +195,7 @@ func (s *Server) rewindSession(ctx context.Context, request *rewindSessionReques
 		return nil, invalidRequest("name the response to carry on from")
 	}
 	if s.store == nil {
-		return nil, invalidRequest(noStore)
+		return nil, noStore
 	}
 
 	err := found.Rewind(ctx, s.store, request.Body.ResponseId)
@@ -219,7 +219,7 @@ func (s *Server) getSessionCommand(ctx context.Context, request *getSessionComma
 
 	receipt, err := found.Command(request.CommandId)
 	if err != nil {
-		return nil, notFound(unknownCommand)
+		return nil, unknownCommand
 	}
 	return &getSessionCommandResponse{Body: receiptOf(receipt)}, nil
 }
@@ -233,7 +233,7 @@ func (s *Server) interruptSessionCommand(ctx context.Context, request *interrupt
 
 	receipt, err := found.InterruptCommand(request.CommandId)
 	if errors.Is(err, conversation.ErrCommandNotFound) {
-		return nil, notFound(unknownCommand)
+		return nil, unknownCommand
 	}
 	if err != nil {
 		// The stop was taken but its durable outcome is not known, so the caller is told
@@ -300,23 +300,23 @@ func (s *Server) setSessionSettings(ctx context.Context, request *setSessionSett
 
 // unknownSession is what a caller is told about a session that is not theirs, which is the
 // same thing they are told about one that never existed.
-var unknownSession = coded{codeSessionNotFound, "no such session"}
+var unknownSession = APIError{Type: ErrorTypeNotFound, Code: codeSessionNotFound, Message: "no such session"}
 
 // unknownCommand is what a caller is told about a command this conversation never
 // accepted, which is the same thing they are told about one they may not touch.
-var unknownCommand = coded{codeCommandNotFound, "no such command"}
+var unknownCommand = APIError{Type: ErrorTypeNotFound, Code: codeCommandNotFound, Message: "no such command"}
 
 // session finds a session belonging to the calling customer.
 func (s *Server) session(ctx context.Context, id string) (*session.Session, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.sessions == nil {
-		return nil, notFound(noSessions)
+		return nil, noSessions
 	}
 	found, ok := s.sessions.Get(id, OwnerFrom(ctx))
 	if !ok || !canReadSession(ctx, found.Spec()) {
-		return nil, notFound(unknownSession)
+		return nil, unknownSession
 	}
 	return found, nil
 }
@@ -331,10 +331,10 @@ func (s *Server) session(ctx context.Context, id string) (*session.Session, erro
 // found: a different answer for each would make this a way to discover whose an id is.
 func (s *Server) storedOrLiveSession(ctx context.Context, id string) (session.Found, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return session.Found{}, missingCustomer()
+		return session.Found{}, missingCustomer
 	}
 	if s.sessions == nil {
-		return session.Found{}, notFound(noSessions)
+		return session.Found{}, noSessions
 	}
 
 	owner := OwnerFrom(ctx)
@@ -342,19 +342,19 @@ func (s *Server) storedOrLiveSession(ctx context.Context, id string) (session.Fo
 		return session.Found{Live: live}, nil
 	}
 	if s.store == nil {
-		return session.Found{}, notFound(unknownSession)
+		return session.Found{}, unknownSession
 	}
 
 	row, err := s.store.StoredSession(ctx, owner.CustomerID, id)
 	if err != nil {
-		return session.Found{}, notFound(unknownSession)
+		return session.Found{}, unknownSession
 	}
 	// The row carries who opened it, which is what the live path checks through the
 	// manager. Skipping it here would let one of a customer's users read another's.
 	if !owner.Reaches(session.Owner{
 		CustomerID: row.CustomerID, UserID: row.UserID, Kind: auth.Kind(row.CallerKind),
 	}) {
-		return session.Found{}, notFound(unknownSession)
+		return session.Found{}, unknownSession
 	}
 	return session.Found{Stored: &row}, nil
 }
@@ -780,11 +780,8 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 	return spec, nil
 }
 
-var (
-	errForkNeedsHistory = errors.New(
-		"response_id says where the carried history stops, so it cannot be combined with messages false")
-	errNoRecords = errors.New(noStore.message)
-)
+var errForkNeedsHistory = errors.New(
+	"response_id says where the carried history stops, so it cannot be combined with messages false")
 
 // recordedHistory is the history a fork reads out of what its parent recorded rather than
 // out of a Chat channel: up to the named response, or all of it for a parent that kept no
@@ -798,7 +795,7 @@ func (s *Server) recordedHistory(ctx context.Context, parent session.Found, requ
 	case responseID == "" && (!carry || recall != nil):
 		return nil, nil
 	case s.store == nil && responseID != "":
-		return nil, stack.Wrap(errNoRecords)
+		return nil, noStore
 	case s.store == nil:
 		return nil, nil
 	}
@@ -857,7 +854,7 @@ func (s *Server) registerSessions(api huma.API) {
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The session"},
 		},
-		Errors: []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.getSession)
 	huma.Register(api, huma.Operation{
 		OperationID: "forkSession",
@@ -937,7 +934,7 @@ func (s *Server) registerSessions(api huma.API) {
 		Responses: map[string]*huma.Response{
 			"204": {Description: "The reply was abandoned, if there was one"},
 		},
-		Errors: []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.interruptSession)
 	huma.Register(api, huma.Operation{
 		OperationID: "getSessionCommand",
@@ -950,7 +947,7 @@ func (s *Server) registerSessions(api huma.API) {
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The command's current receipt"},
 		},
-		Errors: []int{http.StatusUnauthorized, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound},
 	}, s.getSessionCommand)
 	huma.Register(api, huma.Operation{
 		OperationID: "interruptSessionCommand",
@@ -970,7 +967,7 @@ func (s *Server) registerSessions(api huma.API) {
 			"200": {Description: "The command's terminal receipt"},
 			"503": errorResponse("The stop was accepted but its durable outcome is unknown. The command is not reported stopped; retry the same command id."),
 		},
-		Errors: []int{http.StatusUnauthorized, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound},
 	}, s.interruptSessionCommand)
 	huma.Register(api, huma.Operation{
 		OperationID: "setSessionInstructions",

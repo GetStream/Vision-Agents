@@ -104,14 +104,14 @@ func (s *Server) registerConfigPatch(api huma.API) {
 func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfigRequest) (*agentConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, missingCustomer()
+		return nil, missingCustomer
 	}
 	if s.store == nil {
-		return nil, invalidRequest(noConfigs)
+		return nil, noConfigs
 	}
 	config, err := s.configs.AgentConfig(ctx, customerID, request.ID)
 	if err != nil {
-		return nil, notFound(unknownConfig)
+		return nil, unknownConfig
 	}
 	before := config.MCPServers
 
