@@ -29,6 +29,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -46,6 +47,12 @@ const (
 	maxRetry = 3
 	// concurrency is how many pages are read at once.
 	concurrency = 4
+	// sweep is how often pages are looked over for one due a refresh, unless
+	// RefreshInterval says otherwise. A refresh is counted in hours, so a minute late is on
+	// time.
+	sweep = time.Minute
+	// sweepBatch is how many due pages one sweep queues. The rest are queued by the next.
+	sweepBatch = 100
 )
 
 // Options configures a Service. All four dependencies are required: a page needs somewhere
@@ -63,7 +70,10 @@ type Options struct {
 	// failed one waits before it is tried again. Zero is asynq's defaults: a second between
 	// checks and exponential backoff between retries.
 	CheckInterval time.Duration
-	Logger        *slog.Logger
+	// RefreshInterval is how often pages are looked over for one due a refresh. Zero is a
+	// minute.
+	RefreshInterval time.Duration
+	Logger          *slog.Logger
 }
 
 // Service is the control plane for the pages a knowledge base is kept filled from, and the
@@ -75,7 +85,11 @@ type Service struct {
 	reader    search.Reader
 	writer    knowledge.Writer
 	chunkSize int
+	sweep     time.Duration
 	logger    *slog.Logger
+	// stop ends the sweep, and swept is closed once it has. Both are nil until Start.
+	stop  chan struct{}
+	swept chan struct{}
 }
 
 // New validates the options and returns a Service. Nothing is read until Start.
@@ -99,6 +113,10 @@ func New(options Options) (*Service, error) {
 		options.Logger = slog.Default()
 	}
 
+	every := sweep
+	if options.RefreshInterval > 0 {
+		every = options.RefreshInterval
+	}
 	config := asynq.Config{
 		Concurrency: concurrency,
 		Queues:      map[string]int{queue: 1},
@@ -117,20 +135,32 @@ func New(options Options) (*Service, error) {
 		reader:    options.Reader,
 		writer:    options.Writer,
 		chunkSize: options.ChunkSize,
+		sweep:     every,
 		logger:    options.Logger,
 	}, nil
 }
 
 // Start begins reading the pages that are queued, including any left from before a
-// restart: the queue is in Redis, so nothing asked for is lost with the process.
+// restart: the queue is in Redis, so nothing asked for is lost with the process. It also
+// starts queuing the pages due a refresh.
 func (s *Service) Start() error {
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(TaskIndex, s.process)
-	return s.worker.Start(mux)
+	if err := s.worker.Start(mux); err != nil {
+		return err
+	}
+	s.stop, s.swept = make(chan struct{}), make(chan struct{})
+	go s.refresh()
+	return nil
 }
 
-// Close lets the reads in flight finish, then stops the worker and the queue.
+// Close stops queuing refreshes, lets the reads in flight finish, then stops the worker and
+// the queue.
 func (s *Service) Close() error {
+	if s.stop != nil {
+		close(s.stop)
+		<-s.swept
+	}
 	s.worker.Shutdown()
 	return s.queue.Close()
 }
@@ -143,6 +173,8 @@ type Subscription struct {
 	URL         string
 	Title       string
 	Description string
+	// RefreshHours is how often the page is read again on its own. Zero is never.
+	RefreshHours int
 }
 
 // Add subscribes a knowledge base to a page and queues its first read.
@@ -159,11 +191,14 @@ type Subscription struct {
 func (s *Service) Add(ctx context.Context, customerID string, wanted Subscription) (store.KnowledgeURL, error) {
 	namespace := strings.TrimSpace(wanted.Namespace)
 	if namespace == "" {
-		return store.KnowledgeURL{}, errors.New("urls: a namespace is required, knowledge is never shared")
+		return store.KnowledgeURL{}, stack.Wrap(errors.New("urls: a namespace is required, knowledge is never shared"))
 	}
 	address, err := clean(wanted.URL)
 	if err != nil {
 		return store.KnowledgeURL{}, err
+	}
+	if wanted.RefreshHours < 0 {
+		return store.KnowledgeURL{}, stack.Wrap(fmt.Errorf("urls: refresh_hours cannot be negative, got %d", wanted.RefreshHours))
 	}
 
 	page, subscribed, err := s.store.SubscribedKnowledgeURL(ctx, customerID, namespace, address)
@@ -172,6 +207,7 @@ func (s *Service) Add(ctx context.Context, customerID string, wanted Subscriptio
 	}
 	page.DeclaredTitle = wanted.Title
 	page.Description = wanted.Description
+	page.RefreshHours = wanted.RefreshHours
 	if subscribed {
 		if err := s.store.SaveKnowledgeURL(ctx, &page); err != nil {
 			return store.KnowledgeURL{}, err
@@ -227,6 +263,32 @@ func (s *Service) Reindex(ctx context.Context, customerID, id string) (store.Kno
 	return page, s.enqueue(ctx, page)
 }
 
+// refresh queues a read of every page due one, each sweep, until Close. Every router runs
+// it, and a page queued by two of them is read once: the task id is the page.
+func (s *Service) refresh() {
+	defer close(s.swept)
+	ticker := time.NewTicker(s.sweep)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-ticker.C:
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), s.sweep)
+		due, err := s.store.DueKnowledgeURLs(ctx, time.Now().UTC(), sweepBatch)
+		if err != nil {
+			s.logger.Warn("could not look for pages due a refresh", "error", err)
+		}
+		for _, page := range due {
+			if err := s.enqueue(ctx, page); err != nil {
+				s.logger.Warn("could not queue a refresh", "url", page.URL, "error", err)
+			}
+		}
+		cancel()
+	}
+}
+
 // indexPayload names the page a task reads. The customer is in it so the worker looks the
 // row up the same way a request does, rather than by id alone.
 type indexPayload struct {
@@ -239,7 +301,7 @@ type indexPayload struct {
 func (s *Service) enqueue(ctx context.Context, page store.KnowledgeURL) error {
 	payload, err := json.Marshal(indexPayload{CustomerID: page.CustomerID, ID: page.ID})
 	if err != nil {
-		return fmt.Errorf("urls: queue a read of %s: %w", page.URL, err)
+		return stack.Wrap(fmt.Errorf("urls: queue a read of %s: %w", page.URL, err))
 	}
 
 	_, err = s.queue.EnqueueContext(ctx, asynq.NewTask(TaskIndex, payload),
@@ -252,7 +314,7 @@ func (s *Service) enqueue(ctx context.Context, page store.KnowledgeURL) error {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("urls: queue a read of %s: %w", page.URL, err)
+		return stack.Wrap(fmt.Errorf("urls: queue a read of %s: %w", page.URL, err))
 	}
 	return nil
 }
@@ -349,17 +411,17 @@ func (s *Service) write(ctx context.Context, page *store.KnowledgeURL, read sear
 func clean(address string) (string, error) {
 	address = strings.TrimSpace(address)
 	if address == "" {
-		return "", errors.New("urls: a url is required")
+		return "", stack.Wrap(errors.New("urls: a url is required"))
 	}
 	parsed, err := url.Parse(address)
 	if err != nil {
-		return "", fmt.Errorf("urls: %s is not a url: %w", address, err)
+		return "", stack.Wrap(fmt.Errorf("urls: %s is not a url: %w", address, err))
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", fmt.Errorf("urls: %s is not a page that can be fetched", address)
+		return "", stack.Wrap(fmt.Errorf("urls: %s is not a page that can be fetched", address))
 	}
 	if parsed.Host == "" {
-		return "", fmt.Errorf("urls: %s names no host", address)
+		return "", stack.Wrap(fmt.Errorf("urls: %s names no host", address))
 	}
 	return address, nil
 }

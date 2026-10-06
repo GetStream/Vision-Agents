@@ -45,10 +45,10 @@ The session starts from the stored config, and only what the code sets is sent o
 are about, under `user_id`, and what else narrows recall.
 
 `chat` holds the same conversation in writing: the same instructions, skills and knowledge,
-nothing transcribed or spoken.
+nothing transcribed or spoken. It is kept in Stream Chat unless `incognito: true` is given.
 
 ```ruby
-agent.chat(persist: true) { |session| session.responses.create("What changed in v3?") }
+agent.chat { |session| session.responses.create("What changed in v3?") }
 ```
 
 ## Credentials
@@ -59,29 +59,26 @@ agent.chat(persist: true) { |session| session.responses.create("What changed in 
 | `api_key` + `api_secret` | a process you run |
 
 ```ruby
-api = GetStream::VisionAgents::Client.new(api_key: ENV["STREAM_API_KEY"], api_secret: ENV["STREAM_API_SECRET"])
+api = GetStream::VisionAgents::Client.new
 agent = api.agent("support", cost_tracking: { env: "production" })
 ```
 
-`url` falls back to `STREAM_ACCELERATION_URL`, then `http://localhost:8080`, and the rest to
-`STREAM_ACCELERATION_CUSTOMER_ID`, `STREAM_API_KEY` and `STREAM_API_SECRET`. Behind Stream's
-authenticating proxy pass `authenticate: true` or set `STREAM_ACCELERATION_AUTHENTICATE`.
-Creating a call needs `STREAM_API_KEY` and `STREAM_API_SECRET` whichever way the router is
-reached.
+With no arguments the client reads its credentials from the environment: `url` from
+`STREAM_ACCELERATION_URL`, then Stream's hosted router, and the rest from
+`STREAM_ACCELERATION_CUSTOMER_ID`, `STREAM_API_KEY` and `STREAM_API_SECRET`. Pass them only
+when they come from somewhere else. The hosted router is reached through Stream's
+authenticating proxy, which is on by default for it; a self-hosted deployment behind the
+same proxy passes `authenticate: true` or sets `STREAM_ACCELERATION_AUTHENTICATE`. Creating a call needs
+`STREAM_API_KEY` and `STREAM_API_SECRET` whichever way the router is reached.
 
-## Every endpoint, checked against the spec
+## Checked against the spec
 
-```ruby
-api.get("/v1/agents/configs", query: { name: "support" })
-api.post("/v1/search", body: { query: "what changed in v3" })
-api.delete("/v1/agents/sessions/{id}", path: { id: "sess_1" })
-```
-
-One method per HTTP method. The path is the spec's own template, looked up in a table
-generated from `acceleration/api/openapi.yaml`, so a path, query parameter or body key the
-spec does not have is refused before anything is sent. Answers are the router's JSON as
-string-keyed hashes. A failure raises `RouterError` with the status, the operation id and
-what the router said; status 0 means the request never arrived.
+Every resource method (`api.agent`, `api.router`, `api.simulations`, `api.memories`) is built
+on one method per HTTP verb, which looks the path up in a table generated from
+`acceleration/api/openapi.yaml`, so a path, query parameter or body key the spec does not
+have is refused before anything is sent. Answers are the router's JSON as string-keyed
+hashes. A failure raises `RouterError` with the status, the operation id and what the router
+said; status 0 means the request never arrived.
 
 ## Dispatch
 
@@ -96,6 +93,8 @@ dispatch.wait_for_call do |call|
 end
 
 dispatch.wait_for_message do |message|
+  next dispatch.answer(message) unless message.session_id.empty?
+
   dispatch.get_or_create_agent(message) { GetStream::VisionAgents::Agent.new(config: "support") }
           .reply(message)
 end
@@ -103,9 +102,39 @@ end
 dispatch.run
 ```
 
-A call handler that returns accepts the call; one that raises rejects it with the message as
-the reason. A message only arrives when no agent is running on its channel, and
-`get_or_create_agent` keeps one agent per channel for the same reason.
+Every call and message carries a `work_id`, and when its handler returns or raises the worker
+sends `done` for it, with the error message when it raised; work with no handler registered is
+reported done with an error too. The handshake says `capacity`, `active` (calls and messages
+still being handled) and `handles` (`call`, `message`, or neither).
+
+A message arrives when no agent is running on its channel, and `get_or_create_agent` keeps one
+agent per channel for the same reason. An agent whose `agent.yaml` says
+`dispatch: {text: enabled}` hands what end users write to the worker instead, with
+`message.session_id` and `message.command_id` set: `dispatch.answer(message)` has the model
+answer it on that session, with the worker's own credential acting for `message.user_id`.
+`get_or_create_agent` refuses such a message.
+
+A worker can also run tools for every session under an agent id, whoever opened it, such as
+a conversation started from a browser:
+
+```ruby
+tools = GetStream::VisionAgents::Tools.new
+tools.register("lookup_order", description: "An order by id",
+               parameters: { type: "object", properties: { id: { type: "string" } } }) do |args|
+  orders.find(args["id"])
+end
+
+dispatch.host("support", tools, timeout: 30)
+dispatch.run
+```
+
+A tool can say who runs it and how it is shown: `executor: "client"` for one a person's device
+runs (this process still answers it, once the device has reported), and `display_title:` for
+the words shown while it runs, such as `"Checking your order"`.
+
+The tools are declared each time the router says it is ready, and each call runs on its own
+thread. `timeout` is seconds per call; nil takes the router's default. Hosting alone is enough
+to `run`, and a router that refuses the tools ends `run` with the reason.
 
 Ringing somebody is the other direction:
 
@@ -119,12 +148,13 @@ end
 
 ```
 agents/jean/
-  agent.yaml            required: the name and what it runs on (llm, stt, tts, tags, ...)
+  agent.yaml            required: the name and what it runs on (llm, stt, tts, speed, harness, tags, ...)
   instructions.md
   guardrail.md
   skills/think.md
   knowledge/pricing.md
-  knowledge/urls.yaml
+  knowledge/urls.yaml   pages, each a url or a mapping with title, description, refresh_hours
+  simulations/lunch.yaml
   .agent_sync           written by sync: the fingerprint last synced and when
 ```
 
@@ -139,55 +169,129 @@ does not know is refused. `.agent_sync` records the fingerprint, which is the on
 Python and JavaScript SDKs take, so syncing on every start only reads the config back when
 nothing changed. What the code sets wins over what the directory says.
 
-```ruby
-agent.knowledge.add_url("https://example.com/pricing", title: "Pricing")
+The harness is agent config, never session config: `harness:`, `skills:`, `sandbox:` and a
+`pipeline: { subagent: }` given to `Agent.new` are written by `sync`, and a session only runs
+them by starting from that config.
+
+Each file in `simulations/` is a list of simulations (`name`, `scenario`, `assertion`, and
+optionally `mode`, `variations`, `max_turns`, `caller_target`, `judge_target`, `caller_stt`,
+`caller_tts`, `caller_voice`, `tags`). With the directory there, the config's simulations
+become exactly that list, so an empty one deletes them; without it they are left alone.
+
+```yaml
+- name: lunch order with a change
+  scenario: Order a turkey club, then swap it for a veggie wrap.
+  assertion: The final order is one veggie wrap.
+  variations: 3
 ```
 
-adds a page to the agent's knowledge base and waits for it to be read.
+```ruby
+agent.knowledge.add_url("https://example.com/pricing", title: "Pricing", refresh_hours: 24)
+agent.update_config(guardrail: File.read("guardrail.md"), visible_tools: ["athena_*"])
+```
+
+`add_url` adds a page to the agent's knowledge base, read again every `refresh_hours`, and
+waits for it to be read. `update_config` changes only the fields it is given.
+
+## Simulations
+
+```ruby
+simulation = api.simulations.create(name: "refund", config_id: config["id"],
+                                    scenario: "Ask for a refund", assertion: "A refund is offered")
+run = api.simulations.run(simulation["id"])
+run = api.simulations.runs.get(run["id"]) while run["state"] == "running"
+```
+
+`create`, `get`, `list`, `update`, `delete` and `run` on `api.simulations`; `get`, `list` and
+`cancel` on `api.simulations.runs`.
 
 ## Going back, and branching off
 
 ```ruby
-agent.chat(persist: false) do |session|
+agent.chat do |session|
   first = session.responses.create("Pick a number")
   session.responses.create("Double it")
-  session.responses.rewind(first)
   branch = session.fork(response_id: first, title: "asked again")
 end
 
-api.agent("support").sessions.search("billing")
+page = api.agent("support").sessions.query(user_id: "u1", state: "live", limit: 20)
+page = api.agent("support").sessions.query(user_id: "u1", state: "live", cursor: page["next_cursor"]) if page["has_more"]
+api.agent("support").sessions.search("billing")["items"]
 ```
 
-A conversation kept in Stream Chat cannot be rewound, because the channel still holds the
-later turns: the router answers 400, and forking at the response is the way back.
+`query` and `search` answer a page, `{items, has_more, next_cursor}`; pass `next_cursor` back
+as `cursor` with the same filters for the next one. `query` narrows by `project_id`,
+`user_id`, `modality`, `state` (`live` or `ended`) and `agent_id`; `search` takes the same
+but `project_id`. `responses.list` and `responses.items.list` page the same way, and
+`responses.items.each` follows the cursor itself.
+
+A written conversation is kept in Stream Chat unless it is opened with `incognito: true`.
+Neither can be rewound: the channel still holds the later turns, and an incognito one recorded
+nothing to rebuild from. The router answers 400, and forking at the response is the way back.
+`session.responses.rewind(response)` is for a call.
+
+To keep the conversation and change it, from the next turn, for this session only:
+
+```ruby
+session.update(title: "Pricing", llm: "llm-thinking", thinking: "high")
+api.agent("support").sessions.update(session_id, title: "Pricing")  # an ended session can still be renamed
+```
+
+`update` takes `title`, `description`, `custom`, `instructions`, `llm`, `stt`, `tts`, `sts`,
+`voice`, `thinking`, `temperature`, `max_output_tokens` and `verbosity`; a field left out is
+left as it is.
+
+`session.close` stops a conversation and keeps everything it recorded and remembered.
+Deleting is separate:
+
+```ruby
+session.delete                                   # the session, its turns and what it taught memory
+session.delete_memories                          # only what it taught memory
+api.agent("support").sessions.delete(session_id)
+api.memories.truncate("user-42")                 # everything remembered about one user
+```
 
 ## Guests
 
 ```ruby
 guest = api.guest_user(name: "Visitor")          # id, token, expires_at
-api.as_guest(guest).get("/v1/agents/sessions")
+api.as_guest(guest).agent("support").sessions.query
 api.claim_guest_user(guest["id"], "user-42")     # once they sign up
 ```
 
 ## The router
 
-```ruby
-router = GetStream::VisionAgents::Router.new("healthcare", tags: { env: "production" })
+A router comes from the client, and which model answers lives in its config, never in the
+call:
 
-router.stt.realtime(languages: ["en"]) do |stt|
+```yaml
+# routers/healthcare/router.yaml
+stt:
+  target: en-low-latency
+llm:
+  target: llm-fast
+tts:
+  voice: Kore
+```
+
+```ruby
+GetStream::VisionAgents::Router.sync("routers", client: api)
+router = api.router("healthcare", tags: { env: "production" })
+
+router.stt.realtime do |stt|
   stt.send_audio(pcm)
   stt.each { |frame| puts frame["text"] if frame["type"] == "transcript" }
 end
-router.tts.realtime(voice: "Kore") { |tts| File.binwrite("hello.pcm", tts.speak("Hello")) }
-router.llm.realtime(target: "llm-fast") { |llm| llm.respond("Say hi") { |delta| print delta } }
+router.tts.realtime { |tts| File.binwrite("hello.pcm", tts.speak("Hello")) }
+router.llm.realtime { |llm| llm.respond("Say hi") { |delta| print delta } }
 
 router.stt.recording("https://example.com/call.mp3", diarize: true)
 router.search("perioperative antibiotic guidance", results: 5)
-router.configure_stt(providers: %w[deepgram], profanity_filter: true)
-GetStream::VisionAgents::Router.sync("routers")
+router.configure_stt(target: "en-low-latency", keyterms: ["Vision Agents"])
 ```
 
-Options are checked against the spec's option blocks, so a misspelt one is refused here.
+`realtime` takes only per-call overrides such as `diarize:`, `keyterms:` or `voice:`. Options
+are checked against the spec's option blocks, so a misspelt one is refused here.
 
 ## Working on this gem
 

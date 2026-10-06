@@ -11,10 +11,10 @@ use GetStream\VisionAgents\Json;
 final readonly class HealthStatus
 {
     public function __construct(
-        public string $status,
         // Dependency name to "ok" or a failure description.
         /** @var array<string, string> */
         public array $dependencies,
+        public string $status,
     ) {
     }
 
@@ -24,8 +24,8 @@ final readonly class HealthStatus
     public static function fromArray(array $data): self
     {
         return new self(
-            status: Json::string($data, 'status'),
             dependencies: Json::stringMap($data, 'dependencies'),
+            status: Json::string($data, 'status'),
         );
     }
 
@@ -37,8 +37,8 @@ final readonly class HealthStatus
     public function toArray(): array
     {
         $out = [];
-        $out['status'] = $this->status;
         $out['dependencies'] = $this->dependencies;
+        $out['status'] = $this->status;
         return $out;
     }
 }

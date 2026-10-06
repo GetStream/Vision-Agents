@@ -17,7 +17,7 @@ import okhttp3.OkHttpClient
  */
 public class VisionAgents(public val backend: Backend) : AutoCloseable {
     public constructor(
-        url: String,
+        url: String = Backend.DEFAULT_URL,
         customerId: String = "",
         apiKey: String = "",
         okHttpClient: OkHttpClient? = null,

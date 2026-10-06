@@ -63,27 +63,27 @@ class TestLiveRouter < Minitest::Test
 
   def test_a_conversation_is_opened_with_labels_and_found_again
     title = "Sendbird #{unique("search")}"
-    session = open(title: title, project: "docs", custom: { suite: "ruby" }, persist_conversation: true)
+    session = open(title: title, project_id: "docs", custom: { suite: "ruby" })
     session.close
 
     assert_equal title, session.created["title"]
     assert_equal({ "suite" => "ruby" }, session.created["custom"])
     assert_match(/\Aagent:/, session.conversation_id)
-    assert(agent.sessions.query(limit: 50).any? { |each| each["id"] == session.id })
-    assert(agent.sessions.search("Sendbird", limit: 50).any? { |each| each["id"] == session.id })
+    assert(agent.sessions.query(limit: 50)["items"].any? { |each| each["id"] == session.id })
+    assert(agent.sessions.search("Sendbird", limit: 50)["items"].any? { |each| each["id"] == session.id })
   end
 
   def test_an_incognito_conversation_keeps_nothing
     title = unique("incognito")
-    session = open(incognito: true, title: title, persist_conversation: true)
+    session = open(incognito: true, title: title)
     session.close
 
     assert_equal "", session.conversation_id
-    assert_empty agent.sessions.search(title, limit: 50)
+    assert_empty agent.sessions.search(title, limit: 50)["items"]
   end
 
   def test_a_turn_is_named_and_written_down
-    session = open(persist_conversation: true)
+    session = open
 
     turn = session.responses.create("Reply with the single word: pong.")
     answered(session)
@@ -94,23 +94,20 @@ class TestLiveRouter < Minitest::Test
     assert(items.any? { |item| item["kind"] == "answer" })
   end
 
-  def test_rewinding_takes_the_later_turns_out_and_a_fork_starts_from_a_turn
+  def test_a_fork_starts_from_a_turn
     session = open
     ["Reply with the single word: one.", "Reply with the single word: two."].each do |question|
       session.responses.create(question)
       answered(session)
     end
 
-    kept = session.responses.list.first
-    session.responses.rewind(kept)
-    assert_equal [kept["id"]], session.responses.list.map { |response| response["id"] }
-
+    kept = session.responses.list["items"].first
     forked = session.fork(response_id: kept).tap { |fork| @opened << fork }
     assert_equal session.id, forked.created["forked_from"]
   end
 
   def test_a_conversation_kept_in_stream_chat_is_forked_rather_than_rewound
-    session = open(persist_conversation: true)
+    session = open
 
     error = assert_raises(VA::RouterError) { session.responses.rewind("anything") }
     assert_equal 400, error.status
@@ -120,11 +117,11 @@ class TestLiveRouter < Minitest::Test
     refute_equal session.conversation_id, forked.conversation_id
   end
 
-  def test_a_closed_conversation_is_no_longer_running
+  def test_a_closed_conversation_is_no_longer_live
     session = open
     session.close
 
-    refute(agent.sessions.query(state: "running", limit: 50).any? { |each| each["id"] == session.id })
+    refute(agent.sessions.query(state: "live", limit: 50)["items"].any? { |each| each["id"] == session.id })
   end
 
   def test_a_guest_is_minted
@@ -165,7 +162,7 @@ class TestLiveRouter < Minitest::Test
   end
 
   def test_a_question_is_answered_over_the_llm_stream
-    complete = VA::Router.new(client: @api).llm.realtime(target: model) do |llm|
+    complete = @api.router.llm.realtime(target: model) do |llm|
       llm.respond("Reply with the single word: pong.")
     end
 
@@ -173,7 +170,7 @@ class TestLiveRouter < Minitest::Test
   end
 
   def test_search_answers
-    answer = VA::Router.new(client: @api).search("Stream Vision Agents", results: 3)
+    answer = @api.router.search("Stream Vision Agents", results: 3)
 
     refute_empty answer["results"]
   end

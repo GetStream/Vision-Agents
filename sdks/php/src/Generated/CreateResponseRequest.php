@@ -13,8 +13,13 @@ final readonly class CreateResponseRequest
     public function __construct(
         // What to answer, as though it had been said.
         public string $text,
+        // Required for personal persistent text conversations, and text only. Reuse this ID and identical text for re...
+        public ?string $commandId = null,
         /** @var list<ImageSource>|null */
         public ?array $images = null,
+        // Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the v...
+        /** @var list<VideoSource>|null */
+        public ?array $videos = null,
     ) {
     }
 
@@ -25,7 +30,9 @@ final readonly class CreateResponseRequest
     {
         return new self(
             text: Json::string($data, 'text'),
+            commandId: array_key_exists('command_id', $data) && $data['command_id'] !== null ? Json::string($data, 'command_id') : null,
             images: array_key_exists('images', $data) && $data['images'] !== null ? array_map(ImageSource::fromArray(...), Json::objects($data, 'images')) : null,
+            videos: array_key_exists('videos', $data) && $data['videos'] !== null ? array_map(VideoSource::fromArray(...), Json::objects($data, 'videos')) : null,
         );
     }
 
@@ -38,8 +45,14 @@ final readonly class CreateResponseRequest
     {
         $out = [];
         $out['text'] = $this->text;
+        if ($this->commandId !== null) {
+            $out['command_id'] = $this->commandId;
+        }
         if ($this->images !== null) {
             $out['images'] = array_map(static fn (ImageSource $each): array => $each->toArray(), $this->images);
+        }
+        if ($this->videos !== null) {
+            $out['videos'] = array_map(static fn (VideoSource $each): array => $each->toArray(), $this->videos);
         }
         return $out;
     }

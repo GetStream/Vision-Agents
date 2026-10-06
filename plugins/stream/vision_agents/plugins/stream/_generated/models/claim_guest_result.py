@@ -15,29 +15,29 @@ class ClaimGuestResult:
     """
     Attributes:
         guest_id (str):
-        user_id (str):
         sessions_moved (int): How many conversations moved onto the account.
+        user_id (str):
     """
 
     guest_id: str
-    user_id: str
     sessions_moved: int
+    user_id: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         guest_id = self.guest_id
 
-        user_id = self.user_id
-
         sessions_moved = self.sessions_moved
+
+        user_id = self.user_id
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "guest_id": guest_id,
-                "user_id": user_id,
                 "sessions_moved": sessions_moved,
+                "user_id": user_id,
             }
         )
 
@@ -48,14 +48,14 @@ class ClaimGuestResult:
         d = dict(src_dict)
         guest_id = d.pop("guest_id")
 
-        user_id = d.pop("user_id")
-
         sessions_moved = d.pop("sessions_moved")
+
+        user_id = d.pop("user_id")
 
         claim_guest_result = cls(
             guest_id=guest_id,
-            user_id=user_id,
             sessions_moved=sessions_moved,
+            user_id=user_id,
         )
 
         claim_guest_result.additional_properties = d

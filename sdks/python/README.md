@@ -61,11 +61,15 @@ async with agent.chat():
 ```
 
 Somebody writing to an agent's channel reaches it the same way. `dispatch` hands the message
-over, and the agent it keeps for that channel is the one that answered the last:
+over, and the agent it keeps for that channel is the one that answered the last. A message
+from a running session whose agent says `dispatch: {text: enabled}` is answered there:
 
 ```python
 @dispatch.wait_for_message()
 async def written(message: InboundMessage) -> None:
+    if message.session_id:
+        await dispatch.answer(message)
+        return
     agent = await dispatch.get_or_create_agent(
         message, lambda: Agent(config="customer_support")
     )
@@ -135,12 +139,12 @@ agent = Agent(
 another if one is down. A concrete `"deepgram/flux-general-en"` pins it to one model instead.
 `acceleration.LLM` and `acceleration.TTS` route the other two modalities the same way.
 
-`acceleration.Router` says the options once instead, as a stored config with four namespaces.
-Each of the three streaming modalities has a `realtime()` session and a `recording()` job, and
-search is one round trip:
+`client.router(name)` says the options once instead, as a stored config with four namespaces.
+The config holds the `target`, so the call sites don't. Each of the three streaming modalities
+has a `realtime()` session and a `recording()` job, and search is one round trip:
 
 ```python
-router = acceleration.Router("healthcare")
+router = acceleration.Client().router("healthcare")
 
 async with router.stt.realtime() as stt:
     ...

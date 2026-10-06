@@ -42,6 +42,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -295,19 +296,19 @@ func New(settings Options) (*STS, error) {
 		settings.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if settings.APIKey == "" {
-		return nil, fmt.Errorf("openailive: api key is required (set %s)", apiKeyEnvVar)
+		return nil, stack.Wrap(fmt.Errorf("openailive: api key is required (set %s)", apiKeyEnvVar))
 	}
 	if settings.Model == "" {
 		settings.Model = DefaultModel
 	}
 	if !Serves(settings.Model) {
-		return nil, fmt.Errorf("openailive: %s is not a GPT-Live model", settings.Model)
+		return nil, stack.Wrap(fmt.Errorf("openailive: %s is not a GPT-Live model", settings.Model))
 	}
 	if settings.URL == "" {
 		settings.URL = DefaultURL
 	}
 	if !strings.HasPrefix(settings.URL, "ws://") && !strings.HasPrefix(settings.URL, "wss://") {
-		return nil, fmt.Errorf("openailive: url must be ws:// or wss://, got %s", settings.URL)
+		return nil, stack.Wrap(fmt.Errorf("openailive: url must be ws:// or wss://, got %s", settings.URL))
 	}
 	if settings.Backend == "" {
 		settings.Backend = DefaultBackend
@@ -358,7 +359,7 @@ func (s *STS) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
-		return errors.New("openailive: already started")
+		return stack.Wrap(errors.New("openailive: already started"))
 	}
 	s.started = true
 	s.mu.Unlock()
@@ -368,9 +369,9 @@ func (s *STS) Start(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, s.options.URL, header)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("openailive: dial: %w (http %d)", err, response.StatusCode)
+			return stack.Wrap(fmt.Errorf("openailive: dial: %w (http %d)", err, response.StatusCode))
 		}
-		return fmt.Errorf("openailive: dial: %w", err)
+		return stack.Wrap(fmt.Errorf("openailive: dial: %w", err))
 	}
 	if err := s.handshake(conn); err != nil {
 		conn.Close()
@@ -473,7 +474,7 @@ func (s *STS) SendFrame(llm.ImagePart) error { return sts.ErrNoImages }
 
 // SetInstructions is refused. The live model's instructions are fixed at startup, and what
 // the API offers instead appends to them, which is not the replacement this asks for.
-func (s *STS) SetInstructions(string) error { return sts.ErrInstructionsFixed }
+func (s *STS) SetInstructions(string) error { return stack.Wrap(sts.ErrInstructionsFixed) }
 
 // SetTools replaces what the backend may call. The delegation is replaced whole, so the
 // rest of it is sent again unchanged.
@@ -590,34 +591,34 @@ func (s *STS) Capabilities() sts.Capabilities { return CapabilitiesFor(s.options
 func (s *STS) handshake(conn *websocket.Conn) error {
 	payload, err := json.Marshal(clientEvent{Type: eventSessionStart, Session: s.session()})
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
-		return fmt.Errorf("openailive: send session.start: %w", err)
+		return stack.Wrap(fmt.Errorf("openailive: send session.start: %w", err))
 	}
 
 	if err := conn.SetReadDeadline(time.Now().Add(s.options.HandshakeTimeout)); err != nil {
-		return fmt.Errorf("openailive: read session.started: %w", err)
+		return stack.Wrap(fmt.Errorf("openailive: read session.started: %w", err))
 	}
 	defer conn.SetReadDeadline(time.Time{})
 
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
-			return fmt.Errorf("openailive: read session.started: %w", err)
+			return stack.Wrap(fmt.Errorf("openailive: read session.started: %w", err))
 		}
 		var event serverEvent
 		if err := json.Unmarshal(raw, &event); err != nil {
-			return fmt.Errorf("openailive: decode session.started: %w", err)
+			return stack.Wrap(fmt.Errorf("openailive: decode session.started: %w", err))
 		}
 		switch event.Type {
 		case eventSessionStarted:
 			return nil
 		case eventError:
 			if event.Error == nil {
-				return fmt.Errorf("openailive: session rejected: %s", strings.TrimSpace(string(raw)))
+				return stack.Wrap(fmt.Errorf("openailive: session rejected: %s", strings.TrimSpace(string(raw))))
 			}
-			return fmt.Errorf("openailive: session rejected: %w", event.Error)
+			return stack.Wrap(fmt.Errorf("openailive: session rejected: %w", event.Error))
 		}
 	}
 }
@@ -661,20 +662,20 @@ func (s *STS) send(frame any) error {
 	conn, started, closed := s.conn, s.started, s.closed
 	s.mu.Unlock()
 	if closed {
-		return errors.New("openailive: session closed")
+		return stack.Wrap(errors.New("openailive: session closed"))
 	}
 	if !started || conn == nil {
-		return errors.New("openailive: not started")
+		return stack.Wrap(errors.New("openailive: not started"))
 	}
 
 	payload, err := json.Marshal(frame)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
-		return fmt.Errorf("openailive: write: %w", err)
+		return stack.Wrap(fmt.Errorf("openailive: write: %w", err))
 	}
 	return nil
 }

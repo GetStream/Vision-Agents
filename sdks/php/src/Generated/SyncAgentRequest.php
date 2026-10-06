@@ -9,45 +9,53 @@ namespace GetStream\VisionAgents\Generated;
 use GetStream\VisionAgents\Json;
 
 /**
- * An agent directory as it is on disk. Everything after the knowledge is what the directory's
- * declaration decides rather than what it holds, and a setting left out leaves whatever is
- * stored, so a model chosen in the dashboard survives a sync that says nothing about it.
+ * An agent directory as it is on disk. Everything after the simulations is what the
+ * directory's declaration decides rather than what it holds, and a setting left out leaves
+ * whatever is stored, so a model chosen in the dashboard survives a sync that says nothing
+ * about it.
  */
 final readonly class SyncAgentRequest
 {
     public function __construct(
-        // What the config is called, which is also the directory's name.
-        public string $name,
         // A fingerprint of the directory. A second sync with the same hash does nothing.
         public string $hash,
-        public ?string $instructions = null,
+        // What the config is called, which is also the directory's name.
+        public string $name,
+        public ?AgentDispatch $dispatch = null,
+        public ?string $greeting = null,
         // The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Emp...
         public ?string $guardrail = null,
-        /** @var list<SkillRequest>|null */
-        public ?array $skills = null,
+        public Harness|string|null $harness = null,
+        public ?string $instructions = null,
+        /** @var list<string>|null */
+        public ?array $keyterms = null,
         /** @var list<KnowledgeDocument>|null */
         public ?array $knowledge = null,
         // The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base a...
         /** @var list<KnowledgeUrlDeclaration>|null */
         public ?array $knowledgeUrls = null,
-        public AgentMode|string|null $mode = null,
-        public ?string $stt = null,
-        public ?string $tts = null,
-        // A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes t...
-        public ?string $sts = null,
-        public ?string $voice = null,
         public ?string $llm = null,
-        public ?SessionVideo $video = null,
-        public ?string $subagent = null,
-        public ?string $search = null,
-        public ?string $greeting = null,
+        public AgentMode|string|null $mode = null,
         /** @var list<string>|null */
         public ?array $plugins = null,
-        /** @var list<string>|null */
-        public ?array $keyterms = null,
         public Sandbox|string|null $sandbox = null,
+        public ?string $search = null,
+        // The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulat...
+        /** @var list<SimulationDeclaration>|null */
+        public ?array $simulations = null,
+        /** @var list<SkillRequest>|null */
+        public ?array $skills = null,
+        // The voice's rate of delivery, 1 being its own. Zero leaves it there.
+        public ?float $speed = null,
+        // A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes t...
+        public ?string $sts = null,
+        public ?string $stt = null,
+        public ?string $subagent = null,
         /** @var array<string, string>|null */
         public ?array $tags = null,
+        public ?string $tts = null,
+        public ?SessionVideo $video = null,
+        public ?string $voice = null,
     ) {
     }
 
@@ -57,27 +65,31 @@ final readonly class SyncAgentRequest
     public static function fromArray(array $data): self
     {
         return new self(
-            name: Json::string($data, 'name'),
             hash: Json::string($data, 'hash'),
-            instructions: array_key_exists('instructions', $data) && $data['instructions'] !== null ? Json::string($data, 'instructions') : null,
+            name: Json::string($data, 'name'),
+            dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
+            greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Json::string($data, 'greeting') : null,
             guardrail: array_key_exists('guardrail', $data) && $data['guardrail'] !== null ? Json::string($data, 'guardrail') : null,
-            skills: array_key_exists('skills', $data) && $data['skills'] !== null ? array_map(SkillRequest::fromArray(...), Json::objects($data, 'skills')) : null,
+            harness: array_key_exists('harness', $data) && $data['harness'] !== null ? Json::enum($data, 'harness', Harness::class) : null,
+            instructions: array_key_exists('instructions', $data) && $data['instructions'] !== null ? Json::string($data, 'instructions') : null,
+            keyterms: array_key_exists('keyterms', $data) && $data['keyterms'] !== null ? Json::strings($data, 'keyterms') : null,
             knowledge: array_key_exists('knowledge', $data) && $data['knowledge'] !== null ? array_map(KnowledgeDocument::fromArray(...), Json::objects($data, 'knowledge')) : null,
             knowledgeUrls: array_key_exists('knowledge_urls', $data) && $data['knowledge_urls'] !== null ? array_map(KnowledgeUrlDeclaration::fromArray(...), Json::objects($data, 'knowledge_urls')) : null,
-            mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::enum($data, 'mode', AgentMode::class) : null,
-            stt: array_key_exists('stt', $data) && $data['stt'] !== null ? Json::string($data, 'stt') : null,
-            tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
-            sts: array_key_exists('sts', $data) && $data['sts'] !== null ? Json::string($data, 'sts') : null,
-            voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
             llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
-            video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
-            subagent: array_key_exists('subagent', $data) && $data['subagent'] !== null ? Json::string($data, 'subagent') : null,
-            search: array_key_exists('search', $data) && $data['search'] !== null ? Json::string($data, 'search') : null,
-            greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Json::string($data, 'greeting') : null,
+            mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::enum($data, 'mode', AgentMode::class) : null,
             plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::strings($data, 'plugins') : null,
-            keyterms: array_key_exists('keyterms', $data) && $data['keyterms'] !== null ? Json::strings($data, 'keyterms') : null,
             sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? Json::enum($data, 'sandbox', Sandbox::class) : null,
+            search: array_key_exists('search', $data) && $data['search'] !== null ? Json::string($data, 'search') : null,
+            simulations: array_key_exists('simulations', $data) && $data['simulations'] !== null ? array_map(SimulationDeclaration::fromArray(...), Json::objects($data, 'simulations')) : null,
+            skills: array_key_exists('skills', $data) && $data['skills'] !== null ? array_map(SkillRequest::fromArray(...), Json::objects($data, 'skills')) : null,
+            speed: array_key_exists('speed', $data) && $data['speed'] !== null ? Json::float($data, 'speed') : null,
+            sts: array_key_exists('sts', $data) && $data['sts'] !== null ? Json::string($data, 'sts') : null,
+            stt: array_key_exists('stt', $data) && $data['stt'] !== null ? Json::string($data, 'stt') : null,
+            subagent: array_key_exists('subagent', $data) && $data['subagent'] !== null ? Json::string($data, 'subagent') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
+            tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
+            video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
+            voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
         );
     }
 
@@ -89,16 +101,25 @@ final readonly class SyncAgentRequest
     public function toArray(): array
     {
         $out = [];
-        $out['name'] = $this->name;
         $out['hash'] = $this->hash;
-        if ($this->instructions !== null) {
-            $out['instructions'] = $this->instructions;
+        $out['name'] = $this->name;
+        if ($this->dispatch !== null) {
+            $out['dispatch'] = $this->dispatch->toArray();
+        }
+        if ($this->greeting !== null) {
+            $out['greeting'] = $this->greeting;
         }
         if ($this->guardrail !== null) {
             $out['guardrail'] = $this->guardrail;
         }
-        if ($this->skills !== null) {
-            $out['skills'] = array_map(static fn (SkillRequest $each): array => $each->toArray(), $this->skills);
+        if ($this->harness !== null) {
+            $out['harness'] = Json::enumValue($this->harness);
+        }
+        if ($this->instructions !== null) {
+            $out['instructions'] = $this->instructions;
+        }
+        if ($this->keyterms !== null) {
+            $out['keyterms'] = $this->keyterms;
         }
         if ($this->knowledge !== null) {
             $out['knowledge'] = array_map(static fn (KnowledgeDocument $each): array => $each->toArray(), $this->knowledge);
@@ -106,47 +127,50 @@ final readonly class SyncAgentRequest
         if ($this->knowledgeUrls !== null) {
             $out['knowledge_urls'] = array_map(static fn (KnowledgeUrlDeclaration $each): array => $each->toArray(), $this->knowledgeUrls);
         }
-        if ($this->mode !== null) {
-            $out['mode'] = Json::enumValue($this->mode);
-        }
-        if ($this->stt !== null) {
-            $out['stt'] = $this->stt;
-        }
-        if ($this->tts !== null) {
-            $out['tts'] = $this->tts;
-        }
-        if ($this->sts !== null) {
-            $out['sts'] = $this->sts;
-        }
-        if ($this->voice !== null) {
-            $out['voice'] = $this->voice;
-        }
         if ($this->llm !== null) {
             $out['llm'] = $this->llm;
         }
-        if ($this->video !== null) {
-            $out['video'] = $this->video->toArray();
-        }
-        if ($this->subagent !== null) {
-            $out['subagent'] = $this->subagent;
-        }
-        if ($this->search !== null) {
-            $out['search'] = $this->search;
-        }
-        if ($this->greeting !== null) {
-            $out['greeting'] = $this->greeting;
+        if ($this->mode !== null) {
+            $out['mode'] = Json::enumValue($this->mode);
         }
         if ($this->plugins !== null) {
             $out['plugins'] = $this->plugins;
         }
-        if ($this->keyterms !== null) {
-            $out['keyterms'] = $this->keyterms;
-        }
         if ($this->sandbox !== null) {
             $out['sandbox'] = Json::enumValue($this->sandbox);
         }
+        if ($this->search !== null) {
+            $out['search'] = $this->search;
+        }
+        if ($this->simulations !== null) {
+            $out['simulations'] = array_map(static fn (SimulationDeclaration $each): array => $each->toArray(), $this->simulations);
+        }
+        if ($this->skills !== null) {
+            $out['skills'] = array_map(static fn (SkillRequest $each): array => $each->toArray(), $this->skills);
+        }
+        if ($this->speed !== null) {
+            $out['speed'] = $this->speed;
+        }
+        if ($this->sts !== null) {
+            $out['sts'] = $this->sts;
+        }
+        if ($this->stt !== null) {
+            $out['stt'] = $this->stt;
+        }
+        if ($this->subagent !== null) {
+            $out['subagent'] = $this->subagent;
+        }
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;
+        }
+        if ($this->tts !== null) {
+            $out['tts'] = $this->tts;
+        }
+        if ($this->video !== null) {
+            $out['video'] = $this->video->toArray();
+        }
+        if ($this->voice !== null) {
+            $out['voice'] = $this->voice;
         }
         return $out;
     }

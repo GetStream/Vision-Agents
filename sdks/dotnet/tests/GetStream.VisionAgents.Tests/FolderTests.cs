@@ -140,15 +140,17 @@ public sealed class FolderTests : IDisposable
     [Fact]
     public void TheDeclarationSaysWhatTheAgentIsCalledAndRunsOn()
     {
-        Write("agent.yaml", "name: receptionist\nllm: openai/gpt-5.6\nsts: \"\"\nkeyterms: [Vision Agents]\nvideo:\n  source: camera\n");
+        Write("agent.yaml", "name: receptionist\nllm: openai/gpt-5.6\nsts: \"\"\nspeed: 0.9\nharness: default\nkeyterms: [Vision Agents]\nvideo:\n  source: camera\ndispatch:\n  incoming_call: disabled\n  text: enabled\n");
 
         var folder = Folder.Load(_root);
 
         Assert.Equal("receptionist", folder.Name);
         Assert.Equal("openai/gpt-5.6", folder.Declaration.Llm);
+        Assert.Equal((0.9, "default"), (folder.Declaration.Speed, folder.Declaration.Harness));
         Assert.Equal(["Vision Agents"], folder.Declaration.Keyterms);
         Assert.Equal("", folder.Declaration.Sts);
         Assert.Equal(new VideoDeclaration("camera", 1), folder.Declaration.Video);
+        Assert.Equal(new DispatchDeclaration("disabled", "enabled"), folder.Declaration.Dispatch);
     }
 
     [Fact]
@@ -157,11 +159,13 @@ public sealed class FolderTests : IDisposable
         Write("agent.yaml", "name: jean\n");
 
         Assert.Null(Folder.Load(_root).Declaration.Sts);
+        Assert.Null(Folder.Load(_root).Declaration.Dispatch);
     }
 
     [Theory]
     [InlineData("name: jean\nlmm: openai/gpt-5.6\n")]
     [InlineData("video:\n  max_frames: 9\n")]
+    [InlineData("dispatch:\n  sms: enabled\n")]
     [InlineData("keyterms: Vision Agents\n")]
     public void ADeclarationKeyNobodyKnowsIsRefused(string declaration)
     {
@@ -183,6 +187,67 @@ public sealed class FolderTests : IDisposable
 
         Write("knowledge/urls.yaml", "- https://example.com/plans\n");
         Assert.NotEqual(folder.Hash(), Folder.Load(_root).Hash());
+    }
+
+    [Fact]
+    public void RefreshHoursAndSimulationsHashTheWayGoHashesThem()
+    {
+        Write("agent.yaml", "name: jean\nllm: openai/gpt-5.6\n");
+        Write("instructions.md", "You are Jean.\n");
+        Write("skills/think.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n");
+        Write("knowledge/pricing.md", "# Pricing\n\nA penny.\n");
+        Write("knowledge/urls.yaml", "- https://example.com/pricing\n- url: https://example.com/plans\n  title: Plans\n  refresh_hours: 24\n");
+        Write("simulations/b.yaml",
+            "- name: lunch\n  scenario: \"Order a <club> & say \\\"hi\\\"\\n\\tthen café\"\n  assertion: One wrap.\n  variations: 3\n  tags:\n    z: \"1\"\n    a: \"2\"\n" +
+            "- name: quiet\n  scenario: Say nothing.\n  assertion: Nothing said.\n  mode: audio\n");
+        Write("simulations/a.yaml", "- name: first\n  scenario: Hi.\n  assertion: Hello.\n  tags: {}\n");
+
+        var folder = Folder.Load(_root);
+        Assert.Equal("d242f7b676d98e6335567dd98c2e44af", folder.Hash());
+        Assert.Equal(["first", "lunch", "quiet"], folder.Simulations!.Select(simulation => simulation.Name));
+        Assert.Equal(24, folder.KnowledgeUrls[1].RefreshHours);
+
+        Directory.Delete(Path.Combine(_root, "simulations"), recursive: true);
+        Assert.Equal("3ddc02964f8d54f4b6e3fb5ce58b37ef", Folder.Load(_root).Hash());
+
+        Write("knowledge/urls.yaml", "- https://example.com/pricing\n");
+        Directory.CreateDirectory(Path.Combine(_root, "simulations"));
+        var empty = Folder.Load(_root);
+        Assert.Empty(empty.Simulations!);
+        Assert.Equal("922c062197206e70c42ae6d98b484fc0", empty.Hash());
+    }
+
+    [Fact]
+    public void ADirectoryWithoutSimulationsLeavesTheStoredOnesAlone()
+    {
+        Write("agent.yaml", "name: jean\n");
+
+        Assert.Null(Folder.Load(_root).Simulations);
+    }
+
+    [Theory]
+    [InlineData("- name: lunch\n  scenario: Order.\n")]
+    [InlineData("- name: lunch\n  scenario: Order.\n  assertion: Done.\n  mode: video\n")]
+    [InlineData("- name: lunch\n  scenario: Order.\n  assertion: Done.\n  turns: 3\n")]
+    [InlineData("- name: lunch\n  scenario: Order.\n  assertion: Done.\n- name: lunch\n  scenario: Again.\n  assertion: Done.\n")]
+    public void ASimulationThatCannotRunOrIsNamedTwiceIsRefused(string declaration)
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("simulations/lunch.yaml", declaration);
+
+        Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("1.5")]
+    [InlineData("daily")]
+    public void ARefreshThatIsNotAWholeNumberOfHoursIsRefused(string hours)
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("knowledge/urls.yaml", $"- url: https://example.com/plans\n  refresh_hours: {hours}\n");
+
+        Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
     }
 
     [Fact]

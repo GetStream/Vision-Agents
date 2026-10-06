@@ -44,13 +44,13 @@ public sealed class ClientTests
     public async Task AUserHoldsTheirOwnTokenAndIsNotServerSide()
     {
         await using var router = await TestRouter.StartAsync();
-        router.On("GET", "/v1/agents/sessions", 200, Array.Empty<object>());
+        router.On("POST", "/v1/agents/sessions/query", 200, Page());
         using var server = new VisionAgentsClient(new VisionAgentsOptions { Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret });
 
         var user = server.AsUser("ada", "user-token");
-        await user.Sessions.ListAsync(cancellationToken: TestContext.Current.CancellationToken);
+        await user.Sessions.QueryAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-        var seen = router.Only("GET", "/v1/agents/sessions");
+        var seen = router.Only("POST", "/v1/agents/sessions/query");
         Assert.Equal("Bearer user-token", seen.Headers["Authorization"]);
         Assert.Equal("jwt", seen.Headers["Stream-Auth-Type"]);
         Assert.False(user.ServerSide);
@@ -72,6 +72,28 @@ public sealed class ClientTests
         Assert.Equal("key", seen.Headers["api_key"]);
         Assert.Equal("jwt", seen.Headers["stream-auth-type"]);
         Assert.Equal("ada", Fixtures.Claims(seen.Headers["Authorization"]).Text("user_id"));
+    }
+
+    [Fact]
+    public void NamingNoRouterGoesToTheHostedOneThroughTheProxy()
+    {
+        if (Environment.GetEnvironmentVariable(Backend.UrlEnv) is { Length: > 0 })
+        {
+            return;
+        }
+
+        var backend = new Backend(new VisionAgentsOptions { ApiKey = "key", Token = "tok", UserId = "ada" });
+
+        Assert.Equal(Backend.DefaultUrl, backend.Url);
+        Assert.True(backend.Authenticate);
+    }
+
+    [Fact]
+    public void ARouterNamedByUrlLeavesTheProxyOff()
+    {
+        var backend = new Backend(new VisionAgentsOptions { Url = "http://router", CustomerId = "examples" });
+
+        Assert.False(backend.Authenticate);
     }
 
     [Fact]
@@ -116,16 +138,16 @@ public sealed class ClientTests
         await using var router = await TestRouter.StartAsync();
         router.On("POST", "/v1/agents/guests", 200, new { id = "guest-1", token = "guest-token", name = "Visitor" });
         router.On("POST", "/v1/agents/guests/claim", 200, new { guest_id = "guest-1", user_id = "ada", sessions = 2 });
-        router.On("GET", "/v1/agents/sessions", 200, Array.Empty<object>());
+        router.On("POST", "/v1/agents/sessions/query", 200, Page());
         using var client = new VisionAgentsClient(new VisionAgentsOptions { Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret });
         var cancel = TestContext.Current.CancellationToken;
 
         var guest = await client.GuestUserAsync(new GuestOptions { Name = "Visitor" }, cancel);
-        await client.AsGuest(guest).Sessions.ListAsync(cancellationToken: cancel);
+        await client.AsGuest(guest).Sessions.QueryAsync(cancellationToken: cancel);
         await client.ClaimGuestUserAsync(guest.Id, "ada", cancel);
 
         Assert.Equal("Visitor", router.Only("POST", "/v1/agents/guests").Body.Text("name"));
-        Assert.Equal("Bearer guest-token", router.Only("GET", "/v1/agents/sessions").Headers["Authorization"]);
+        Assert.Equal("Bearer guest-token", router.Only("POST", "/v1/agents/sessions/query").Headers["Authorization"]);
         var claim = router.Only("POST", "/v1/agents/guests/claim").Body;
         Assert.Equal(("guest-1", "ada"), (claim.Text("guest_id"), claim.Text("user_id")));
     }
@@ -142,35 +164,91 @@ public sealed class ClientTests
     }
 
     [Fact]
-    public async Task SessionsAreListedAndSearchedWithTheQueryTheRouterReads()
+    public async Task SessionsAreQueriedAndSearchedWithTheFilterTheRouterReads()
     {
         await using var router = await TestRouter.StartAsync();
-        router.On("GET", "/v1/agents/sessions", 200, new[] { Fixtures.Session("s1") });
-        router.On("GET", "/v1/agents/sessions/search", 200, new[] { Fixtures.Session("s2") });
+        var queried = 0;
+        router.On("POST", "/v1/agents/sessions/query", _ => new Reply(200, ++queried == 1
+            ? Page(true, "c2", Fixtures.Session("s1"))
+            : Page(false, null, Fixtures.Session("s2"))));
         router.On("GET", "/v1/agents/sessions/s1", 200, Fixtures.Session("s1"));
         using var client = Fixtures.Client(router);
         var cancel = TestContext.Current.CancellationToken;
 
-        var listed = await client.Sessions.ListAsync(new SessionQuery
+        var listed = await client.Agent("support").Sessions.QueryAsync(new SessionQuery
         {
-            Agent = "support", State = "running", Custom = new() { ["suite"] = "unit" }, Limit = 10,
-            CreatedAfter = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero),
+            UserId = "u1", State = "live", AgentId = "jean", Modality = "text", Limit = 10, Cursor = "c1",
         }, cancel);
-        var found = await client.Sessions.SearchAsync("billing", new SessionQuery { Project = "docs" }, cancel);
+        var found = await client.Sessions.SearchAsync("billing", new SessionQuery { UserId = "u1" }, cancel);
         var read = await client.Sessions.GetAsync("s1", cancel);
 
-        Assert.Equal("s1", Assert.Single(listed).Id);
-        Assert.Equal("s2", Assert.Single(found).Id);
+        Assert.Equal(("s1", true, "c2"), (Assert.Single(listed.Items).Id, listed.HasMore, listed.NextCursor));
+        Assert.Equal(("s2", false), (Assert.Single(found.Items).Id, found.HasMore));
         Assert.False(read.Live);
-        var query = router.Only("GET", "/v1/agents/sessions").Query;
-        Assert.Equal("support", query["agent"]);
-        Assert.Equal("running", query["state"]);
-        Assert.Equal("""{"suite":"unit"}""", query["custom"]);
-        Assert.Equal("10", query["limit"]);
-        Assert.StartsWith("2026-09-01T00:00:00", query["created_after"]);
-        Assert.False(query.ContainsKey("offset"));
-        var search = router.Only("GET", "/v1/agents/sessions/search").Query;
-        Assert.Equal(("billing", "docs"), (search["q"], search["project"]));
+        var bodies = router.To("POST", "/v1/agents/sessions/query").Select(seen => seen.Body!.AsObject()).ToList();
+        Assert.Equal(["cursor", "filter", "limit"], bodies[0].Select(pair => pair.Key).Order());
+        Assert.Equal(("c1", 10), (bodies[0].Text("cursor"), bodies[0]["limit"]!.GetValue<int>()));
+        Assert.Equal("""{"agent":"support","agent_id":"jean","modality":"text","state":"live","user_id":"u1"}""",
+            bodies[0]["filter"]!.ToJsonString());
+        Assert.Equal("""{"text":{"$q":"billing"},"user_id":"u1"}""", bodies[1]["filter"]!.ToJsonString());
+    }
+
+    [Fact]
+    public async Task ASessionIsUpdatedStoppedAndDeletedByItsId()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("PATCH", "/v1/agents/sessions/s1", 200, Fixtures.Session("s1"));
+        router.On("DELETE", "/v1/agents/sessions/s1", 204);
+        router.On("DELETE", "/v1/agents/sessions/s1/memories", 204);
+        router.On("DELETE", "/v1/agents/users/ada/memories", 204);
+        using var client = Fixtures.Client(router);
+        var cancel = TestContext.Current.CancellationToken;
+
+        var updated = await client.Agent("support").Sessions.UpdateAsync("s1", new UpdateSessionRequest { Title = "Pricing" }, cancel);
+        await client.Sessions.DeleteMemoriesAsync("s1", cancel);
+        await client.Sessions.DeleteAsync("s1", cancel);
+        await client.Memories.TruncateAsync("ada", cancel);
+
+        Assert.Equal("s1", updated.Id);
+        Assert.Equal("""{"title":"Pricing"}""", router.Only("PATCH", "/v1/agents/sessions/s1").Body!.ToJsonString());
+        router.Only("DELETE", "/v1/agents/sessions/s1/memories");
+        router.Only("DELETE", "/v1/agents/sessions/s1");
+        router.Only("DELETE", "/v1/agents/users/ada/memories");
+        await Assert.ThrowsAsync<ConfigurationException>(() => client.Memories.TruncateAsync("", cancel));
+    }
+
+    [Fact]
+    public async Task SimulationsAreWrittenRunAndReadBack()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/simulations", 201, Simulation());
+        router.On("GET", "/v1/agents/simulations", 200, new[] { Simulation() });
+        router.On("GET", "/v1/agents/simulations/sim-1", 200, Simulation());
+        router.On("PUT", "/v1/agents/simulations/sim-1", 200, Simulation());
+        router.On("DELETE", "/v1/agents/simulations/sim-1", 204);
+        router.On("POST", "/v1/agents/simulations/sim-1/run", 202, Run("running"));
+        router.On("GET", "/v1/agents/simulation-runs/run-1", 200, Run("passed"));
+        router.On("GET", "/v1/agents/simulation-runs", 200, new[] { Run("passed") });
+        router.On("POST", "/v1/agents/simulation-runs/run-1/cancel", 200, Run("cancelled"));
+        using var client = Fixtures.Client(router);
+        var cancel = TestContext.Current.CancellationToken;
+        var asked = new SimulationRequest { Name = "lunch", ConfigId = "cfg-1", Scenario = "Order lunch.", Assertion = "One wrap." };
+
+        var simulation = await client.Simulations.CreateAsync(asked, cancel);
+        Assert.Single(await client.Simulations.ListAsync(cancel));
+        await client.Simulations.GetAsync(simulation.Id, cancel);
+        await client.Simulations.UpdateAsync(simulation.Id, asked, cancel);
+        var run = await client.Simulations.RunAsync(simulation.Id, cancel);
+        var finished = await client.Simulations.Runs.GetAsync(run.Id, cancel);
+        Assert.Single(await client.Simulations.Runs.ListAsync(new SimulationRunQuery { SimulationId = "sim-1", Limit = 5 }, cancel));
+        var cancelled = await client.Simulations.Runs.CancelAsync(run.Id, cancel);
+        await client.Simulations.DeleteAsync(simulation.Id, cancel);
+
+        Assert.Equal(("running", "passed", "cancelled"), (run.State, finished.State, cancelled.State));
+        Assert.Equal(("lunch", "cfg-1"), (router.Only("POST", "/v1/agents/simulations").Body.Text("name"), router.Only("PUT", "/v1/agents/simulations/sim-1").Body.Text("config_id")));
+        var runs = router.Only("GET", "/v1/agents/simulation-runs").Query;
+        Assert.Equal(("sim-1", "5"), (runs["simulation_id"], runs["limit"]));
+        router.Only("DELETE", "/v1/agents/simulations/sim-1");
     }
 
     [Fact]
@@ -180,8 +258,9 @@ public sealed class ClientTests
         var items = Enumerable.Range(0, 5).Select(index => new { response_id = $"r{index}", kind = "said", text = $"{index}" }).ToArray();
         router.On("GET", "/v1/agents/sessions/s1/responses/items", seen =>
         {
-            var offset = seen.Query.TryGetValue("offset", out var at) ? int.Parse(at) : 0;
-            return new Reply(200, items.Skip(offset).Take(int.Parse(seen.Query["limit"])));
+            var at = seen.Query.TryGetValue("cursor", out var cursor) ? int.Parse(cursor) : 0;
+            var next = at + int.Parse(seen.Query["limit"]);
+            return new Reply(200, new { items = items.Skip(at).Take(next - at), has_more = next < items.Length, next_cursor = next < items.Length ? $"{next}" : null });
         });
         using var client = Fixtures.Client(router);
 
@@ -200,7 +279,7 @@ public sealed class ClientTests
     {
         await using var router = await TestRouter.StartAsync();
         router.On("POST", "/v1/agents/sessions/s1/responses", 202, new { id = "r1", session_id = "s1", status = "running" });
-        router.On("GET", "/v1/agents/sessions/s1/responses/items", 200, new[] { new { response_id = "r1", kind = "said", text = "hi" } });
+        router.On("GET", "/v1/agents/sessions/s1/responses/items", 200, new { items = new[] { new { response_id = "r1", kind = "said", text = "hi" } }, has_more = false });
         using var client = Fixtures.Client(router);
         var cancel = TestContext.Current.CancellationToken;
 
@@ -217,14 +296,14 @@ public sealed class ClientTests
     public async Task ARewindNamesTheResponseToGoBackTo()
     {
         await using var router = await TestRouter.StartAsync();
-        router.On("GET", "/v1/agents/sessions/s1/responses", 200, new[] { new { id = "r1", session_id = "s1", status = "completed" } });
+        router.On("GET", "/v1/agents/sessions/s1/responses", 200, new { items = new[] { new { id = "r1", session_id = "s1", status = "completed" } }, has_more = false });
         router.On("POST", "/v1/agents/sessions/s1/rewind", 204);
         router.On("POST", "/v1/agents/sessions/kept/rewind", 400, new { error = "a conversation kept in Stream Chat cannot be rewound; fork it at the response instead" });
         using var client = Fixtures.Client(router);
         var cancel = TestContext.Current.CancellationToken;
 
         var responses = client.Sessions.Responses("s1");
-        var kept = Assert.Single(await responses.ListAsync(cancellationToken: cancel));
+        var kept = Assert.Single((await responses.ListAsync(cancellationToken: cancel)).Items);
         await responses.RewindAsync(kept.Id, cancel);
 
         Assert.Equal("r1", router.Only("POST", "/v1/agents/sessions/s1/rewind").Body.Text("response_id"));
@@ -234,22 +313,48 @@ public sealed class ClientTests
     }
 
     [Fact]
-    public async Task ARecordIsForkedAtAResponseAndClosedByDeletingIt()
+    public async Task ARecordIsForkedAtAResponseAndClosedByStoppingIt()
     {
         await using var router = await TestRouter.StartAsync();
         router.On("GET", "/v1/agents/sessions/s1", 200, Fixtures.Session("s1"));
         router.On("POST", "/v1/agents/sessions/s1/fork", 201, Fixtures.Session("s2"));
-        router.On("DELETE", "/v1/agents/sessions/s1", 204);
+        router.On("POST", "/v1/agents/sessions/s1/stop", 204);
         using var client = Fixtures.Client(router);
         var cancel = TestContext.Current.CancellationToken;
 
         await using var parent = await client.Sessions.GetAsync("s1", cancel);
-        var forked = await parent.ForkAsync(new ForkOptions { ResponseId = "r1", Title = "again" }, cancel);
+        var forked = await parent.ForkAsync(new ForkOptions { ResponseId = "r1", Title = "again", ProjectId = "docs" }, cancel);
         await parent.CloseAsync(cancel);
 
         Assert.Equal("s2", forked.Id);
         var fork = router.Only("POST", "/v1/agents/sessions/s1/fork").Body;
-        Assert.Equal(("r1", "again"), (fork.Text("response_id"), fork.Text("title")));
+        Assert.Equal(("r1", "again", "docs"), (fork.Text("response_id"), fork.Text("title"), fork.Text("project_id")));
+        router.Only("POST", "/v1/agents/sessions/s1/stop");
+        Assert.Empty(router.To("DELETE", "/v1/agents/sessions/s1"));
+    }
+
+    [Fact]
+    public async Task ASessionIsChangedWithOnlyWhatWasSet()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("GET", "/v1/agents/sessions/s1", 200, Fixtures.Session("s1"));
+        router.On("PATCH", "/v1/agents/sessions/s1", 200, Fixtures.Session("s1"));
+        router.On("DELETE", "/v1/agents/sessions/s1", 204);
+        router.On("DELETE", "/v1/agents/sessions/s1/memories", 204);
+        router.On("POST", "/v1/agents/sessions/s1/stop", 204);
+        using var client = Fixtures.Client(router);
+        var cancel = TestContext.Current.CancellationToken;
+
+        await using var session = await client.Sessions.GetAsync("s1", cancel);
+        var updated = await session.UpdateAsync(new UpdateSessionRequest { Llm = "llm-thinking", Thinking = "high" }, cancel);
+        await session.DeleteMemoriesAsync(cancel);
+        await session.DeleteAsync(cancel);
+
+        Assert.Equal("s1", updated.Id);
+        var body = router.Only("PATCH", "/v1/agents/sessions/s1").Body!.AsObject();
+        Assert.Equal(["llm", "thinking"], body.Select(pair => pair.Key).Order());
+        Assert.Equal(("llm-thinking", "high"), (body.Text("llm"), body.Text("thinking")));
+        router.Only("DELETE", "/v1/agents/sessions/s1/memories");
         router.Only("DELETE", "/v1/agents/sessions/s1");
     }
 
@@ -261,10 +366,36 @@ public sealed class ClientTests
         using var client = Fixtures.Client(router);
 
         await client.PostAsync<Models.Session>("/v1/agents/sessions",
-            new CreateSessionRequest { ConversationId = "agent:1", PersistConversation = true }, TestContext.Current.CancellationToken);
+            new CreateSessionRequest { ConversationId = "agent:1", Incognito = true }, TestContext.Current.CancellationToken);
 
         var body = router.Only("POST", "/v1/agents/sessions").Body!.AsObject();
-        Assert.Equal(["conversation_id", "persist_conversation"], body.Select(pair => pair.Key).Order());
-        Assert.Equal(JsonValueKind.True, body["persist_conversation"]!.GetValueKind());
+        Assert.Equal(["conversation_id", "incognito"], body.Select(pair => pair.Key).Order());
+        Assert.Equal(JsonValueKind.True, body["incognito"]!.GetValueKind());
     }
+
+    [Fact]
+    public void APolicyKeepsAnAbsentModelListApartFromAnEmptyOne()
+    {
+        var absent = JsonSerializer.Deserialize<Policy>("{}", Json.Options)!;
+        var none = JsonSerializer.Deserialize<Policy>("""{"allowed_models":[],"tags":{"team":"a"}}""", Json.Options)!;
+
+        Assert.Null(absent.AllowedModels);
+        Assert.Empty(none.AllowedModels!);
+        Assert.Equal("{}", JsonSerializer.Serialize(absent, Json.Options));
+        Assert.Equal("""{"allowed_models":[],"tags":{"team":"a"}}""", JsonSerializer.Serialize(none, Json.Options));
+    }
+
+    private static object Page(bool hasMore = false, string? next = null, params object[] items) =>
+        new { items, has_more = hasMore, next_cursor = next };
+
+    private static object Simulation() => new
+    {
+        id = "sim-1", config_id = "cfg-1", name = "lunch", scenario = "Order lunch.", assertion = "One wrap.", mode = "text",
+        variations = 1, max_turns = 8, created_at = "2026-09-24T10:00:00Z", updated_at = "2026-09-24T10:00:00Z",
+    };
+
+    private static object Run(string state) => new
+    {
+        id = "run-1", simulation_id = "sim-1", state, created_at = "2026-09-24T10:00:00Z",
+    };
 }

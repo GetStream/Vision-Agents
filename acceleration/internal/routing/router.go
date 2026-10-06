@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math"
 	"slices"
 	"sort"
@@ -27,6 +28,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -67,11 +69,41 @@ type VoiceResolver interface {
 	ResolveVoice(ctx context.Context, customerID, provider, voice string) (string, error)
 }
 
+// ErrModelNotAllowed says the customer's policies allow none of the models a request could
+// be routed to.
+var ErrModelNotAllowed = errors.New("routing: your policy does not allow this model")
+
 // Gate is what an organization's and an app's policies say about a customer's request
 // before anything is routed. Admit refuses a customer who has spent their budget, and
-// otherwise returns the data policy every request of theirs is held to on top of its own.
+// otherwise returns what every request of theirs is held to on top of its own.
 type Gate interface {
-	Admit(ctx context.Context, customerID string) (options.DataPolicy, error)
+	Admit(ctx context.Context, customerID string) (Admission, error)
+}
+
+// Admission is what a customer's policies hold every request of theirs to.
+type Admission struct {
+	// DataPolicy is the floor every request is held to, on top of whatever it asked for.
+	DataPolicy options.DataPolicy
+	// Models are the "provider/model" names the customer may be routed to. Nil allows
+	// every model, and an empty list allows none.
+	Models []string
+	// Tags are laid over the request's own on every row its work records, so a request
+	// cannot relabel what its policies attribute.
+	Tags Tags
+}
+
+// Labelled returns the tags with the policies' laid over them, leaving the ones passed in
+// untouched.
+func (a Admission) Labelled(tags Tags) Tags {
+	if len(a.Tags) == 0 {
+		return tags
+	}
+	merged := maps.Clone(tags)
+	if merged == nil {
+		merged = Tags{}
+	}
+	maps.Copy(merged, a.Tags)
+	return merged
 }
 
 // Options configures a Router. Store, Live and Voices are optional: without them the
@@ -208,7 +240,7 @@ func New[P Provider](options Options[P]) (*Router[P], error) {
 		modality: options.Modality,
 		config:   options.Config,
 		registry: options.Registry,
-		recorder: NewRecorder(options.Modality, options.Store, options.Live, logger),
+		recorder: newRecorder(options.Modality, options.Store, options.Live, options.Gate, logger),
 		live:     options.Live,
 		voices:   options.Voices,
 		gate:     options.Gate,
@@ -249,7 +281,7 @@ func (r *Router[P]) Providers(ctx context.Context) []Candidate {
 // puts that one first instead, for as long as it is available.
 func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []string) ([]Candidate, error) {
 	if target == "" {
-		return nil, errors.New("routing: target is required")
+		return nil, stack.Wrap(errors.New("routing: target is required"))
 	}
 
 	if provider, ok := r.config.Provider(target); ok {
@@ -258,7 +290,7 @@ func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []
 
 	alias, ok := r.config.Aliases[target]
 	if !ok {
-		return nil, fmt.Errorf("routing: unknown target %q", target)
+		return nil, stack.Wrap(fmt.Errorf("routing: unknown target %q", target))
 	}
 
 	var candidates []Candidate
@@ -274,7 +306,7 @@ func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []
 	}
 
 	if len(candidates) == 0 {
-		return nil, fmt.Errorf("routing: no provider satisfies %q for languages %s", target, strings.Join(languageHints, ","))
+		return nil, stack.Wrap(fmt.Errorf("routing: no provider satisfies %q for languages %s", target, strings.Join(languageHints, ",")))
 	}
 
 	rank(candidates)
@@ -289,19 +321,27 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 	var zero P
 
 	if request.CustomerID == "" {
-		return zero, ProviderConfig{}, errors.New("routing: customer id is required")
+		return zero, ProviderConfig{}, stack.Wrap(errors.New("routing: customer id is required"))
 	}
 	if err := request.Tags.Validate(); err != nil {
 		return zero, ProviderConfig{}, err
 	}
 
-	floor, err := r.Admit(ctx, request.CustomerID)
+	admission, err := r.Admit(ctx, request.CustomerID)
 	if err != nil {
 		return zero, ProviderConfig{}, err
 	}
-	request.DataPolicy = request.DataPolicy.Stricter(floor)
+	// Every row is recorded under the merged tags, so they have to fit what a row carries.
+	if err := admission.Labelled(request.Tags).Validate(); err != nil {
+		return zero, ProviderConfig{}, err
+	}
+	request.DataPolicy = request.DataPolicy.Stricter(admission.DataPolicy)
 
 	candidates, err := r.Candidates(ctx, request)
+	if err != nil {
+		return zero, ProviderConfig{}, err
+	}
+	candidates, err = allowed(candidates, admission.Models)
 	if err != nil {
 		return zero, ProviderConfig{}, err
 	}
@@ -335,16 +375,16 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 		failures = append(failures, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
 	}
 
-	return zero, ProviderConfig{}, fmt.Errorf("routing: every candidate for %q failed: %w",
-		request.Target, errors.Join(failures...))
+	return zero, ProviderConfig{}, stack.Wrap(fmt.Errorf("routing: every candidate for %q failed: %w",
+		request.Target, errors.Join(failures...)))
 }
 
-// Admit asks the customer's policies whether they may spend anything, and what data policy
-// their requests are held to. A modality whose session serves many units of work asks it
-// again before each one, since a budget can run out mid-session.
-func (r *Router[P]) Admit(ctx context.Context, customerID string) (options.DataPolicy, error) {
+// Admit asks the customer's policies whether they may spend anything, and what their
+// requests are held to. A modality whose session serves many units of work asks it again
+// before each one, since a budget can run out mid-session.
+func (r *Router[P]) Admit(ctx context.Context, customerID string) (Admission, error) {
 	if r.gate == nil {
-		return options.DataPolicy{}, nil
+		return Admission{}, nil
 	}
 	return r.gate.Admit(ctx, customerID)
 }
@@ -395,8 +435,8 @@ func (r *Router[P]) resolveChain(ctx context.Context, request Request) ([]Candid
 	}
 
 	if len(chain) == 0 {
-		return nil, fmt.Errorf("routing: nothing in the priority list %s can serve this request: %w",
-			strings.Join(request.Providers, ", "), errors.Join(refusals...))
+		return nil, stack.Wrap(fmt.Errorf("routing: nothing in the priority list %s can serve this request: %w",
+			strings.Join(request.Providers, ", "), errors.Join(refusals...)))
 	}
 
 	demote(chain)
@@ -466,7 +506,7 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 	if r.validate != nil {
 		if err := r.validate(provider, candidate.Config); err != nil {
 			provider.Close()
-			return zero, err
+			return zero, stack.Wrap(err)
 		}
 	}
 	if err := provider.Start(ctx); err != nil {
@@ -512,7 +552,7 @@ func (r *Router[P]) voice(ctx context.Context, request Request, provider string)
 		// A deployment with no resolver has no voices of its own, so a name asked for as
 		// one is a mistake, and passing it on would send the prefix to the provider.
 		if strings.HasPrefix(request.Voice, options.OwnVoicePrefix) {
-			return "", fmt.Errorf("routing: %q was asked for, and this deployment has no voices of its own", request.Voice)
+			return "", stack.Wrap(fmt.Errorf("routing: %q was asked for, and this deployment has no voices of its own", request.Voice))
 		}
 		return request.Voice, nil
 	}
@@ -568,7 +608,29 @@ func serving(candidates []Candidate, terms []options.Term) ([]Candidate, error) 
 	if len(unserved) == 0 {
 		unserved = []string{"that combination of terms"}
 	}
-	return nil, fmt.Errorf("routing: no provider can express %s", strings.Join(unserved, ", "))
+	return nil, stack.Wrap(fmt.Errorf("routing: no provider can express %s", strings.Join(unserved, ", ")))
+}
+
+// allowed narrows candidates to the models the customer's policies allow. A request none of
+// whose candidates is allowed is refused rather than sent somewhere else, since an
+// allowlist that fell back to any model would not be one.
+func allowed(candidates []Candidate, models []string) ([]Candidate, error) {
+	if models == nil {
+		return candidates, nil
+	}
+
+	kept := make([]Candidate, 0, len(candidates))
+	asked := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		asked = append(asked, candidate.Config.Name())
+		if slices.Contains(models, candidate.Config.Name()) {
+			kept = append(kept, candidate)
+		}
+	}
+	if len(kept) == 0 {
+		return nil, stack.Wrap(fmt.Errorf("%w: it allows none of %s", ErrModelNotAllowed, strings.Join(asked, ", ")))
+	}
+	return kept, nil
 }
 
 // permitted narrows candidates to the ones allowed to do this work at all.
@@ -614,8 +676,8 @@ func permitted(candidates []Candidate, policy options.DataPolicy) ([]Candidate, 
 	if len(unmet) == 0 {
 		unmet = []string{"that combination of data policy requirements"}
 	}
-	return nil, fmt.Errorf("routing: no provider meets your data policy: none offers %s",
-		strings.Join(unmet, " and "))
+	return nil, stack.Wrap(fmt.Errorf("routing: no provider meets your data policy: none offers %s",
+		strings.Join(unmet, " and ")))
 }
 
 // seeing narrows candidates to the ones that accept every extra input kind the request
@@ -650,7 +712,7 @@ func seeing(candidates []Candidate, modalities []string) ([]Candidate, error) {
 	if len(unmet) == 0 {
 		unmet = []string{"that combination of input modalities"}
 	}
-	return nil, fmt.Errorf("routing: no provider accepts %s input", strings.Join(unmet, ", "))
+	return nil, stack.Wrap(fmt.Errorf("routing: no provider accepts %s input", strings.Join(unmet, ", ")))
 }
 
 // retentionUnmet names a retention requirement nothing offered, in the words it was asked

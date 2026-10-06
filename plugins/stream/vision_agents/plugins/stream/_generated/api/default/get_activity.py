@@ -8,7 +8,7 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.activity_bucket import ActivityBucket
 from ...models.activity_granularity import ActivityGranularity
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...types import UNSET, Response, Unset
 
 
@@ -46,7 +46,7 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | list[ActivityBucket] | None:
+) -> ErrorResponse | list[ActivityBucket] | None:
     if response.status_code == 200:
         response_200 = []
         _response_200 = response.json()
@@ -58,19 +58,24 @@ def _parse_response(
         return response_200
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
+
+    if response.status_code == 500:
+        response_500 = ErrorResponse.from_dict(response.json())
+
+        return response_500
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -80,7 +85,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | list[ActivityBucket]]:
+) -> Response[ErrorResponse | list[ActivityBucket]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -95,7 +100,7 @@ def sync_detailed(
     granularity: ActivityGranularity | Unset = UNSET,
     from_: datetime.datetime,
     to: datetime.datetime,
-) -> Response[Error | list[ActivityBucket]]:
+) -> Response[ErrorResponse | list[ActivityBucket]]:
     """Who used the calling customer's agents, and how much
 
      Sessions opened, responses produced and calls held, counted per bucket, alongside how many distinct
@@ -108,15 +113,15 @@ def sync_detailed(
         granularity (ActivityGranularity | Unset): Separate from Granularity, and coarser, because
             distinct users cannot be summed: a month of them is who came back rather than the sum of
             its days.
-        from_ (datetime.datetime):
-        to (datetime.datetime):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[ActivityBucket]]
+        Response[ErrorResponse | list[ActivityBucket]]
     """
 
     kwargs = _get_kwargs(
@@ -138,7 +143,7 @@ def sync(
     granularity: ActivityGranularity | Unset = UNSET,
     from_: datetime.datetime,
     to: datetime.datetime,
-) -> Error | list[ActivityBucket] | None:
+) -> ErrorResponse | list[ActivityBucket] | None:
     """Who used the calling customer's agents, and how much
 
      Sessions opened, responses produced and calls held, counted per bucket, alongside how many distinct
@@ -151,15 +156,15 @@ def sync(
         granularity (ActivityGranularity | Unset): Separate from Granularity, and coarser, because
             distinct users cannot be summed: a month of them is who came back rather than the sum of
             its days.
-        from_ (datetime.datetime):
-        to (datetime.datetime):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[ActivityBucket]
+        ErrorResponse | list[ActivityBucket]
     """
 
     return sync_detailed(
@@ -176,7 +181,7 @@ async def asyncio_detailed(
     granularity: ActivityGranularity | Unset = UNSET,
     from_: datetime.datetime,
     to: datetime.datetime,
-) -> Response[Error | list[ActivityBucket]]:
+) -> Response[ErrorResponse | list[ActivityBucket]]:
     """Who used the calling customer's agents, and how much
 
      Sessions opened, responses produced and calls held, counted per bucket, alongside how many distinct
@@ -189,15 +194,15 @@ async def asyncio_detailed(
         granularity (ActivityGranularity | Unset): Separate from Granularity, and coarser, because
             distinct users cannot be summed: a month of them is who came back rather than the sum of
             its days.
-        from_ (datetime.datetime):
-        to (datetime.datetime):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[ActivityBucket]]
+        Response[ErrorResponse | list[ActivityBucket]]
     """
 
     kwargs = _get_kwargs(
@@ -217,7 +222,7 @@ async def asyncio(
     granularity: ActivityGranularity | Unset = UNSET,
     from_: datetime.datetime,
     to: datetime.datetime,
-) -> Error | list[ActivityBucket] | None:
+) -> ErrorResponse | list[ActivityBucket] | None:
     """Who used the calling customer's agents, and how much
 
      Sessions opened, responses produced and calls held, counted per bucket, alongside how many distinct
@@ -230,15 +235,15 @@ async def asyncio(
         granularity (ActivityGranularity | Unset): Separate from Granularity, and coarser, because
             distinct users cannot be summed: a month of them is who came back rather than the sum of
             its days.
-        from_ (datetime.datetime):
-        to (datetime.datetime):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[ActivityBucket]
+        ErrorResponse | list[ActivityBucket]
     """
 
     return (

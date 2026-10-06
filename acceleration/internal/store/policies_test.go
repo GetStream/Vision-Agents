@@ -52,6 +52,27 @@ func (s *StoreSuite) TestSavingAPolicyReplacesWhatWasThere() {
 	s.Nil(app.PromptInjection, "an app and an organization sharing an id are different scopes")
 }
 
+func (s *StoreSuite) TestSavingAnOrganizationsPolicyWithoutTheRequirementKeepsTheStoredOne() {
+	// A save over HTTP leaves the requirement out, whatever the document it read said, so
+	// one landing after the operator's write keeps what the operator set.
+	yes, no := true, false
+	s.Require().NoError(s.store.SavePolicy(s.ctx, ScopeOrganization, "org-1", PolicyDocument{RequireOwnStreamApp: &yes}))
+	s.Require().NoError(s.store.SavePolicy(s.ctx, ScopeOrganization, "org-1", PolicyDocument{PromptInjection: &yes}))
+
+	document, err := s.store.Policy(s.ctx, ScopeOrganization, "org-1")
+	s.Require().NoError(err)
+	s.Require().NotNil(document.PromptInjection)
+	s.True(*document.PromptInjection)
+	s.Require().NotNil(document.RequireOwnStreamApp, "a save that leaves it out keeps the operator's")
+	s.True(*document.RequireOwnStreamApp)
+
+	s.Require().NoError(s.store.SavePolicy(s.ctx, ScopeOrganization, "org-1", PolicyDocument{RequireOwnStreamApp: &no}))
+	document, err = s.store.Policy(s.ctx, ScopeOrganization, "org-1")
+	s.Require().NoError(err)
+	s.Require().NotNil(document.RequireOwnStreamApp)
+	s.False(*document.RequireOwnStreamApp, "the operator still turns it off")
+}
+
 func (s *StoreSuite) TestAnAppBelongsToTheOrganizationItWasLastSeenUnder() {
 	unknown, err := s.store.OrganizationOf(s.ctx, "app-1")
 	s.Require().NoError(err)

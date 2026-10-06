@@ -32,6 +32,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -408,13 +409,13 @@ type STS struct {
 // New validates the settings and returns an unstarted provider.
 func New(settings Options) (*STS, error) {
 	if settings.Vendor.Provider == "" {
-		return nil, errors.New("openairealtime: a vendor is required")
+		return nil, stack.Wrap(errors.New("openairealtime: a vendor is required"))
 	}
 	if settings.APIKey == "" && settings.Vendor.APIKeyEnvVar != "" {
 		settings.APIKey = os.Getenv(settings.Vendor.APIKeyEnvVar)
 	}
 	if settings.APIKey == "" {
-		return nil, fmt.Errorf("%s: api key is required (set %s)", settings.Vendor.Provider, settings.Vendor.APIKeyEnvVar)
+		return nil, stack.Wrap(fmt.Errorf("%s: api key is required (set %s)", settings.Vendor.Provider, settings.Vendor.APIKeyEnvVar))
 	}
 	if settings.Model == "" {
 		settings.Model = settings.Vendor.Model
@@ -423,25 +424,25 @@ func New(settings Options) (*STS, error) {
 		settings.URL = settings.Vendor.URL
 	}
 	if !strings.HasPrefix(settings.URL, "ws://") && !strings.HasPrefix(settings.URL, "wss://") {
-		return nil, fmt.Errorf("%s: url must be ws:// or wss://, got %s", settings.Vendor.Provider, settings.URL)
+		return nil, stack.Wrap(fmt.Errorf("%s: url must be ws:// or wss://, got %s", settings.Vendor.Provider, settings.URL))
 	}
 	if settings.Vendor.InputSampleRate <= 0 || settings.Vendor.OutputSampleRate <= 0 {
-		return nil, fmt.Errorf("%s: the vendor's sample rates are required", settings.Vendor.Provider)
+		return nil, stack.Wrap(fmt.Errorf("%s: the vendor's sample rates are required", settings.Vendor.Provider))
 	}
 	capabilities := CapabilitiesFor(settings.Vendor, settings.Model)
 	switch settings.TurnDetection {
 	case "", options.TurnServerVAD:
 	case options.TurnSemantic:
 		if !capabilities.SemanticTurns {
-			return nil, fmt.Errorf("%s: %s has no semantic turn detector", settings.Vendor.Provider, settings.Model)
+			return nil, stack.Wrap(fmt.Errorf("%s: %s has no semantic turn detector", settings.Vendor.Provider, settings.Model))
 		}
 	case options.TurnManual:
-		return nil, fmt.Errorf("%s: manual turns are not supported", settings.Vendor.Provider)
+		return nil, stack.Wrap(fmt.Errorf("%s: manual turns are not supported", settings.Vendor.Provider))
 	default:
-		return nil, fmt.Errorf("%s: unknown turn detection %q", settings.Vendor.Provider, settings.TurnDetection)
+		return nil, stack.Wrap(fmt.Errorf("%s: unknown turn detection %q", settings.Vendor.Provider, settings.TurnDetection))
 	}
 	if len(settings.Tools) > 0 && !capabilities.Tools {
-		return nil, fmt.Errorf("%s: %s does not call tools", settings.Vendor.Provider, settings.Model)
+		return nil, stack.Wrap(fmt.Errorf("%s: %s does not call tools", settings.Vendor.Provider, settings.Model))
 	}
 	if settings.HandshakeTimeout == 0 {
 		settings.HandshakeTimeout = 30 * time.Second
@@ -529,7 +530,7 @@ func (s *STS) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
-		return fmt.Errorf("%s: already started", s.options.Vendor.Provider)
+		return stack.Wrap(fmt.Errorf("%s: already started", s.options.Vendor.Provider))
 	}
 	s.started = true
 	s.mu.Unlock()
@@ -539,9 +540,9 @@ func (s *STS) Start(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, s.endpoint(), header)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("%s: dial: %w (http %d)", s.options.Vendor.Provider, err, response.StatusCode)
+			return stack.Wrap(fmt.Errorf("%s: dial: %w (http %d)", s.options.Vendor.Provider, err, response.StatusCode))
 		}
-		return fmt.Errorf("%s: dial: %w", s.options.Vendor.Provider, err)
+		return stack.Wrap(fmt.Errorf("%s: dial: %w", s.options.Vendor.Provider, err))
 	}
 	s.conn = conn
 
@@ -578,7 +579,7 @@ func (s *STS) ProcessAudio(pcm sts.PcmData, participant sts.Participant) error {
 // SendText injects a typed turn and asks the model to answer it.
 func (s *STS) SendText(text string, participant sts.Participant) error {
 	if !s.capabilities.Text {
-		return sts.ErrNoText
+		return stack.Wrap(sts.ErrNoText)
 	}
 	if err := s.ready(); err != nil {
 		return err
@@ -623,7 +624,7 @@ func (s *STS) SendFrame(frame llm.ImagePart) error {
 // SetInstructions changes the system prompt for the replies that follow.
 func (s *STS) SetInstructions(text string) error {
 	if !s.capabilities.InstructionsMidSession {
-		return sts.ErrInstructionsFixed
+		return stack.Wrap(sts.ErrInstructionsFixed)
 	}
 	if err := s.ready(); err != nil {
 		return err
@@ -678,7 +679,7 @@ func (s *STS) Answer(callID string, output string, err error) error {
 // Prompt asks the model to reply now, guided by the text.
 func (s *STS) Prompt(text string) error {
 	if !s.capabilities.Text {
-		return sts.ErrNoText
+		return stack.Wrap(sts.ErrNoText)
 	}
 	if err := s.ready(); err != nil {
 		return err
@@ -782,10 +783,10 @@ func (s *STS) ready() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return fmt.Errorf("%s: session closed", s.options.Vendor.Provider)
+		return stack.Wrap(fmt.Errorf("%s: session closed", s.options.Vendor.Provider))
 	}
 	if !s.started || s.conn == nil {
-		return fmt.Errorf("%s: not started", s.options.Vendor.Provider)
+		return stack.Wrap(fmt.Errorf("%s: not started", s.options.Vendor.Provider))
 	}
 	return nil
 }
@@ -795,31 +796,31 @@ func (s *STS) ready() error {
 // configured some other way.
 func (s *STS) handshake() error {
 	if err := s.conn.SetReadDeadline(time.Now().Add(s.options.HandshakeTimeout)); err != nil {
-		return fmt.Errorf("%s: read handshake: %w", s.options.Vendor.Provider, err)
+		return stack.Wrap(fmt.Errorf("%s: read handshake: %w", s.options.Vendor.Provider, err))
 	}
 	defer s.conn.SetReadDeadline(time.Time{})
 
 	created, err := s.next()
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	if created.Type != eventSessionCreated {
-		return fmt.Errorf("%s: expected %s, got %s", s.options.Vendor.Provider, eventSessionCreated, created.Type)
+		return stack.Wrap(fmt.Errorf("%s: expected %s, got %s", s.options.Vendor.Provider, eventSessionCreated, created.Type))
 	}
 
 	if err := s.send(clientEvent{Type: eventSessionUpdate, Session: s.session()}); err != nil {
-		return fmt.Errorf("%s: send session: %w", s.options.Vendor.Provider, err)
+		return stack.Wrap(fmt.Errorf("%s: send session: %w", s.options.Vendor.Provider, err))
 	}
 	for {
 		event, err := s.next()
 		if err != nil {
-			return err
+			return stack.Wrap(err)
 		}
 		switch event.Type {
 		case eventSessionUpdated:
 			return nil
 		case eventError:
-			return fmt.Errorf("%s: session rejected: %w", s.options.Vendor.Provider, event.Error)
+			return stack.Wrap(fmt.Errorf("%s: session rejected: %w", s.options.Vendor.Provider, event.Error))
 		}
 	}
 }
@@ -828,11 +829,11 @@ func (s *STS) handshake() error {
 func (s *STS) next() (serverEvent, error) {
 	_, raw, err := s.conn.ReadMessage()
 	if err != nil {
-		return serverEvent{}, fmt.Errorf("%s: read handshake: %w", s.options.Vendor.Provider, err)
+		return serverEvent{}, stack.Wrap(fmt.Errorf("%s: read handshake: %w", s.options.Vendor.Provider, err))
 	}
 	var event serverEvent
 	if err := json.Unmarshal(raw, &event); err != nil {
-		return serverEvent{}, fmt.Errorf("%s: decode handshake: %w", s.options.Vendor.Provider, err)
+		return serverEvent{}, stack.Wrap(fmt.Errorf("%s: decode handshake: %w", s.options.Vendor.Provider, err))
 	}
 	if event.Type == eventError && event.Error == nil {
 		event.Error = &apiError{Message: strings.TrimSpace(string(raw))}
@@ -974,13 +975,13 @@ func toolsOf(dialect Dialect, tools []llm.Tool) []tool {
 func (s *STS) send(event clientEvent) error {
 	payload, err := json.Marshal(event)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if err := s.conn.WriteMessage(websocket.TextMessage, payload); err != nil {
-		return fmt.Errorf("%s: write %s: %w", s.options.Vendor.Provider, event.Type, err)
+		return stack.Wrap(fmt.Errorf("%s: write %s: %w", s.options.Vendor.Provider, event.Type, err))
 	}
 	return nil
 }

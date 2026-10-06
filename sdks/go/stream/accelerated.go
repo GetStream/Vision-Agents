@@ -44,11 +44,8 @@ type Config struct {
 	// STT is the model that transcribes.
 	STT string
 	// TTS is the model that speaks.
-	TTS string
-	// Subagent is the model that does the thinking a harness delegates. Overridden by the
-	// harness when it names one.
-	Subagent string
-	Video    *acceleration.SessionVideo
+	TTS   string
+	Video *acceleration.SessionVideo
 	// Voice is a provider-specific voice id.
 	Voice string
 	// Language is a hint, which narrows the candidates in every modality.
@@ -79,11 +76,10 @@ type Config struct {
 // Call is what one conversation is about, as opposed to the agent behind it.
 //
 // The backend joins a call that already exists, so the id here names one somebody has
-// created. The harness, cost and memory fields are rendered from an agent's configuration
+// created. The cost and memory fields are rendered from an agent's configuration
 // before it joins.
 type Call struct {
-	PersistConversation bool
-	ConversationID      string
+	ConversationID string
 	// ID is the call to join. Empty holds the conversation in writing instead.
 	ID string
 	// Type is the Stream call type. Empty leaves the backend's default.
@@ -101,13 +97,12 @@ type Call struct {
 	// are searched.
 	Title       string
 	Description string
-	// Project groups conversations, and is carried as a cost label too.
-	Project string
+	// ProjectID groups conversations, and is carried as a cost label too.
+	ProjectID string
 	// Custom is the caller's own labels, handed back untouched and queryable.
 	Custom map[string]any
 	// Incognito holds the conversation and keeps nothing: no session row, no turns, no
-	// transcript whatever PersistConversation says. It cannot be found afterwards, which is
-	// the point of it.
+	// transcript. It cannot be found afterwards, which is the point of it.
 	Incognito bool
 	// ModelOverwrites changes the models for this conversation alone, over whatever the
 	// agent config decided.
@@ -118,16 +113,7 @@ type Call struct {
 	// Memory is who the session's memories are about and what narrows recall.
 	Memory *acceleration.SessionMemory
 
-	// Subagent is the model that runs delegated work, from the agent's harness.
-	Subagent string
-	Video    *acceleration.SessionVideo
-	// Tasks is how much delegated work may run at once.
-	Tasks int
-	// Sandbox is where the subagent may run code it writes.
-	Sandbox string
-	// Skills replace the built-in set. Nil leaves them alone, and an empty non-nil slice
-	// turns delegation off: the two mean different things.
-	Skills *[]acceleration.SessionSkill
+	Video *acceleration.SessionVideo
 
 	// Phone is the number the session acts from, which is what turns transferring on.
 	Phone *acceleration.SessionPhone
@@ -157,7 +143,18 @@ type Event struct {
 	PendingWork bool
 	Interrupted bool
 	Error       string
-	Frame       Frame
+	// Files are what a task_settled's code handed back, uploaded where the person can see
+	// them.
+	Files []Attachment
+	Frame Frame
+}
+
+// Attachment is something the agent's code made, at a URL the person can reach.
+type Attachment struct {
+	Name     string `json:"name"`
+	MIMEType string `json:"mime_type"`
+	URL      string `json:"url"`
+	Size     int    `json:"size"`
 }
 
 // Pipeline is a whole voice or text pipeline, running in the acceleration backend.
@@ -336,7 +333,7 @@ func (p *Pipeline) ready() (*acceleration.ClientWithResponses, error) {
 	return backend.Client()
 }
 
-// abandon closes a session nothing here can watch. Whatever went wrong on the way to
+// abandon stops a session nothing here can watch. Whatever went wrong on the way to
 // watching it has already been reported, so a second failure here is nothing to add.
 func (p *Pipeline) abandon(ctx context.Context, id string) {
 	backend, err := p.backend.Resolve()
@@ -347,7 +344,7 @@ func (p *Pipeline) abandon(ctx context.Context, id string) {
 	if err != nil {
 		return
 	}
-	_, _ = client.CloseSessionWithResponse(ctx, id)
+	_, _ = client.StopSessionWithResponse(ctx, id)
 }
 
 // Events yields what the backend did until the call ends, when the channel closes.
@@ -367,16 +364,6 @@ func (p *Pipeline) Say(text string, interrupt bool) error {
 		}
 	}
 	return p.command(Frame{"type": "say", "text": text})
-}
-
-// Respond answers text through the model, as though it had been said on the call.
-func (p *Pipeline) Respond(text string, interrupt bool) error {
-	if interrupt {
-		if err := p.command(Frame{"type": "interrupt"}); err != nil {
-			return err
-		}
-	}
-	return p.command(Frame{"type": "respond", "text": text})
 }
 
 // Interrupt abandons the reply being spoken.
@@ -406,7 +393,7 @@ func (p *Pipeline) Leave(ctx context.Context) error {
 		failure = socket.Send(Frame{"type": "close"})
 	} else if backend, err := p.backend.Resolve(); err == nil {
 		if client, err := backend.Client(); err == nil {
-			_, failure = client.CloseSessionWithResponse(ctx, session.Id)
+			_, failure = client.StopSessionWithResponse(ctx, session.Id)
 		}
 	}
 
@@ -427,13 +414,8 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 		request.CallId = &call.ID
 	}
 
-	// An incognito conversation writes no transcript by definition, so asking for one is a
-	// contradiction the router refuses rather than quietly honours. Dropped here so a caller
-	// that set both gets the conversation they asked for rather than a 400.
 	if call.Incognito {
 		request.Incognito = &call.Incognito
-	} else {
-		request.PersistConversation = &call.PersistConversation
 	}
 	if len(call.Custom) > 0 {
 		custom := call.Custom
@@ -448,7 +430,7 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 	setString(&request.Instructions, call.Instructions)
 	setString(&request.Title, call.Title)
 	setString(&request.Description, call.Description)
-	setString(&request.Project, call.Project)
+	setString(&request.ProjectId, call.ProjectID)
 	setString(&request.Agent, p.config.Agent)
 	setString(&request.ConfigId, p.config.ConfigID)
 	setString(&request.Llm, p.config.LLM)
@@ -468,28 +450,11 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 		request.ToolTimeoutMs = &milliseconds
 	}
 
-	// The harness names the subagent when it has one, and the pipeline's own is the
-	// fallback for an agent configured without a harness.
-	subagent := call.Subagent
-	if subagent == "" {
-		subagent = p.config.Subagent
-	}
-	setString(&request.Subagent, subagent)
 	request.Video = p.config.Video
 	if call.Video != nil {
 		request.Video = call.Video
 	}
 
-	if call.Tasks > 0 {
-		request.Tasks = &call.Tasks
-	}
-	if call.Sandbox != "" {
-		sandbox := acceleration.Sandbox(call.Sandbox)
-		request.Sandbox = &sandbox
-	}
-	if call.Skills != nil {
-		request.Skills = call.Skills
-	}
 	if len(call.Tags) > 0 {
 		request.Tags = &call.Tags
 	}
@@ -636,6 +601,17 @@ func eventOf(frame Frame) Event {
 		Error:       frame.String("error"),
 		Frame:       frame,
 	}
+	files, _ := frame["files"].([]any)
+	for _, listed := range files {
+		file, ok := listed.(map[string]any)
+		if !ok {
+			continue
+		}
+		event.Files = append(event.Files, Attachment{
+			Name: Frame(file).String("name"), MIMEType: Frame(file).String("mime_type"),
+			URL: Frame(file).String("url"), Size: Frame(file).Int("size"),
+		})
+	}
 	if participant := frame.Frame("participant"); participant != nil {
 		event.Participant = Participant{
 			ID:     participant.String("id"),
@@ -651,9 +627,9 @@ func sessionOf(response *acceleration.CreateSessionResponse) (*acceleration.Sess
 	if response.JSON201 != nil {
 		return response.JSON201, nil
 	}
-	for _, failure := range []*acceleration.Error{response.JSON400, response.JSON401, response.JSON404} {
+	for _, failure := range []*acceleration.ErrorResponse{response.JSON400, response.JSON401, response.JSON404} {
 		if failure != nil {
-			return nil, fmt.Errorf("stream: %s", failure.Error)
+			return nil, fmt.Errorf("stream: %s", failure.Error.Message)
 		}
 	}
 	return nil, fmt.Errorf("stream: the router answered %s rather than with a session", response.Status())

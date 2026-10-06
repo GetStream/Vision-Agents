@@ -3,12 +3,13 @@ package tui
 import (
 	"context"
 
+	"github.com/GetStream/Vision-Agents/sdks/go/agents"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
-// Session is the conversation the terminal UI is attached to. An *agents.Session
-// satisfies it, and so does anything else that can answer questions and say what it is
-// doing while it answers them.
+// Session is the conversation the terminal UI is attached to. Agent adapts an
+// *agents.Session to it, and anything else that can answer questions and say what it is
+// doing while it answers them can satisfy it too.
 type Session interface {
 	// ID identifies the live session, which is what a browser opens to watch it.
 	ID() string
@@ -25,6 +26,16 @@ type Session interface {
 	Interrupt() error
 	// Close ends the session.
 	Close(ctx context.Context) error
+}
+
+// Agent adapts a Go SDK session, which asks through its Responses, to a Session.
+func Agent(session *agents.Session) Session { return agentSession{session} }
+
+type agentSession struct{ *agents.Session }
+
+func (s agentSession) Respond(text string) error {
+	_, err := s.Responses.Create(context.Background(), text)
+	return err
 }
 
 // Opener opens a session on a conversation. An empty id starts a new conversation; the

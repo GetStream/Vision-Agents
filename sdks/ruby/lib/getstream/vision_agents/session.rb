@@ -56,9 +56,9 @@ module GetStream
           client.socket(EVENTS_PATH, path: { id: created.fetch("id") }, query: query)
         rescue Error
           # The session is live in the backend even though nothing here can watch it, so it
-          # is closed rather than left holding a call nobody is listening to.
+          # is stopped rather than left holding a call nobody is listening to.
           begin
-            client.delete("/v1/agents/sessions/{id}", path: { id: created["id"] })
+            client.post("/v1/agents/sessions/{id}/stop", path: { id: created["id"] })
           rescue Error
             nil
           end
@@ -124,12 +124,6 @@ module GetStream
         command(type: "say", text: text)
       end
 
-      # Answers text through the model, as though it had been said on the call.
-      # Responses#create is the same with an id back.
-      def respond(text)
-        command(type: "respond", text: text)
-      end
-
       # Abandons the reply being spoken.
       def interrupt
         command(type: "interrupt")
@@ -150,12 +144,37 @@ module GetStream
       #   so the fork branches from there. A persistent conversation cannot be rewound; this
       #   is how it is taken back instead.
       # @param options any other ForkSessionRequest field: agent, config_id, title,
-      #   description, project, custom, model_overwrites, instructions, incognito, messages,
+      #   description, project_id, custom, model_overwrites, instructions, incognito, messages,
       #   call_id.
       def fork(response_id: nil, **options)
         body = options.merge(response_id: response_id && Responses.id_of(response_id))
         forked = @client.post("/v1/agents/sessions/{id}/fork", path: { id: id }, body: body)
         Session.watching(@client, forked, tools: @tools, **@options)
+      end
+
+      # Changes this session only: its title, description, custom labels, instructions, models
+      # or voice, from the next turn. The config it started from is untouched, and a target
+      # that does not route is refused before anything changes. Server side only.
+      #
+      # @param fields any UpdateSessionRequest field: title, description, custom,
+      #   instructions, llm, stt, tts, sts, voice, thinking, temperature, max_output_tokens,
+      #   verbosity. A field left out is left as it is; an empty sts makes the session a
+      #   cascade again, and an empty voice returns to the provider's default.
+      # @return [Hash] the session as the router now has it.
+      def update(**fields)
+        @client.patch("/v1/agents/sessions/{id}", path: { id: id }, body: fields)
+      end
+
+      # Deletes this conversation: it is stopped, and its turns and what it remembered are
+      # deleted with it. The user's other memories are kept.
+      def delete
+        @client.delete("/v1/agents/sessions/{id}", path: { id: id })
+      end
+
+      # Deletes what this conversation remembered, and leaves the rest of the user's
+      # memories alone. Server side only.
+      def delete_memories
+        @client.delete("/v1/agents/sessions/{id}/memories", path: { id: id })
       end
 
       # Blocks until the conversation ends. Returns false if the timeout passed first.
@@ -175,7 +194,8 @@ module GetStream
         @lock.synchronize { @participants.values }
       end
 
-      # Ends the conversation. Safe to call after it has already ended.
+      # Stops the conversation. Safe to call after it has already ended. What it recorded and
+      # remembered is kept; #delete takes it away.
       def close
         if @socket.open?
           begin
@@ -185,7 +205,7 @@ module GetStream
           end
         elsif live?
           begin
-            @client.delete("/v1/agents/sessions/{id}", path: { id: id })
+            @client.post("/v1/agents/sessions/{id}/stop", path: { id: id })
           rescue RouterError
             nil
           end

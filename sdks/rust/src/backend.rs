@@ -14,8 +14,8 @@ pub const API_KEY_ENV: &str = "STREAM_API_KEY";
 pub const API_SECRET_ENV: &str = "STREAM_API_SECRET";
 pub const AUTHENTICATE_ENV: &str = "STREAM_ACCELERATION_AUTHENTICATE";
 
-/// Where the router is when nothing says otherwise.
-pub const DEFAULT_URL: &str = "http://localhost:8080";
+/// Stream's hosted router, which is where a client goes when nothing says otherwise.
+pub const DEFAULT_URL: &str = "https://accelerate.gcp.stream-io-api.com";
 
 /// How long a token minted here lasts. Short, because one is minted per request.
 pub const TOKEN_VALIDITY_SECONDS: u64 = 60 * 60;
@@ -29,7 +29,8 @@ pub const TOKEN_VALIDITY_SECONDS: u64 = 60 * 60;
 /// Go, Python and JavaScript SDKs read.
 #[derive(Debug, Clone, Default)]
 pub struct ClientOptions {
-    /// The router's base URL. Falls back to `STREAM_ACCELERATION_URL`, then localhost.
+    /// The router's base URL. Falls back to `STREAM_ACCELERATION_URL`, then Stream's hosted
+    /// router, so only a self-hosted or local router needs it.
     pub url: Option<String>,
     /// Who the work is billed to, taken at face value, for a router with no keys in front
     /// of it. Falls back to `STREAM_ACCELERATION_CUSTOMER_ID`.
@@ -47,7 +48,8 @@ pub struct ClientOptions {
     /// the sessions opened belong to that user and their own device can reach them.
     pub user_id: Option<String>,
     /// Whether the router is reached through Stream's authenticating proxy, which wants the
-    /// credential spelled its own way. Falls back to `STREAM_ACCELERATION_AUTHENTICATE`.
+    /// credential spelled its own way. On for the hosted router; anywhere else it falls back
+    /// to `STREAM_ACCELERATION_AUTHENTICATE`.
     pub authenticate: Option<bool>,
     /// The HTTP client to send with, for a caller that wants its own proxy or timeouts.
     pub http: Option<reqwest::Client>,
@@ -61,6 +63,9 @@ pub(crate) struct Backend {
     pub api_secret: String,
     pub token: String,
     pub user_id: String,
+    /// The end user a server credential speaks for. Unlike `user_id` it never becomes a user
+    /// token, so what is written is still the server's and the model answers it.
+    pub acting_for: String,
     pub authenticate: bool,
 }
 
@@ -98,7 +103,7 @@ impl Backend {
         });
         let authenticate = options
             .authenticate
-            .unwrap_or_else(|| flag(env(AUTHENTICATE_ENV)));
+            .unwrap_or_else(|| flag(env(AUTHENTICATE_ENV)) || url == DEFAULT_URL);
 
         if authenticate && api_key.is_empty() {
             return Err(Error::configuration(format!(
@@ -124,6 +129,7 @@ impl Backend {
             api_secret,
             token,
             user_id: options.user_id.clone().unwrap_or_default(),
+            acting_for: String::new(),
             authenticate,
         })
     }
@@ -139,6 +145,14 @@ impl Backend {
     /// holding an expired one. A server socket sends headers rather than the query string a
     /// browser has to use.
     pub fn headers(&self) -> Result<Vec<(&'static str, String)>> {
+        let mut headers = self.credentials()?;
+        if !self.acting_for.is_empty() {
+            headers.push(("X-Stream-User-Id", self.acting_for.clone()));
+        }
+        Ok(headers)
+    }
+
+    fn credentials(&self) -> Result<Vec<(&'static str, String)>> {
         if self.api_key.is_empty() {
             return Ok(vec![("X-Customer-Id", self.customer_id.clone())]);
         }

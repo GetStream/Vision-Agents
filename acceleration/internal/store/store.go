@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -22,7 +21,9 @@ import (
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/driver/pgdriver"
+	"github.com/uptrace/bun/extra/bunotel"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/migrations"
 )
 
@@ -33,6 +34,10 @@ type Store struct {
 	// shapes is what each table an export carries looks like, read from the catalogue
 	// once rather than kept in a list here that a migration could leave behind.
 	shapes tableShapes
+	// pins says how Stream app pins cross between deployments, once the router has said.
+	pins pinsHolder
+	// deliveriesPruned is when hook deliveries were last forgotten, in Unix nanoseconds.
+	deliveriesPruned atomic.Int64
 }
 
 // Open connects to Postgres using a pgdriver DSN, for example
@@ -43,7 +48,11 @@ func Open(dsn string) (*Store, error) {
 	}
 
 	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
-	return &Store{db: bun.NewDB(sqldb, pgdialect.New())}, nil
+	db := bun.NewDB(sqldb, pgdialect.New())
+	// A span per query, so a request's trace says which reads it waited on. Queries are
+	// recorded unformatted: the arguments of these are customer ids and api keys.
+	db.AddQueryHook(bunotel.NewQueryHook(bunotel.WithDBName("router")))
+	return &Store{db: db}, nil
 }
 
 // DB exposes the bun handle so callers can run queries this store does not wrap.
@@ -53,7 +62,7 @@ func (s *Store) DB() *bun.DB { return s.db }
 func (s *Store) Close() error { return s.db.Close() }
 
 // Ping verifies the connection is usable.
-func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
+func (s *Store) Ping(ctx context.Context) error { return stack.Wrap(s.db.PingContext(ctx)) }
 
 // Migrate applies every pending migration.
 func (s *Store) Migrate(ctx context.Context) error {
@@ -96,10 +105,10 @@ func (s *Store) RecordRequest(ctx context.Context, request *Request) error {
 // window.
 func (s *Store) Rollup(ctx context.Context, granularity Granularity, from, to time.Time) (int64, error) {
 	if !granularity.Valid() {
-		return 0, fmt.Errorf("store: unknown granularity %q", granularity)
+		return 0, stack.Wrap(fmt.Errorf("store: unknown granularity %q", granularity))
 	}
 	if !to.After(from) {
-		return 0, fmt.Errorf("store: rollup window must be non-empty, got %s to %s", from, to)
+		return 0, stack.Wrap(fmt.Errorf("store: rollup window must be non-empty, got %s to %s", from, to))
 	}
 
 	providers, err := s.rollupProviders(ctx, granularity, from, to)
@@ -164,12 +173,12 @@ ON CONFLICT (modality, customer_id, provider, model, bucket) DO UPDATE SET
 
 	result, err := s.db.ExecContext(ctx, query, from, to)
 	if err != nil {
-		return 0, fmt.Errorf("store: rollup %s: %w", granularity, err)
+		return 0, stack.Wrap(fmt.Errorf("store: rollup %s: %w", granularity, err))
 	}
 
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return 0, fmt.Errorf("store: rollup %s: %w", granularity, err)
+		return 0, stack.Wrap(fmt.Errorf("store: rollup %s: %w", granularity, err))
 	}
 	return affected, nil
 }
@@ -225,12 +234,12 @@ ON CONFLICT (modality, customer_id, tag_key, tag_value, bucket) DO UPDATE SET
 
 	result, err := s.db.ExecContext(ctx, query, from, to)
 	if err != nil {
-		return 0, fmt.Errorf("store: rollup %s tags: %w", granularity, err)
+		return 0, stack.Wrap(fmt.Errorf("store: rollup %s tags: %w", granularity, err))
 	}
 
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return 0, fmt.Errorf("store: rollup %s tags: %w", granularity, err)
+		return 0, stack.Wrap(fmt.Errorf("store: rollup %s tags: %w", granularity, err))
 	}
 	return affected, nil
 }
@@ -309,12 +318,12 @@ ON CONFLICT (customer_id, agent_id, bucket) DO UPDATE SET
 
 	result, err := s.db.ExecContext(ctx, query, from, to)
 	if err != nil {
-		return 0, fmt.Errorf("store: rollup %s turns: %w", granularity, err)
+		return 0, stack.Wrap(fmt.Errorf("store: rollup %s turns: %w", granularity, err))
 	}
 
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return 0, fmt.Errorf("store: rollup %s turns: %w", granularity, err)
+		return 0, stack.Wrap(fmt.Errorf("store: rollup %s turns: %w", granularity, err))
 	}
 	return affected, nil
 }
@@ -328,10 +337,10 @@ func (s *Store) CustomerTurnStats(
 	from, to time.Time,
 ) ([]TurnBucket, error) {
 	if !granularity.Valid() {
-		return nil, fmt.Errorf("store: unknown granularity %q", granularity)
+		return nil, stack.Wrap(fmt.Errorf("store: unknown granularity %q", granularity))
 	}
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
 	query := s.db.NewSelect().
@@ -345,7 +354,7 @@ func (s *Store) CustomerTurnStats(
 
 	var buckets []TurnBucket
 	if err := query.Order("bucket ASC", "agent_id ASC").Scan(ctx, &buckets); err != nil {
-		return nil, fmt.Errorf("store: customer turn stats: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer turn stats: %w", err))
 	}
 	return buckets, nil
 }
@@ -362,13 +371,13 @@ func (s *Store) CustomerStats(
 	tags map[string]string,
 ) ([]Bucket, error) {
 	if !granularity.Valid() {
-		return nil, fmt.Errorf("store: unknown granularity %q", granularity)
+		return nil, stack.Wrap(fmt.Errorf("store: unknown granularity %q", granularity))
 	}
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 	if modality == "" {
-		return nil, errors.New("store: modality is required")
+		return nil, stack.Wrap(errors.New("store: modality is required"))
 	}
 
 	if tags == nil {
@@ -387,7 +396,7 @@ func (s *Store) taggedStats(
 ) ([]Bucket, error) {
 	filter, err := json.Marshal(tags)
 	if err != nil {
-		return nil, fmt.Errorf("store: customer stats: encode tag filter: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer stats: encode tag filter: %w", err))
 	}
 
 	query := fmt.Sprintf(`
@@ -419,7 +428,7 @@ ORDER BY bucket ASC, provider ASC, model ASC`, granularity.truncateUnit())
 
 	var buckets []Bucket
 	if err := s.db.NewRaw(query, modality, customerID, from, to, string(filter)).Scan(ctx, &buckets); err != nil {
-		return nil, fmt.Errorf("store: customer stats by tag: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer stats by tag: %w", err))
 	}
 	return buckets, nil
 }
@@ -434,16 +443,16 @@ func (s *Store) CustomerTagStats(
 	from, to time.Time,
 ) ([]TagBucket, error) {
 	if !granularity.Valid() {
-		return nil, fmt.Errorf("store: unknown granularity %q", granularity)
+		return nil, stack.Wrap(fmt.Errorf("store: unknown granularity %q", granularity))
 	}
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 	if modality == "" {
-		return nil, errors.New("store: modality is required")
+		return nil, stack.Wrap(errors.New("store: modality is required"))
 	}
 	if tagKey == "" {
-		return nil, errors.New("store: tag key is required")
+		return nil, stack.Wrap(errors.New("store: tag key is required"))
 	}
 
 	var buckets []TagBucket
@@ -457,7 +466,7 @@ func (s *Store) CustomerTagStats(
 		Order("bucket ASC", "tag_value ASC").
 		Scan(ctx, &buckets)
 	if err != nil {
-		return nil, fmt.Errorf("store: customer tag stats: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer tag stats: %w", err))
 	}
 	return buckets, nil
 }
@@ -490,20 +499,20 @@ func (s *Store) CustomerSpend(
 	tags map[string]string,
 ) ([]SpendBucket, error) {
 	if !granularity.Valid() {
-		return nil, fmt.Errorf("store: unknown granularity %q", granularity)
+		return nil, stack.Wrap(fmt.Errorf("store: unknown granularity %q", granularity))
 	}
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 	if limit < 1 {
-		return nil, errors.New("store: limit must be at least 1")
+		return nil, stack.Wrap(errors.New("store: limit must be at least 1"))
 	}
 	if tags == nil {
 		tags = map[string]string{}
 	}
 	filter, err := json.Marshal(tags)
 	if err != nil {
-		return nil, fmt.Errorf("store: customer spend: encode tag filter: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer spend: encode tag filter: %w", err))
 	}
 
 	valueExpr := "modality"
@@ -559,7 +568,7 @@ ORDER BY bucket ASC, cost_micros_total DESC, value ASC`,
 
 	var buckets []SpendBucket
 	if err := s.db.NewRaw(query, args...).Scan(ctx, &buckets); err != nil {
-		return nil, fmt.Errorf("store: customer spend: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer spend: %w", err))
 	}
 	return buckets, nil
 }
@@ -594,14 +603,14 @@ func (s *Store) CustomerTagKeys(
 	tags map[string]string,
 ) ([]TagKeySummary, error) {
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 	if tags == nil {
 		tags = map[string]string{}
 	}
 	filter, err := json.Marshal(tags)
 	if err != nil {
-		return nil, fmt.Errorf("store: customer tag keys: encode tag filter: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer tag keys: encode tag filter: %w", err))
 	}
 
 	// Coverage is measured against every request in the window, labelled or not, because a
@@ -617,7 +626,7 @@ func (s *Store) CustomerTagKeys(
 		Where("tags @> ?::jsonb", string(filter)).
 		Scan(ctx, &total)
 	if err != nil {
-		return nil, fmt.Errorf("store: customer tag keys: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer tag keys: %w", err))
 	}
 	if total == 0 {
 		return nil, nil
@@ -674,7 +683,7 @@ ORDER BY k.cost_micros_total DESC, k.request_count DESC, k.key ASC, r.rank ASC`
 	var rows []tagKeyRow
 	err = s.db.NewRaw(query, customerID, from, to, string(filter), topTagValues).Scan(ctx, &rows)
 	if err != nil {
-		return nil, fmt.Errorf("store: customer tag keys: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer tag keys: %w", err))
 	}
 
 	var keys []TagKeySummary
@@ -717,10 +726,10 @@ func (s *Store) CustomerActivity(
 	from, to time.Time,
 ) ([]ActivityBucket, error) {
 	if !granularity.Valid() {
-		return nil, fmt.Errorf("store: unknown activity granularity %q", granularity)
+		return nil, stack.Wrap(fmt.Errorf("store: unknown activity granularity %q", granularity))
 	}
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
 	unit := granularity.truncateUnit()
@@ -731,7 +740,8 @@ WITH seen AS (
         COALESCE(NULLIF(g.claimed_by, ''), s.user_id) AS user_id,
         s.caller_kind AS caller_kind
     FROM agent_sessions AS s
-    LEFT JOIN guest_users AS g ON g.id = s.user_id AND g.customer_id = s.customer_id
+    LEFT JOIN users AS g ON g.id = s.user_id AND g.customer_id = s.customer_id
+        AND g.kind = 'guest'
     WHERE s.customer_id = ? AND s.created_at >= ? AND s.created_at < ?
     UNION ALL
     SELECT
@@ -740,7 +750,8 @@ WITH seen AS (
         s.caller_kind AS caller_kind
     FROM agent_responses AS a
     JOIN agent_sessions AS s ON s.id = a.session_id
-    LEFT JOIN guest_users AS g ON g.id = s.user_id AND g.customer_id = s.customer_id
+    LEFT JOIN users AS g ON g.id = s.user_id AND g.customer_id = s.customer_id
+        AND g.kind = 'guest'
     WHERE a.customer_id = ? AND a.created_at >= ? AND a.created_at < ?
 ),
 user_counts AS (
@@ -803,7 +814,7 @@ ORDER BY b.bucket ASC`, unit)
 		customerID, from, to,
 	).Scan(ctx, &buckets)
 	if err != nil {
-		return nil, fmt.Errorf("store: customer activity: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer activity: %w", err))
 	}
 	return buckets, nil
 }
@@ -813,7 +824,7 @@ ORDER BY b.bucket ASC`, unit)
 // calls rather than spend, and is read from the raw requests so it needs no rollup.
 func (s *Store) ModelRequests(ctx context.Context, modality string, since time.Time) (map[string]int64, error) {
 	if modality == "" {
-		return nil, errors.New("store: modality is required")
+		return nil, stack.Wrap(errors.New("store: modality is required"))
 	}
 
 	var rows []struct {
@@ -830,7 +841,7 @@ func (s *Store) ModelRequests(ctx context.Context, modality string, since time.T
 		Group("provider", "model").
 		Scan(ctx, &rows)
 	if err != nil {
-		return nil, fmt.Errorf("store: model requests: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: model requests: %w", err))
 	}
 
 	counts := make(map[string]int64, len(rows))
@@ -843,13 +854,13 @@ func (s *Store) ModelRequests(ctx context.Context, modality string, since time.T
 // RecordNumber stores a number a customer now holds.
 func (s *Store) RecordNumber(ctx context.Context, number *PhoneNumber) error {
 	if number.E164 == "" {
-		return errors.New("store: a number is required")
+		return stack.Wrap(errors.New("store: a number is required"))
 	}
 	if number.Vendor == "" {
-		return errors.New("store: vendor is required")
+		return stack.Wrap(errors.New("store: vendor is required"))
 	}
 	if number.CustomerID == "" {
-		return errors.New("store: customer id is required")
+		return stack.Wrap(errors.New("store: customer id is required"))
 	}
 	if number.PurchasedAt.IsZero() {
 		number.PurchasedAt = time.Now().UTC()
@@ -861,7 +872,7 @@ func (s *Store) RecordNumber(ctx context.Context, number *PhoneNumber) error {
 	}
 
 	if _, err := s.db.NewInsert().Model(number).Exec(ctx); err != nil {
-		return fmt.Errorf("store: record number: %w", err)
+		return stack.Wrap(fmt.Errorf("store: record number: %w", err))
 	}
 	return nil
 }
@@ -870,7 +881,7 @@ func (s *Store) RecordNumber(ctx context.Context, number *PhoneNumber) error {
 // it was held is still part of that month's bill.
 func (s *Store) ReleaseNumber(ctx context.Context, customerID, e164 string, at time.Time) error {
 	if customerID == "" || e164 == "" {
-		return errors.New("store: a customer and a number are required")
+		return stack.Wrap(errors.New("store: a customer and a number are required"))
 	}
 	if at.IsZero() {
 		at = time.Now().UTC()
@@ -883,14 +894,14 @@ func (s *Store) ReleaseNumber(ctx context.Context, customerID, e164 string, at t
 		Where("released_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: release number: %w", err)
+		return stack.Wrap(fmt.Errorf("store: release number: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: release number: %w", err)
+		return stack.Wrap(fmt.Errorf("store: release number: %w", err))
 	}
 	if affected == 0 {
-		return fmt.Errorf("store: %s is not a number %s holds", e164, customerID)
+		return stack.Wrap(fmt.Errorf("store: %s is not a number %s holds", e164, customerID))
 	}
 	return nil
 }
@@ -900,40 +911,61 @@ func (s *Store) ReleaseNumber(ctx context.Context, customerID, e164 string, at t
 //
 // The call is recorded as well as the trunk because an inbound call arrives over a webhook
 // that names the call, so without it there is nothing to attribute the call to.
-func (s *Store) AttachNumber(ctx context.Context, customerID, e164, trunkID, callType, callID string) error {
+func (s *Store) AttachNumber(ctx context.Context, customerID, e164 string, attached NumberAttachment) error {
 	if customerID == "" || e164 == "" {
-		return errors.New("store: a customer and a number are required")
+		return stack.Wrap(errors.New("store: a customer and a number are required"))
 	}
-	if trunkID == "" {
-		return errors.New("store: a trunk id is required")
+	if attached.TrunkID == "" {
+		return stack.Wrap(errors.New("store: a trunk id is required"))
 	}
 
 	result, err := s.db.NewUpdate().Model((*PhoneNumber)(nil)).
-		Set("stream_trunk_id = ?", trunkID).
-		Set("stream_call_id = ?", callID).
-		Set("stream_call_type = ?", callType).
+		Set("stream_trunk_id = ?", attached.TrunkID).
+		Set("stream_route_id = ?", nullable(attached.RouteID)).
+		Set("stream_app_pk = ?", nullablePin(attached.StreamAppPK)).
+		Set("stream_call_id = ?", attached.CallID).
+		Set("stream_call_type = ?", attached.CallType).
 		Where("customer_id = ?", customerID).
 		Where("e164 = ?", e164).
 		Where("released_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: attach number: %w", err)
+		return stack.Wrap(fmt.Errorf("store: attach number: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: attach number: %w", err)
+		return stack.Wrap(fmt.Errorf("store: attach number: %w", err))
 	}
 	if affected == 0 {
-		return fmt.Errorf("store: %s is not a number %s holds", e164, customerID)
+		return stack.Wrap(fmt.Errorf("store: %s is not a number %s holds", e164, customerID))
 	}
 	return nil
+}
+
+// NumberAttachment is what attaching a number made in Stream, and where its calls go.
+type NumberAttachment struct {
+	TrunkID string
+	RouteID string
+	// StreamAppPK is the app the trunk and route were made in, zero for the deployment's.
+	StreamAppPK int64
+	CallType    string
+	CallID      string
+}
+
+// nullablePin stores the deployment's own app as NULL, as every pin written before apps
+// had identities reads.
+func nullablePin(app int64) any {
+	if app == 0 {
+		return nil
+	}
+	return app
 }
 
 // CustomerNumbers returns the numbers a customer holds, newest first. Released numbers
 // are left out unless asked for, since what is normally wanted is what can be called.
 func (s *Store) CustomerNumbers(ctx context.Context, customerID string, includeReleased bool) ([]PhoneNumber, error) {
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
 	query := s.db.NewSelect().Model((*PhoneNumber)(nil)).
@@ -945,7 +977,7 @@ func (s *Store) CustomerNumbers(ctx context.Context, customerID string, includeR
 
 	var numbers []PhoneNumber
 	if err := query.Scan(ctx, &numbers); err != nil {
-		return nil, fmt.Errorf("store: customer numbers: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer numbers: %w", err))
 	}
 	return numbers, nil
 }
@@ -953,7 +985,7 @@ func (s *Store) CustomerNumbers(ctx context.Context, customerID string, includeR
 // Number returns one number a customer holds.
 func (s *Store) Number(ctx context.Context, customerID, e164 string) (PhoneNumber, error) {
 	if customerID == "" || e164 == "" {
-		return PhoneNumber{}, errors.New("store: a customer and a number are required")
+		return PhoneNumber{}, stack.Wrap(errors.New("store: a customer and a number are required"))
 	}
 
 	var number PhoneNumber
@@ -964,59 +996,10 @@ func (s *Store) Number(ctx context.Context, customerID, e164 string) (PhoneNumbe
 		Limit(1).
 		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return PhoneNumber{}, fmt.Errorf("store: %s is not a number %s holds", e164, customerID)
+		return PhoneNumber{}, stack.Wrap(fmt.Errorf("store: %s is not a number %s holds", e164, customerID))
 	}
 	if err != nil {
-		return PhoneNumber{}, fmt.Errorf("store: number: %w", err)
-	}
-	return number, nil
-}
-
-// NumberByCall returns the number whose callers land in a Stream call.
-//
-// This is the way back from an arriving call to the customer whose call it is: the webhook
-// that reports one is app-wide and names the call rather than the number or the customer.
-//
-// A number attached before the call was recorded is found by the "phone-<e164>" the default
-// routing rule names, which is derivable rather than stored. Without that fallback every
-// number already in service would have to be attached again to answer a call.
-func (s *Store) NumberByCall(ctx context.Context, callType, callID string) (PhoneNumber, error) {
-	if callID == "" {
-		return PhoneNumber{}, errors.New("store: a call id is required")
-	}
-	if callType == "" {
-		callType = "agent"
-	}
-
-	var number PhoneNumber
-	err := s.db.NewSelect().Model(&number).
-		Where("stream_call_id = ?", callID).
-		Where("stream_call_type = ?", callType).
-		Where("released_at IS NULL").
-		Limit(1).
-		Scan(ctx)
-	if err == nil {
-		return number, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return PhoneNumber{}, fmt.Errorf("store: number by call: %w", err)
-	}
-
-	e164, named := strings.CutPrefix(callID, "phone-")
-	if !named {
-		return PhoneNumber{}, fmt.Errorf("store: no number reaches call %s:%s", callType, callID)
-	}
-	err = s.db.NewSelect().Model(&number).
-		Where("e164 = ?", e164).
-		Where("stream_trunk_id IS NOT NULL").
-		Where("released_at IS NULL").
-		Limit(1).
-		Scan(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
-		return PhoneNumber{}, fmt.Errorf("store: no number reaches call %s:%s", callType, callID)
-	}
-	if err != nil {
-		return PhoneNumber{}, fmt.Errorf("store: number by call: %w", err)
+		return PhoneNumber{}, stack.Wrap(fmt.Errorf("store: number: %w", err))
 	}
 	return number, nil
 }

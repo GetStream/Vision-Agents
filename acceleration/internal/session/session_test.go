@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
@@ -210,8 +211,9 @@ func (s *stubTTS) spoken() []tts.Request {
 // stubMemory records the scope it was asked under, which is what a memory filter has to
 // reach for it to mean anything.
 type stubMemory struct {
-	mu    sync.Mutex
-	scope memory.Scope
+	mu      sync.Mutex
+	scope   memory.Scope
+	learned [][]llm.Message
 }
 
 func (m *stubMemory) Recall(_ context.Context, query memory.Query) ([]memory.Memory, error) {
@@ -221,9 +223,23 @@ func (m *stubMemory) Recall(_ context.Context, query memory.Query) ([]memory.Mem
 	return nil, nil
 }
 
-func (m *stubMemory) Remember(context.Context, memory.Scope, []llm.Message) error { return nil }
-func (m *stubMemory) Provider() string                                            { return "stub" }
-func (m *stubMemory) Close() error                                                { return nil }
+func (m *stubMemory) Remember(_ context.Context, _ memory.Scope, messages []llm.Message) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.learned = append(m.learned, messages)
+	return nil
+}
+
+func (m *stubMemory) Truncate(context.Context, string, string) error  { return nil }
+func (m *stubMemory) ForgetRun(context.Context, string, string) error { return nil }
+func (m *stubMemory) Provider() string                                { return "stub" }
+func (m *stubMemory) Close() error                                    { return nil }
+
+func (m *stubMemory) remembered() [][]llm.Message {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([][]llm.Message(nil), m.learned...)
+}
 
 func (m *stubMemory) scopedTo() memory.Scope {
 	m.mu.Lock()
@@ -296,10 +312,12 @@ type SessionSuite struct {
 	// gated answers the conversation model instead of stubLLM, for a test that needs a
 	// reply it can hold open while something else happens to the session.
 	gated *gatedLLM
-	// conversations persists text commands, for a test that submits one, and outbox is
-	// where it writes them.
+	// conversations persists text commands, for a test that submits one.
 	conversations *persistent.Service
-	outbox        string
+	// apps is the Stream apps sessions act in, when a test names them; edgeApps is the
+	// identity each edge was built with.
+	apps     *streamapp.Clients
+	edgeApps []streamapp.Identity
 }
 
 func TestSessionSuite(t *testing.T) {
@@ -314,6 +332,8 @@ func (s *SessionSuite) SetupTest() {
 	s.thinks = false
 	s.gated = nil
 	s.conversations = nil
+	s.apps = nil
+	s.edgeApps = nil
 }
 
 // thinking is what the LLM router routes. A deployment that routes no high-quality model
@@ -382,7 +402,7 @@ func (s *SessionSuite) manages() {
 
 	var storing TranscriptFactory
 	if s.records != nil {
-		storing = func(Spec, *slog.Logger) (Transcript, error) { return s.records, nil }
+		storing = func(context.Context, Spec, streamapp.Bound, *slog.Logger) (Transcript, error) { return s.records, nil }
 	}
 
 	manager, err := NewManager(ManagerOptions{
@@ -392,8 +412,10 @@ func (s *SessionSuite) manages() {
 		Memory:        remembering,
 		Transcript:    storing,
 		Conversations: s.conversations,
+		Stream:        s.apps,
 		Logger:        logger,
-		Edge: func(Spec, *slog.Logger) (agent.Edge, error) {
+		Edge: func(_ context.Context, _ Spec, stream streamapp.Bound, _ *slog.Logger) (agent.Edge, error) {
+			s.edgeApps = append(s.edgeApps, stream.Identity)
 			edge := newQuietEdge()
 			s.edges = append(s.edges, edge)
 			return edge, nil
@@ -717,6 +739,17 @@ func (s *SessionSuite) TestAWrittenAnswerIsStoredInTheConversation() {
 	s.Equal([]string{"Hello."}, s.records.replies())
 }
 
+func (s *SessionSuite) TestAnIncognitoCallWritesNothingIntoChat() {
+	s.records = &stubTranscript{}
+	s.manages()
+	created := s.joins(Spec{CallID: "call-1", Incognito: true})
+
+	_, err := created.Ask(s.ctx, "is my invoice reissuable?")
+
+	s.Require().NoError(err)
+	s.Empty(s.records.replies(), "a channel in Stream Chat is a record")
+}
+
 func (s *SessionSuite) TestWhatWasAskedInWritingIsRememberedForTheRestOfTheCall() {
 	// Otherwise the caller cannot refer to it out loud, and the agent answers as though it
 	// had never been asked.
@@ -789,7 +822,7 @@ func (s *SessionSuite) TestTheRecordedCallSaysWhatItWasRunWith() {
 			AgentID:        "call-9",
 			LLMTarget:      "gemini/gemini-3.5-flash-lite",
 			STTTarget:      "gemini/gemini-3.5-transcribe-live",
-			TTSTarget:      "elevenlabs/eleven_v3_conversational",
+			TTSTarget:      "elevenlabs/eleven_v4_turbo",
 			SubagentTarget: "openai/gpt-5.6-sol",
 			Instructions:   "Keep it short.",
 		},
@@ -802,7 +835,7 @@ func (s *SessionSuite) TestTheRecordedCallSaysWhatItWasRunWith() {
 
 	s.Equal("gemini/gemini-3.5-flash-lite", recorded.LLM)
 	s.Equal("gemini/gemini-3.5-transcribe-live", recorded.STT)
-	s.Equal("elevenlabs/eleven_v3_conversational", recorded.TTS)
+	s.Equal("elevenlabs/eleven_v4_turbo", recorded.TTS)
 	s.Equal("openai/gpt-5.6-sol", recorded.Subagent)
 	s.Equal("Keep it short.", recorded.Instructions)
 	s.Equal([]string{"think"}, recorded.Skills,
@@ -950,6 +983,19 @@ func (s *SessionSuite) TestARewoundSessionCarriesOnFromTheKeptResponse() {
 		{Role: llm.Assistant, Content: "Yes."},
 	}, created.voiceAgent.History())
 	s.Len(recorded.exchanges, 1, "the later turn is no longer part of the conversation")
+}
+
+func (s *SessionSuite) TestARenamedSessionKeepsWhatItWasNotAskedToChange() {
+	s.manages()
+	created := s.writes(Spec{Title: "First ask", Description: "About pricing", Custom: map[string]any{"tab": "docs"}})
+	renamed := "Pricing, again"
+
+	created.Describe(s.ctx, Labels{Title: &renamed})
+
+	spec := created.Spec()
+	s.Equal("Pricing, again", spec.Title)
+	s.Equal("About pricing", spec.Description, "a field left out is left as it is")
+	s.Equal(map[string]any{"tab": "docs"}, spec.Custom)
 }
 
 func (s *SessionSuite) TestRewindingToAResponseTheSessionNeverHadIsUnknown() {
@@ -1293,7 +1339,7 @@ func (s *SessionSuite) TestTheCallersMemoryFilterScopesWhatIsRecalled() {
 	s.remembers = &stubMemory{}
 	s.manages()
 
-	s.joins(Spec{Memory: MemorySpec{
+	created := s.joins(Spec{ConfigID: "support", Memory: MemorySpec{
 		UserID: "222",
 		AppID:  "router",
 		Filter: map[string]string{"company_id": "12312"},
@@ -1301,8 +1347,40 @@ func (s *SessionSuite) TestTheCallersMemoryFilterScopesWhatIsRecalled() {
 
 	scope := s.remembers.scopedTo()
 	s.Equal("222", scope.UserID, "the customer was recalled instead of the caller's user")
-	s.Equal("router", scope.AppID)
-	s.Equal(map[string]string{"company_id": "12312"}, scope.Extra)
+	s.Equal("acme", scope.AppID, "the app id is always the customer")
+	s.Equal("support", scope.AgentID, "the agent is the config the session was opened from")
+	s.Equal(created.ID(), scope.RunID)
+	s.Equal(map[string]string{"company_id": "12312", "app_id": "router"}, scope.Extra,
+		"the caller's app id narrows recall like any other label")
+}
+
+func (s *SessionSuite) TestAnIncognitoSessionWritesNothingToMemory() {
+	s.remembers = &stubMemory{}
+	s.manages()
+	created := s.joins(Spec{Incognito: true, Memory: MemorySpec{UserID: "222"}})
+	events, detach := created.Watch()
+	defer detach()
+
+	s.says(created, "I moved to Austin")
+	s.Require().NotEmpty(awaitReply(events), "the turn never finished")
+	s.Require().NoError(created.Close())
+
+	s.Equal("222", s.remembers.scopedTo().UserID, "an incognito session may still recall")
+	s.Empty(s.remembers.remembered(), "an incognito session is not kept, in memory or anywhere else")
+}
+
+func (s *SessionSuite) TestARecordedSessionWritesToMemory() {
+	s.remembers = &stubMemory{}
+	s.manages()
+	created := s.joins(Spec{Memory: MemorySpec{UserID: "222"}})
+	events, detach := created.Watch()
+	defer detach()
+
+	s.says(created, "I moved to Austin")
+	s.Require().NotEmpty(awaitReply(events), "the turn never finished")
+	s.Require().NoError(created.Close())
+
+	s.NotEmpty(s.remembers.remembered(), "a finished turn is handed to memory")
 }
 
 func (s *SessionSuite) TestChangingTheInstructionsAppliesToTheNextTurn() {
@@ -1422,25 +1500,6 @@ func (s *SessionSuite) TestSkillsMeanNothingWithoutASubagentToRunThem() {
 	s.Empty(skills.Skills)
 }
 
-func (s *SessionSuite) TestASkillSpelledOutWithoutADeadlineGetsOne() {
-	// A zero deadline would abandon the work the instant it started.
-	s.manages()
-
-	skills, err := s.manager.skills(s.ctx, Spec{
-		CustomerID:     "acme",
-		SubagentTarget: "en-low-latency",
-		Skills: &harness.Skills{Skills: []harness.Skill{{
-			Name:         "refund",
-			Description:  "work out what a caller is owed",
-			Instructions: "read the order and the policy",
-		}}},
-	})
-
-	s.Require().NoError(err)
-	s.Require().Len(skills.Skills, 1)
-	s.Positive(skills.Skills[0].Deadline)
-}
-
 func (s *SessionSuite) TestWhatWasSaidIsKeptSoTheCallCanBeReviewed() {
 	s.manages()
 	created := s.joins(Spec{})
@@ -1558,10 +1617,11 @@ func (s *SessionSuite) TestRequestedMemoryRequiresAConfiguredProvider() {
 	s.Require().ErrorContains(err, "memory is unavailable")
 }
 
-func (s *SessionSuite) TestTextSessionDoesNotAcquireAnImplicitSubagent() {
+func (s *SessionSuite) TestTextSessionThinksOnItsOwnModel() {
 	s.thinks = true
 	s.manages()
-	created := s.writes(Spec{})
-	s.Empty(created.Spec().SubagentTarget)
-	s.Empty(row(created).Subagent)
+	created := s.writes(Spec{SubagentTarget: defaultSubagentTarget})
+	s.Equal(created.Spec().LLMTarget, created.Spec().SubagentTarget)
+	s.NotEqual(defaultSubagentTarget, row(created).Subagent)
+	s.Equal(created.Spec().LLMTarget, row(created).Subagent)
 }

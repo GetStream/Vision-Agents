@@ -3,7 +3,7 @@
 //! The backend joins the call, hears the caller, answers and speaks. What runs here is the
 //! configuration of an agent, the caller's own functions, and whatever watches or steers
 //! the conversation: [`Agent`] and [`Session`] for conversations, [`Dispatch`] for inbound
-//! calls and messages, [`Router`] for one modality at a time, and [`Client`] for every
+//! calls and messages, [`Client::router`] for one modality at a time, and [`Client`] for every
 //! endpoint in the spec.
 
 mod agent;
@@ -21,6 +21,7 @@ mod responses;
 mod router;
 mod session;
 mod sessions;
+mod simulations;
 mod socket;
 mod stream;
 mod tools;
@@ -28,7 +29,7 @@ mod tools;
 pub mod types;
 
 pub use agent::{Agent, USER_KEY, user_id_of};
-pub use backend::{ClientOptions, DEFAULT_URL, TOKEN_VALIDITY_SECONDS, sign, sign_for};
+pub use backend::{ClientOptions, DEFAULT_URL, TOKEN_VALIDITY_SECONDS, URL_ENV, sign, sign_for};
 pub use client::{Client, segment};
 pub use dispatch::{Dispatch, InboundCall, InboundMessage};
 pub use error::{Error, Result};
@@ -39,7 +40,8 @@ pub use operations::*;
 pub use responses::{AgentResponse, Items, ResponseRef, Responses};
 pub use router::{Ask, Audio, Completions, Recording, Router, SAMPLE_RATE, Transcriber, Voice};
 pub use session::{Participant, Session, SessionEvent, WatchOptions};
-pub use sessions::{AgentRef, Sessions};
+pub use sessions::{AgentRef, Memories, Query, Sessions};
+pub use simulations::{SimulationRuns, Simulations};
 pub use socket::{Frame, Incoming, Socket, SocketReceiver, SocketSender};
 pub use stream::{Call, DEFAULT_CALL_TYPE, STREAM_API, StreamApp};
 pub use tools::Tools;

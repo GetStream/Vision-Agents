@@ -18,7 +18,7 @@ Three files, in this order of value:
 
 1. `<name>_test.go` — no network. Feed `handleMessage` (or its equivalent) server frames and assert the events that come out.
 2. `socket_test.go` — a fake WebSocket server. Asserts what goes on the wire (setup frame, keyterms, flush on close).
-3. `integration_test.go` — `//go:build integration`, embeds `sttsuite.Suite`:
+3. `<name>_integration_test.go` — `//go:build integration`, embeds `sttsuite.Suite`. Copy `deepgram/deepgram_integration_test.go`, and see the `go-testing` skill's `ai-routing.md`:
 
 ```go
 suite.Run(t, &XIntegrationSuite{Suite: sttsuite.Suite{

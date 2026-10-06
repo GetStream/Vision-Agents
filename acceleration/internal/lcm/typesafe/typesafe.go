@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ProviderName is how this is named in stats and configuration.
@@ -55,6 +56,18 @@ type StatusError struct {
 
 func (e *StatusError) Error() string {
 	return fmt.Sprintf("typesafe: the API returned %d: %s", e.StatusCode, e.Body)
+}
+
+// Unwrap says which of lcm's failures this is, so a caller can back off without knowing
+// TypeSafe's status codes. A status that is neither is the request's own fault.
+func (e *StatusError) Unwrap() error {
+	switch e.StatusCode {
+	case http.StatusTooManyRequests:
+		return lcm.ErrRateLimited
+	case http.StatusServiceUnavailable, 529:
+		return lcm.ErrUnavailable
+	}
+	return nil
 }
 
 // Retryable reports whether waiting and asking again is worth it, which is a rate limit or an
@@ -99,7 +112,7 @@ func New(options Options) (*Client, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("typesafe: " + apiKeyEnvVar + " is required")
+		return nil, stack.Wrap(errors.New("typesafe: " + apiKeyEnvVar + " is required"))
 	}
 	if options.Model == "" {
 		options.Model = DefaultModel
@@ -193,7 +206,7 @@ func (c *Client) Classify(
 	ctx context.Context, asked lcm.Request,
 ) (lcm.Result, error) {
 	if err := asked.Validate(); err != nil {
-		return lcm.Result{}, err
+		return lcm.Result{}, stack.Wrap(err)
 	}
 
 	questions := make(map[string]wireQuestion, len(asked.Questions))
@@ -207,34 +220,34 @@ func (c *Client) Classify(
 
 	payload, err := json.Marshal(request{State: asked.State, Model: c.model, Questions: questions})
 	if err != nil {
-		return lcm.Result{}, fmt.Errorf("typesafe: encode questions: %w", err)
+		return lcm.Result{}, stack.Wrap(fmt.Errorf("typesafe: encode questions: %w", err))
 	}
 
 	httpRequest, err := http.NewRequestWithContext(
 		ctx, http.MethodPost, c.baseURL+"/v1/systemone", bytes.NewReader(payload))
 	if err != nil {
-		return lcm.Result{}, fmt.Errorf("typesafe: build request: %w", err)
+		return lcm.Result{}, stack.Wrap(fmt.Errorf("typesafe: build request: %w", err))
 	}
 	httpRequest.Header.Set("Authorization", "Bearer "+c.apiKey)
 	httpRequest.Header.Set("Content-Type", "application/json")
 
 	httpResponse, err := c.client.Do(httpRequest)
 	if err != nil {
-		return lcm.Result{}, fmt.Errorf("typesafe: classify: %w", err)
+		return lcm.Result{}, stack.Wrap(fmt.Errorf("typesafe: classify: %w: %w", lcm.ErrUnavailable, err))
 	}
 	defer httpResponse.Body.Close()
 
 	if httpResponse.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(httpResponse.Body, errorBodyLimit))
-		return lcm.Result{}, &StatusError{
+		return lcm.Result{}, stack.Wrap(&StatusError{
 			StatusCode: httpResponse.StatusCode,
 			Body:       strings.TrimSpace(string(body)),
-		}
+		})
 	}
 
 	var decoded wireResponse
 	if err := json.NewDecoder(httpResponse.Body).Decode(&decoded); err != nil {
-		return lcm.Result{}, fmt.Errorf("typesafe: decode answers: %w", err)
+		return lcm.Result{}, stack.Wrap(fmt.Errorf("typesafe: decode answers: %w", err))
 	}
 
 	result := lcm.Result{
@@ -248,7 +261,7 @@ func (c *Client) Classify(
 	for id := range asked.Questions {
 		answer, answered := decoded.Answers[id]
 		if !answered {
-			return lcm.Result{}, fmt.Errorf("typesafe: %q was not answered", id)
+			return lcm.Result{}, stack.Wrap(fmt.Errorf("typesafe: %q was not answered", id))
 		}
 		result.Answers[id] = lcm.Answer{
 			Type:          lcm.QuestionType(answer.Type),

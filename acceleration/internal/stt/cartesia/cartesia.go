@@ -35,6 +35,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -167,7 +168,7 @@ func New(options Options) (*STT, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, fmt.Errorf("cartesia: api key is required (set %s)", apiKeyEnvVar)
+		return nil, stack.Wrap(fmt.Errorf("cartesia: api key is required (set %s)", apiKeyEnvVar))
 	}
 	if options.Model == "" {
 		options.Model = DefaultModel
@@ -176,15 +177,15 @@ func New(options Options) (*STT, error) {
 		options.URL = DefaultURL
 	}
 	if !strings.HasPrefix(options.URL, "ws://") && !strings.HasPrefix(options.URL, "wss://") {
-		return nil, fmt.Errorf("cartesia: url must be ws:// or wss://, got %s", options.URL)
+		return nil, stack.Wrap(fmt.Errorf("cartesia: url must be ws:// or wss://, got %s", options.URL))
 	}
 	options.Keyterms = stt.CleanKeyterms(options.Keyterms)
 	if len(options.Keyterms) > stt.MaxKeyterms {
-		return nil, fmt.Errorf("cartesia: at most %d keyterms, got %d", stt.MaxKeyterms, len(options.Keyterms))
+		return nil, stack.Wrap(fmt.Errorf("cartesia: at most %d keyterms, got %d", stt.MaxKeyterms, len(options.Keyterms)))
 	}
 	if spelt := keytermChars(options.Keyterms); spelt > maxKeytermChars {
-		return nil, fmt.Errorf("cartesia: keyterms total at most %d characters, got %d",
-			maxKeytermChars, spelt)
+		return nil, stack.Wrap(fmt.Errorf("cartesia: keyterms total at most %d characters, got %d",
+			maxKeytermChars, spelt))
 	}
 	if options.HandshakeTimeout == 0 {
 		options.HandshakeTimeout = 15 * time.Second
@@ -211,7 +212,7 @@ func (s *STT) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
-		return errors.New("cartesia: already started")
+		return stack.Wrap(errors.New("cartesia: already started"))
 	}
 	s.started = true
 	s.mu.Unlock()
@@ -222,9 +223,9 @@ func (s *STT) Start(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, s.endpoint(), header)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("cartesia: dial: %w (http %d)", err, response.StatusCode)
+			return stack.Wrap(fmt.Errorf("cartesia: dial: %w (http %d)", err, response.StatusCode))
 		}
-		return fmt.Errorf("cartesia: dial: %w", err)
+		return stack.Wrap(fmt.Errorf("cartesia: dial: %w", err))
 	}
 	s.conn = conn
 
@@ -343,7 +344,7 @@ func (s *STT) flush() {
 func (s *STT) write(messageType int, payload []byte) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.conn.WriteMessage(messageType, payload)
+	return stack.Wrap(s.conn.WriteMessage(messageType, payload))
 }
 
 // readLoop translates server events into stt events until the connection ends.

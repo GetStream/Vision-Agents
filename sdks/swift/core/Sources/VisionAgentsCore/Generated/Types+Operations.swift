@@ -11,254 +11,10 @@ import struct Foundation.Date
 #endif
 /// API operations, with input and output types, generated from `#/paths` in the OpenAPI document.
 internal enum Operations {
-    /// The sessions the calling customer is running
-    ///
-    /// Without filters this is what is happening now, which is what it has always been. With any of them it is a query over what has happened as well: the sessions this process is still holding and the rows recorded for the ones that ended, as one list deduplicated by id, because a caller asking for their conversations does not care which of them this instance happens to be holding.
-    /// A backend gets its customer's sessions; an end user gets their own, whatever they ask for. That is not a filter they can widen, and it is why listing is safe to expose to a page: one person's conversations are not a way to find another's. An anonymous caller who named nobody gets nothing at all, since they reach their own session by holding its id.
-    ///
-    ///
-    /// - Remark: HTTP `GET /v1/agents/sessions`.
-    /// - Remark: Generated from `#/paths//v1/agents/sessions/get(listSessions)`.
-    internal enum ListSessions {
-        internal static let id: Swift.String = "listSessions"
-        internal struct Input: Sendable, Hashable {
-            /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query`.
-            internal struct Query: Sendable, Hashable {
-                /// The agent name the session was opened against.
-                ///
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/agent`.
-                internal var agent: Components.Parameters.SessionAgent?
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/config_id`.
-                internal var configId: Components.Parameters.SessionConfigID?
-                /// Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary.
-                ///
-                ///
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/user_id`.
-                internal var userId: Components.Parameters.SessionUserID?
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/project`.
-                internal var project: Components.Parameters.SessionProject?
-                /// - Remark: Generated from `#/components/parameters/SessionStateFilter`.
-                internal enum SessionStateFilter: String, Codable, Hashable, Sendable, CaseIterable {
-                    case running = "running"
-                    case closed = "closed"
-                }
-                /// Omitted is both.
-                ///
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/state`.
-                internal var state: Components.Parameters.SessionStateFilter?
-                /// Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
-                ///
-                ///
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/custom`.
-                internal var custom: Components.Parameters.SessionCustom?
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/created_after`.
-                internal var createdAfter: Components.Parameters.SessionCreatedAfter?
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/created_before`.
-                internal var createdBefore: Components.Parameters.SessionCreatedBefore?
-                /// Up to 200. Omitted is 25.
-                ///
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/limit`.
-                internal var limit: Components.Parameters.SessionLimit?
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/offset`.
-                internal var offset: Components.Parameters.SessionOffset?
-                /// Creates a new `Query`.
-                ///
-                /// - Parameters:
-                ///   - agent: The agent name the session was opened against.
-                ///   - configId:
-                ///   - userId: Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary.
-                ///   - project:
-                ///   - state: Omitted is both.
-                ///   - custom: Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
-                ///   - createdAfter:
-                ///   - createdBefore:
-                ///   - limit: Up to 200. Omitted is 25.
-                ///   - offset:
-                internal init(
-                    agent: Components.Parameters.SessionAgent? = nil,
-                    configId: Components.Parameters.SessionConfigID? = nil,
-                    userId: Components.Parameters.SessionUserID? = nil,
-                    project: Components.Parameters.SessionProject? = nil,
-                    state: Components.Parameters.SessionStateFilter? = nil,
-                    custom: Components.Parameters.SessionCustom? = nil,
-                    createdAfter: Components.Parameters.SessionCreatedAfter? = nil,
-                    createdBefore: Components.Parameters.SessionCreatedBefore? = nil,
-                    limit: Components.Parameters.SessionLimit? = nil,
-                    offset: Components.Parameters.SessionOffset? = nil
-                ) {
-                    self.agent = agent
-                    self.configId = configId
-                    self.userId = userId
-                    self.project = project
-                    self.state = state
-                    self.custom = custom
-                    self.createdAfter = createdAfter
-                    self.createdBefore = createdBefore
-                    self.limit = limit
-                    self.offset = offset
-                }
-            }
-            internal var query: Operations.ListSessions.Input.Query
-            /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/header`.
-            internal struct Headers: Sendable, Hashable {
-                internal var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.ListSessions.AcceptableContentType>]
-                /// Creates a new `Headers`.
-                ///
-                /// - Parameters:
-                ///   - accept:
-                internal init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.ListSessions.AcceptableContentType>] = .defaultValues()) {
-                    self.accept = accept
-                }
-            }
-            internal var headers: Operations.ListSessions.Input.Headers
-            /// Creates a new `Input`.
-            ///
-            /// - Parameters:
-            ///   - query:
-            ///   - headers:
-            internal init(
-                query: Operations.ListSessions.Input.Query = .init(),
-                headers: Operations.ListSessions.Input.Headers = .init()
-            ) {
-                self.query = query
-                self.headers = headers
-            }
-        }
-        internal enum Output: Sendable, Hashable {
-            internal struct Ok: Sendable, Hashable {
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/responses/200/content`.
-                internal enum Body: Sendable, Hashable {
-                    /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/responses/200/content/application\/json`.
-                    case json([Components.Schemas.Session])
-                    /// The associated value of the enum case if `self` is `.json`.
-                    ///
-                    /// - Throws: An error if `self` is not `.json`.
-                    /// - SeeAlso: `.json`.
-                    internal var json: [Components.Schemas.Session] {
-                        get throws {
-                            switch self {
-                            case let .json(body):
-                                return body
-                            }
-                        }
-                    }
-                }
-                /// Received HTTP response body
-                internal var body: Operations.ListSessions.Output.Ok.Body
-                /// Creates a new `Ok`.
-                ///
-                /// - Parameters:
-                ///   - body: Received HTTP response body
-                internal init(body: Operations.ListSessions.Output.Ok.Body) {
-                    self.body = body
-                }
-            }
-            /// The customer's sessions, newest first. A page shorter than the limit asked for is the last one, which is all a caller walking the list needs: counting every conversation a busy customer ever had costs more than the page itself.
-            ///
-            ///
-            /// - Remark: Generated from `#/paths//v1/agents/sessions/get(listSessions)/responses/200`.
-            ///
-            /// HTTP response code: `200 ok`.
-            case ok(Operations.ListSessions.Output.Ok)
-            /// The associated value of the enum case if `self` is `.ok`.
-            ///
-            /// - Throws: An error if `self` is not `.ok`.
-            /// - SeeAlso: `.ok`.
-            internal var ok: Operations.ListSessions.Output.Ok {
-                get throws {
-                    switch self {
-                    case let .ok(response):
-                        return response
-                    default:
-                        try throwUnexpectedResponseStatus(
-                            expectedStatus: "ok",
-                            response: self
-                        )
-                    }
-                }
-            }
-            /// The request was malformed
-            ///
-            /// - Remark: Generated from `#/paths//v1/agents/sessions/get(listSessions)/responses/400`.
-            ///
-            /// HTTP response code: `400 badRequest`.
-            case badRequest(Components.Responses.BadRequest)
-            /// The associated value of the enum case if `self` is `.badRequest`.
-            ///
-            /// - Throws: An error if `self` is not `.badRequest`.
-            /// - SeeAlso: `.badRequest`.
-            internal var badRequest: Components.Responses.BadRequest {
-                get throws {
-                    switch self {
-                    case let .badRequest(response):
-                        return response
-                    default:
-                        try throwUnexpectedResponseStatus(
-                            expectedStatus: "badRequest",
-                            response: self
-                        )
-                    }
-                }
-            }
-            /// The customer header is missing
-            ///
-            /// - Remark: Generated from `#/paths//v1/agents/sessions/get(listSessions)/responses/401`.
-            ///
-            /// HTTP response code: `401 unauthorized`.
-            case unauthorized(Components.Responses.Unauthorized)
-            /// The associated value of the enum case if `self` is `.unauthorized`.
-            ///
-            /// - Throws: An error if `self` is not `.unauthorized`.
-            /// - SeeAlso: `.unauthorized`.
-            internal var unauthorized: Components.Responses.Unauthorized {
-                get throws {
-                    switch self {
-                    case let .unauthorized(response):
-                        return response
-                    default:
-                        try throwUnexpectedResponseStatus(
-                            expectedStatus: "unauthorized",
-                            response: self
-                        )
-                    }
-                }
-            }
-            /// Undocumented response.
-            ///
-            /// A response with a code that is not documented in the OpenAPI document.
-            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
-        }
-        internal enum AcceptableContentType: AcceptableProtocol {
-            case json
-            case other(Swift.String)
-            internal init?(rawValue: Swift.String) {
-                switch rawValue.lowercased() {
-                case "application/json":
-                    self = .json
-                default:
-                    self = .other(rawValue)
-                }
-            }
-            internal var rawValue: Swift.String {
-                switch self {
-                case let .other(string):
-                    return string
-                case .json:
-                    return "application/json"
-                }
-            }
-            internal static var allCases: [Self] {
-                [
-                    .json
-                ]
-            }
-        }
-    }
     /// Join a call as a voice agent
     ///
     /// The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.
     /// It returns once the agent is in the call, so a session that comes back is one that is already listening. Tools declared here are the caller's own: the model asks for them over the events socket and waits for the caller to answer.
-    ///
     ///
     /// - Remark: HTTP `POST /v1/agents/sessions`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/post(createSession)`.
@@ -417,6 +173,80 @@ internal enum Operations {
                     }
                 }
             }
+            internal struct Conflict: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/POST/responses/409/content`.
+                internal enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/POST/responses/409/content/application\/json`.
+                    case json(Components.Schemas.ErrorResponse)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    internal var json: Components.Schemas.ErrorResponse {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                internal var body: Operations.CreateSession.Output.Conflict.Body
+                /// Creates a new `Conflict`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                internal init(body: Operations.CreateSession.Output.Conflict.Body) {
+                    self.body = body
+                }
+            }
+            /// A session with that id already exists
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/post(createSession)/responses/409`.
+            ///
+            /// HTTP response code: `409 conflict`.
+            case conflict(Operations.CreateSession.Output.Conflict)
+            /// The associated value of the enum case if `self` is `.conflict`.
+            ///
+            /// - Throws: An error if `self` is not `.conflict`.
+            /// - SeeAlso: `.conflict`.
+            internal var conflict: Operations.CreateSession.Output.Conflict {
+                get throws {
+                    switch self {
+                    case let .conflict(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "conflict",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/post(createSession)/responses/500`.
+            ///
+            /// HTTP response code: `500 internalServerError`.
+            case internalServerError(Components.Responses.InternalError)
+            /// The associated value of the enum case if `self` is `.internalServerError`.
+            ///
+            /// - Throws: An error if `self` is not `.internalServerError`.
+            /// - SeeAlso: `.internalServerError`.
+            internal var internalServerError: Components.Responses.InternalError {
+                get throws {
+                    switch self {
+                    case let .internalServerError(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "internalServerError",
+                            response: self
+                        )
+                    }
+                }
+            }
             /// Undocumented response.
             ///
             /// A response with a code that is not documented in the OpenAPI document.
@@ -448,48 +278,561 @@ internal enum Operations {
             }
         }
     }
-    /// Leave the call and end the session
+    /// One session
     ///
-    /// - Remark: HTTP `DELETE /v1/agents/sessions/{id}`.
-    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(closeSession)`.
-    internal enum CloseSession {
-        internal static let id: Swift.String = "closeSession"
+    /// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/{id}`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)`.
+    internal enum GetSession {
+        internal static let id: Swift.String = "getSession"
         internal struct Input: Sendable, Hashable {
-            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/DELETE/path`.
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/path`.
             internal struct Path: Sendable, Hashable {
                 /// The session, as returned when it was created.
                 ///
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/DELETE/path/id`.
-                internal var id: Components.Parameters.SessionID
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/path/id`.
+                internal var id: Swift.String
                 /// Creates a new `Path`.
                 ///
                 /// - Parameters:
                 ///   - id: The session, as returned when it was created.
-                internal init(id: Components.Parameters.SessionID) {
+                internal init(id: Swift.String) {
                     self.id = id
                 }
             }
-            internal var path: Operations.CloseSession.Input.Path
-            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/DELETE/header`.
+            internal var path: Operations.GetSession.Input.Path
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/header`.
             internal struct Headers: Sendable, Hashable {
-                internal var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.CloseSession.AcceptableContentType>]
+                internal var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.GetSession.AcceptableContentType>]
                 /// Creates a new `Headers`.
                 ///
                 /// - Parameters:
                 ///   - accept:
-                internal init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.CloseSession.AcceptableContentType>] = .defaultValues()) {
+                internal init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.GetSession.AcceptableContentType>] = .defaultValues()) {
                     self.accept = accept
                 }
             }
-            internal var headers: Operations.CloseSession.Input.Headers
+            internal var headers: Operations.GetSession.Input.Headers
             /// Creates a new `Input`.
             ///
             /// - Parameters:
             ///   - path:
             ///   - headers:
             internal init(
-                path: Operations.CloseSession.Input.Path,
-                headers: Operations.CloseSession.Input.Headers = .init()
+                path: Operations.GetSession.Input.Path,
+                headers: Operations.GetSession.Input.Headers = .init()
+            ) {
+                self.path = path
+                self.headers = headers
+            }
+        }
+        internal enum Output: Sendable, Hashable {
+            internal struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/responses/200/content`.
+                internal enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/responses/200/content/application\/json`.
+                    case json(Components.Schemas.Session)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    internal var json: Components.Schemas.Session {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                internal var body: Operations.GetSession.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                internal init(body: Operations.GetSession.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// The session
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.GetSession.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            internal var ok: Operations.GetSession.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The request was malformed
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)/responses/400`.
+            ///
+            /// HTTP response code: `400 badRequest`.
+            case badRequest(Components.Responses.BadRequest)
+            /// The associated value of the enum case if `self` is `.badRequest`.
+            ///
+            /// - Throws: An error if `self` is not `.badRequest`.
+            /// - SeeAlso: `.badRequest`.
+            internal var badRequest: Components.Responses.BadRequest {
+                get throws {
+                    switch self {
+                    case let .badRequest(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "badRequest",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The customer header is missing
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)/responses/401`.
+            ///
+            /// HTTP response code: `401 unauthorized`.
+            case unauthorized(Components.Responses.Unauthorized)
+            /// The associated value of the enum case if `self` is `.unauthorized`.
+            ///
+            /// - Throws: An error if `self` is not `.unauthorized`.
+            /// - SeeAlso: `.unauthorized`.
+            internal var unauthorized: Components.Responses.Unauthorized {
+                get throws {
+                    switch self {
+                    case let .unauthorized(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "unauthorized",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The caller is known and this operation is server-side only. It needs Stream-Auth-Type: server and a token carrying server: true, which means it cannot be reached from an end user's device.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)/responses/403`.
+            ///
+            /// HTTP response code: `403 forbidden`.
+            case forbidden(Components.Responses.Forbidden)
+            /// The associated value of the enum case if `self` is `.forbidden`.
+            ///
+            /// - Throws: An error if `self` is not `.forbidden`.
+            /// - SeeAlso: `.forbidden`.
+            internal var forbidden: Components.Responses.Forbidden {
+                get throws {
+                    switch self {
+                    case let .forbidden(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "forbidden",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// No such modality, provider or shortcut
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Components.Responses.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            internal var notFound: Components.Responses.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)/responses/500`.
+            ///
+            /// HTTP response code: `500 internalServerError`.
+            case internalServerError(Components.Responses.InternalError)
+            /// The associated value of the enum case if `self` is `.internalServerError`.
+            ///
+            /// - Throws: An error if `self` is not `.internalServerError`.
+            /// - SeeAlso: `.internalServerError`.
+            internal var internalServerError: Components.Responses.InternalError {
+                get throws {
+                    switch self {
+                    case let .internalServerError(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "internalServerError",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        internal enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            internal init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            internal var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            internal static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// Change a session
+    ///
+    /// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+    ///
+    /// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+    ///
+    /// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+    ///
+    /// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+    ///
+    /// - Remark: HTTP `PATCH /v1/agents/sessions/{id}`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/patch(updateSession)`.
+    internal enum UpdateSession {
+        internal static let id: Swift.String = "updateSession"
+        internal struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/path`.
+            internal struct Path: Sendable, Hashable {
+                /// The session, as returned when it was created.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/path/id`.
+                internal var id: Swift.String
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id: The session, as returned when it was created.
+                internal init(id: Swift.String) {
+                    self.id = id
+                }
+            }
+            internal var path: Operations.UpdateSession.Input.Path
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/header`.
+            internal struct Headers: Sendable, Hashable {
+                internal var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.UpdateSession.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                internal init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.UpdateSession.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            internal var headers: Operations.UpdateSession.Input.Headers
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/requestBody`.
+            internal enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/requestBody/content/application\/json`.
+                case json(Components.Schemas.UpdateSessionRequest)
+            }
+            internal var body: Operations.UpdateSession.Input.Body
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            ///   - body:
+            internal init(
+                path: Operations.UpdateSession.Input.Path,
+                headers: Operations.UpdateSession.Input.Headers = .init(),
+                body: Operations.UpdateSession.Input.Body
+            ) {
+                self.path = path
+                self.headers = headers
+                self.body = body
+            }
+        }
+        internal enum Output: Sendable, Hashable {
+            internal struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/responses/200/content`.
+                internal enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/responses/200/content/application\/json`.
+                    case json(Components.Schemas.Session)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    internal var json: Components.Schemas.Session {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                internal var body: Operations.UpdateSession.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                internal init(body: Operations.UpdateSession.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// The session as it now is
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/patch(updateSession)/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.UpdateSession.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            internal var ok: Operations.UpdateSession.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The request was malformed
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/patch(updateSession)/responses/400`.
+            ///
+            /// HTTP response code: `400 badRequest`.
+            case badRequest(Components.Responses.BadRequest)
+            /// The associated value of the enum case if `self` is `.badRequest`.
+            ///
+            /// - Throws: An error if `self` is not `.badRequest`.
+            /// - SeeAlso: `.badRequest`.
+            internal var badRequest: Components.Responses.BadRequest {
+                get throws {
+                    switch self {
+                    case let .badRequest(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "badRequest",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The customer header is missing
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/patch(updateSession)/responses/401`.
+            ///
+            /// HTTP response code: `401 unauthorized`.
+            case unauthorized(Components.Responses.Unauthorized)
+            /// The associated value of the enum case if `self` is `.unauthorized`.
+            ///
+            /// - Throws: An error if `self` is not `.unauthorized`.
+            /// - SeeAlso: `.unauthorized`.
+            internal var unauthorized: Components.Responses.Unauthorized {
+                get throws {
+                    switch self {
+                    case let .unauthorized(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "unauthorized",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The caller is known and this operation is server-side only. It needs Stream-Auth-Type: server and a token carrying server: true, which means it cannot be reached from an end user's device.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/patch(updateSession)/responses/403`.
+            ///
+            /// HTTP response code: `403 forbidden`.
+            case forbidden(Components.Responses.Forbidden)
+            /// The associated value of the enum case if `self` is `.forbidden`.
+            ///
+            /// - Throws: An error if `self` is not `.forbidden`.
+            /// - SeeAlso: `.forbidden`.
+            internal var forbidden: Components.Responses.Forbidden {
+                get throws {
+                    switch self {
+                    case let .forbidden(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "forbidden",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// No such modality, provider or shortcut
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/patch(updateSession)/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Components.Responses.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            internal var notFound: Components.Responses.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/patch(updateSession)/responses/500`.
+            ///
+            /// HTTP response code: `500 internalServerError`.
+            case internalServerError(Components.Responses.InternalError)
+            /// The associated value of the enum case if `self` is `.internalServerError`.
+            ///
+            /// - Throws: An error if `self` is not `.internalServerError`.
+            /// - SeeAlso: `.internalServerError`.
+            internal var internalServerError: Components.Responses.InternalError {
+                get throws {
+                    switch self {
+                    case let .internalServerError(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "internalServerError",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        internal enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            internal init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            internal var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            internal static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// Delete a session
+    ///
+    /// Deletes the session, running or stopped: it is stopped first if it is running, then its turns and their items are deleted, and so is everything it taught the memory store. Memories other sessions learned about the same user are kept. The transcript a conversation in writing kept in Stream Chat is not deleted.
+    ///
+    /// To end a call and keep the conversation, stop the session instead.
+    ///
+    /// - Remark: HTTP `DELETE /v1/agents/sessions/{id}`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(deleteSession)`.
+    internal enum DeleteSession {
+        internal static let id: Swift.String = "deleteSession"
+        internal struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/DELETE/path`.
+            internal struct Path: Sendable, Hashable {
+                /// The session, as returned when it was created.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/DELETE/path/id`.
+                internal var id: Swift.String
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id: The session, as returned when it was created.
+                internal init(id: Swift.String) {
+                    self.id = id
+                }
+            }
+            internal var path: Operations.DeleteSession.Input.Path
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/DELETE/header`.
+            internal struct Headers: Sendable, Hashable {
+                internal var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.DeleteSession.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                internal init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.DeleteSession.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            internal var headers: Operations.DeleteSession.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            internal init(
+                path: Operations.DeleteSession.Input.Path,
+                headers: Operations.DeleteSession.Input.Headers = .init()
             ) {
                 self.path = path
                 self.headers = headers
@@ -500,15 +843,15 @@ internal enum Operations {
                 /// Creates a new `NoContent`.
                 internal init() {}
             }
-            /// The agent has left
+            /// The session is deleted
             ///
-            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(closeSession)/responses/204`.
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(deleteSession)/responses/204`.
             ///
             /// HTTP response code: `204 noContent`.
-            case noContent(Operations.CloseSession.Output.NoContent)
-            /// The agent has left
+            case noContent(Operations.DeleteSession.Output.NoContent)
+            /// The session is deleted
             ///
-            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(closeSession)/responses/204`.
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(deleteSession)/responses/204`.
             ///
             /// HTTP response code: `204 noContent`.
             internal static var noContent: Self {
@@ -518,7 +861,7 @@ internal enum Operations {
             ///
             /// - Throws: An error if `self` is not `.noContent`.
             /// - SeeAlso: `.noContent`.
-            internal var noContent: Operations.CloseSession.Output.NoContent {
+            internal var noContent: Operations.DeleteSession.Output.NoContent {
                 get throws {
                     switch self {
                     case let .noContent(response):
@@ -531,9 +874,32 @@ internal enum Operations {
                     }
                 }
             }
+            /// The request was malformed
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(deleteSession)/responses/400`.
+            ///
+            /// HTTP response code: `400 badRequest`.
+            case badRequest(Components.Responses.BadRequest)
+            /// The associated value of the enum case if `self` is `.badRequest`.
+            ///
+            /// - Throws: An error if `self` is not `.badRequest`.
+            /// - SeeAlso: `.badRequest`.
+            internal var badRequest: Components.Responses.BadRequest {
+                get throws {
+                    switch self {
+                    case let .badRequest(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "badRequest",
+                            response: self
+                        )
+                    }
+                }
+            }
             /// The customer header is missing
             ///
-            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(closeSession)/responses/401`.
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(deleteSession)/responses/401`.
             ///
             /// HTTP response code: `401 unauthorized`.
             case unauthorized(Components.Responses.Unauthorized)
@@ -556,7 +922,7 @@ internal enum Operations {
             }
             /// No such modality, provider or shortcut
             ///
-            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(closeSession)/responses/404`.
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(deleteSession)/responses/404`.
             ///
             /// HTTP response code: `404 notFound`.
             case notFound(Components.Responses.NotFound)
@@ -572,6 +938,29 @@ internal enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(deleteSession)/responses/500`.
+            ///
+            /// HTTP response code: `500 internalServerError`.
+            case internalServerError(Components.Responses.InternalError)
+            /// The associated value of the enum case if `self` is `.internalServerError`.
+            ///
+            /// - Throws: An error if `self` is not `.internalServerError`.
+            /// - SeeAlso: `.internalServerError`.
+            internal var internalServerError: Components.Responses.InternalError {
+                get throws {
+                    switch self {
+                    case let .internalServerError(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "internalServerError",
                             response: self
                         )
                     }
@@ -613,7 +1002,6 @@ internal enum Operations {
     /// Opens a session from another's spec, carrying its history across by default, and records where it came from. The usual reason is to ask the same question of a different model without losing the original answer, which is why anything in the request is written over what the parent was opened with.
     /// The parent is untouched and keeps running if it was running. Forking an incognito session is refused rather than answered with an empty conversation: there is nothing recorded to fork from, and pretending otherwise would hand back a session that quietly lost everything the caller thought they were continuing.
     ///
-    ///
     /// - Remark: HTTP `POST /v1/agents/sessions/{id}/fork`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/fork/post(forkSession)`.
     internal enum ForkSession {
@@ -624,12 +1012,12 @@ internal enum Operations {
                 /// The session, as returned when it was created.
                 ///
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/fork/POST/path/id`.
-                internal var id: Components.Parameters.SessionID
+                internal var id: Swift.String
                 /// Creates a new `Path`.
                 ///
                 /// - Parameters:
                 ///   - id: The session, as returned when it was created.
-                internal init(id: Components.Parameters.SessionID) {
+                internal init(id: Swift.String) {
                     self.id = id
                 }
             }
@@ -812,6 +1200,29 @@ internal enum Operations {
                     }
                 }
             }
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/fork/post(forkSession)/responses/500`.
+            ///
+            /// HTTP response code: `500 internalServerError`.
+            case internalServerError(Components.Responses.InternalError)
+            /// The associated value of the enum case if `self` is `.internalServerError`.
+            ///
+            /// - Throws: An error if `self` is not `.internalServerError`.
+            /// - SeeAlso: `.internalServerError`.
+            internal var internalServerError: Components.Responses.InternalError {
+                get throws {
+                    switch self {
+                    case let .internalServerError(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "internalServerError",
+                            response: self
+                        )
+                    }
+                }
+            }
             /// Undocumented response.
             ///
             /// A response with a code that is not documented in the OpenAPI document.
@@ -847,7 +1258,6 @@ internal enum Operations {
     ///
     /// Oldest first, which read in order are the conversation. This is the shape of it rather than the text: what was asked, whether the turn finished, and how long it took. The items endpoint is what carries what happened inside each one.
     ///
-    ///
     /// - Remark: HTTP `GET /v1/agents/sessions/{id}/responses`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/get(listResponses)`.
     internal enum ListResponses {
@@ -858,12 +1268,12 @@ internal enum Operations {
                 /// The session, as returned when it was created.
                 ///
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/GET/path/id`.
-                internal var id: Components.Parameters.SessionID
+                internal var id: Swift.String
                 /// Creates a new `Path`.
                 ///
                 /// - Parameters:
                 ///   - id: The session, as returned when it was created.
-                internal init(id: Components.Parameters.SessionID) {
+                internal init(id: Swift.String) {
                     self.id = id
                 }
             }
@@ -873,20 +1283,22 @@ internal enum Operations {
                 /// Up to 200. Omitted is 25.
                 ///
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/GET/query/limit`.
-                internal var limit: Components.Parameters.SessionLimit?
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/GET/query/offset`.
-                internal var offset: Components.Parameters.SessionOffset?
+                internal var limit: Swift.Int?
+                /// The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/GET/query/cursor`.
+                internal var cursor: Swift.String?
                 /// Creates a new `Query`.
                 ///
                 /// - Parameters:
                 ///   - limit: Up to 200. Omitted is 25.
-                ///   - offset:
+                ///   - cursor: The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
                 internal init(
-                    limit: Components.Parameters.SessionLimit? = nil,
-                    offset: Components.Parameters.SessionOffset? = nil
+                    limit: Swift.Int? = nil,
+                    cursor: Swift.String? = nil
                 ) {
                     self.limit = limit
-                    self.offset = offset
+                    self.cursor = cursor
                 }
             }
             internal var query: Operations.ListResponses.Input.Query
@@ -923,12 +1335,12 @@ internal enum Operations {
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/GET/responses/200/content`.
                 internal enum Body: Sendable, Hashable {
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/GET/responses/200/content/application\/json`.
-                    case json([Components.Schemas.AgentResponse])
+                    case json(Components.Schemas.AgentResponsePage)
                     /// The associated value of the enum case if `self` is `.json`.
                     ///
                     /// - Throws: An error if `self` is not `.json`.
                     /// - SeeAlso: `.json`.
-                    internal var json: [Components.Schemas.AgentResponse] {
+                    internal var json: Components.Schemas.AgentResponsePage {
                         get throws {
                             switch self {
                             case let .json(body):
@@ -965,6 +1377,29 @@ internal enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The request was malformed
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/get(listResponses)/responses/400`.
+            ///
+            /// HTTP response code: `400 badRequest`.
+            case badRequest(Components.Responses.BadRequest)
+            /// The associated value of the enum case if `self` is `.badRequest`.
+            ///
+            /// - Throws: An error if `self` is not `.badRequest`.
+            /// - SeeAlso: `.badRequest`.
+            internal var badRequest: Components.Responses.BadRequest {
+                get throws {
+                    switch self {
+                    case let .badRequest(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "badRequest",
                             response: self
                         )
                     }
@@ -1039,6 +1474,620 @@ internal enum Operations {
                     }
                 }
             }
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/get(listResponses)/responses/500`.
+            ///
+            /// HTTP response code: `500 internalServerError`.
+            case internalServerError(Components.Responses.InternalError)
+            /// The associated value of the enum case if `self` is `.internalServerError`.
+            ///
+            /// - Throws: An error if `self` is not `.internalServerError`.
+            /// - SeeAlso: `.internalServerError`.
+            internal var internalServerError: Components.Responses.InternalError {
+                get throws {
+                    switch self {
+                    case let .internalServerError(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "internalServerError",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        internal enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            internal init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            internal var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            internal static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// Ask the agent something and get a handle on the answer
+    ///
+    /// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
+    /// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/responses`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)`.
+    internal enum CreateResponse {
+        internal static let id: Swift.String = "createResponse"
+        internal struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/path`.
+            internal struct Path: Sendable, Hashable {
+                /// The session, as returned when it was created.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/path/id`.
+                internal var id: Swift.String
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id: The session, as returned when it was created.
+                internal init(id: Swift.String) {
+                    self.id = id
+                }
+            }
+            internal var path: Operations.CreateResponse.Input.Path
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/header`.
+            internal struct Headers: Sendable, Hashable {
+                internal var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.CreateResponse.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                internal init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.CreateResponse.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            internal var headers: Operations.CreateResponse.Input.Headers
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/requestBody`.
+            internal enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/requestBody/content/application\/json`.
+                case json(Components.Schemas.CreateResponseRequest)
+            }
+            internal var body: Operations.CreateResponse.Input.Body
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            ///   - body:
+            internal init(
+                path: Operations.CreateResponse.Input.Path,
+                headers: Operations.CreateResponse.Input.Headers = .init(),
+                body: Operations.CreateResponse.Input.Body
+            ) {
+                self.path = path
+                self.headers = headers
+                self.body = body
+            }
+        }
+        internal enum Output: Sendable, Hashable {
+            internal struct Accepted: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/202/content`.
+                internal enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/202/content/application\/json`.
+                    case json(Components.Schemas.AgentResponse)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    internal var json: Components.Schemas.AgentResponse {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                internal var body: Operations.CreateResponse.Output.Accepted.Body
+                /// Creates a new `Accepted`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                internal init(body: Operations.CreateResponse.Output.Accepted.Body) {
+                    self.body = body
+                }
+            }
+            /// The agent is answering
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)/responses/202`.
+            ///
+            /// HTTP response code: `202 accepted`.
+            case accepted(Operations.CreateResponse.Output.Accepted)
+            /// The associated value of the enum case if `self` is `.accepted`.
+            ///
+            /// - Throws: An error if `self` is not `.accepted`.
+            /// - SeeAlso: `.accepted`.
+            internal var accepted: Operations.CreateResponse.Output.Accepted {
+                get throws {
+                    switch self {
+                    case let .accepted(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "accepted",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The request was malformed
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)/responses/400`.
+            ///
+            /// HTTP response code: `400 badRequest`.
+            case badRequest(Components.Responses.BadRequest)
+            /// The associated value of the enum case if `self` is `.badRequest`.
+            ///
+            /// - Throws: An error if `self` is not `.badRequest`.
+            /// - SeeAlso: `.badRequest`.
+            internal var badRequest: Components.Responses.BadRequest {
+                get throws {
+                    switch self {
+                    case let .badRequest(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "badRequest",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The customer header is missing
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)/responses/401`.
+            ///
+            /// HTTP response code: `401 unauthorized`.
+            case unauthorized(Components.Responses.Unauthorized)
+            /// The associated value of the enum case if `self` is `.unauthorized`.
+            ///
+            /// - Throws: An error if `self` is not `.unauthorized`.
+            /// - SeeAlso: `.unauthorized`.
+            internal var unauthorized: Components.Responses.Unauthorized {
+                get throws {
+                    switch self {
+                    case let .unauthorized(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "unauthorized",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The caller is known and this operation is server-side only. It needs Stream-Auth-Type: server and a token carrying server: true, which means it cannot be reached from an end user's device.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)/responses/403`.
+            ///
+            /// HTTP response code: `403 forbidden`.
+            case forbidden(Components.Responses.Forbidden)
+            /// The associated value of the enum case if `self` is `.forbidden`.
+            ///
+            /// - Throws: An error if `self` is not `.forbidden`.
+            /// - SeeAlso: `.forbidden`.
+            internal var forbidden: Components.Responses.Forbidden {
+                get throws {
+                    switch self {
+                    case let .forbidden(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "forbidden",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// No such modality, provider or shortcut
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Components.Responses.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            internal var notFound: Components.Responses.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            internal struct Conflict: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/409/content`.
+                internal enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/409/content/application\/json`.
+                    case json(Components.Schemas.ErrorResponse)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    internal var json: Components.Schemas.ErrorResponse {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                internal var body: Operations.CreateResponse.Output.Conflict.Body
+                /// Creates a new `Conflict`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                internal init(body: Operations.CreateResponse.Output.Conflict.Body) {
+                    self.body = body
+                }
+            }
+            /// The command ID was already accepted with different content
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)/responses/409`.
+            ///
+            /// HTTP response code: `409 conflict`.
+            case conflict(Operations.CreateResponse.Output.Conflict)
+            /// The associated value of the enum case if `self` is `.conflict`.
+            ///
+            /// - Throws: An error if `self` is not `.conflict`.
+            /// - SeeAlso: `.conflict`.
+            internal var conflict: Operations.CreateResponse.Output.Conflict {
+                get throws {
+                    switch self {
+                    case let .conflict(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "conflict",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)/responses/500`.
+            ///
+            /// HTTP response code: `500 internalServerError`.
+            case internalServerError(Components.Responses.InternalError)
+            /// The associated value of the enum case if `self` is `.internalServerError`.
+            ///
+            /// - Throws: An error if `self` is not `.internalServerError`.
+            /// - SeeAlso: `.internalServerError`.
+            internal var internalServerError: Components.Responses.InternalError {
+                get throws {
+                    switch self {
+                    case let .internalServerError(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "internalServerError",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        internal enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            internal init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            internal var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            internal static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// What the agent did, turn by turn, in the order it happened
+    ///
+    /// One flat stream across every turn rather than a list per turn, because that is how a conversation reads and how it is rendered: the question, what the agent did about it, what it said, then the next question. Naming a response narrows it to that turn.
+    /// Deltas are not here. A hundred fragments of one sentence are the sentence, and keeping them would make this mostly punctuation; a caller watching a turn happen reads the deltas off the events socket, and a caller reading one back wants the shape of it.
+    /// Nothing is returned for an incognito session, which has no items to return.
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/{id}/responses/items`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/items/get(listResponseItems)`.
+    internal enum ListResponseItems {
+        internal static let id: Swift.String = "listResponseItems"
+        internal struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/path`.
+            internal struct Path: Sendable, Hashable {
+                /// The session, as returned when it was created.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/path/id`.
+                internal var id: Swift.String
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id: The session, as returned when it was created.
+                internal init(id: Swift.String) {
+                    self.id = id
+                }
+            }
+            internal var path: Operations.ListResponseItems.Input.Path
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/query`.
+            internal struct Query: Sendable, Hashable {
+                /// Narrow to one turn's items. Omitted is every turn in the session.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/query/response_id`.
+                internal var responseId: Swift.String?
+                /// Up to 1000. Omitted is 200.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/query/limit`.
+                internal var limit: Swift.Int?
+                /// The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/query/cursor`.
+                internal var cursor: Swift.String?
+                /// Creates a new `Query`.
+                ///
+                /// - Parameters:
+                ///   - responseId: Narrow to one turn's items. Omitted is every turn in the session.
+                ///   - limit: Up to 1000. Omitted is 200.
+                ///   - cursor: The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
+                internal init(
+                    responseId: Swift.String? = nil,
+                    limit: Swift.Int? = nil,
+                    cursor: Swift.String? = nil
+                ) {
+                    self.responseId = responseId
+                    self.limit = limit
+                    self.cursor = cursor
+                }
+            }
+            internal var query: Operations.ListResponseItems.Input.Query
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/header`.
+            internal struct Headers: Sendable, Hashable {
+                internal var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.ListResponseItems.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                internal init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.ListResponseItems.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            internal var headers: Operations.ListResponseItems.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - query:
+            ///   - headers:
+            internal init(
+                path: Operations.ListResponseItems.Input.Path,
+                query: Operations.ListResponseItems.Input.Query = .init(),
+                headers: Operations.ListResponseItems.Input.Headers = .init()
+            ) {
+                self.path = path
+                self.query = query
+                self.headers = headers
+            }
+        }
+        internal enum Output: Sendable, Hashable {
+            internal struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/responses/200/content`.
+                internal enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/responses/200/content/application\/json`.
+                    case json(Components.Schemas.AgentResponseItemPage)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    internal var json: Components.Schemas.AgentResponseItemPage {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                internal var body: Operations.ListResponseItems.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                internal init(body: Operations.ListResponseItems.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// The items, oldest first
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/items/get(listResponseItems)/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.ListResponseItems.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            internal var ok: Operations.ListResponseItems.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The request was malformed
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/items/get(listResponseItems)/responses/400`.
+            ///
+            /// HTTP response code: `400 badRequest`.
+            case badRequest(Components.Responses.BadRequest)
+            /// The associated value of the enum case if `self` is `.badRequest`.
+            ///
+            /// - Throws: An error if `self` is not `.badRequest`.
+            /// - SeeAlso: `.badRequest`.
+            internal var badRequest: Components.Responses.BadRequest {
+                get throws {
+                    switch self {
+                    case let .badRequest(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "badRequest",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The customer header is missing
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/items/get(listResponseItems)/responses/401`.
+            ///
+            /// HTTP response code: `401 unauthorized`.
+            case unauthorized(Components.Responses.Unauthorized)
+            /// The associated value of the enum case if `self` is `.unauthorized`.
+            ///
+            /// - Throws: An error if `self` is not `.unauthorized`.
+            /// - SeeAlso: `.unauthorized`.
+            internal var unauthorized: Components.Responses.Unauthorized {
+                get throws {
+                    switch self {
+                    case let .unauthorized(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "unauthorized",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The caller is known and this operation is server-side only. It needs Stream-Auth-Type: server and a token carrying server: true, which means it cannot be reached from an end user's device.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/items/get(listResponseItems)/responses/403`.
+            ///
+            /// HTTP response code: `403 forbidden`.
+            case forbidden(Components.Responses.Forbidden)
+            /// The associated value of the enum case if `self` is `.forbidden`.
+            ///
+            /// - Throws: An error if `self` is not `.forbidden`.
+            /// - SeeAlso: `.forbidden`.
+            internal var forbidden: Components.Responses.Forbidden {
+                get throws {
+                    switch self {
+                    case let .forbidden(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "forbidden",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// No such modality, provider or shortcut
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/items/get(listResponseItems)/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Components.Responses.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            internal var notFound: Components.Responses.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/items/get(listResponseItems)/responses/500`.
+            ///
+            /// HTTP response code: `500 internalServerError`.
+            case internalServerError(Components.Responses.InternalError)
+            /// The associated value of the enum case if `self` is `.internalServerError`.
+            ///
+            /// - Throws: An error if `self` is not `.internalServerError`.
+            /// - SeeAlso: `.internalServerError`.
+            internal var internalServerError: Components.Responses.InternalError {
+                get throws {
+                    switch self {
+                    case let .internalServerError(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "internalServerError",
+                            response: self
+                        )
+                    }
+                }
+            }
             /// Undocumented response.
             ///
             /// A response with a code that is not documented in the OpenAPI document.
@@ -1075,7 +2124,6 @@ internal enum Operations {
     /// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
     /// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
     ///
-    ///
     /// - Remark: HTTP `POST /v1/agents/sessions/{id}/rewind`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/rewind/post(rewindSession)`.
     internal enum RewindSession {
@@ -1086,12 +2134,12 @@ internal enum Operations {
                 /// The session, as returned when it was created.
                 ///
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/rewind/POST/path/id`.
-                internal var id: Components.Parameters.SessionID
+                internal var id: Swift.String
                 /// Creates a new `Path`.
                 ///
                 /// - Parameters:
                 ///   - id: The session, as returned when it was created.
-                internal init(id: Components.Parameters.SessionID) {
+                internal init(id: Swift.String) {
                     self.id = id
                 }
             }
@@ -1258,6 +2306,439 @@ internal enum Operations {
                     }
                 }
             }
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/rewind/post(rewindSession)/responses/500`.
+            ///
+            /// HTTP response code: `500 internalServerError`.
+            case internalServerError(Components.Responses.InternalError)
+            /// The associated value of the enum case if `self` is `.internalServerError`.
+            ///
+            /// - Throws: An error if `self` is not `.internalServerError`.
+            /// - SeeAlso: `.internalServerError`.
+            internal var internalServerError: Components.Responses.InternalError {
+                get throws {
+                    switch self {
+                    case let .internalServerError(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "internalServerError",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        internal enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            internal init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            internal var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            internal static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// Stop a running session
+    ///
+    /// The agent leaves the call and the session stops running. Everything it recorded is kept: it can still be read back, renamed and forked, and what it remembered carries into the next conversation. Deleting a session is what takes those away.
+    ///
+    /// A conversation in writing has nothing to hang up, so it is usually left running rather than stopped. Stopping is for a call, where the agent is holding a line open.
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/stop`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/stop/post(stopSession)`.
+    internal enum StopSession {
+        internal static let id: Swift.String = "stopSession"
+        internal struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/stop/POST/path`.
+            internal struct Path: Sendable, Hashable {
+                /// The session, as returned when it was created.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/stop/POST/path/id`.
+                internal var id: Swift.String
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id: The session, as returned when it was created.
+                internal init(id: Swift.String) {
+                    self.id = id
+                }
+            }
+            internal var path: Operations.StopSession.Input.Path
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/stop/POST/header`.
+            internal struct Headers: Sendable, Hashable {
+                internal var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.StopSession.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                internal init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.StopSession.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            internal var headers: Operations.StopSession.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            internal init(
+                path: Operations.StopSession.Input.Path,
+                headers: Operations.StopSession.Input.Headers = .init()
+            ) {
+                self.path = path
+                self.headers = headers
+            }
+        }
+        internal enum Output: Sendable, Hashable {
+            internal struct NoContent: Sendable, Hashable {
+                /// Creates a new `NoContent`.
+                internal init() {}
+            }
+            /// The agent has left
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/stop/post(stopSession)/responses/204`.
+            ///
+            /// HTTP response code: `204 noContent`.
+            case noContent(Operations.StopSession.Output.NoContent)
+            /// The agent has left
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/stop/post(stopSession)/responses/204`.
+            ///
+            /// HTTP response code: `204 noContent`.
+            internal static var noContent: Self {
+                .noContent(.init())
+            }
+            /// The associated value of the enum case if `self` is `.noContent`.
+            ///
+            /// - Throws: An error if `self` is not `.noContent`.
+            /// - SeeAlso: `.noContent`.
+            internal var noContent: Operations.StopSession.Output.NoContent {
+                get throws {
+                    switch self {
+                    case let .noContent(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "noContent",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The request was malformed
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/stop/post(stopSession)/responses/400`.
+            ///
+            /// HTTP response code: `400 badRequest`.
+            case badRequest(Components.Responses.BadRequest)
+            /// The associated value of the enum case if `self` is `.badRequest`.
+            ///
+            /// - Throws: An error if `self` is not `.badRequest`.
+            /// - SeeAlso: `.badRequest`.
+            internal var badRequest: Components.Responses.BadRequest {
+                get throws {
+                    switch self {
+                    case let .badRequest(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "badRequest",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The customer header is missing
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/stop/post(stopSession)/responses/401`.
+            ///
+            /// HTTP response code: `401 unauthorized`.
+            case unauthorized(Components.Responses.Unauthorized)
+            /// The associated value of the enum case if `self` is `.unauthorized`.
+            ///
+            /// - Throws: An error if `self` is not `.unauthorized`.
+            /// - SeeAlso: `.unauthorized`.
+            internal var unauthorized: Components.Responses.Unauthorized {
+                get throws {
+                    switch self {
+                    case let .unauthorized(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "unauthorized",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// No such modality, provider or shortcut
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/stop/post(stopSession)/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Components.Responses.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            internal var notFound: Components.Responses.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/stop/post(stopSession)/responses/500`.
+            ///
+            /// HTTP response code: `500 internalServerError`.
+            case internalServerError(Components.Responses.InternalError)
+            /// The associated value of the enum case if `self` is `.internalServerError`.
+            ///
+            /// - Throws: An error if `self` is not `.internalServerError`.
+            /// - SeeAlso: `.internalServerError`.
+            internal var internalServerError: Components.Responses.InternalError {
+                get throws {
+                    switch self {
+                    case let .internalServerError(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "internalServerError",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        internal enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            internal init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            internal var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            internal static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// List or search the caller's sessions
+    ///
+    /// Three queries are supported, each over the sessions still running and the ones that ended:
+    ///
+    /// - every session, sorted by `updated_at`
+    /// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
+    /// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+    ///
+    /// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+    ///
+    /// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/query`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/query/post(querySessions)`.
+    internal enum QuerySessions {
+        internal static let id: Swift.String = "querySessions"
+        internal struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/query/POST/header`.
+            internal struct Headers: Sendable, Hashable {
+                internal var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.QuerySessions.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                internal init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.QuerySessions.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            internal var headers: Operations.QuerySessions.Input.Headers
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/query/POST/requestBody`.
+            internal enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/query/POST/requestBody/content/application\/json`.
+                case json(Components.Schemas.SessionQuery)
+            }
+            internal var body: Operations.QuerySessions.Input.Body?
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - headers:
+            ///   - body:
+            internal init(
+                headers: Operations.QuerySessions.Input.Headers = .init(),
+                body: Operations.QuerySessions.Input.Body? = nil
+            ) {
+                self.headers = headers
+                self.body = body
+            }
+        }
+        internal enum Output: Sendable, Hashable {
+            internal struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/query/POST/responses/200/content`.
+                internal enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/query/POST/responses/200/content/application\/json`.
+                    case json(Components.Schemas.SessionPage)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    internal var json: Components.Schemas.SessionPage {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                internal var body: Operations.QuerySessions.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                internal init(body: Operations.QuerySessions.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// A page of sessions
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/query/post(querySessions)/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.QuerySessions.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            internal var ok: Operations.QuerySessions.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The request was malformed
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/query/post(querySessions)/responses/400`.
+            ///
+            /// HTTP response code: `400 badRequest`.
+            case badRequest(Components.Responses.BadRequest)
+            /// The associated value of the enum case if `self` is `.badRequest`.
+            ///
+            /// - Throws: An error if `self` is not `.badRequest`.
+            /// - SeeAlso: `.badRequest`.
+            internal var badRequest: Components.Responses.BadRequest {
+                get throws {
+                    switch self {
+                    case let .badRequest(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "badRequest",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The customer header is missing
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/query/post(querySessions)/responses/401`.
+            ///
+            /// HTTP response code: `401 unauthorized`.
+            case unauthorized(Components.Responses.Unauthorized)
+            /// The associated value of the enum case if `self` is `.unauthorized`.
+            ///
+            /// - Throws: An error if `self` is not `.unauthorized`.
+            /// - SeeAlso: `.unauthorized`.
+            internal var unauthorized: Components.Responses.Unauthorized {
+                get throws {
+                    switch self {
+                    case let .unauthorized(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "unauthorized",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/query/post(querySessions)/responses/500`.
+            ///
+            /// HTTP response code: `500 internalServerError`.
+            case internalServerError(Components.Responses.InternalError)
+            /// The associated value of the enum case if `self` is `.internalServerError`.
+            ///
+            /// - Throws: An error if `self` is not `.internalServerError`.
+            /// - SeeAlso: `.internalServerError`.
+            internal var internalServerError: Components.Responses.InternalError {
+                get throws {
+                    switch self {
+                    case let .internalServerError(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "internalServerError",
+                            response: self
+                        )
+                    }
+                }
+            }
             /// Undocumented response.
             ///
             /// A response with a code that is not documented in the OpenAPI document.
@@ -1292,7 +2773,6 @@ internal enum Operations {
     /// Answer a question out of what is true now
     ///
     /// The fourth routed modality, reachable on its own rather than only as a tool an agent reaches for. One question, one answer: routed, failed over and billed like the rest, and with no socket because nothing arrives in pieces.
-    ///
     ///
     /// - Remark: HTTP `POST /v1/search`.
     /// - Remark: Generated from `#/paths//v1/search/post(search)`.
@@ -1446,6 +2926,29 @@ internal enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
+            ///
+            /// - Remark: Generated from `#/paths//v1/search/post(search)/responses/500`.
+            ///
+            /// HTTP response code: `500 internalServerError`.
+            case internalServerError(Components.Responses.InternalError)
+            /// The associated value of the enum case if `self` is `.internalServerError`.
+            ///
+            /// - Throws: An error if `self` is not `.internalServerError`.
+            /// - SeeAlso: `.internalServerError`.
+            internal var internalServerError: Components.Responses.InternalError {
+                get throws {
+                    switch self {
+                    case let .internalServerError(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "internalServerError",
                             response: self
                         )
                     }

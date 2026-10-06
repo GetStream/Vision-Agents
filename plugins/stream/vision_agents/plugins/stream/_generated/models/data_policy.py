@@ -23,8 +23,7 @@ class DataPolicy:
             allow_training (bool | Unset): False requires a provider that has said it does not train on what it is sent.
                 Omitting this asks nothing. A provider that has published nothing either way counts as not having said no.
             retention (str | Unset): The longest a provider may keep this audio - none, or a duration such as 30d or 24h.
-                Omitting it asks nothing.
-                 Example: none.
+                Omitting it asks nothing. Example: none.
     """
 
     allow_training: bool | Unset = UNSET

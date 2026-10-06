@@ -167,10 +167,6 @@ public sealed class Session : IAsyncDisposable
     public Task SayAsync(string text, CancellationToken cancellationToken = default) =>
         SendAsync(Frames.Of("say", ("text", text)), cancellationToken);
 
-    /// <summary>Hands the model a turn, as though somebody had said it.</summary>
-    public Task RespondAsync(string text, IReadOnlyList<ImageSource>? images = null, CancellationToken cancellationToken = default) =>
-        SendAsync(Frames.Of("respond", ("text", text), ("images", images is { Count: > 0 } ? images : null)), cancellationToken);
-
     /// <summary>Stops whatever the agent is saying.</summary>
     public Task InterruptAsync(CancellationToken cancellationToken = default) =>
         SendAsync(Frames.Of("interrupt"), cancellationToken);
@@ -178,6 +174,25 @@ public sealed class Session : IAsyncDisposable
     /// <summary>Replaces the system prompt from the next turn on.</summary>
     public Task SetInstructionsAsync(string instructions, CancellationToken cancellationToken = default) =>
         SendAsync(Frames.Of("instructions", ("instructions", instructions)), cancellationToken);
+
+    /// <summary>
+    /// Changes this session: its title, description, custom labels, instructions, models or
+    /// voice, and returns it as it now is. A field left null is left as it is.
+    /// </summary>
+    /// <remarks>Models and instructions take over from the next turn. The id, the call and incognito cannot change; fork for that.</remarks>
+    public Task<Models.Session> UpdateAsync(UpdateSessionRequest update, CancellationToken cancellationToken = default) =>
+        new Sessions(_client).UpdateAsync(Id, update, cancellationToken);
+
+    /// <summary>
+    /// Deletes this conversation: it is stopped, and its turns and what it remembered are
+    /// deleted with it. <see cref="CloseAsync"/> is what keeps them.
+    /// </summary>
+    public Task DeleteAsync(CancellationToken cancellationToken = default) =>
+        new Sessions(_client).DeleteAsync(Id, cancellationToken);
+
+    /// <summary>Deletes what this conversation remembered, and leaves the rest of the user's memories alone.</summary>
+    public Task DeleteMemoriesAsync(CancellationToken cancellationToken = default) =>
+        new Sessions(_client).DeleteMemoriesAsync(Id, cancellationToken);
 
     /// <summary>
     /// Carries the conversation on in a new session, leaving this one as it was.
@@ -194,7 +209,7 @@ public sealed class Session : IAsyncDisposable
             Agent = VisionAgentsClient.Blank(options.Agent),
             Title = VisionAgentsClient.Blank(options.Title),
             Description = VisionAgentsClient.Blank(options.Description),
-            Project = VisionAgentsClient.Blank(options.Project),
+            ProjectId = VisionAgentsClient.Blank(options.ProjectId),
             Custom = options.Custom,
             ModelOverwrites = options.ModelOverwrites,
             Instructions = VisionAgentsClient.Blank(options.Instructions),
@@ -214,11 +229,12 @@ public sealed class Session : IAsyncDisposable
     public Task WaitAsync(CancellationToken cancellationToken = default) => _ended.Task.WaitAsync(cancellationToken);
 
     /// <summary>
-    /// Ends the session: the agent leaves the call and its socket closes. Safe to call twice.
+    /// Stops the session: the agent leaves the call and its socket closes. What it recorded
+    /// and remembered is kept; <see cref="DeleteAsync"/> takes it away. Safe to call twice.
     /// </summary>
     /// <remarks>
     /// Over the socket when it is open, since that is what the router is listening to;
-    /// otherwise by deleting the session, which is how a read session is ended.
+    /// otherwise by stopping the session, which is how a read session is ended.
     /// </remarks>
     public async Task CloseAsync(CancellationToken cancellationToken = default)
     {
@@ -243,7 +259,7 @@ public sealed class Session : IAsyncDisposable
         {
             try
             {
-                await _client.DeleteAsync($"/v1/agents/sessions/{VisionAgentsClient.Escape(Id)}", cancellationToken).ConfigureAwait(false);
+                await _client.PostAsync($"/v1/agents/sessions/{VisionAgentsClient.Escape(Id)}/stop", null, cancellationToken).ConfigureAwait(false);
             }
             catch (RouterException failure) when (failure.Status == 404)
             {
@@ -269,7 +285,7 @@ public sealed class Session : IAsyncDisposable
 
     /// <summary>
     /// Opens a created session's socket and starts watching it. A socket that cannot be
-    /// opened deletes the session, which would otherwise hold a call with nobody running
+    /// opened stops the session, which would otherwise hold a call with nobody running
     /// its tools.
     /// </summary>
     internal static async Task<Session> OpenAsync(
@@ -296,7 +312,7 @@ public sealed class Session : IAsyncDisposable
         {
             try
             {
-                await client.DeleteAsync($"/v1/agents/sessions/{VisionAgentsClient.Escape(created.Id)}", CancellationToken.None).ConfigureAwait(false);
+                await client.PostAsync($"/v1/agents/sessions/{VisionAgentsClient.Escape(created.Id)}/stop", null, CancellationToken.None).ConfigureAwait(false);
             }
             catch (RouterException)
             {
@@ -471,7 +487,7 @@ public sealed record ForkOptions
     public string? Description { get; init; }
 
     /// <summary>The project the fork is filed under.</summary>
-    public string? Project { get; init; }
+    public string? ProjectId { get; init; }
 
     /// <summary>Anything of the caller's own.</summary>
     public Dictionary<string, object?>? Custom { get; init; }

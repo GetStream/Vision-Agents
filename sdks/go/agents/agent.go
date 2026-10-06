@@ -9,9 +9,13 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/client"
 	"github.com/GetStream/Vision-Agents/sdks/go/edge"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 	"github.com/GetStream/Vision-Agents/sdks/go/tools"
@@ -27,15 +31,18 @@ type Options struct {
 	// is who the agent appears as in a call.
 	Name string
 	// Dir is an agent directory holding agent.yaml, instructions.md, skills/ and knowledge/.
-	// What it says fills in whatever is left empty here.
+	// What it says fills in whatever is left empty here. Empty reads agents/<Name> when
+	// there is one, which is where `agents create` puts it.
 	Dir string
+	// Tools are the functions the model is offered and this process runs.
+	Tools []tools.Tool
 	// Instructions is the system prompt.
 	Instructions string
 	// Guardrail is a guardrail.md: frontmatter saying how a turn is screened, then the
 	// policy in prose. Empty means every turn is answered. It is enforced in the backend,
 	// not here, so a turn the policy refuses never reaches the model.
 	Guardrail string
-	// LLM is the pipeline running in the backend.
+	// LLM is the pipeline running in the backend. Nil runs the stored config named Name.
 	LLM *stream.Pipeline
 	// Harness is what stands between what a caller said and the model that answers them.
 	Harness *Harness
@@ -55,6 +62,9 @@ type Options struct {
 
 // Agent is a configured agent, before and between the calls it holds.
 type Agent struct {
+	// Sessions opens the agent's conversations.
+	Sessions *Sessions
+
 	options Options
 	folder  *Folder
 	logger  *slog.Logger
@@ -62,18 +72,21 @@ type Agent struct {
 
 // New validates an agent's configuration and reads its directory, if it has one.
 func New(options Options) (*Agent, error) {
-	if options.LLM == nil {
-		return nil, errors.New("agents: an agent needs an llm")
-	}
-
 	logger := options.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	agent := &Agent{options: options, logger: logger}
-	if options.Dir != "" {
-		folder, err := Load(options.Dir)
+	agent.Sessions = &Sessions{agent: agent}
+	dir := options.Dir
+	if dir == "" && options.Name != "" {
+		if _, err := os.Stat(filepath.Join("agents", options.Name, AgentFile)); err == nil {
+			dir = filepath.Join("agents", options.Name)
+		}
+	}
+	if dir != "" {
+		folder, err := Load(dir)
 		if err != nil {
 			return nil, err
 		}
@@ -83,6 +96,14 @@ func New(options Options) (*Agent, error) {
 
 	if agent.options.Name == "" {
 		return nil, errors.New("agents: an agent needs a name")
+	}
+	if agent.options.LLM == nil {
+		agent.options.LLM = stream.Accelerated(stream.Config{Agent: agent.options.Name})
+	}
+	for _, tool := range agent.options.Tools {
+		if err := agent.options.LLM.Functions().Add(tool); err != nil {
+			return nil, err
+		}
 	}
 	// Validated after the directory has been read, since what it holds is part of what is
 	// being validated.
@@ -104,36 +125,30 @@ func (a *Agent) Instructions() string { return a.options.Instructions }
 // LLM is the pipeline running in the backend.
 func (a *Agent) LLM() *stream.Pipeline { return a.options.LLM }
 
-// Functions are the agent's own, which the model is offered and this process runs.
-func (a *Agent) Functions() *tools.Registry { return a.options.LLM.Functions() }
+// Tools are the agent's own functions, which the model is offered and this process runs.
+//
+// They are declared to the backend when a session is created, so a tool added to a session
+// already running is offered from the next one.
+//
+//	agent.Tools().Add(LookupOrder{orders: orders})
+func (a *Agent) Tools() *tools.Registry { return a.options.LLM.Functions() }
 
 // Folder is the agent directory the agent was read from, or nil if it has none.
 func (a *Agent) Folder() *Folder { return a.folder }
 
-// Join has the backend join a call and hold a conversation on it.
-//
-// An empty call id creates one named after a random string, which is what a one-off
-// conversation wants. It returns once the backend is in the call, so an agent that has
-// joined is one that is already listening.
-func (a *Agent) Join(ctx context.Context, call edge.Call) (*Session, error) {
-	transport, err := a.edge()
-	if err != nil {
-		return nil, err
-	}
-	created, err := transport.CreateCall(ctx, call, edge.User{ID: a.options.UserID, Name: a.options.Name})
-	if err != nil {
-		return nil, err
-	}
-	return a.join(ctx, created, nil, false)
+// Sessions opens an agent's conversations.
+type Sessions struct {
+	agent *Agent
 }
 
-// Chat holds the conversation in writing rather than on a call.
-//
-// No call is joined, nothing is transcribed and nothing is spoken. Everything between
-// hearing a question and answering it is unchanged: the same instructions, the same skills
-// handed to the same slower model and the same knowledge base a call would have had.
-type ChatOptions struct {
-	Persist        bool
+// SessionOptions is what one conversation changes about the agent holding it. The zero
+// value holds the conversation in writing, as the agent is configured.
+type SessionOptions struct {
+	// Call is the Stream call to join. Nil holds the conversation in writing: nothing is
+	// transcribed and nothing is spoken. A call with an empty id creates one named after a
+	// random string, which is what a one-off conversation wants.
+	Call *edge.Call
+
 	ConversationID string
 	// AgentID is the conversation being answered, which names the channel replies are
 	// written into and is what the backend finds a running session by when somebody
@@ -144,29 +159,65 @@ type ChatOptions struct {
 	// started last.
 	AgentID string
 
+	// Instructions replace the agent's own system prompt for this conversation.
+	Instructions string
+	// CostTracking labels are added to the agent's, and win where both name a key.
+	CostTracking map[string]string
+	// MemoryFilter replaces the agent's, for a conversation about somebody else.
+	MemoryFilter map[string]string
+
 	// Title and Description are what a person finds this conversation by afterwards. Both
 	// are searched, so the opening question makes a reasonable title.
 	Title       string
 	Description string
-	// Project groups conversations, and is carried as a cost label too.
-	Project string
+	// ProjectID groups conversations, and is carried as a cost label too.
+	ProjectID string
 	// Custom is anything of the caller's own worth remembering about the conversation, which
 	// a later query can match on.
 	Custom map[string]any
 	// Incognito holds the conversation and keeps nothing: no session row, no turns and no
-	// transcript whatever Persist says. It cannot be found afterwards, which is the point.
+	// transcript. It cannot be found afterwards, which is the point.
 	Incognito bool
 	// ModelOverwrites changes the models for this conversation alone, over whatever the
 	// agent's own configuration decided.
 	ModelOverwrites *acceleration.ModelOverwrites
 }
 
-func (a *Agent) Chat(ctx context.Context, options ...ChatOptions) (*Session, error) {
-	return a.join(ctx, edge.Call{}, nil, false, options...)
+// Create opens a conversation. It returns once the backend is holding it, so an agent on a
+// call is already listening.
+func (s *Sessions) Create(ctx context.Context, options SessionOptions) (*Session, error) {
+	a := s.agent
+	var call edge.Call
+	if options.Call != nil {
+		transport, err := a.edge()
+		if err != nil {
+			return nil, err
+		}
+		call, err = transport.CreateCall(ctx, *options.Call, edge.User{ID: a.options.UserID, Name: a.options.Name})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return a.join(ctx, call, nil, false, options)
+}
+
+// Join has the backend join a call and hold a conversation on it.
+func (a *Agent) Join(ctx context.Context, call edge.Call) (*Session, error) {
+	return a.Sessions.Create(ctx, SessionOptions{Call: &call})
+}
+
+// Chat holds the conversation in writing rather than on a call.
+func (a *Agent) Chat(ctx context.Context, options ...SessionOptions) (*Session, error) {
+	var chosen SessionOptions
+	if len(options) > 0 {
+		chosen = options[0]
+	}
+	chosen.Call = nil
+	return a.Sessions.Create(ctx, chosen)
 }
 
 // join renders the agent's configuration into a session and opens it.
-func (a *Agent) join(ctx context.Context, call edge.Call, phone *acceleration.SessionPhone, navigating bool, options ...ChatOptions) (*Session, error) {
+func (a *Agent) join(ctx context.Context, call edge.Call, phone *acceleration.SessionPhone, navigating bool, options ...SessionOptions) (*Session, error) {
 	remote := stream.Call{
 		ID:           call.ID,
 		Type:         call.Type,
@@ -180,25 +231,48 @@ func (a *Agent) join(ctx context.Context, call edge.Call, phone *acceleration.Se
 		Navigating:   navigating,
 	}
 	if len(options) > 0 {
-		remote.PersistConversation = options[0].Persist
-		remote.ConversationID = options[0].ConversationID
-		remote.Title = options[0].Title
-		remote.Description = options[0].Description
-		remote.Project = options[0].Project
-		remote.Custom = options[0].Custom
-		remote.Incognito = options[0].Incognito
-		remote.ModelOverwrites = options[0].ModelOverwrites
-		if options[0].AgentID != "" {
-			remote.AgentID = options[0].AgentID
+		chosen := options[0]
+		remote.ConversationID = chosen.ConversationID
+		remote.Title = chosen.Title
+		remote.Description = chosen.Description
+		remote.ProjectID = chosen.ProjectID
+		remote.Custom = chosen.Custom
+		remote.Incognito = chosen.Incognito
+		remote.ModelOverwrites = chosen.ModelOverwrites
+		if chosen.AgentID != "" {
+			remote.AgentID = chosen.AgentID
+		}
+		if chosen.Instructions != "" {
+			remote.Instructions = chosen.Instructions
+		}
+		if len(chosen.CostTracking) > 0 {
+			tags := maps.Clone(a.options.CostTracking)
+			if tags == nil {
+				tags = map[string]string{}
+			}
+			maps.Copy(tags, chosen.CostTracking)
+			remote.Tags = tags
+		}
+		if chosen.MemoryFilter != nil {
+			remote.Memory = memoryOf(chosen.MemoryFilter)
 		}
 	}
-	a.options.Harness.apply(&remote)
-
-	session, err := a.options.LLM.Join(ctx, remote)
+	backend, err := a.options.LLM.Backend()
 	if err != nil {
 		return nil, err
 	}
-	return &Session{agent: a, pipeline: a.options.LLM, call: call, session: session}, nil
+	resources, err := client.New(backend)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := a.options.LLM.Join(ctx, remote); err != nil {
+		return nil, err
+	}
+	held, err := resources.Hold(a.options.Name, a.options.LLM)
+	if err != nil {
+		return nil, err
+	}
+	return &Session{Session: held, agent: a, call: call}, nil
 }
 
 // Client is the acceleration router this agent talks to.
@@ -225,54 +299,18 @@ func (a *Agent) edge() (*edge.Edge, error) {
 }
 
 // Session is one conversation the agent is holding.
+//
+// It is a client.Session, so it reads the same as one opened by name: session.Responses,
+// Fork, Say and Events are all there. What it adds is the call it is on.
 type Session struct {
-	agent    *Agent
-	pipeline *stream.Pipeline
-	call     edge.Call
-	session  *acceleration.Session
-}
+	*client.Session
 
-// ID is the backend's id for the session.
-func (s *Session) ID() string { return s.session.Id }
+	agent *Agent
+	call  edge.Call
+}
 
 // Call is the Stream call the conversation is on. Its id is empty for a chat.
 func (s *Session) Call() edge.Call { return s.call }
-
-// Session is what the router said when it created this.
-func (s *Session) Session() *acceleration.Session { return s.session }
-
-// Events yields what the backend did until the conversation ends, when the channel closes.
-func (s *Session) Events() <-chan stream.Event { return s.pipeline.Events() }
-
-// Say speaks text without going through the model, for when you already know what should be
-// said.
-func (s *Session) Say(text string) error { return s.pipeline.Say(text, false) }
-
-// Respond answers text through the model, as though it had been said on the call.
-func (s *Session) Respond(text string) error { return s.pipeline.Respond(text, true) }
-
-// Interrupt abandons the reply being spoken.
-func (s *Session) Interrupt() error { return s.pipeline.Interrupt() }
-
-// SetInstructions changes what the agent is told to be, from the next turn.
-func (s *Session) SetInstructions(instructions string) error {
-	return s.pipeline.SetInstructions(instructions)
-}
-
-// Wait blocks until the conversation ends or the context does.
-func (s *Session) Wait(ctx context.Context) error {
-	events := s.Events()
-	for {
-		select {
-		case _, open := <-events:
-			if !open {
-				return nil
-			}
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-}
 
 // MonitorURL is a link a person can open to join this call from a browser and hear the
 // agent.
@@ -284,11 +322,8 @@ func (s *Session) MonitorURL() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return transport.MonitorURL(s.call, edge.User{ID: "monitor-" + s.session.Id, Name: "Monitor"})
+	return transport.MonitorURL(s.call, edge.User{ID: "monitor-" + s.ID(), Name: "Monitor"})
 }
-
-// Close ends the conversation. Safe to call after it has already ended.
-func (s *Session) Close(ctx context.Context) error { return s.pipeline.Leave(ctx) }
 
 // memoryOf splits the filter into who the memories are about and what narrows them.
 func memoryOf(filter map[string]string) *acceleration.SessionMemory {
@@ -329,14 +364,4 @@ func userIDOf(name string) string {
 		return "vision-agent"
 	}
 	return id
-}
-
-func (s *Session) ConversationID() string {
-	if s.session.ConversationId == nil {
-		return ""
-	}
-	return *s.session.ConversationId
-}
-func (s *Session) ContextTruncated() bool {
-	return s.session.ContextTruncated != nil && *s.session.ContextTruncated
 }

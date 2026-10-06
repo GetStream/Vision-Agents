@@ -5,6 +5,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/emit"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -100,6 +101,9 @@ type Responding struct {
 	Participant stt.Participant
 	// Prompt is what the agent is replying to.
 	Prompt string
+	// Continues is the turn whose tools or delegated work this reply delivers, empty on a
+	// reply to something somebody said.
+	Continues string
 }
 
 func (Responding) isAgentEvent() {}
@@ -111,6 +115,15 @@ type ResponseDelta struct {
 }
 
 func (ResponseDelta) isAgentEvent() {}
+
+// ReasoningDelta is a piece of the model's thinking while it works on a written reply.
+// It is never the reply: it is only shown live to people watching the conversation.
+type ReasoningDelta struct {
+	TurnID string
+	Text   string
+}
+
+func (ReasoningDelta) isAgentEvent() {}
 
 // Responded means the model finished. The reply may still be being spoken.
 type Responded struct {
@@ -231,6 +244,8 @@ type TaskSettled struct {
 	// ElapsedMs is how long the caller was kept company for.
 	ElapsedMs float64
 	Err       error
+	// Files are what the work's code handed back, published where the caller can see them.
+	Files []sandbox.Attachment
 }
 
 func (TaskSettled) isAgentEvent() {}
@@ -249,15 +264,29 @@ func (TaskCancelled) isAgentEvent() {}
 // reported whether or not it worked, because a tool that failed still changed what the
 // agent goes on to say.
 type ToolStarted struct {
-	Product   string
-	SDK       string
-	ID        string
-	TurnID    string
-	Tool      string
+	Product string
+	SDK     string
+	ID      string
+	TurnID  string
+	Tool    string
+	// Arguments are the model's, as JSON. Only a tool a person's device runs shows them.
+	Arguments string
 	StartedAt time.Time
 }
 
 func (ToolStarted) isAgentEvent() {}
+
+// ToolApprovalDecided is a person's answer to a call that waited for their approval. It
+// changes how the call is shown; the call itself is still answered by its result.
+type ToolApprovalDecided struct {
+	ID      string
+	TurnID  string
+	Allowed bool
+	// Summary is shown on a declined call, such as "Location not shared".
+	Summary string
+}
+
+func (ToolApprovalDecided) isAgentEvent() {}
 
 type ToolRan struct {
 	ID     string

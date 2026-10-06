@@ -127,7 +127,6 @@ profile.html
 
 # pytest json report
 .report.json
-.agents/
 .cursor/
 
 # Code generators fetched on demand, not vendored. See sdks/swift/README.md.
@@ -143,7 +142,9 @@ xcuserdata/
 # churn. The app's, under xcshareddata, is committed.
 /sdks/swift/*/Package.resolved
 *.spec.md
+*.spec.plan
 
 # What an agent or router directory was last synced as. Local to whoever ran it.
 .agent_sync
 .router_sync
+.thoughts/**

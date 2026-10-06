@@ -41,6 +41,21 @@ def _env(name: str, default: str) -> str:
     return default
 
 
+def _customer_id() -> str | None:
+    """The customer id for a local router, or None for one behind Stream's proxy.
+
+    A customer id makes the SDK drop STREAM_API_KEY, which the proxy needs.
+    """
+    if os.environ.get("STREAM_ACCELERATION_AUTHENTICATE", "").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        return None
+    return _env("STREAM_ACCELERATION_CUSTOMER_ID", DEFAULT_CUSTOMER_ID)
+
+
 async def sync_accelerated_pack(pack: str) -> None:
     """Store the skills this pack's subagent may run as an agent config.
 
@@ -54,7 +69,7 @@ async def sync_accelerated_pack(pack: str) -> None:
     await stream.sync_agent(
         pack,
         path=str(path),
-        customer_id=_env("STREAM_ACCELERATION_CUSTOMER_ID", DEFAULT_CUSTOMER_ID),
+        customer_id=_customer_id(),
     )
 
 
@@ -74,7 +89,7 @@ def build_llm(kind: str, pack: str):
             tts=_env("VOICEBENCH_TTS", DEFAULT_ACCELERATED_TTS),
             subagent=_env("VOICEBENCH_SUBAGENT", DEFAULT_ACCELERATED_SUBAGENT),
             voice=os.environ.get("VOICEBENCH_VOICE", "").strip(),
-            customer_id=_env("STREAM_ACCELERATION_CUSTOMER_ID", DEFAULT_CUSTOMER_ID),
+            customer_id=_customer_id(),
             keyterms=PACK_KEYTERMS.get(pack, []),
         )
     if kind != "realtime":

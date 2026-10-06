@@ -551,7 +551,7 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 			"aggregate_latency_ms", float64(result.latency)/float64(time.Millisecond),
 			"budget_exhausted", result.budgetExhausted)
 		if held != nil {
-			a.act(a.converse.Ruled(*held, a.floor()))
+			a.rule(*held)
 		}
 		return
 	}
@@ -570,7 +570,7 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 			"candidate", gate.candidateID, "snapshot_ordinal", result.snapshotOrdinal,
 			"reason", "invalid_score")
 		if held != nil {
-			a.act(a.converse.Ruled(*held, a.floor()))
+			a.rule(*held)
 		}
 		return
 	}
@@ -614,7 +614,7 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 			Floor:       harness.Continue,
 			TookMs:      float64(result.latency) / float64(time.Millisecond),
 		}
-		a.act(a.converse.Ruled(wait, a.floor()))
+		a.rule(wait)
 		return
 	}
 	if gate.primary {
@@ -638,7 +638,7 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 			Floor:       harness.Continue,
 			TookMs:      float64(result.latency) / float64(time.Millisecond),
 		}
-		a.act(a.converse.Ruled(decision, a.floor()))
+		a.rule(decision)
 		return
 	}
 	gate.approved = true
@@ -649,7 +649,7 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 	}
 	a.mu.Unlock()
 	if held != nil {
-		a.act(a.converse.Ruled(*held, a.floor()))
+		a.rule(*held)
 	}
 }
 
@@ -716,14 +716,14 @@ func (a *Agent) decideFromHarness(p *pipeline, current *harness.Harness, decisio
 	gate := a.eotGates[decision.CandidateID]
 	if gate == nil || gate.pipeline != p || gate.harness != current {
 		a.mu.Unlock()
-		a.act(a.converse.Ruled(decision, a.floor()))
+		a.rule(decision)
 		return
 	}
 	if gate.approved || canPassWithoutEOT(decision, floorQuiet) {
 		delete(a.eotGates, gate.candidateID)
 		gate.cancel()
 		a.mu.Unlock()
-		a.act(a.converse.Ruled(decision, a.floor()))
+		a.rule(decision)
 		return
 	}
 	copy := decision

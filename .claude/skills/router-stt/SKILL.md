@@ -68,8 +68,9 @@ request for 16 speakers is a different set of candidates than a request for 8.
 
 1. A field on `options.STT`, with `Merge` and, if it is optional behaviour, a `Term` and a line
    in `Terms()`. Pointers, so "say nothing" and "turn this off" stay different.
-2. The same field on `SttOptions` in
-   [`openapi.yaml`](../../../acceleration/api/openapi.yaml), then regenerate all three clients.
+2. The same field on `SttOptions`, on its Go struct in
+   `internal/api`. Then run
+   `go run ./cmd/openapi` and regenerate all three clients.
 3. Read it in each provider that can express it, and declare it in `supports:`.
 4. A test that a provider which cannot express it refuses rather than drops it.
 

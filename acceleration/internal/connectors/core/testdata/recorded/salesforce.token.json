@@ -1,0 +1,1 @@
+{"access_token":"synthetic-access-token","refresh_token":"synthetic-refresh-token","signature":"synthetic-signature","scope":"mcp_api refresh_token","instance_url":"https://example-org.my.salesforce.com","id":"https://login.salesforce.com/id/00D000000000001AAA/005000000000001AAA","token_type":"Bearer","issued_at":"1759276800000"}

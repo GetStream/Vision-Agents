@@ -21,78 +21,72 @@ class SessionSettingsRequest:
 
         Attributes:
             llm (str | Unset): The conversation model, a provider/model or a capability shortcut.
-            stt (str | Unset):
-            tts (str | Unset):
+            max_output_tokens (int | Unset):
             sts (str | Unset): A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
-            subagent (str | Unset):
+            stt (str | Unset):
+            temperature (float | Unset):
+            thinking (SessionSettingsRequestThinking | Unset):
+            tts (str | Unset):
+            verbosity (SessionSettingsRequestVerbosity | Unset):
             voice (str | Unset): The voice to speak in, in the provider's own terms. Empty returns to the provider's
                 default.
-            thinking (SessionSettingsRequestThinking | Unset):
-            temperature (float | Unset):
-            max_output_tokens (int | Unset):
-            verbosity (SessionSettingsRequestVerbosity | Unset):
     """
 
     llm: str | Unset = UNSET
-    stt: str | Unset = UNSET
-    tts: str | Unset = UNSET
-    sts: str | Unset = UNSET
-    subagent: str | Unset = UNSET
-    voice: str | Unset = UNSET
-    thinking: SessionSettingsRequestThinking | Unset = UNSET
-    temperature: float | Unset = UNSET
     max_output_tokens: int | Unset = UNSET
+    sts: str | Unset = UNSET
+    stt: str | Unset = UNSET
+    temperature: float | Unset = UNSET
+    thinking: SessionSettingsRequestThinking | Unset = UNSET
+    tts: str | Unset = UNSET
     verbosity: SessionSettingsRequestVerbosity | Unset = UNSET
+    voice: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         llm = self.llm
 
-        stt = self.stt
-
-        tts = self.tts
+        max_output_tokens = self.max_output_tokens
 
         sts = self.sts
 
-        subagent = self.subagent
+        stt = self.stt
 
-        voice = self.voice
+        temperature = self.temperature
 
         thinking: str | Unset = UNSET
         if not isinstance(self.thinking, Unset):
             thinking = self.thinking.value
 
-        temperature = self.temperature
-
-        max_output_tokens = self.max_output_tokens
+        tts = self.tts
 
         verbosity: str | Unset = UNSET
         if not isinstance(self.verbosity, Unset):
             verbosity = self.verbosity.value
+
+        voice = self.voice
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
         if llm is not UNSET:
             field_dict["llm"] = llm
-        if stt is not UNSET:
-            field_dict["stt"] = stt
-        if tts is not UNSET:
-            field_dict["tts"] = tts
-        if sts is not UNSET:
-            field_dict["sts"] = sts
-        if subagent is not UNSET:
-            field_dict["subagent"] = subagent
-        if voice is not UNSET:
-            field_dict["voice"] = voice
-        if thinking is not UNSET:
-            field_dict["thinking"] = thinking
-        if temperature is not UNSET:
-            field_dict["temperature"] = temperature
         if max_output_tokens is not UNSET:
             field_dict["max_output_tokens"] = max_output_tokens
+        if sts is not UNSET:
+            field_dict["sts"] = sts
+        if stt is not UNSET:
+            field_dict["stt"] = stt
+        if temperature is not UNSET:
+            field_dict["temperature"] = temperature
+        if thinking is not UNSET:
+            field_dict["thinking"] = thinking
+        if tts is not UNSET:
+            field_dict["tts"] = tts
         if verbosity is not UNSET:
             field_dict["verbosity"] = verbosity
+        if voice is not UNSET:
+            field_dict["voice"] = voice
 
         return field_dict
 
@@ -101,15 +95,13 @@ class SessionSettingsRequest:
         d = dict(src_dict)
         llm = d.pop("llm", UNSET)
 
-        stt = d.pop("stt", UNSET)
-
-        tts = d.pop("tts", UNSET)
+        max_output_tokens = d.pop("max_output_tokens", UNSET)
 
         sts = d.pop("sts", UNSET)
 
-        subagent = d.pop("subagent", UNSET)
+        stt = d.pop("stt", UNSET)
 
-        voice = d.pop("voice", UNSET)
+        temperature = d.pop("temperature", UNSET)
 
         _thinking = d.pop("thinking", UNSET)
         thinking: SessionSettingsRequestThinking | Unset
@@ -118,9 +110,7 @@ class SessionSettingsRequest:
         else:
             thinking = SessionSettingsRequestThinking(_thinking)
 
-        temperature = d.pop("temperature", UNSET)
-
-        max_output_tokens = d.pop("max_output_tokens", UNSET)
+        tts = d.pop("tts", UNSET)
 
         _verbosity = d.pop("verbosity", UNSET)
         verbosity: SessionSettingsRequestVerbosity | Unset
@@ -129,17 +119,18 @@ class SessionSettingsRequest:
         else:
             verbosity = SessionSettingsRequestVerbosity(_verbosity)
 
+        voice = d.pop("voice", UNSET)
+
         session_settings_request = cls(
             llm=llm,
-            stt=stt,
-            tts=tts,
-            sts=sts,
-            subagent=subagent,
-            voice=voice,
-            thinking=thinking,
-            temperature=temperature,
             max_output_tokens=max_output_tokens,
+            sts=sts,
+            stt=stt,
+            temperature=temperature,
+            thinking=thinking,
+            tts=tts,
             verbosity=verbosity,
+            voice=voice,
         )
 
         session_settings_request.additional_properties = d

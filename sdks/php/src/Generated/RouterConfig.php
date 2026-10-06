@@ -11,15 +11,15 @@ use GetStream\VisionAgents\Json;
 final readonly class RouterConfig
 {
     public function __construct(
+        public \DateTimeImmutable $createdAt,
         public string $id,
         public string $name,
-        public \DateTimeImmutable $createdAt,
         public \DateTimeImmutable $updatedAt,
+        public ?LlmOptions $llm = null,
+        public ?SearchOptions $search = null,
+        public ?StsOptions $sts = null,
         public ?SttOptions $stt = null,
         public ?TtsOptions $tts = null,
-        public ?LlmOptions $llm = null,
-        public ?StsOptions $sts = null,
-        public ?SearchOptions $search = null,
     ) {
     }
 
@@ -29,15 +29,15 @@ final readonly class RouterConfig
     public static function fromArray(array $data): self
     {
         return new self(
+            createdAt: Json::date($data, 'created_at'),
             id: Json::string($data, 'id'),
             name: Json::string($data, 'name'),
-            createdAt: Json::date($data, 'created_at'),
             updatedAt: Json::date($data, 'updated_at'),
+            llm: array_key_exists('llm', $data) && $data['llm'] !== null ? LlmOptions::fromArray(Json::object($data, 'llm')) : null,
+            search: array_key_exists('search', $data) && $data['search'] !== null ? SearchOptions::fromArray(Json::object($data, 'search')) : null,
+            sts: array_key_exists('sts', $data) && $data['sts'] !== null ? StsOptions::fromArray(Json::object($data, 'sts')) : null,
             stt: array_key_exists('stt', $data) && $data['stt'] !== null ? SttOptions::fromArray(Json::object($data, 'stt')) : null,
             tts: array_key_exists('tts', $data) && $data['tts'] !== null ? TtsOptions::fromArray(Json::object($data, 'tts')) : null,
-            llm: array_key_exists('llm', $data) && $data['llm'] !== null ? LlmOptions::fromArray(Json::object($data, 'llm')) : null,
-            sts: array_key_exists('sts', $data) && $data['sts'] !== null ? StsOptions::fromArray(Json::object($data, 'sts')) : null,
-            search: array_key_exists('search', $data) && $data['search'] !== null ? SearchOptions::fromArray(Json::object($data, 'search')) : null,
         );
     }
 
@@ -49,24 +49,24 @@ final readonly class RouterConfig
     public function toArray(): array
     {
         $out = [];
+        $out['created_at'] = Json::dateValue($this->createdAt);
         $out['id'] = $this->id;
         $out['name'] = $this->name;
-        $out['created_at'] = Json::dateValue($this->createdAt);
         $out['updated_at'] = Json::dateValue($this->updatedAt);
+        if ($this->llm !== null) {
+            $out['llm'] = $this->llm->toArray();
+        }
+        if ($this->search !== null) {
+            $out['search'] = $this->search->toArray();
+        }
+        if ($this->sts !== null) {
+            $out['sts'] = $this->sts->toArray();
+        }
         if ($this->stt !== null) {
             $out['stt'] = $this->stt->toArray();
         }
         if ($this->tts !== null) {
             $out['tts'] = $this->tts->toArray();
-        }
-        if ($this->llm !== null) {
-            $out['llm'] = $this->llm->toArray();
-        }
-        if ($this->sts !== null) {
-            $out['sts'] = $this->sts->toArray();
-        }
-        if ($this->search !== null) {
-            $out['search'] = $this->search->toArray();
         }
         return $out;
     }

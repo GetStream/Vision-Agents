@@ -34,6 +34,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -190,7 +191,7 @@ func New(options Options) (*STT, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, fmt.Errorf("elevenlabs: api key is required (set %s)", apiKeyEnvVar)
+		return nil, stack.Wrap(fmt.Errorf("elevenlabs: api key is required (set %s)", apiKeyEnvVar))
 	}
 	if options.Model == "" {
 		options.Model = DefaultModel
@@ -199,7 +200,7 @@ func New(options Options) (*STT, error) {
 		options.URL = DefaultURL
 	}
 	if !strings.HasPrefix(options.URL, "ws://") && !strings.HasPrefix(options.URL, "wss://") {
-		return nil, fmt.Errorf("elevenlabs: url must be ws:// or wss://, got %s", options.URL)
+		return nil, stack.Wrap(fmt.Errorf("elevenlabs: url must be ws:// or wss://, got %s", options.URL))
 	}
 	if options.CommitStrategy == "" {
 		options.CommitStrategy = CommitOnVAD
@@ -207,18 +208,18 @@ func New(options Options) (*STT, error) {
 	switch options.CommitStrategy {
 	case CommitOnVAD, CommitManually:
 	default:
-		return nil, fmt.Errorf("elevenlabs: commit strategy must be %s or %s, got %s",
-			CommitOnVAD, CommitManually, options.CommitStrategy)
+		return nil, stack.Wrap(fmt.Errorf("elevenlabs: commit strategy must be %s or %s, got %s",
+			CommitOnVAD, CommitManually, options.CommitStrategy))
 	}
 	options.Keyterms = stt.CleanKeyterms(options.Keyterms)
 	if len(options.Keyterms) > maxKeyterms {
-		return nil, fmt.Errorf("elevenlabs: at most %d keyterms, got %d",
-			maxKeyterms, len(options.Keyterms))
+		return nil, stack.Wrap(fmt.Errorf("elevenlabs: at most %d keyterms, got %d",
+			maxKeyterms, len(options.Keyterms)))
 	}
 	for _, term := range options.Keyterms {
 		if len([]rune(term)) > maxKeytermRunes {
-			return nil, fmt.Errorf("elevenlabs: keyterms are at most %d characters, got %q",
-				maxKeytermRunes, term)
+			return nil, stack.Wrap(fmt.Errorf("elevenlabs: keyterms are at most %d characters, got %q",
+				maxKeytermRunes, term))
 		}
 	}
 	if options.HandshakeTimeout == 0 {
@@ -245,7 +246,7 @@ func (s *STT) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
-		return errors.New("elevenlabs: already started")
+		return stack.Wrap(errors.New("elevenlabs: already started"))
 	}
 	s.started = true
 	s.mu.Unlock()
@@ -256,9 +257,9 @@ func (s *STT) Start(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, s.endpoint(), header)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("elevenlabs: dial: %w (http %d)", err, response.StatusCode)
+			return stack.Wrap(fmt.Errorf("elevenlabs: dial: %w (http %d)", err, response.StatusCode))
 		}
-		return fmt.Errorf("elevenlabs: dial: %w", err)
+		return stack.Wrap(fmt.Errorf("elevenlabs: dial: %w", err))
 	}
 	s.conn = conn
 
@@ -376,25 +377,25 @@ func (s *STT) endpoint() string {
 // server is not yet listening to, and a rejected key arrives here rather than as silence.
 func (s *STT) handshake() error {
 	if err := s.conn.SetReadDeadline(time.Now().Add(s.options.HandshakeTimeout)); err != nil {
-		return fmt.Errorf("elevenlabs: read handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("elevenlabs: read handshake: %w", err))
 	}
 	_, raw, err := s.conn.ReadMessage()
 	if err != nil {
-		return fmt.Errorf("elevenlabs: read handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("elevenlabs: read handshake: %w", err))
 	}
 	if err := s.conn.SetReadDeadline(time.Time{}); err != nil {
-		return fmt.Errorf("elevenlabs: read handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("elevenlabs: read handshake: %w", err))
 	}
 
 	var message serverMessage
 	if err := json.Unmarshal(raw, &message); err != nil {
-		return fmt.Errorf("elevenlabs: decode handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("elevenlabs: decode handshake: %w", err))
 	}
 	if message.MessageType != eventSessionStarted {
 		if message.Error != "" {
-			return fmt.Errorf("elevenlabs: session refused: %s", message.Error)
+			return stack.Wrap(fmt.Errorf("elevenlabs: session refused: %s", message.Error))
 		}
-		return fmt.Errorf("elevenlabs: expected %q, got %q", eventSessionStarted, message.MessageType)
+		return stack.Wrap(fmt.Errorf("elevenlabs: expected %q, got %q", eventSessionStarted, message.MessageType))
 	}
 	return nil
 }
@@ -431,12 +432,12 @@ func (s *STT) sendAudio(samples []byte, commit bool) error {
 		SampleRate:  stt.SampleRate,
 	})
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.conn.WriteMessage(websocket.TextMessage, payload)
+	return stack.Wrap(s.conn.WriteMessage(websocket.TextMessage, payload))
 }
 
 // readLoop translates server frames into events until the connection ends.

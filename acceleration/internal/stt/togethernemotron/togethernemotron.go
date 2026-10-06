@@ -45,6 +45,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -187,7 +188,7 @@ func New(options Options) (*STT, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, fmt.Errorf("togethernemotron: api key is required (set %s)", apiKeyEnvVar)
+		return nil, stack.Wrap(fmt.Errorf("togethernemotron: api key is required (set %s)", apiKeyEnvVar))
 	}
 	if options.Model == "" {
 		options.Model = DefaultModel
@@ -196,7 +197,7 @@ func New(options Options) (*STT, error) {
 		options.URL = DefaultURL
 	}
 	if !strings.HasPrefix(options.URL, "ws://") && !strings.HasPrefix(options.URL, "wss://") {
-		return nil, fmt.Errorf("togethernemotron: url must be ws:// or wss://, got %s", options.URL)
+		return nil, stack.Wrap(fmt.Errorf("togethernemotron: url must be ws:// or wss://, got %s", options.URL))
 	}
 	if options.HandshakeTimeout == 0 {
 		options.HandshakeTimeout = 30 * time.Second
@@ -225,7 +226,7 @@ func (s *STT) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
-		return errors.New("togethernemotron: already started")
+		return stack.Wrap(errors.New("togethernemotron: already started"))
 	}
 	s.started = true
 	s.mu.Unlock()
@@ -239,9 +240,9 @@ func (s *STT) Start(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, s.endpoint(), header)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("togethernemotron: dial: %w (http %d)", err, response.StatusCode)
+			return stack.Wrap(fmt.Errorf("togethernemotron: dial: %w (http %d)", err, response.StatusCode))
 		}
-		return fmt.Errorf("togethernemotron: dial: %w", err)
+		return stack.Wrap(fmt.Errorf("togethernemotron: dial: %w", err))
 	}
 	s.conn = conn
 
@@ -360,25 +361,25 @@ func (s *STT) endpoint() string {
 // server is not yet listening to.
 func (s *STT) handshake() error {
 	if err := s.conn.SetReadDeadline(time.Now().Add(s.options.HandshakeTimeout)); err != nil {
-		return fmt.Errorf("togethernemotron: read handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("togethernemotron: read handshake: %w", err))
 	}
 	_, raw, err := s.conn.ReadMessage()
 	if err != nil {
-		return fmt.Errorf("togethernemotron: read handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("togethernemotron: read handshake: %w", err))
 	}
 	if err := s.conn.SetReadDeadline(time.Time{}); err != nil {
-		return fmt.Errorf("togethernemotron: read handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("togethernemotron: read handshake: %w", err))
 	}
 
 	var message serverMessage
 	if err := json.Unmarshal(raw, &message); err != nil {
-		return fmt.Errorf("togethernemotron: decode handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("togethernemotron: decode handshake: %w", err))
 	}
 	if message.Type == eventError {
-		return fmt.Errorf("togethernemotron: handshake rejected: %s", message.failure())
+		return stack.Wrap(fmt.Errorf("togethernemotron: handshake rejected: %s", message.failure()))
 	}
 	if message.Type != eventSessionCreated {
-		return fmt.Errorf("togethernemotron: expected %q, got %q", eventSessionCreated, message.Type)
+		return stack.Wrap(fmt.Errorf("togethernemotron: expected %q, got %q", eventSessionCreated, message.Type))
 	}
 	return nil
 }
@@ -408,12 +409,12 @@ func (s *STT) flush(patience time.Duration) {
 func (s *STT) send(frame clientMessage) error {
 	payload, err := json.Marshal(frame)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.conn.WriteMessage(websocket.TextMessage, payload)
+	return stack.Wrap(s.conn.WriteMessage(websocket.TextMessage, payload))
 }
 
 // readLoop translates server frames into events until the connection ends.

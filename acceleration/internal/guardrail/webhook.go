@@ -16,12 +16,15 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // TimestampHeader and SignatureHeader are how a webhook proves it came from here.
 const (
 	TimestampHeader = "X-Timestamp"
 	SignatureHeader = "X-Signature"
+	// APIKeyHeader names the key whose secret signed the request, when there is one to name.
+	APIKeyHeader = "X-Api-Key"
 )
 
 // errorBodyLimit caps how much of an unusable reply is read into an error message.
@@ -34,6 +37,7 @@ type webhook struct {
 	// agent it is deciding for.
 	owner  routing.Owner
 	secret string
+	apiKey string
 	client *http.Client
 	logger *slog.Logger
 }
@@ -67,8 +71,8 @@ func newWebhook(policy Policy, deps Deps) (Guardrail, error) {
 	if deps.Secret == "" {
 		// Unsigned, the customer's server cannot tell our request from anyone who found
 		// the URL, and what it decides on that request gates an agent's replies.
-		return nil, errors.New(
-			"guardrail: a webhook guardrail needs the app secret to sign with, and this deployment has none")
+		return nil, stack.Wrap(errors.New(
+			"guardrail: a webhook guardrail needs the app secret to sign with, and this deployment has none"))
 	}
 
 	client := deps.HTTPClient
@@ -79,6 +83,7 @@ func newWebhook(policy Policy, deps Deps) (Guardrail, error) {
 		policy: policy,
 		owner:  deps.Owner,
 		secret: deps.Secret,
+		apiKey: deps.APIKey,
 		client: client,
 		logger: deps.Logger,
 	}, nil
@@ -114,6 +119,9 @@ func (w *webhook) Check(ctx context.Context, turnID, text string) (Verdict, erro
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(TimestampHeader, timestamp)
 	request.Header.Set(SignatureHeader, Sign(w.secret, timestamp, body))
+	if w.apiKey != "" {
+		request.Header.Set(APIKeyHeader, w.apiKey)
+	}
 
 	response, err := w.client.Do(request)
 	if err != nil {

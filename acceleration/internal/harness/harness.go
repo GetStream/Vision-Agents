@@ -28,7 +28,12 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	llmoptions "github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
+
+// Default is the harness every agent runs unless its config names another. It is named so
+// that a config can say which it wants once there is more than one to choose from.
+const Default = "default"
 
 // eventBuffer is how many events may queue before a slow consumer applies backpressure.
 const eventBuffer = 32
@@ -64,6 +69,9 @@ type Options struct {
 	// alone: running code takes seconds, and the model holding the conversation does not
 	// have seconds. Nil means the subagent works everything out in its head.
 	Sandbox sandbox.Sandbox
+	// Publish puts the files the subagent's code hands back where the caller can see them.
+	// Nil means there is nowhere to, and the subagent is told so.
+	Publish sandbox.Publisher
 	// Tasks caps how much delegated work may run at once.
 	Tasks int
 	// MaxTokens caps each reply. Zero leaves the model's own default in place.
@@ -95,6 +103,9 @@ type noted struct {
 }
 
 // Turn is what the harness is asked to answer.
+// toolReplyEffort is how hard the model thinks before answering a tool result.
+const toolReplyEffort = "low"
+
 type Turn struct {
 	// ID correlates the reply with the turn the agent is measuring.
 	ID string
@@ -106,6 +117,8 @@ type Turn struct {
 	// Note is something true of this turn alone, such as the caller not having been
 	// heard clearly. It is not remembered past the reply it shapes.
 	Note string
+	// AfterTool says the reply follows a tool result rather than the caller.
+	AfterTool bool
 }
 
 // Harness decides what the fast model is asked and what becomes of what it answers.
@@ -155,7 +168,7 @@ type Harness struct {
 // given are already started.
 func New(options Options) (*Harness, error) {
 	if options.Model == nil && options.Subagent == nil && options.OpenSubagent == nil {
-		return nil, errors.New("harness: a model session is required")
+		return nil, stack.Wrap(errors.New("harness: a model session is required"))
 	}
 	if options.Tasks <= 0 {
 		options.Tasks = defaultTasks
@@ -180,6 +193,8 @@ func New(options Options) (*Harness, error) {
 		h.tasks = newManager(options.Subagent, options.Tasks, options.Sandbox, options.Overwrites, h.logger)
 		h.tasks.onModelCall = options.OnModelCall
 		h.tasks.capture = options.Capture
+		h.tasks.load = options.Skills.Load
+		h.tasks.publish = options.Publish
 		if options.Subagent == nil {
 			h.tasks.open(options.OpenSubagent)
 		}
@@ -290,9 +305,18 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	model := session.Capabilities()
 	h.mu.Unlock()
 
+	// A reply to a tool result is given a little thinking. The caller was told to wait
+	// while the tool ran, so it costs them nothing they notice, and at no effort Luna
+	// answers a free table with "may I book it?" instead of booking it.
+	var reasoning llm.ReasoningParams
+	if turn.AfterTool && slices.Contains(model.ReasoningEfforts, toolReplyEffort) {
+		reasoning.Effort = toolReplyEffort
+	}
+
 	return session.Create(ctx, llm.ResponseParams{
 		ID:                 turn.ID,
 		Purpose:            "reply",
+		Reasoning:          reasoning,
 		TurnID:             turn.ID,
 		OnTiming:           h.options.OnModelCall,
 		Instructions:       instructions,
@@ -346,14 +370,14 @@ func (h *Harness) Preview(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	}
 	params := llm.ResponseParams{
 		ID: turn.ID, Purpose: "reply", TurnID: turn.ID,
-		OnTiming:        h.options.OnModelCall,
+		OnTiming:           h.options.OnModelCall,
 		Instructions:       instructions,
 		Input:              input,
-		MaxOutputTokens: h.options.MaxTokens,
-		Tools:           h.options.Tools.Requests(),
-		Store:           session.Capabilities().Store,
+		MaxOutputTokens:    h.options.MaxTokens,
+		Tools:              h.options.Tools.Requests(),
+		Store:              session.Capabilities().Store,
 		PreviousResponseID: previous,
-		PromptCacheKey:  h.options.CacheKey,
+		PromptCacheKey:     h.options.CacheKey,
 	}.Overwrite(h.options.Overwrites)
 	h.mu.Unlock()
 	return session.Create(ctx, params)
@@ -457,7 +481,7 @@ func (h *Harness) Requested(turnID string, calls []llm.ToolCall) {
 // Decide asks the fast flow controller what to do with an evolving transcript.
 func (h *Harness) Decide(turn FlowTurn) error {
 	if h.flow == nil {
-		return errors.New("harness: a flow controller is required")
+		return stack.Wrap(errors.New("harness: a flow controller is required"))
 	}
 	return h.flow.Decide(turn)
 }
@@ -609,6 +633,14 @@ func (h *Harness) act(turnID string, found directive) {
 		return
 	}
 	h.mu.Unlock()
+	// The model is told a colleague is already looking at what the caller sent, and asks
+	// for it anyway. Its copy has none of the images, so it would only replace the task
+	// that does.
+	if h.tasks != nil && h.tasks.Attached(skill.Name, turnID) {
+		h.logger.Debug("the caller's attachments are already being looked at",
+			"skill", skill.Name, "prompt", found.body)
+		return
+	}
 
 	if skill.CaptureVideo {
 		skill.VideoSource = found.source
@@ -813,10 +845,10 @@ func identifiersAlreadyComplete(history []llm.Message) bool {
 func (h *Harness) Delegate(skillName, prompt, turnID string, parts []llm.ContentPart, history []llm.Message) (string, error) {
 	skill, ok := h.options.Skills.Lookup(skillName)
 	if !ok || h.tasks == nil {
-		return "", fmt.Errorf("harness: skill %q is not available", skillName)
+		return "", stack.Wrap(fmt.Errorf("harness: skill %q is not available", skillName))
 	}
 	if strings.TrimSpace(prompt) == "" {
-		return "", errors.New("harness: delegation needs a prompt")
+		return "", stack.Wrap(errors.New("harness: delegation needs a prompt"))
 	}
 	if history == nil {
 		h.mu.Lock()

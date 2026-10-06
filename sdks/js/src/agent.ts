@@ -39,20 +39,18 @@ export interface Skill {
 /**
  * What stands between what a caller said and the model that answers them.
  *
- * The loop runs in the backend, so this is configuration rather than behaviour: it is
- * serialized into the session and the decisions are taken there.
+ * The loop runs in the backend and is part of the agent's stored config, never of a
+ * session: `sync` writes it, and every session created from the config runs it.
  */
 export interface Harness {
-  /** Offer the backend's built-in skills. Naming skills of your own replaces them. */
-  useSkills?: boolean;
+  /** Which harness the backend runs. Left out is `default`, the only one there is. */
+  name?: Schemas["Harness"];
   /** Model targets for the work handed over. The one under `default` runs the skills. */
   subagents?: Record<string, string>;
   /** Where delegated code runs. */
   vm?: Sandbox;
-  /** Skills of your own, replacing the built-in set. */
+  /** Skills of your own, stored and named by the config in place of the built-in set. */
   skills?: Skill[];
-  /** How much delegated work may run at once. */
-  tasks?: number;
 }
 
 /**
@@ -69,8 +67,6 @@ export interface Pipeline {
   tts?: string;
   /** A speech-to-speech target. Naming one means no transcriber or voice is opened. */
   sts?: string;
-  /** The model that does the thinking a harness delegates. */
-  subagent?: string;
   /** A provider-specific voice id. */
   voice?: string;
   /** A language hint, which narrows the candidates in every modality. */
@@ -97,8 +93,12 @@ export interface Declaration {
   /** An empty string turns speech-to-speech off, which is different from saying nothing. */
   sts?: string;
   voice?: string;
+  /** The voice's rate of delivery, 1 being its own. */
+  speed?: number;
   llm?: string;
-  subagent?: string;
+  harness?: Schemas["Harness"];
+  /** The model a voice agent hands its skills to. A text agent runs on its llm alone. */
+  thinking_llm?: string;
   search?: string;
   greeting?: string;
   sandbox?: Schemas["Sandbox"];
@@ -106,6 +106,12 @@ export interface Declaration {
   keyterms?: string[];
   tags?: Record<string, string>;
   video?: Schemas["SessionVideo"];
+  /**
+   * What the agent leaves to this application's own dispatch worker. With `text` enabled
+   * the model does not answer what end users write: the worker is handed it, and answers
+   * with `dispatch.answer`.
+   */
+  dispatch?: Schemas["AgentDispatch"];
 }
 
 /**
@@ -130,7 +136,13 @@ export interface Folder {
   guardrail: string;
   skills: Skill[];
   knowledge: { source: string; text: string }[];
-  knowledgeURLs: { url: string; title?: string; description?: string }[];
+  knowledgeURLs: { url: string; title?: string; description?: string; refresh_hours?: number }[];
+  /**
+   * What simulations/*.yaml declare, by file name and then as listed. Undefined when there is
+   * no simulations/, which leaves the stored ones alone; empty when it has none, which
+   * deletes them.
+   */
+  simulations?: Schemas["SimulationDeclaration"][];
   /** `.agent_sync`, so a sync of a directory nothing has touched asks the router nothing. */
   stamp?: SyncStamp;
 }
@@ -167,8 +179,10 @@ export interface AgentOptions {
 
 /** How a text conversation is held. */
 export interface ChatOptions extends SessionOptions {
-  /** Keep the conversation in Stream Chat, creating a channel when no id is given. */
-  persist?: boolean;
+  /**
+   * The Stream Chat channel to resume. Left empty the backend creates one, since every text
+   * conversation is kept unless it is incognito.
+   */
   conversationId?: string;
   /**
    * The conversation being answered, which names the channel replies are written into.
@@ -216,7 +230,7 @@ export class Agent {
     if (declared && (declared.skills?.length ?? 0) === 0 && fromFolder.length > 0) {
       this.harness = { ...declared, skills: fromFolder };
     } else if (!declared && fromFolder.length > 0) {
-      this.harness = { useSkills: true, skills: fromFolder };
+      this.harness = { skills: fromFolder };
     } else {
       this.harness = declared;
     }
@@ -276,11 +290,10 @@ export class Agent {
    * skills handed to the same slower model, the same knowledge base.
    */
   chat(options: ChatOptions = {}): Promise<Session> {
-    const { persist, conversationId, agentId, ...rest } = options;
+    const { conversationId, agentId, ...rest } = options;
     return this.open(
       {
         text: true,
-        ...(persist === undefined ? {} : { persist_conversation: persist }),
         ...(conversationId ? { conversation_id: conversationId } : {}),
         ...(agentId ? { agent_id: agentId } : {}),
       },
@@ -315,7 +328,6 @@ export class Agent {
   reply(message: InboundMessage, options: SessionOptions = {}): Promise<Session> {
     return this.chat({
       ...options,
-      persist: true,
       conversationId: `${message.channelType}:${message.channelId}`,
       agentId: message.agentId,
     });
@@ -392,8 +404,8 @@ export class Agent {
   }
 
   /**
-   * Stores the agent in the backend: its instructions, guardrail, skills and knowledge,
-   * and the models it was declared with.
+   * Stores the agent in the backend: its instructions, guardrail, harness, skills,
+   * knowledge and simulations, and the models it was declared with.
    *
    * A config is what a session can be created from by name, so the things worth deciding
    * once are decided once. It is one request, and it carries a fingerprint of everything
@@ -411,9 +423,10 @@ export class Agent {
     const pipeline = this.options.pipeline ?? {};
     const declared = this.folder?.settings ?? {};
     const skills = this.harness?.skills ?? this.folder?.skills ?? [];
-    const subagent =
-      this.harness?.subagents?.["default"] ?? (pipeline.subagent || declared.subagent);
+    const harness = this.harness?.name ?? declared.harness;
+    const thinking = this.harness?.subagents?.["default"] ?? declared.thinking_llm;
     const sandbox = this.harness?.vm?.provider ?? declared.sandbox;
+    const simulations = this.folder?.simulations;
     const tags = { ...declared.tags, ...this.options.costTracking };
     const pages = this.folder?.knowledgeURLs ?? [];
 
@@ -428,6 +441,9 @@ export class Agent {
         : {}),
       ...(this.folder?.knowledge.length ? { knowledge: this.folder.knowledge } : {}),
       ...(pages.length > 0 ? { knowledge_urls: pages } : {}),
+      // Sent whenever there is a simulations/, empty included, since the router makes the
+      // stored ones exactly this list.
+      ...(simulations ? { simulations } : {}),
       ...declaredRequest(declared),
       ...(pipeline.llm ? { llm: pipeline.llm } : {}),
       ...(pipeline.stt ? { stt: pipeline.stt } : {}),
@@ -436,7 +452,8 @@ export class Agent {
       ...(pipeline.voice ? { voice: pipeline.voice } : {}),
       ...(pipeline.greeting ? { greeting: pipeline.greeting } : {}),
       ...(pipeline.video ? { video: pipeline.video } : {}),
-      ...(subagent ? { subagent } : {}),
+      ...(harness ? { harness } : {}),
+      ...(thinking ? { thinking_llm: thinking } : {}),
       ...(sandbox ? { sandbox } : {}),
       ...(Object.keys(tags).length > 0 ? { tags } : {}),
     };
@@ -470,7 +487,6 @@ export class Agent {
       agent_id: this.userId,
       ...(this.instructions ? { instructions: this.instructions } : {}),
       ...(await this.pipelineRequest(pipeline)),
-      ...(this.harnessRequest()),
       ...(this.options.costTracking ? { tags: this.options.costTracking } : {}),
       ...(this.memoryRequest()),
       ...call,
@@ -495,26 +511,6 @@ export class Agent {
       ...(pipeline.toolTimeoutMs ? { tool_timeout_ms: pipeline.toolTimeoutMs } : {}),
       ...(pipeline.video ? { video: pipeline.video } : {}),
       ...(pipeline.config ? { config_id: await this.resolveConfig(pipeline.config) } : {}),
-    };
-  }
-
-  private harnessRequest(): Partial<Schemas["CreateSessionRequest"]> {
-    const harness = this.harness;
-    const pipelineSubagent = this.options.pipeline?.subagent;
-    if (!harness) {
-      return pipelineSubagent ? { subagent: pipelineSubagent } : {};
-    }
-
-    // An absent skill list and an empty one mean different things: one leaves the built-in
-    // set alone, the other turns delegation off.
-    const replaces = (harness.skills?.length ?? 0) > 0 || harness.useSkills === false;
-    const subagent = harness.subagents?.["default"] ?? pipelineSubagent;
-
-    return {
-      ...(subagent ? { subagent } : {}),
-      ...(harness.tasks ? { tasks: harness.tasks } : {}),
-      ...(harness.vm ? { sandbox: harness.vm.provider } : {}),
-      ...(replaces ? { skills: (harness.skills ?? []).map(skillRequest) } : {}),
     };
   }
 
@@ -559,13 +555,8 @@ export class Agent {
 
 }
 
-/**
- * Renders a skill the way both the session spec and the sync request take it.
- *
- * The two shapes are the same but for the config a stored skill belongs to, which is not
- * something a session has.
- */
-function skillRequest(skill: Skill): Schemas["SessionSkill"] {
+/** Renders a skill the way the sync request takes it. */
+function skillRequest(skill: Skill): Omit<Schemas["SkillRequest"], "config_id"> {
   return {
     name: skill.name,
     description: skill.description,
@@ -586,12 +577,15 @@ function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentReque
     ...(declared.tts ? { tts: declared.tts } : {}),
     ...(declared.sts === undefined ? {} : { sts: declared.sts }),
     ...(declared.voice ? { voice: declared.voice } : {}),
+    ...(declared.speed ? { speed: declared.speed } : {}),
     ...(declared.llm ? { llm: declared.llm } : {}),
+    ...(declared.harness ? { harness: declared.harness } : {}),
     ...(declared.search ? { search: declared.search } : {}),
     ...(declared.greeting ? { greeting: declared.greeting } : {}),
     ...(declared.plugins?.length ? { plugins: declared.plugins } : {}),
     ...(declared.keyterms?.length ? { keyterms: declared.keyterms } : {}),
     ...(declared.video ? { video: declared.video } : {}),
+    ...(declared.dispatch ? { dispatch: declared.dispatch } : {}),
   };
 }
 
@@ -616,9 +610,6 @@ async function fingerprint(body: unknown): Promise<string> {
 function validate(harness: Harness | undefined): void {
   if (!harness) {
     return;
-  }
-  if ((harness.tasks ?? 0) < 0) {
-    throw new ConfigurationError("tasks cannot be negative");
   }
   for (const skill of harness.skills ?? []) {
     if (!skill.name) {

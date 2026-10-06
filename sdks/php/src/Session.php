@@ -7,8 +7,6 @@ namespace GetStream\VisionAgents;
 use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Exception\RouterException;
 use GetStream\VisionAgents\Generated\ForkSessionRequest;
-use GetStream\VisionAgents\Generated\InstructionsRequest;
-use GetStream\VisionAgents\Generated\RespondRequest;
 use GetStream\VisionAgents\Generated\SayRequest;
 use GetStream\VisionAgents\Generated\Session as SessionRow;
 use GetStream\VisionAgents\Worker\Watch;
@@ -71,28 +69,11 @@ final class Session
     }
 
     /**
-     * Answers text through the model, as though it had been said on the call. Unlike
-     * `responses->create`, nothing names the turn.
-     */
-    public function respond(string $text): void
-    {
-        $this->client->post('/v1/agents/sessions/{id}/respond', ['id' => $this->id()], body: (new RespondRequest($text))->toArray());
-    }
-
-    /**
      * Abandons the reply being spoken.
      */
     public function interrupt(): void
     {
         $this->client->post('/v1/agents/sessions/{id}/interrupt', ['id' => $this->id()]);
-    }
-
-    /**
-     * Changes what the agent is told to be, from the next turn.
-     */
-    public function setInstructions(string $instructions): void
-    {
-        $this->client->put('/v1/agents/sessions/{id}/instructions', ['id' => $this->id()], (new InstructionsRequest($instructions))->toArray());
     }
 
     /**
@@ -106,6 +87,48 @@ final class Session
     {
         $forked = $this->client->post('/v1/agents/sessions/{id}/fork', ['id' => $this->id()], body: ($options ?? new ForkSessionRequest())->toArray());
         return new self($this->client, SessionRow::fromArray(Json::asObject($forked)), $this->agent);
+    }
+
+    /**
+     * Changes this session only: its title, description, custom labels, instructions, models
+     * or voice. The config it started from is untouched, and a target that does not route is
+     * refused before anything changes. See `Sessions::update`.
+     *
+     * @param array<string, mixed>|null $custom
+     */
+    public function update(
+        ?string $title = null,
+        ?string $description = null,
+        ?array $custom = null,
+        ?string $instructions = null,
+        ?string $llm = null,
+        ?string $stt = null,
+        ?string $tts = null,
+        ?string $sts = null,
+        ?string $voice = null,
+        ?string $thinking = null,
+        ?float $temperature = null,
+        ?int $maxOutputTokens = null,
+        ?string $verbosity = null,
+    ): SessionRow {
+        return $this->sessions()->update($this->id(), $title, $description, $custom, $instructions, $llm, $stt, $tts, $sts, $voice, $thinking, $temperature, $maxOutputTokens, $verbosity);
+    }
+
+    /**
+     * Deletes this conversation, its turns and what it remembered. See `Sessions::delete`.
+     */
+    public function delete(): void
+    {
+        $this->sessions()->delete($this->id());
+        $this->closed = true;
+    }
+
+    /**
+     * Deletes what this conversation remembered. See `Sessions::deleteMemories`.
+     */
+    public function deleteMemories(): void
+    {
+        $this->sessions()->deleteMemories($this->id());
     }
 
     /**
@@ -131,7 +154,8 @@ final class Session
     }
 
     /**
-     * Ends the conversation. Safe to call after it has already ended.
+     * Stops the conversation: the agent leaves, and what it recorded and remembered is kept;
+     * `delete` takes it away. Safe to call after it has already ended.
      */
     public function close(): void
     {
@@ -140,7 +164,7 @@ final class Session
         }
         $this->closed = true;
         try {
-            $this->client->delete('/v1/agents/sessions/{id}', ['id' => $this->id()]);
+            $this->client->post('/v1/agents/sessions/{id}/stop', ['id' => $this->id()]);
         } catch (RouterException $failed) {
             if ($failed->status !== 404) {
                 throw $failed;
@@ -151,5 +175,10 @@ final class Session
     public function closed(): bool
     {
         return $this->closed;
+    }
+
+    private function sessions(): Sessions
+    {
+        return new Sessions($this->client, $this->agent->name ?? '');
     }
 }

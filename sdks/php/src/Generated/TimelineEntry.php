@@ -11,26 +11,39 @@ use GetStream\VisionAgents\Json;
 final readonly class TimelineEntry
 {
     public function __construct(
-        public string $turnId,
         public \DateTimeImmutable $startedAt,
-        // What the caller said, when it can be matched to this exchange.
-        public ?string $heard = null,
-        // What the agent answered.
-        public ?string $said = null,
-        // How long the caller waited between finishing and being answered.
-        public ?float $roundtripMs = null,
-        // The provider's decode time for the transcript that settled the turn.
-        public ?float $sttLatencyMs = null,
-        // The wait between asking the model and its first token.
-        public ?float $llmTtftMs = null,
-        // The wait between sending the first sentence and the first audio.
-        public ?float $ttsTtfbMs = null,
-        // Voice in to voice out, which is the whole of what the caller felt.
-        public ?float $speechEndToAudioMs = null,
+        public string $turnId,
         // How much the agent spoke.
         public ?float $audioOutMs = null,
+        // Last transcript revision to a stable turn ready for the flow controller.
+        public ?float $cadenceMs = null,
+        // Stable turn to the main model request, including flow and queueing.
+        public ?float $decisionMs = null,
+        // What the caller said, when it can be matched to this exchange.
+        public ?string $heard = null,
         // Whether the caller talked over the answer.
         public ?bool $interrupted = null,
+        // The wait between asking the model and its first token.
+        public ?float $llmTtftMs = null,
+        // Individual model requests for this turn, including flow and delegated work.
+        /** @var list<ModelCallTiming>|null */
+        public ?array $modelCalls = null,
+        // Main model request to the first text delta admitted to the voice pipeline.
+        public ?float $modelToFirstTextMs = null,
+        // Last transcript revision to first audio published; includes cadence settling.
+        public ?float $roundtripMs = null,
+        // What the agent answered.
+        public ?string $said = null,
+        // Last input audio to first output audio, estimated using provider STT processing time plus roundtrip. It exc...
+        public ?float $speechEndToAudioMs = null,
+        // The provider's decode time for the transcript that settled the turn.
+        public ?float $sttLatencyMs = null,
+        // First text delta to the first TTS request.
+        public ?float $textToTtsMs = null,
+        // First TTS request to the first audio chunk published to the edge.
+        public ?float $ttsToAudioMs = null,
+        // The wait between sending the first sentence and the first audio.
+        public ?float $ttsTtfbMs = null,
     ) {
     }
 
@@ -40,17 +53,23 @@ final readonly class TimelineEntry
     public static function fromArray(array $data): self
     {
         return new self(
-            turnId: Json::string($data, 'turn_id'),
             startedAt: Json::date($data, 'started_at'),
-            heard: array_key_exists('heard', $data) && $data['heard'] !== null ? Json::string($data, 'heard') : null,
-            said: array_key_exists('said', $data) && $data['said'] !== null ? Json::string($data, 'said') : null,
-            roundtripMs: array_key_exists('roundtrip_ms', $data) && $data['roundtrip_ms'] !== null ? Json::float($data, 'roundtrip_ms') : null,
-            sttLatencyMs: array_key_exists('stt_latency_ms', $data) && $data['stt_latency_ms'] !== null ? Json::float($data, 'stt_latency_ms') : null,
-            llmTtftMs: array_key_exists('llm_ttft_ms', $data) && $data['llm_ttft_ms'] !== null ? Json::float($data, 'llm_ttft_ms') : null,
-            ttsTtfbMs: array_key_exists('tts_ttfb_ms', $data) && $data['tts_ttfb_ms'] !== null ? Json::float($data, 'tts_ttfb_ms') : null,
-            speechEndToAudioMs: array_key_exists('speech_end_to_audio_ms', $data) && $data['speech_end_to_audio_ms'] !== null ? Json::float($data, 'speech_end_to_audio_ms') : null,
+            turnId: Json::string($data, 'turn_id'),
             audioOutMs: array_key_exists('audio_out_ms', $data) && $data['audio_out_ms'] !== null ? Json::float($data, 'audio_out_ms') : null,
+            cadenceMs: array_key_exists('cadence_ms', $data) && $data['cadence_ms'] !== null ? Json::float($data, 'cadence_ms') : null,
+            decisionMs: array_key_exists('decision_ms', $data) && $data['decision_ms'] !== null ? Json::float($data, 'decision_ms') : null,
+            heard: array_key_exists('heard', $data) && $data['heard'] !== null ? Json::string($data, 'heard') : null,
             interrupted: array_key_exists('interrupted', $data) && $data['interrupted'] !== null ? Json::bool($data, 'interrupted') : null,
+            llmTtftMs: array_key_exists('llm_ttft_ms', $data) && $data['llm_ttft_ms'] !== null ? Json::float($data, 'llm_ttft_ms') : null,
+            modelCalls: array_key_exists('model_calls', $data) && $data['model_calls'] !== null ? array_map(ModelCallTiming::fromArray(...), Json::objects($data, 'model_calls')) : null,
+            modelToFirstTextMs: array_key_exists('model_to_first_text_ms', $data) && $data['model_to_first_text_ms'] !== null ? Json::float($data, 'model_to_first_text_ms') : null,
+            roundtripMs: array_key_exists('roundtrip_ms', $data) && $data['roundtrip_ms'] !== null ? Json::float($data, 'roundtrip_ms') : null,
+            said: array_key_exists('said', $data) && $data['said'] !== null ? Json::string($data, 'said') : null,
+            speechEndToAudioMs: array_key_exists('speech_end_to_audio_ms', $data) && $data['speech_end_to_audio_ms'] !== null ? Json::float($data, 'speech_end_to_audio_ms') : null,
+            sttLatencyMs: array_key_exists('stt_latency_ms', $data) && $data['stt_latency_ms'] !== null ? Json::float($data, 'stt_latency_ms') : null,
+            textToTtsMs: array_key_exists('text_to_tts_ms', $data) && $data['text_to_tts_ms'] !== null ? Json::float($data, 'text_to_tts_ms') : null,
+            ttsToAudioMs: array_key_exists('tts_to_audio_ms', $data) && $data['tts_to_audio_ms'] !== null ? Json::float($data, 'tts_to_audio_ms') : null,
+            ttsTtfbMs: array_key_exists('tts_ttfb_ms', $data) && $data['tts_ttfb_ms'] !== null ? Json::float($data, 'tts_ttfb_ms') : null,
         );
     }
 
@@ -62,34 +81,52 @@ final readonly class TimelineEntry
     public function toArray(): array
     {
         $out = [];
-        $out['turn_id'] = $this->turnId;
         $out['started_at'] = Json::dateValue($this->startedAt);
+        $out['turn_id'] = $this->turnId;
+        if ($this->audioOutMs !== null) {
+            $out['audio_out_ms'] = $this->audioOutMs;
+        }
+        if ($this->cadenceMs !== null) {
+            $out['cadence_ms'] = $this->cadenceMs;
+        }
+        if ($this->decisionMs !== null) {
+            $out['decision_ms'] = $this->decisionMs;
+        }
         if ($this->heard !== null) {
             $out['heard'] = $this->heard;
         }
-        if ($this->said !== null) {
-            $out['said'] = $this->said;
-        }
-        if ($this->roundtripMs !== null) {
-            $out['roundtrip_ms'] = $this->roundtripMs;
-        }
-        if ($this->sttLatencyMs !== null) {
-            $out['stt_latency_ms'] = $this->sttLatencyMs;
+        if ($this->interrupted !== null) {
+            $out['interrupted'] = $this->interrupted;
         }
         if ($this->llmTtftMs !== null) {
             $out['llm_ttft_ms'] = $this->llmTtftMs;
         }
-        if ($this->ttsTtfbMs !== null) {
-            $out['tts_ttfb_ms'] = $this->ttsTtfbMs;
+        if ($this->modelCalls !== null) {
+            $out['model_calls'] = array_map(static fn (ModelCallTiming $each): array => $each->toArray(), $this->modelCalls);
+        }
+        if ($this->modelToFirstTextMs !== null) {
+            $out['model_to_first_text_ms'] = $this->modelToFirstTextMs;
+        }
+        if ($this->roundtripMs !== null) {
+            $out['roundtrip_ms'] = $this->roundtripMs;
+        }
+        if ($this->said !== null) {
+            $out['said'] = $this->said;
         }
         if ($this->speechEndToAudioMs !== null) {
             $out['speech_end_to_audio_ms'] = $this->speechEndToAudioMs;
         }
-        if ($this->audioOutMs !== null) {
-            $out['audio_out_ms'] = $this->audioOutMs;
+        if ($this->sttLatencyMs !== null) {
+            $out['stt_latency_ms'] = $this->sttLatencyMs;
         }
-        if ($this->interrupted !== null) {
-            $out['interrupted'] = $this->interrupted;
+        if ($this->textToTtsMs !== null) {
+            $out['text_to_tts_ms'] = $this->textToTtsMs;
+        }
+        if ($this->ttsToAudioMs !== null) {
+            $out['tts_to_audio_ms'] = $this->ttsToAudioMs;
+        }
+        if ($this->ttsTtfbMs !== null) {
+            $out['tts_ttfb_ms'] = $this->ttsTtfbMs;
         }
         return $out;
     }

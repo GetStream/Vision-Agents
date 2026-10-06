@@ -260,6 +260,8 @@ fn a_declaration_key_nobody_knows_is_refused() {
         "keyterms: Vision Agents\n",
         "video:\n  frames: 2\n",
         "sandbox: docker\n",
+        "dispatch:\n  sms: enabled\n",
+        "dispatch:\n  text: on\n",
     ] {
         let (_temporary, root) = directory("jean");
         write(&root, "agent.yaml", declaration);
@@ -289,6 +291,111 @@ fn a_directory_hashes_the_way_the_python_and_go_sdks_hash_it() {
         "- https://example.com/plans\n",
     );
     assert_ne!(Folder::load(&root).unwrap().hash(), folder.hash());
+}
+
+#[test]
+fn schedules_and_simulations_hash_the_way_the_go_sdk_hashes_them() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\nllm: openai/gpt-5.6\n");
+    write(&root, "instructions.md", "You are Jean.\n");
+    write(
+        &root,
+        "skills/think.md",
+        "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n",
+    );
+    write(&root, "knowledge/pricing.md", "# Pricing\n\nA penny.\n");
+    write(
+        &root,
+        "knowledge/urls.yaml",
+        "- url: https://example.com/plans\n  refresh_hours: 24\n",
+    );
+    write(
+        &root,
+        "simulations/a.yaml",
+        "- name: lunch <& more>\n  scenario: Order a club.\n  assertion: One club.\n  variations: 3\n  tags: {team: support}\n- name: dinner\n  scenario: Order soup.\n  assertion: Soup.\n  mode: audio\n",
+    );
+
+    let folder = Folder::load(&root).unwrap();
+
+    assert_eq!(folder.knowledge_urls[0].refresh_hours, 24);
+    let simulations = folder.simulations.as_ref().unwrap();
+    assert_eq!(simulations.len(), 2);
+    assert_eq!(simulations[1].mode, "audio");
+    assert_eq!(folder.hash(), "cd4143470d394f065b6f39a0026a817c");
+}
+
+#[test]
+fn an_empty_simulations_directory_is_not_the_same_as_none() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\n");
+    let without = Folder::load(&root).unwrap();
+    std::fs::create_dir(root.join("simulations")).unwrap();
+    let empty = Folder::load(&root).unwrap();
+
+    assert_eq!(without.simulations, None);
+    assert_eq!(empty.simulations, Some(vec![]));
+    assert_ne!(without.hash(), empty.hash());
+}
+
+#[test]
+fn a_simulation_that_is_misspelt_unfinished_or_named_twice_is_refused() {
+    for (file, declaration) in [
+        (
+            "a.yaml",
+            "- name: lunch\n  scenario: s\n  assertion: a\n  judge: x\n",
+        ),
+        ("a.yaml", "- name: lunch\n  scenario: s\n"),
+        (
+            "a.yaml",
+            "- name: lunch\n  scenario: s\n  assertion: a\n  mode: video\n",
+        ),
+        ("b.yml", "- name: first\n  scenario: s\n  assertion: a\n"),
+    ] {
+        let (_temporary, root) = directory("jean");
+        write(&root, "agent.yaml", "name: jean\n");
+        write(
+            &root,
+            "simulations/a.yaml",
+            "- name: first\n  scenario: s\n  assertion: a\n",
+        );
+        write(&root, &format!("simulations/{file}"), declaration);
+
+        assert!(Folder::load(&root).is_err(), "accepted {declaration:?}");
+    }
+}
+
+#[test]
+fn a_page_is_read_again_at_least_an_hour_apart() {
+    for declaration in [
+        "- url: https://example.com/plans\n  refresh_hours: 0\n",
+        "- url: https://example.com/plans\n  refresh_hours: 1.5\n",
+    ] {
+        let (_temporary, root) = directory("jean");
+        write(&root, "agent.yaml", "name: jean\n");
+        write(&root, "knowledge/urls.yaml", declaration);
+
+        assert!(Folder::load(&root).is_err(), "accepted {declaration:?}");
+    }
+}
+
+#[test]
+fn the_declaration_names_a_harness_and_a_speed() {
+    let (_temporary, root) = directory("jean");
+    write(
+        &root,
+        "agent.yaml",
+        "name: jean\nharness: default\nspeed: 1.1\n",
+    );
+
+    let settings = Folder::load(&root).unwrap().settings;
+
+    assert_eq!(settings.harness, Some(types::Harness::Default));
+    assert_eq!(settings.speed, 1.1);
+    for declaration in ["harness: fancy\n", "speed: fast\n"] {
+        let (_temporary, root) = directory("jean");
+        write(&root, "agent.yaml", declaration);
+        assert!(Folder::load(&root).is_err(), "accepted {declaration:?}");
+    }
 }
 
 #[test]

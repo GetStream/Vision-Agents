@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -60,7 +61,7 @@ func NewPrerecorded(options PrerecordedOptions) (*Prerecorded, error) {
 		options.APIKey = os.Getenv("DEEPGRAM_API_KEY")
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("deepgram: api key is required (set DEEPGRAM_API_KEY)")
+		return nil, stack.Wrap(errors.New("deepgram: api key is required (set DEEPGRAM_API_KEY)"))
 	}
 	if options.Model == "" {
 		options.Model = PrerecordedModel
@@ -95,32 +96,32 @@ func (p *Prerecorded) Model() string { return p.options.Model }
 // Transcribe sends the recording and reads back the whole transcript.
 func (p *Prerecorded) Transcribe(ctx context.Context, recording stt.Recording) (stt.Transcription, error) {
 	if err := recording.Validate(); err != nil {
-		return stt.Transcription{}, err
+		return stt.Transcription{}, stack.Wrap(err)
 	}
 
 	request, err := p.request(ctx, recording)
 	if err != nil {
-		return stt.Transcription{}, err
+		return stt.Transcription{}, stack.Wrap(err)
 	}
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return stt.Transcription{}, fmt.Errorf("deepgram: transcribe: %w", err)
+		return stt.Transcription{}, stack.Wrap(fmt.Errorf("deepgram: transcribe: %w", err))
 	}
 	defer response.Body.Close()
 
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
-		return stt.Transcription{}, fmt.Errorf("deepgram: read transcript: %w", err)
+		return stt.Transcription{}, stack.Wrap(fmt.Errorf("deepgram: read transcript: %w", err))
 	}
 	if response.StatusCode != http.StatusOK {
-		return stt.Transcription{}, fmt.Errorf("deepgram: transcribe: %s: %s",
-			response.Status, strings.TrimSpace(string(body)))
+		return stt.Transcription{}, stack.Wrap(fmt.Errorf("deepgram: transcribe: %s: %s",
+			response.Status, strings.TrimSpace(string(body))))
 	}
 
 	var decoded prerecordedResponse
 	if err := json.Unmarshal(body, &decoded); err != nil {
-		return stt.Transcription{}, fmt.Errorf("deepgram: decode transcript: %w", err)
+		return stt.Transcription{}, stack.Wrap(fmt.Errorf("deepgram: decode transcript: %w", err))
 	}
 	return decoded.transcription(), nil
 }
@@ -136,7 +137,7 @@ func (p *Prerecorded) request(ctx context.Context, recording stt.Recording) (*ht
 	if recording.URL != "" {
 		encoded, err := json.Marshal(map[string]string{"url": recording.URL})
 		if err != nil {
-			return nil, fmt.Errorf("deepgram: encode source: %w", err)
+			return nil, stack.Wrap(fmt.Errorf("deepgram: encode source: %w", err))
 		}
 		body = bytes.NewReader(encoded)
 		contentType = "application/json"
@@ -146,7 +147,7 @@ func (p *Prerecorded) request(ctx context.Context, recording stt.Recording) (*ht
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 	if err != nil {
-		return nil, fmt.Errorf("deepgram: build request: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("deepgram: build request: %w", err))
 	}
 	request.Header.Set("Authorization", "Token "+p.options.APIKey)
 	if contentType != "" {

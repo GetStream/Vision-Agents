@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
-import { Backend, ConfigurationError, signToken } from "../src/index.js";
+import { Backend, ConfigurationError, DEFAULT_URL, signToken } from "../src/index.js";
 import { TestRouter, claimsOf } from "./router.js";
 
 describe("Backend", () => {
@@ -24,6 +24,19 @@ describe("Backend", () => {
     const backend = new Backend({ url: "http://localhost:8080" });
 
     await assert.rejects(() => backend.headers(), ConfigurationError);
+  });
+
+  it("goes to the hosted router, through the proxy, when nothing names another", () => {
+    const backend = new Backend({ apiKey: "vak_live_x", token: "token-for-jim" });
+
+    assert.equal(backend.url, DEFAULT_URL);
+    assert.equal(backend.authenticate, true);
+  });
+
+  it("leaves the proxy off for a router it was pointed at", () => {
+    const backend = new Backend({ url: "http://localhost:8080", customerId: "examples" });
+
+    assert.equal(backend.authenticate, false);
   });
 
   it("refuses a request from a key with neither the secret it belongs to nor a token", async () => {
@@ -253,6 +266,58 @@ describe("Backend", () => {
       null,
       "there is no query counterpart, so a browser socket cannot claim to be a backend",
     );
+  });
+
+  it("hands the proxy a socket's credential the way it reads a request's", async () => {
+    // The proxy refuses a socket carrying only `token`; `token` stays for a router reached
+    // directly, which is what reads it.
+    const backend = new Backend({ url: router.url, apiKey: "key", token: "t", authenticate: true });
+
+    const url = new URL(await backend.socketURL("/v1/agents/sessions/x/events"));
+    assert.equal(url.searchParams.get("api_key"), "key");
+    assert.equal(url.searchParams.get("token"), "t");
+    assert.equal(url.searchParams.get("authorization"), "t");
+    assert.equal(url.searchParams.get("stream-auth-type"), "jwt", "a user, never a backend");
+  });
+
+  it("leaves a socket to a router reached directly as it was", async () => {
+    const backend = new Backend({ url: router.url, apiKey: "key", token: "t" });
+
+    const url = new URL(await backend.socketURL("/v1/agents/sessions/x/events"));
+    assert.equal(url.searchParams.get("token"), "t");
+    assert.equal(url.searchParams.get("authorization"), null);
+    assert.equal(url.searchParams.get("stream-auth-type"), null);
+  });
+
+  it("names the end user to a router reached by customer id", async () => {
+    const backend = new Backend({ url: router.url, customerId: "local", userId: "ana" });
+
+    const url = new URL(await backend.socketURL("/v1/agents/sessions/x/events"));
+    assert.equal(url.searchParams.get("customer_id"), "local");
+    assert.equal(url.searchParams.get("user_id"), "ana");
+    assert.deepEqual(backend.query(), { user_id: "ana" });
+    assert.deepEqual(await backend.headers(), { "X-Customer-Id": "local" }, "no header a page's CORS would refuse");
+    assert.deepEqual(new Backend({ url: router.url, customerId: "local" }).query(), {});
+  });
+
+  it("calls the runtime's fetch on the global object, which a browser insists on", async () => {
+    // A browser's fetch throws "Illegal invocation" unless it is called on the window. Node's
+    // does not care, so the check is made here.
+    const real = globalThis.fetch;
+    globalThis.fetch = function (this: unknown, input: RequestInfo | URL, init?: RequestInit) {
+      if (this !== globalThis) {
+        throw new TypeError("Illegal invocation");
+      }
+      return real(input, init);
+    } as typeof fetch;
+    try {
+      const backend = new Backend({ url: router.url, customerId: "local" });
+      router.serve("GET", "/v1/agents/configs", { body: [] });
+      const response = await backend.request(`${router.url}/v1/agents/configs`, { method: "GET" });
+      assert.equal(response.status, 200);
+    } finally {
+      globalThis.fetch = real;
+    }
   });
 
   it("upgrades an https router to wss", async () => {

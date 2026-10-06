@@ -152,9 +152,9 @@ describe("Session", () => {
     await session.close();
   });
 
-  it("closes the session in the backend when the socket cannot be watched", async () => {
+  it("stops the session in the backend when the socket cannot be watched", async () => {
     const unwatchable = new Client({ url: router.url, customerId: "local" });
-    router.serve("DELETE", "/v1/agents/sessions/sess_1", { status: 204 });
+    router.serve("POST", "/v1/agents/sessions/sess_1/stop", { status: 204 });
     await router.stop();
 
     await assert.rejects(() => Session.open(unwatchable, { call_id: "demo" }));
@@ -309,12 +309,9 @@ describe("Session", () => {
     session.say("one moment");
     assert.deepEqual(await connection.next(), { type: "say", text: "one moment" });
 
-    session.respond("what is the weather", { interrupt: true });
+    session.say("actually", { interrupt: true });
     assert.deepEqual(await connection.next(), { type: "interrupt" });
-    assert.deepEqual(await connection.next(), {
-      type: "respond",
-      text: "what is the weather",
-    });
+    assert.deepEqual(await connection.next(), { type: "say", text: "actually" });
 
     session.setInstructions("be brief");
     assert.deepEqual(await connection.next(), {
@@ -322,6 +319,49 @@ describe("Session", () => {
       instructions: "be brief",
     });
 
+    await session.close();
+  });
+
+  it("abandons the reply to one command, or whatever is being said", async () => {
+    const [session, connection] = await opened();
+
+    session.interrupt({ commandId: "cmd_2" });
+    assert.deepEqual(await connection.next(), { type: "interrupt", command_id: "cmd_2" });
+    session.interrupt();
+    assert.deepEqual(await connection.next(), { type: "interrupt" });
+
+    await session.close();
+  });
+
+  it("opens the channel on a chat client the caller already holds", async () => {
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: {
+        id: "sess_1",
+        conversation_id: "agent:support-1",
+        user_id: "john",
+        agent_id: "john",
+        state: "live",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    const opening = Session.open(api, { text: true });
+    await router.socket();
+    const session = await opening;
+    let connects = 0;
+    const client = {
+      channel: (type: string, id: string) => ({ type, id }),
+      connectUser: async () => {
+        connects++;
+      },
+      disconnectUser: async () => undefined,
+    };
+
+    const chat = await session.chat({ client });
+
+    assert.equal(chat.client, client);
+    assert.deepEqual(chat.channel, { type: "agent", id: "support-1" });
+    assert.equal(connects, 0, "no second connection");
     await session.close();
   });
 

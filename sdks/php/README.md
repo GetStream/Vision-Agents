@@ -46,14 +46,15 @@ use GetStream\VisionAgents\{Backend, Client};
 // A router with nothing in front of it, on a laptop.
 $client = new Client(new Backend(url: 'http://localhost:8080', customerId: 'examples'));
 
-// Your own server, against a hosted router.
-$client = new Client(new Backend(apiKey: $key, apiSecret: $secret, authenticate: true));
+// Your own server, against Stream's hosted router: STREAM_API_KEY and STREAM_API_SECRET are read for you.
+$client = new Client();
 ```
 
 Every argument falls back to the environment: `STREAM_ACCELERATION_URL`,
 `STREAM_ACCELERATION_CUSTOMER_ID`, `STREAM_API_KEY`, `STREAM_API_SECRET`,
-`STREAM_ACCELERATION_AUTHENTICATE`. Pass the client to anything that talks to the router:
-`new Agent(..., client: $client)`.
+`STREAM_ACCELERATION_AUTHENTICATE`, so `new Client()` is usually enough. With no URL the client
+goes to Stream's hosted router, through its authenticating proxy. Pass the client to
+anything that talks to the router: `new Agent(..., client: $client)`.
 
 ## Conversations, responses, rewind and fork
 
@@ -68,30 +69,50 @@ foreach ($second->items->unwind() as $item) {
     echo $item->kind, "\n";
 }
 
-$session->responses->rewind($first);                       // forget everything after it
-$fork = $session->fork(new ForkSessionRequest(responseId: $first->id()));
+$fork = $session->fork(new ForkSessionRequest(responseId: $first->id()));  // carry on from the first
 ```
 
-A response is created running and finishes on its own. Rewind takes a response `id`, not a
-`turn_id`. A conversation kept with `persist: true` is refused a rewind with a 400: fork it
-instead.
+A response is created running and finishes on its own. A written conversation is kept in
+Stream Chat unless it is opened with `incognito: true`. Neither can be rewound (the router
+answers 400): fork at the response instead. `$session->responses->rewind()` is for a call, and
+takes a response `id`, not a `turn_id`.
 
-Past conversations, by agent:
+One method changes a session: title, description, custom labels, instructions, models and
+voice, from the next turn, for this session only. An ended session can still be renamed by id:
 
 ```php
-$rows = $client->agent('support')->sessions->query(state: 'closed', custom: ['plan' => 'pro']);
+$row = $session->update(title: 'Pricing', llm: 'llm-thinking', thinking: 'high');
+$client->agent('support')->sessions->update($sessionId, title: 'Pricing');
+```
+
+Past conversations, by agent, a page at a time:
+
+```php
+$sessions = $client->agent('support')->sessions;
+$page = $sessions->query(userId: 'u1', state: 'live');
+$next = $sessions->query(userId: 'u1', state: 'live', cursor: $page->nextCursor);
+$found = $sessions->search('pricing');
+```
+
+`close()` stops a session and keeps what it recorded and remembered; `delete()` deletes it,
+its turns and its memories. Memory can also be deleted on its own (server side only):
+
+```php
+$session->deleteMemories();                 // what this session learned
+$client->memories->truncate('u1');          // everything remembered about one user
 ```
 
 ## An agent from a directory
 
 ```
 support/
-  agent.yaml          name, models, mode, keyterms, video, ...
+  agent.yaml          name, models, mode, speed, harness, keyterms, video, dispatch, ...
   instructions.md
   guardrail.md
   skills/refunds.md   frontmatter: description, deadline, capture_video
   knowledge/*.md
-  knowledge/urls.yaml pages to keep the knowledge base filled from
+  knowledge/urls.yaml pages to keep the knowledge base filled from, each with an optional refresh_hours
+  simulations/*.yaml  lists of simulations: name, scenario, assertion, variations, ...
 ```
 
 ```php
@@ -99,13 +120,25 @@ $agent = new Agent(folder: __DIR__ . '/support');
 $agent->sync();
 ```
 
-`sync` is one request carrying everything, knowledge URLs included. It writes `.agent_sync`
-with the fingerprint, and while nothing changes a later sync reads the stored config instead
-of sending it again. The fingerprint is the Go SDK's, so either can sync the same directory.
-An unknown key in `agent.yaml` is refused rather than ignored.
+`sync` is one request carrying everything, knowledge URLs and simulations included. The
+harness (`harness:`, the subagent, the sandbox and the skills) is written onto the config,
+never onto a session. A `simulations/` directory makes the stored simulations exactly the ones
+it declares, so an empty one deletes them; without the directory they are left alone. `sync`
+writes `.agent_sync` with the fingerprint, and while nothing changes a later sync reads the
+stored config instead of sending it again. The fingerprint is the Go SDK's, so either can sync
+the same directory. An unknown key in `agent.yaml`, `urls.yaml` or a simulations file is
+refused rather than ignored.
 
 ```php
-$agent->knowledge()->addUrl('https://example.com/pricing', title: 'Pricing');
+$agent->knowledge()->addUrl('https://example.com/pricing', title: 'Pricing', refreshHours: 24);
+```
+
+To change part of a stored config without restating the rest (server side only):
+
+```php
+use GetStream\VisionAgents\Generated\AgentConfigPatch;
+
+$client->agent('support')->updateConfig(new AgentConfigPatch(guardrail: 'Never promise a refund.'));
 ```
 
 ## Tools
@@ -119,7 +152,7 @@ $agent->tools->register('get_weather', 'The weather in a city', [
 
 $session = $agent->chat();
 $watch = $session->watch();
-$watch->respond('Weather in Paris?');
+$session->responses->create('Weather in Paris?');
 foreach ($watch as $event) {
     if ($event->kind === 'responded') {
         echo $event->text(), "\n";
@@ -129,7 +162,8 @@ foreach ($watch as $event) {
 ```
 
 A tool runs while the session is watched, in its own fiber. What it throws is sent to the
-model as the tool's error.
+model as the tool's error. `register` also takes `displayTitle:`, what the reply's tool call
+shows, and `executor: 'client'` for a tool a person's device runs instead.
 
 ## Phone
 
@@ -152,14 +186,42 @@ $dispatch->waitForCall(function (InboundCall $call): void {
 });
 
 $dispatch->waitForMessage(function (InboundMessage $message) use ($dispatch): void {
+    if ($message->sessionId !== '') {
+        $dispatch->answer($message); // text written to a running session
+        return;
+    }
     $dispatch->getOrCreateAgent($message, fn () => new Agent(config: 'support'));
 });
 
 $dispatch->run();
 ```
 
-A handler that throws rejects the call. SIGINT and SIGTERM stop it where pcntl is loaded;
-work still running is waited for.
+Each call and message ends with a `done` frame to the router, carrying what the handler threw
+if it threw. SIGINT and SIGTERM stop it where pcntl is loaded; work still running is waited for.
+
+An agent whose `agent.yaml` says `dispatch: {text: enabled}` leaves what end users write to
+the worker: the message arrives with `sessionId` and `commandId`, and `answer()` has the
+model reply on that session, using the worker's server credential acting for the writer.
+
+### Hosted tools
+
+A worker can also run tools for every session opened under an agent id, including sessions
+opened from a browser. Hosting alone is enough to `run()`.
+
+```php
+use GetStream\VisionAgents\Tools;
+
+$tools = (new Tools())->register('get_weather', 'The weather in a city', [
+    'type' => 'object',
+    'properties' => ['city' => ['type' => 'string']],
+], fn (array $args): string => weatherIn($args['city']));
+
+$dispatch->host('my-agent', $tools, timeoutMs: 0); // 0 takes the router's default
+$dispatch->run();
+```
+
+Each call runs in its own fiber. A refusal throws `HostingRefusedException`, and
+`$dispatch->hosting` lists the agent ids the router accepted.
 
 ## Guests
 
@@ -170,11 +232,16 @@ $client->claimGuestUser($guest, $accountId);      // once they sign up
 
 ## Routing without an agent
 
-```php
-use GetStream\VisionAgents\Generated\{SttOptions, TtsOptions};
-use GetStream\VisionAgents\Router;
+The router comes from the client. `healthcare` is a stored router config, and it holds the
+target each modality answers with (`target: en-low-latency` under `stt:` in
+`routers/healthcare/router.yaml`, or `configureStt`); a call only overrides per-call options
+such as `diarize` or `keyterms`.
 
-$router = new Router('healthcare', tags: ['team' => 'clinical']);
+```php
+use GetStream\VisionAgents\Client;
+use GetStream\VisionAgents\Generated\{SttOptions, TtsOptions};
+
+$router = (new Client())->router('healthcare', tags: ['team' => 'clinical']);
 
 $answer = $router->search('perioperative antibiotic guidance');
 $transcript = $router->stt->recording('https://example.com/visit.mp3', new SttOptions(diarize: true));
@@ -185,18 +252,30 @@ $stt->sendAudio($pcm16);
 foreach ($stt->frames() as $frame) { /* transcript frames */ }
 ```
 
-## Every endpoint
+## Simulations
 
-`Client` has one method per HTTP method. Request and response shapes are generated into
-`GetStream\VisionAgents\Generated` from `acceleration/api/openapi.yaml`.
+Conversations to put an agent through, judged at the end (server side only):
 
 ```php
-$configs = $client->get('/v1/agents/configs', query: ['name' => 'support']);
-$client->delete('/v1/agents/sessions/{id}', ['id' => $id]);
+use GetStream\VisionAgents\Generated\SimulationRequest;
+
+$simulation = $client->simulations->create(new SimulationRequest(
+    name: 'lunch order',
+    configId: $config->id,
+    scenario: 'Order a turkey club, then swap it for a veggie wrap.',
+    assertion: 'The final order is one veggie wrap.',
+));
+$run = $client->simulations->run($simulation->id);
+$run = $client->simulations->runs->get($run->id);   // until its state is no longer running
 ```
 
-A failure raises `RouterException` with the status (0 when the router was never reached),
-the operation, and what the router said.
+Also `get`, `list`, `update`, `delete`, and `runs->list`, `runs->cancel`.
+
+## Shapes and failures
+
+Request and response shapes are generated into `GetStream\VisionAgents\Generated` from
+`acceleration/api/openapi.yaml`. A failure raises `RouterException` with the status (0 when
+the router was never reached), the operation, and what the router said.
 
 ## Developing
 

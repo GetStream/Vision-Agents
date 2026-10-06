@@ -21,6 +21,7 @@ pub const INSTRUCTIONS_FILE: &str = "instructions.md";
 pub const GUARDRAIL_FILE: &str = "guardrail.md";
 pub const SKILLS_DIR: &str = "skills";
 pub const KNOWLEDGE_DIR: &str = "knowledge";
+pub const SIMULATIONS_DIR: &str = "simulations";
 /// The pages a knowledge directory is kept filled from, as opposed to the files it is
 /// filled from directly.
 pub const KNOWLEDGE_URLS_FILE: &str = "urls.yaml";
@@ -43,6 +44,55 @@ pub struct KnowledgeUrl {
     pub url: String,
     pub title: String,
     pub description: String,
+    /// How often the backend reads the page again on its own. Zero is never.
+    pub refresh_hours: i64,
+}
+
+/// One conversation a `simulations/*.yaml` file declares, run against the agent the
+/// directory is. A file holds a list of them.
+///
+/// The fields are in the Go SDK's order and all serialized, since the fingerprint is taken
+/// over this as JSON.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct Simulation {
+    pub name: String,
+    pub scenario: String,
+    pub assertion: String,
+    /// `text` or `audio`, empty for the router's default.
+    pub mode: String,
+    pub variations: i64,
+    pub max_turns: i64,
+    pub caller_target: String,
+    pub judge_target: String,
+    pub caller_stt: String,
+    pub caller_tts: String,
+    pub caller_voice: String,
+    /// `None` when the file says nothing, which serializes differently from an empty map.
+    pub tags: Option<BTreeMap<String, String>>,
+}
+
+impl Simulation {
+    pub(crate) fn declaration(&self) -> types::SimulationDeclaration {
+        let text = |value: &str| (!value.is_empty()).then(|| value.to_string());
+        types::SimulationDeclaration {
+            name: self.name.clone(),
+            scenario: self.scenario.clone(),
+            assertion: self.assertion.clone(),
+            mode: match self.mode.as_str() {
+                "text" => Some(types::SimulationDeclarationMode::Text),
+                "audio" => Some(types::SimulationDeclarationMode::Audio),
+                _ => None,
+            },
+            variations: (self.variations > 0).then_some(self.variations),
+            max_turns: (self.max_turns > 0).then_some(self.max_turns),
+            caller_target: text(&self.caller_target),
+            judge_target: text(&self.judge_target),
+            caller_stt: text(&self.caller_stt),
+            caller_tts: text(&self.caller_tts),
+            caller_voice: text(&self.caller_voice),
+            tags: self.tags.clone().unwrap_or_default(),
+        }
+    }
 }
 
 /// Which video a skill that captures it sees.
@@ -67,7 +117,10 @@ pub struct Settings {
     /// `None` when the declaration says nothing, and empty when it turns it off.
     pub sts: Option<String>,
     pub voice: String,
+    /// The voice's rate of delivery, 1 being its own. Zero leaves it there.
+    pub speed: f64,
     pub llm: String,
+    pub harness: Option<types::Harness>,
     pub subagent: String,
     pub search: String,
     pub greeting: String,
@@ -76,6 +129,9 @@ pub struct Settings {
     pub keyterms: Vec<String>,
     pub tags: BTreeMap<String, String>,
     pub video: Option<VideoSettings>,
+    /// What the agent leaves to this application's own dispatch worker. With `text`
+    /// enabled the model does not answer what end users write; a worker is handed it.
+    pub dispatch: Option<types::AgentDispatch>,
 }
 
 /// An agent written down as a directory.
@@ -88,6 +144,7 @@ pub struct Settings {
 ///   skills/think.md
 ///   knowledge/pricing.md
 ///   knowledge/urls.yaml
+///   simulations/lunch.yaml
 /// ```
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Folder {
@@ -108,6 +165,10 @@ pub struct Folder {
     pub knowledge: Vec<Document>,
     /// The pages knowledge/urls.yaml declares, in the order it lists them.
     pub knowledge_urls: Vec<KnowledgeUrl>,
+    /// What simulations/*.yaml declare, by file name and then as listed. `None` when there
+    /// is no simulations/, which leaves the stored ones alone; empty when it has none, which
+    /// deletes them.
+    pub simulations: Option<Vec<Simulation>>,
 }
 
 impl Folder {
@@ -153,6 +214,7 @@ impl Folder {
             knowledge_urls: load_knowledge_urls(
                 &path.join(KNOWLEDGE_DIR).join(KNOWLEDGE_URLS_FILE),
             )?,
+            simulations: load_simulations(&path.join(SIMULATIONS_DIR))?,
             path: path.to_path_buf(),
         })
     }
@@ -210,6 +272,7 @@ impl Folder {
             &self.skills,
             &self.knowledge,
             &self.knowledge_urls,
+            self.simulations.as_deref(),
         )
     }
 }
@@ -221,6 +284,7 @@ pub(crate) fn fingerprint(
     skills: &[Skill],
     knowledge: &[Document],
     pages: &[KnowledgeUrl],
+    simulations: Option<&[Simulation]>,
 ) -> String {
     let mut hasher = Md5::new();
     hasher.update(format!("{declaration}\n{instructions}\n{guardrail}"));
@@ -257,12 +321,36 @@ pub(crate) fn fingerprint(
             "\nurl:{}\n{}\n{}",
             page.url, page.title, page.description
         ));
+        // Written only when there is one, so a page without keeps its fingerprint.
+        if page.refresh_hours > 0 {
+            hasher.update(format!("\nrefresh_hours:{}", page.refresh_hours));
+        }
+    }
+    // Written only when there is a simulations/, so a directory without one keeps its
+    // fingerprint.
+    if let Some(simulations) = simulations {
+        hasher.update("\nsimulations:");
+        for simulation in simulations {
+            hasher.update(go_json(simulation));
+        }
     }
     hasher
         .finalize()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+/// JSON the way Go's `encoding/json` writes it, which escapes `<`, `>`, `&` and the two line
+/// separators that serde_json leaves as they are.
+fn go_json(value: &impl serde::Serialize) -> String {
+    serde_json::to_string(value)
+        .unwrap_or_default()
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
 }
 
 /// The fingerprint a directory was last synced under, or empty when it never was or the
@@ -346,7 +434,16 @@ fn declare(raw: &str) -> std::result::Result<Settings, String> {
             "tts" => settings.tts = text()?,
             "sts" => settings.sts = if value.is_null() { None } else { Some(text()?) },
             "voice" => settings.voice = text()?,
+            "speed" => {
+                settings.speed = match &value {
+                    Yaml::Real(number) => number.parse().map_err(|_| "speed is a number")?,
+                    Yaml::Integer(number) => *number as f64,
+                    Yaml::Null => 0.0,
+                    _ => return Err("speed is a number".into()),
+                }
+            }
             "llm" => settings.llm = text()?,
+            "harness" => settings.harness = named(&text()?, "harness")?,
             "subagent" => settings.subagent = text()?,
             "search" => settings.search = text()?,
             "greeting" => settings.greeting = text()?,
@@ -356,6 +453,7 @@ fn declare(raw: &str) -> std::result::Result<Settings, String> {
             "keyterms" => settings.keyterms = strings(&value, &key)?,
             "tags" => settings.tags = mapping(&value, &key)?,
             "video" => settings.video = video(&value)?,
+            "dispatch" => settings.dispatch = dispatch(&value)?,
             _ => return Err(format!("{key:?} is not a setting agent.yaml knows")),
         }
     }
@@ -408,6 +506,32 @@ fn video(value: &Yaml) -> std::result::Result<Option<VideoSettings>, String> {
         return Err("video.max_frames must be an integer from 1 to 8".into());
     }
     Ok(Some(video))
+}
+
+fn dispatch(value: &Yaml) -> std::result::Result<Option<types::AgentDispatch>, String> {
+    let Yaml::Hash(fields) = value else {
+        return if value.is_null() {
+            Ok(None)
+        } else {
+            Err("dispatch is a mapping".into())
+        };
+    };
+    let mut dispatch = types::AgentDispatch::default();
+    for (key, value) in fields {
+        let key = scalar(key).unwrap_or_default();
+        let setting = match key.as_str() {
+            "incoming_call" => &mut dispatch.incoming_call,
+            "text" => &mut dispatch.text,
+            _ => {
+                return Err(format!(
+                    "{key:?} is not a dispatch setting; incoming_call and text are"
+                ));
+            }
+        };
+        let text = scalar(value).ok_or(format!("dispatch.{key} is a string"))?;
+        *setting = named(&text, "dispatch setting; enabled or disabled is")?;
+    }
+    Ok(Some(dispatch))
 }
 
 fn strings(value: &Yaml, key: &str) -> std::result::Result<Vec<String>, String> {
@@ -661,9 +785,22 @@ fn load_knowledge_urls(path: &Path) -> Result<Vec<KnowledgeUrl>> {
                         "url" => &mut page.url,
                         "title" => &mut page.title,
                         "description" => &mut page.description,
+                        "refresh_hours" => {
+                            page.refresh_hours = match value {
+                                Yaml::Integer(hours) if *hours >= 1 => *hours,
+                                _ => {
+                                    return Err(refused(
+                                        "refresh_hours is how many hours between reads, so it is \
+                                         at least 1; leave it out for never"
+                                            .into(),
+                                    ));
+                                }
+                            };
+                            continue;
+                        }
                         _ => {
                             return Err(refused(format!(
-                                "{key:?} is not something a page says; url, title and description are"
+                                "{key:?} is not something a page says; url, title, description and refresh_hours are"
                             )));
                         }
                     };
@@ -684,4 +821,113 @@ fn load_knowledge_urls(path: &Path) -> Result<Vec<KnowledgeUrl>> {
         pages.push(page);
     }
     Ok(pages)
+}
+
+/// Reads every .yaml and .yml file in simulations/, each a list of simulations. A key
+/// nobody knows is refused, as in agent.yaml, and so is a name two simulations share, since
+/// a sync finds a simulation by its name.
+fn load_simulations(path: &Path) -> Result<Option<Vec<Simulation>>> {
+    let entries = match std::fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(Error::io(path, error)),
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|file| {
+            file.is_file()
+                && file.extension().is_some_and(|extension| {
+                    matches!(
+                        extension.to_string_lossy().to_lowercase().as_str(),
+                        "yaml" | "yml"
+                    )
+                })
+        })
+        .collect();
+    files.sort();
+
+    let mut simulations = Vec::new();
+    let mut named: BTreeMap<String, String> = BTreeMap::new();
+    for file in files {
+        let raw = std::fs::read_to_string(&file).map_err(|error| Error::io(&file, error))?;
+        let refused = |message: String| Error::folder(&file, message);
+        let document =
+            YamlLoader::load_from_str(&raw).map_err(|error| refused(error.to_string()))?;
+        let items = match document.into_iter().next() {
+            None | Some(Yaml::Null) => Vec::new(),
+            Some(Yaml::Array(items)) => items,
+            Some(_) => return Err(refused("a simulations file is a list".into())),
+        };
+        let listed = file
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        for item in items {
+            let simulation = simulation(&item).map_err(refused)?;
+            if let Some(first) = named.get(&simulation.name) {
+                return Err(refused(format!(
+                    "simulation {:?} is also declared in {first}",
+                    simulation.name
+                )));
+            }
+            named.insert(simulation.name.clone(), listed.clone());
+            simulations.push(simulation);
+        }
+    }
+    Ok(Some(simulations))
+}
+
+fn simulation(item: &Yaml) -> std::result::Result<Simulation, String> {
+    let Yaml::Hash(fields) = item else {
+        return Err("a simulation is a mapping".into());
+    };
+    let mut simulation = Simulation::default();
+    for (key, value) in fields {
+        let key = scalar(key).ok_or("a simulation's keys are strings")?;
+        let text = || scalar(value).ok_or(format!("{key} is a string"));
+        let count = || match value {
+            Yaml::Integer(number) => Ok(*number),
+            Yaml::Null => Ok(0),
+            _ => Err(format!("{key} is an integer")),
+        };
+        match key.as_str() {
+            "name" => simulation.name = text()?,
+            "scenario" => simulation.scenario = text()?,
+            "assertion" => simulation.assertion = text()?,
+            "mode" => simulation.mode = text()?,
+            "variations" => simulation.variations = count()?,
+            "max_turns" => simulation.max_turns = count()?,
+            "caller_target" => simulation.caller_target = text()?,
+            "judge_target" => simulation.judge_target = text()?,
+            "caller_stt" => simulation.caller_stt = text()?,
+            "caller_tts" => simulation.caller_tts = text()?,
+            "caller_voice" => simulation.caller_voice = text()?,
+            "tags" => {
+                simulation.tags = (!value.is_null())
+                    .then(|| mapping(value, &key))
+                    .transpose()?
+            }
+            _ => return Err(format!("{key:?} is not something a simulation says")),
+        }
+    }
+    if simulation.name.is_empty() {
+        return Err("a simulation needs a name".into());
+    }
+    if simulation.scenario.is_empty() {
+        return Err(format!("simulation {:?} needs a scenario", simulation.name));
+    }
+    if simulation.assertion.is_empty() {
+        return Err(format!(
+            "simulation {:?} needs an assertion",
+            simulation.name
+        ));
+    }
+    if !matches!(simulation.mode.as_str(), "" | "text" | "audio") {
+        return Err(format!(
+            "simulation {:?} is text or audio, not {:?}",
+            simulation.name, simulation.mode
+        ));
+    }
+    Ok(simulation)
 }

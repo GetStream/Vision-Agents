@@ -34,20 +34,20 @@ public fun ConversationView(
     val conversation by session.conversation.collectAsStateWithLifecycle()
     val connected by session.isConnected.collectAsStateWithLifecycle()
     val failure by session.failure.collectAsStateWithLifecycle()
-    var opening by remember(session) { mutableStateOf<AgentsException?>(null) }
+    var refused by remember(session) { mutableStateOf<AgentsException?>(null) }
 
     LaunchedEffect(session) {
         try {
             session.start()
         } catch (e: AgentsException) {
-            opening = e
+            refused = e
         }
     }
 
     Column(modifier = modifier) {
         TranscriptView(conversation.turns, Modifier.weight(1f).fillMaxWidth())
 
-        val problem = (failure ?: opening)?.message ?: conversation.failure
+        val problem = (failure ?: refused)?.message ?: conversation.failure
         if (problem != null) {
             Text(
                 problem,
@@ -62,9 +62,10 @@ public fun ConversationView(
         Composer(
             send = {
                 try {
-                    session.send(it)
-                } catch (_: AgentsException) {
-                    // The socket is gone, which `failure` and `enabled` already show.
+                    session.responses.create(it.trim())
+                    refused = null
+                } catch (e: AgentsException) {
+                    refused = e
                 }
             },
             modifier = Modifier.padding(16.dp),

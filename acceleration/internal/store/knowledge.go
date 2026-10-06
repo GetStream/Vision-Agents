@@ -6,19 +6,21 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // CreateKnowledgeURL stores a new page to keep a knowledge base filled from, and fills in
 // its id and timestamps. It starts pending, because nothing has been read yet.
 func (s *Store) CreateKnowledgeURL(ctx context.Context, page *KnowledgeURL) error {
 	if page.CustomerID == "" {
-		return errors.New("store: customer id is required")
+		return stack.Wrap(errors.New("store: customer id is required"))
 	}
 	if page.Namespace == "" {
-		return errors.New("store: a namespace is required, knowledge is never shared")
+		return stack.Wrap(errors.New("store: a namespace is required, knowledge is never shared"))
 	}
 	if page.URL == "" {
-		return errors.New("store: a knowledge url needs a url")
+		return stack.Wrap(errors.New("store: a knowledge url needs a url"))
 	}
 
 	page.ID = newID()
@@ -31,7 +33,7 @@ func (s *Store) CreateKnowledgeURL(ctx context.Context, page *KnowledgeURL) erro
 	page.DeletedAt = nil
 
 	if _, err := s.db.NewInsert().Model(page).Exec(ctx); err != nil {
-		return fmt.Errorf("store: create knowledge url: %w", err)
+		return stack.Wrap(fmt.Errorf("store: create knowledge url: %w", err))
 	}
 	return nil
 }
@@ -42,7 +44,7 @@ func (s *Store) SubscribedKnowledgeURL(
 	ctx context.Context, customerID, namespace, address string,
 ) (KnowledgeURL, bool, error) {
 	if customerID == "" || namespace == "" || address == "" {
-		return KnowledgeURL{}, false, errors.New("store: a customer, a namespace and a url are required")
+		return KnowledgeURL{}, false, stack.Wrap(errors.New("store: a customer, a namespace and a url are required"))
 	}
 
 	var page KnowledgeURL
@@ -57,7 +59,7 @@ func (s *Store) SubscribedKnowledgeURL(
 		return KnowledgeURL{}, false, nil
 	}
 	if err != nil {
-		return KnowledgeURL{}, false, fmt.Errorf("store: subscribed knowledge url: %w", err)
+		return KnowledgeURL{}, false, stack.Wrap(fmt.Errorf("store: subscribed knowledge url: %w", err))
 	}
 	return page, true, nil
 }
@@ -67,24 +69,24 @@ func (s *Store) SubscribedKnowledgeURL(
 // subscribing to a page again can say something different about it.
 func (s *Store) SaveKnowledgeURL(ctx context.Context, page *KnowledgeURL) error {
 	if page.CustomerID == "" || page.ID == "" {
-		return errors.New("store: a customer and a knowledge url id are required")
+		return stack.Wrap(errors.New("store: a customer and a knowledge url id are required"))
 	}
 
 	page.UpdatedAt = time.Now().UTC()
 
 	result, err := s.db.NewUpdate().Model(page).
-		Column("title", "declared_title", "description",
+		Column("title", "declared_title", "description", "refresh_hours",
 			"state", "error", "passages", "last_indexed_at", "updated_at").
 		Where("id = ?", page.ID).
 		Where("customer_id = ?", page.CustomerID).
 		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: save knowledge url: %w", err)
+		return stack.Wrap(fmt.Errorf("store: save knowledge url: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: save knowledge url: %w", err)
+		return stack.Wrap(fmt.Errorf("store: save knowledge url: %w", err))
 	}
 	if affected == 0 {
 		return unknownKnowledgeURL(page.ID)
@@ -96,7 +98,7 @@ func (s *Store) SaveKnowledgeURL(ctx context.Context, page *KnowledgeURL) error 
 // they are not in this database.
 func (s *Store) DeleteKnowledgeURL(ctx context.Context, customerID, id string) error {
 	if customerID == "" || id == "" {
-		return errors.New("store: a customer and a knowledge url id are required")
+		return stack.Wrap(errors.New("store: a customer and a knowledge url id are required"))
 	}
 
 	result, err := s.db.NewUpdate().Model((*KnowledgeURL)(nil)).
@@ -106,11 +108,11 @@ func (s *Store) DeleteKnowledgeURL(ctx context.Context, customerID, id string) e
 		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: delete knowledge url: %w", err)
+		return stack.Wrap(fmt.Errorf("store: delete knowledge url: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: delete knowledge url: %w", err)
+		return stack.Wrap(fmt.Errorf("store: delete knowledge url: %w", err))
 	}
 	if affected == 0 {
 		return unknownKnowledgeURL(id)
@@ -121,7 +123,7 @@ func (s *Store) DeleteKnowledgeURL(ctx context.Context, customerID, id string) e
 // KnowledgeURL returns one page a customer subscribes to.
 func (s *Store) KnowledgeURL(ctx context.Context, customerID, id string) (KnowledgeURL, error) {
 	if customerID == "" || id == "" {
-		return KnowledgeURL{}, errors.New("store: a customer and a knowledge url id are required")
+		return KnowledgeURL{}, stack.Wrap(errors.New("store: a customer and a knowledge url id are required"))
 	}
 
 	var page KnowledgeURL
@@ -135,16 +137,36 @@ func (s *Store) KnowledgeURL(ctx context.Context, customerID, id string) (Knowle
 		return KnowledgeURL{}, unknownKnowledgeURL(id)
 	}
 	if err != nil {
-		return KnowledgeURL{}, fmt.Errorf("store: knowledge url: %w", err)
+		return KnowledgeURL{}, stack.Wrap(fmt.Errorf("store: knowledge url: %w", err))
 	}
 	return page, nil
+}
+
+// DueKnowledgeURLs returns pages, of every customer, whose refresh interval has passed since
+// they were last read. A read that failed counts, since every read is saved, so a broken
+// page is tried once an interval rather than on every sweep. A page still waiting on its
+// first read is not due: that read is already queued.
+func (s *Store) DueKnowledgeURLs(ctx context.Context, now time.Time, limit int) ([]KnowledgeURL, error) {
+	var pages []KnowledgeURL
+	err := s.db.NewSelect().Model(&pages).
+		Where("deleted_at IS NULL").
+		Where("refresh_hours > 0").
+		Where("state <> ?", KnowledgeURLPending).
+		Where("updated_at + refresh_hours * interval '1 hour' <= ?", now).
+		Order("updated_at ASC").
+		Limit(limit).
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("store: due knowledge urls: %w", err)
+	}
+	return pages, nil
 }
 
 // CustomerKnowledgeURLs returns the pages a customer subscribes to, newest first. An empty
 // namespace returns every one of them, which is what a caller listing them all wants.
 func (s *Store) CustomerKnowledgeURLs(ctx context.Context, customerID, namespace string) ([]KnowledgeURL, error) {
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
 	var pages []KnowledgeURL
@@ -155,7 +177,7 @@ func (s *Store) CustomerKnowledgeURLs(ctx context.Context, customerID, namespace
 		query = query.Where("namespace = ?", namespace)
 	}
 	if err := query.Order("created_at DESC").Scan(ctx); err != nil {
-		return nil, fmt.Errorf("store: customer knowledge urls: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer knowledge urls: %w", err))
 	}
 	return pages, nil
 }
@@ -165,7 +187,7 @@ func (s *Store) CustomerKnowledgeURLs(ctx context.Context, customerID, namespace
 var ErrNoKnowledgeURL = errors.New("store: no such knowledge url")
 
 func unknownKnowledgeURL(id string) error {
-	return fmt.Errorf("%w: %s", ErrNoKnowledgeURL, id)
+	return stack.Wrap(fmt.Errorf("%w: %s", ErrNoKnowledgeURL, id))
 }
 
 // SaveKnowledgeDocument records how many passages a document was cut into. A source the
@@ -173,13 +195,13 @@ func unknownKnowledgeURL(id string) error {
 // replaced the same passages rather than adding a second copy.
 func (s *Store) SaveKnowledgeDocument(ctx context.Context, document *KnowledgeDocument) error {
 	if document.CustomerID == "" {
-		return errors.New("store: customer id is required")
+		return stack.Wrap(errors.New("store: customer id is required"))
 	}
 	if document.Namespace == "" {
-		return errors.New("store: a namespace is required, knowledge is never shared")
+		return stack.Wrap(errors.New("store: a namespace is required, knowledge is never shared"))
 	}
 	if document.Source == "" {
-		return errors.New("store: a knowledge document needs a source")
+		return stack.Wrap(errors.New("store: a knowledge document needs a source"))
 	}
 
 	document.ID = newID()
@@ -195,7 +217,7 @@ func (s *Store) SaveKnowledgeDocument(ctx context.Context, document *KnowledgeDo
 		Returning("id, created_at").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: save knowledge document: %w", err)
+		return stack.Wrap(fmt.Errorf("store: save knowledge document: %w", err))
 	}
 	return nil
 }
@@ -203,7 +225,7 @@ func (s *Store) SaveKnowledgeDocument(ctx context.Context, document *KnowledgeDo
 // KnowledgeDocument returns one document a customer filled a knowledge base with.
 func (s *Store) KnowledgeDocument(ctx context.Context, customerID, id string) (KnowledgeDocument, error) {
 	if customerID == "" || id == "" {
-		return KnowledgeDocument{}, errors.New("store: a customer and a knowledge document id are required")
+		return KnowledgeDocument{}, stack.Wrap(errors.New("store: a customer and a knowledge document id are required"))
 	}
 
 	var document KnowledgeDocument
@@ -216,7 +238,7 @@ func (s *Store) KnowledgeDocument(ctx context.Context, customerID, id string) (K
 		return KnowledgeDocument{}, unknownKnowledgeDocument(id)
 	}
 	if err != nil {
-		return KnowledgeDocument{}, fmt.Errorf("store: knowledge document: %w", err)
+		return KnowledgeDocument{}, stack.Wrap(fmt.Errorf("store: knowledge document: %w", err))
 	}
 	return document, nil
 }
@@ -228,7 +250,7 @@ func (s *Store) CustomerKnowledgeDocuments(
 	ctx context.Context, customerID, namespace string,
 ) ([]KnowledgeDocument, error) {
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
 	var documents []KnowledgeDocument
@@ -237,7 +259,7 @@ func (s *Store) CustomerKnowledgeDocuments(
 		query = query.Where("namespace = ?", namespace)
 	}
 	if err := query.Order("updated_at DESC").Scan(ctx); err != nil {
-		return nil, fmt.Errorf("store: customer knowledge documents: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer knowledge documents: %w", err))
 	}
 	return documents, nil
 }
@@ -246,7 +268,7 @@ func (s *Store) CustomerKnowledgeDocuments(
 // since they are not in this database.
 func (s *Store) DeleteKnowledgeDocument(ctx context.Context, customerID, id string) error {
 	if customerID == "" || id == "" {
-		return errors.New("store: a customer and a knowledge document id are required")
+		return stack.Wrap(errors.New("store: a customer and a knowledge document id are required"))
 	}
 
 	result, err := s.db.NewDelete().Model((*KnowledgeDocument)(nil)).
@@ -254,11 +276,11 @@ func (s *Store) DeleteKnowledgeDocument(ctx context.Context, customerID, id stri
 		Where("customer_id = ?", customerID).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: delete knowledge document: %w", err)
+		return stack.Wrap(fmt.Errorf("store: delete knowledge document: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: delete knowledge document: %w", err)
+		return stack.Wrap(fmt.Errorf("store: delete knowledge document: %w", err))
 	}
 	if affected == 0 {
 		return unknownKnowledgeDocument(id)
@@ -267,5 +289,5 @@ func (s *Store) DeleteKnowledgeDocument(ctx context.Context, customerID, id stri
 }
 
 func unknownKnowledgeDocument(id string) error {
-	return fmt.Errorf("store: there is no knowledge document %s", id)
+	return stack.Wrap(fmt.Errorf("store: there is no knowledge document %s", id))
 }

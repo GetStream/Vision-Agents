@@ -11,11 +11,11 @@ use GetStream\VisionAgents\Json;
 final readonly class LibraryVoices
 {
     public function __construct(
-        /** @var list<LibraryVoice> */
-        public array $voices,
         // The providers that publish a library, sorted by name.
         /** @var list<string> */
         public array $providers,
+        /** @var list<LibraryVoice> */
+        public array $voices,
         // Providers whose library could not be read just now.
         /** @var list<string>|null */
         public ?array $unavailable = null,
@@ -28,8 +28,8 @@ final readonly class LibraryVoices
     public static function fromArray(array $data): self
     {
         return new self(
-            voices: array_map(LibraryVoice::fromArray(...), Json::objects($data, 'voices')),
             providers: Json::strings($data, 'providers'),
+            voices: array_map(LibraryVoice::fromArray(...), Json::objects($data, 'voices')),
             unavailable: array_key_exists('unavailable', $data) && $data['unavailable'] !== null ? Json::strings($data, 'unavailable') : null,
         );
     }
@@ -42,8 +42,8 @@ final readonly class LibraryVoices
     public function toArray(): array
     {
         $out = [];
-        $out['voices'] = array_map(static fn (LibraryVoice $each): array => $each->toArray(), $this->voices);
         $out['providers'] = $this->providers;
+        $out['voices'] = array_map(static fn (LibraryVoice $each): array => $each->toArray(), $this->voices);
         if ($this->unavailable !== null) {
             $out['unavailable'] = $this->unavailable;
         }

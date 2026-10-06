@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ProviderName is how this provider is named in stats.
@@ -80,13 +81,13 @@ func New(options Options) (*Provider, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("tavily: " + apiKeyEnvVar + " is required")
+		return nil, stack.Wrap(errors.New("tavily: " + apiKeyEnvVar + " is required"))
 	}
 	if options.Model == "" {
 		options.Model = ModelBasic
 	}
 	if options.Model != ModelBasic && options.Model != ModelAdvanced {
-		return nil, fmt.Errorf("tavily: %q is not a depth this searches at", options.Model)
+		return nil, stack.Wrap(fmt.Errorf("tavily: %q is not a depth this searches at", options.Model))
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
@@ -149,7 +150,7 @@ type searchResponse struct {
 // Search answers the question out of what is true now.
 func (p *Provider) Search(ctx context.Context, query search.Query) (search.Result, error) {
 	if err := query.Validate(); err != nil {
-		return search.Result{}, err
+		return search.Result{}, stack.Wrap(err)
 	}
 
 	limit := query.Limit
@@ -163,32 +164,32 @@ func (p *Provider) Search(ctx context.Context, query search.Query) (search.Resul
 		SearchDepth:   p.model,
 	})
 	if err != nil {
-		return search.Result{}, fmt.Errorf("tavily: encode search: %w", err)
+		return search.Result{}, stack.Wrap(fmt.Errorf("tavily: encode search: %w", err))
 	}
 
 	request, err := http.NewRequestWithContext(
 		ctx, http.MethodPost, p.baseURL+"/search", bytes.NewReader(payload))
 	if err != nil {
-		return search.Result{}, fmt.Errorf("tavily: build search: %w", err)
+		return search.Result{}, stack.Wrap(fmt.Errorf("tavily: build search: %w", err))
 	}
 	request.Header.Set("Authorization", "Bearer "+p.apiKey)
 	request.Header.Set("Content-Type", "application/json")
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return search.Result{}, fmt.Errorf("tavily: search: %w", err)
+		return search.Result{}, stack.Wrap(fmt.Errorf("tavily: search: %w", err))
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return search.Result{}, fmt.Errorf("tavily: search returned %d: %s",
-			response.StatusCode, strings.TrimSpace(string(body)))
+		return search.Result{}, stack.Wrap(fmt.Errorf("tavily: search returned %d: %s",
+			response.StatusCode, strings.TrimSpace(string(body))))
 	}
 
 	var decoded searchResponse
 	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
-		return search.Result{}, fmt.Errorf("tavily: decode search: %w", err)
+		return search.Result{}, stack.Wrap(fmt.Errorf("tavily: decode search: %w", err))
 	}
 
 	found := search.Result{Answer: decoded.Answer}

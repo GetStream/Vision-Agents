@@ -1,0 +1,1 @@
+{"token":"synthetic-verification-token","team_id":"T0000TEAM","api_app_id":"A0000APP","event":{"type":"tokens_revoked","tokens":{"oauth":["U0000USER","U0000OTHER"],"bot":["U0000BOT"]}},"type":"event_callback","event_id":"Ev0000REVOKED","event_time":1759740000}

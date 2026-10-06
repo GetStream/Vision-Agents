@@ -53,7 +53,7 @@ class LiveTest {
     fun `asking something gets an answer, streamed into the transcript`() = runBlocking {
         val chat = agents.chat(options)
 
-        chat.send("What is two plus two? Answer in one short sentence.")
+        chat.responses.create("What is two plus two? Answer in one short sentence.")
 
         val done = withTimeout(30.seconds) {
             chat.conversation.first { it.state == Conversation.State.Idle && it.turns.size >= 2 }
@@ -77,7 +77,7 @@ class LiveTest {
         }
         val chat = agents.chat(options.copy(tools = listOf(lookup)))
 
-        chat.send("Use the lookup_order tool to look up order A-1042 and tell me what is in it.")
+        chat.responses.create("Use the lookup_order tool to look up order A-1042 and tell me what is in it.")
 
         until(45) { asked.isNotEmpty() }
         assertEquals("A-1042", asked.first().uppercase())
@@ -85,25 +85,23 @@ class LiveTest {
     }
 
     @Test
-    fun `a rewound session carries on from the response kept, and a fork branches off it`() = runBlocking {
+    fun `a fork at a response branches off it and leaves the original as it was`() = runBlocking {
         val chat = agents.chat(options)
 
-        chat.send("My name is Ada. Reply with one word.")
+        chat.responses.create("My name is Ada. Reply with one word.")
         withTimeout(30.seconds) { chat.conversation.first { it.state == Conversation.State.Idle && it.turns.size >= 2 } }
-        chat.send("What is my name? Reply with one word.")
+        chat.responses.create("What is my name? Reply with one word.")
         withTimeout(30.seconds) { chat.conversation.first { it.state == Conversation.State.Idle && it.turns.size >= 4 } }
-        until(10) { chat.responses.list().size == 2 }
+        until(10) { chat.responses.list().items.size == 2 }
 
-        val kept = chat.responses.list().first()
+        val kept = chat.responses.list().items.first()
         assertTrue(kept.said.contains("Ada"))
-        assertTrue(chat.responses.items(kept.id).isNotEmpty())
-
-        chat.responses.rewind(kept)
-        assertEquals(listOf(kept.id), chat.responses.list().map { it.id })
+        assertTrue(chat.responses.items(kept.id).items.isNotEmpty())
 
         val fork = chat.fork(ForkOptions(responseId = kept.id))
         assertNotEquals(chat.id, fork.id)
         assertEquals(chat.id, fork.forkedFrom)
+        assertEquals(2, chat.responses.list().items.size)
         agents.sessions.close(fork.id)
         chat.close()
     }
@@ -116,7 +114,7 @@ class LiveTest {
 
         assertEquals(chat.id, response.sessionId)
         withTimeout(30.seconds) { chat.conversation.first { it.turns.any { turn -> turn.isAgent && turn.text.isNotEmpty() } } }
-        until(15) { chat.responses.list().any { it.id == response.id && it.status != AgentResponse.Status.Running } }
+        until(15) { chat.responses.list().items.any { it.id == response.id && it.status != AgentResponse.Status.Running } }
         chat.close()
     }
 
@@ -127,9 +125,22 @@ class LiveTest {
 
         val found = agents.sessions.search(title)
 
-        assertTrue(found.any { it.id == session.id })
-        assertTrue(agents.sessions.query(SessionQuery(limit = 50)).any { it.id == session.id })
-        agents.sessions.close(session.id)
+        assertTrue(found.items.any { it.id == session.id })
+        assertTrue(agents.sessions.query(SessionQuery(limit = 50)).items.any { it.id == session.id })
+        agents.sessions.delete(session.id)
+        assertTrue(agents.sessions.query(SessionQuery(limit = 50)).items.none { it.id == session.id })
+    }
+
+    @Test
+    fun `a device renames its session, and again once it ended`() = runBlocking {
+        val chat = agents.chat(options)
+
+        assertEquals("Renamed", chat.update(title = "Renamed").title)
+        assertEquals("Renamed", agents.sessions.get(chat.id).title)
+        chat.close()
+        assertEquals("Ended", agents.sessions.update(chat.id, title = "Ended").title)
+        assertEquals("Ended", agents.sessions.query(SessionQuery(limit = 50)).items.single { it.id == chat.id }.title)
+        agents.sessions.delete(chat.id)
     }
 
     @Test
@@ -140,7 +151,7 @@ class LiveTest {
         agents.setUser(guest)
         val session = agents.sessions.create(options)
 
-        assertTrue(agents.sessions.query().any { it.id == session.id })
+        assertTrue(agents.sessions.query().items.any { it.id == session.id })
         agents.sessions.close(session.id)
     }
 }

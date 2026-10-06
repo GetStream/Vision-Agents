@@ -5,7 +5,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...models.sync_agent_request import SyncAgentRequest
 from ...models.sync_agent_result import SyncAgentResult
 from ...types import Response
@@ -32,26 +32,31 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | SyncAgentResult | None:
+) -> ErrorResponse | SyncAgentResult | None:
     if response.status_code == 200:
         response_200 = SyncAgentResult.from_dict(response.json())
 
         return response_200
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
+
+    if response.status_code == 500:
+        response_500 = ErrorResponse.from_dict(response.json())
+
+        return response_500
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -61,7 +66,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | SyncAgentResult]:
+) -> Response[ErrorResponse | SyncAgentResult]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -74,21 +79,24 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: SyncAgentRequest,
-) -> Response[Error | SyncAgentResult]:
-    """Store an agent directory's instructions, skills, knowledge and settings
+) -> Response[ErrorResponse | SyncAgentResult]:
+    """Store an agent directory's instructions, skills, knowledge, simulations and settings
 
-     Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and
-    knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does
-    nothing, so a process that syncs on startup is cheap when nothing has changed.
+     Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/,
+    knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the
+    same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+
     agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository
     needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-    knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the
-    directory is taken out of the base on the next sync.
+
+    knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of
+    its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (SyncAgentRequest): An agent directory as it is on disk. Everything after the
-            knowledge is what the directory's declaration decides rather than what it holds, and a
+            simulations is what the directory's declaration decides rather than what it holds, and a
             setting left out leaves whatever is stored, so a model chosen in the dashboard survives a
             sync that says nothing about it.
 
@@ -97,7 +105,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | SyncAgentResult]
+        Response[ErrorResponse | SyncAgentResult]
     """
 
     kwargs = _get_kwargs(
@@ -115,21 +123,24 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: SyncAgentRequest,
-) -> Error | SyncAgentResult | None:
-    """Store an agent directory's instructions, skills, knowledge and settings
+) -> ErrorResponse | SyncAgentResult | None:
+    """Store an agent directory's instructions, skills, knowledge, simulations and settings
 
-     Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and
-    knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does
-    nothing, so a process that syncs on startup is cheap when nothing has changed.
+     Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/,
+    knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the
+    same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+
     agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository
     needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-    knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the
-    directory is taken out of the base on the next sync.
+
+    knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of
+    its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (SyncAgentRequest): An agent directory as it is on disk. Everything after the
-            knowledge is what the directory's declaration decides rather than what it holds, and a
+            simulations is what the directory's declaration decides rather than what it holds, and a
             setting left out leaves whatever is stored, so a model chosen in the dashboard survives a
             sync that says nothing about it.
 
@@ -138,7 +149,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | SyncAgentResult
+        ErrorResponse | SyncAgentResult
     """
 
     return sync_detailed(
@@ -151,21 +162,24 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: SyncAgentRequest,
-) -> Response[Error | SyncAgentResult]:
-    """Store an agent directory's instructions, skills, knowledge and settings
+) -> Response[ErrorResponse | SyncAgentResult]:
+    """Store an agent directory's instructions, skills, knowledge, simulations and settings
 
-     Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and
-    knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does
-    nothing, so a process that syncs on startup is cheap when nothing has changed.
+     Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/,
+    knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the
+    same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+
     agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository
     needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-    knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the
-    directory is taken out of the base on the next sync.
+
+    knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of
+    its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (SyncAgentRequest): An agent directory as it is on disk. Everything after the
-            knowledge is what the directory's declaration decides rather than what it holds, and a
+            simulations is what the directory's declaration decides rather than what it holds, and a
             setting left out leaves whatever is stored, so a model chosen in the dashboard survives a
             sync that says nothing about it.
 
@@ -174,7 +188,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | SyncAgentResult]
+        Response[ErrorResponse | SyncAgentResult]
     """
 
     kwargs = _get_kwargs(
@@ -190,21 +204,24 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: SyncAgentRequest,
-) -> Error | SyncAgentResult | None:
-    """Store an agent directory's instructions, skills, knowledge and settings
+) -> ErrorResponse | SyncAgentResult | None:
+    """Store an agent directory's instructions, skills, knowledge, simulations and settings
 
-     Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and
-    knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does
-    nothing, so a process that syncs on startup is cheap when nothing has changed.
+     Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/,
+    knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the
+    same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+
     agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository
     needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
-    knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the
-    directory is taken out of the base on the next sync.
+
+    knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of
+    its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (SyncAgentRequest): An agent directory as it is on disk. Everything after the
-            knowledge is what the directory's declaration decides rather than what it holds, and a
+            simulations is what the directory's declaration decides rather than what it holds, and a
             setting left out leaves whatever is stored, so a model chosen in the dashboard survives a
             sync that says nothing about it.
 
@@ -213,7 +230,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | SyncAgentResult
+        ErrorResponse | SyncAgentResult
     """
 
     return (

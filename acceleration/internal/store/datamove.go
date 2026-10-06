@@ -42,11 +42,20 @@ type dataTable struct {
 // Deliberately absent: organizations, apps and api_keys, which are the credentials rather
 // than the data, and which a deployment mints for itself; and goose_db_version, which is
 // this schema's own bookkeeping. Organization-scope policies are absent too, since one
-// organization's decisions cover apps the caller may not have.
+// organization's decisions cover apps the caller may not have. So are
+// connector_authorization_attempts: one lives minutes, is sealed under this deployment's
+// key and finishes at this deployment's callback, so a copy could only expire. And
+// connector_oauth_clients: a client's secret is sealed under this deployment's key, and a
+// client without it cannot authenticate, so the app puts it again where it moved to.
 var dataTables = []dataTable{
 	{name: "agent_configs", customer: "customer_id"},
 	{name: "skills", customer: "customer_id"},
 	{name: "agent_plugin_connections", customer: "customer_id"},
+	{name: "agent_plugin_clients", customer: "customer_id"},
+	// Only the customer's own definitions: the built-ins are under no customer, and every
+	// deployment seeds its own. They come before the connections that pin them.
+	{name: "connector_definitions", customer: "customer_id"},
+	{name: "connector_connections", customer: "customer_id"},
 	{name: "router_configs", customer: "customer_id"},
 	{name: "voices", customer: "customer_id"},
 	{name: "voice_samples", parent: "voices", parentColumn: "voice_id"},
@@ -59,7 +68,7 @@ var dataTables = []dataTable{
 	{name: "simulations", customer: "customer_id"},
 	{name: "simulation_runs", customer: "customer_id"},
 	{name: "simulation_cases", parent: "simulation_runs", parentColumn: "run_id"},
-	{name: "guest_users", customer: "customer_id"},
+	{name: "users", customer: "customer_id"},
 	{name: "calls", customer: "customer_id"},
 	{name: "call_events", customer: "customer_id"},
 	{name: "call_bridges", customer: "customer_id"},
@@ -89,7 +98,7 @@ var dataTables = []dataTable{
 // their data would be a way to walk off with a customer's users' accounts. Both are left
 // out on the way out and left alone on the way in, so a connection arrives needing to be
 // authorized again rather than arriving broken.
-var secretColumns = []string{"secret_sealed", "access_token", "refresh_token", "oauth_state", "code_verifier"}
+var secretColumns = []string{"secret_sealed", "access_token", "refresh_token", "oauth_state", "code_verifier", "credentials_sealed"}
 
 // DataChange is one thing that happened to one row.
 type DataChange struct {
@@ -184,7 +193,7 @@ func (s *Store) ExportCustomer(ctx context.Context, customerID string, write fun
 	}
 
 	for _, table := range dataTables {
-		if err := exportTable(ctx, tx, table, customerID, write); err != nil {
+		if err := s.exportTable(ctx, tx, table, customerID, write); err != nil {
 			return 0, err
 		}
 	}
@@ -202,7 +211,7 @@ SELECT COALESCE(
     (SELECT MIN(seq) - 1 FROM data_changes WHERE tx >= pg_snapshot_xmin(pg_current_snapshot())),
     (SELECT COALESCE(MAX(seq), 0) FROM data_changes))`
 
-func exportTable(ctx context.Context, tx bun.Tx, table dataTable, customerID string, write func(string, json.RawMessage) error) error {
+func (s *Store) exportTable(ctx context.Context, tx bun.Tx, table dataTable, customerID string, write func(string, json.RawMessage) error) error {
 	query, args := table.selectRows(customerID)
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -214,6 +223,9 @@ func exportTable(ctx context.Context, tx bun.Tx, table dataTable, customerID str
 		var row json.RawMessage
 		if err := rows.Scan(&row); err != nil {
 			return fmt.Errorf("store: export %s: %w", table.name, err)
+		}
+		if row, err = s.exportPin(table.name, row); err != nil {
+			return err
 		}
 		if err := write(table.name, row); err != nil {
 			return err
@@ -265,6 +277,10 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	spec, found := dataTableByName(table)
 	if !found {
 		return fmt.Errorf("store: %q is not a table an export carries", table)
+	}
+	row, err := s.importPin(ctx, customerID, table, row)
+	if err != nil {
+		return err
 	}
 	shape, err := s.shapeOf(ctx, table)
 	if err != nil {
@@ -322,6 +338,18 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 func (t dataTable) identity() string {
 	if t.name == "policies" {
 		return "jsonb_build_object('scope_id', ?::text, 'scope', 'app')"
+	}
+	// A connector connection arrives without its credentials, so it arrives saying it needs
+	// one, rather than connected with nothing to connect with. Key version 0 and no
+	// expiry are what a connection without credentials holds (20261002193000_connector_connections.sql),
+	// so the source credentials' key version and expiry do not come along either, on an import or
+	// on every change applied after it. Nor does its provider unit: a row in an import is
+	// whatever the importer wrote, and a unit stored from it would route another customer's
+	// events to this one. The reconnect it needs proves the unit again
+	// (SetConnectorConnectionProviderUnit).
+	if t.name == "connector_connections" {
+		return "jsonb_build_object('customer_id', ?::text, 'status', '" + ConnectionNeedsReauthorization + "'," +
+			" 'credentials_kek_version', 0, 'expires_at', NULL, 'provider_unit_id', NULL)"
 	}
 	return fmt.Sprintf("jsonb_build_object('%s', ?::text)", t.customer)
 }
@@ -388,6 +416,11 @@ LIMIT ?`, changeWatermark), customerID, after, limit)
 			return nil, 0, fmt.Errorf("store: changes: %w", err)
 		}
 		change.Payload = payload
+		if change.Op != ChangeDelete && len(payload) > 0 {
+			if change.Payload, err = s.exportPin(change.Table, payload); err != nil {
+				return nil, 0, err
+			}
+		}
 		changes = append(changes, change)
 		cursor = change.Seq
 	}

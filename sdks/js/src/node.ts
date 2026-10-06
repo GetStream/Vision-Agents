@@ -11,9 +11,11 @@ export {
   INSTRUCTIONS_FILE,
   KNOWLEDGE_DIR,
   KNOWLEDGE_URLS_FILE,
+  SIMULATIONS_DIR,
   SKILLS_DIR,
   loadFolder,
   parseDeclaration,
   parsePages,
+  parseSimulations,
   parseSkill,
 } from "./folder.js";

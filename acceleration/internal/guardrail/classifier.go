@@ -7,6 +7,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // violates is the id the one question is asked under.
@@ -27,8 +28,8 @@ type classifier struct {
 // reach its classifier allows every turn, which is worse than the call not starting.
 func newClassifier(ctx context.Context, policy Policy, deps Deps) (Guardrail, error) {
 	if deps.Classifier == nil {
-		return nil, errors.New(
-			"guardrail: this deployment routes no lcm, so it cannot judge a turn against a policy")
+		return nil, stack.Wrap(errors.New(
+			"guardrail: this deployment routes no lcm, so it cannot judge a turn against a policy"))
 	}
 
 	session, err := deps.Classifier.Start(ctx, lcmrouter.Request{

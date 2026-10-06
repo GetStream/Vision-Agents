@@ -121,8 +121,21 @@ func (s *DialogueSuite) TestOnlyADialogueModelIsServedHere() {
 	_, err := NewDialogue(Options{APIKey: "k", Model: DefaultModel})
 	s.ErrorContains(err, "not a dialogue model")
 
-	_, err = New(Options{APIKey: "k", Model: DefaultDialogueModel})
-	s.ErrorContains(err, "is a dialogue model")
+	for _, model := range []string{"eleven_v3_conversational", "eleven_v4", DefaultDialogueModel} {
+		_, err = New(Options{APIKey: "k", Model: model})
+		s.ErrorContains(err, "is a dialogue model", model)
+
+		provider, err := NewDialogue(Options{APIKey: "k", Model: model})
+		s.Require().NoError(err, model)
+		s.True(provider.Performs(), model)
+	}
+}
+
+func (s *DialogueSuite) TestASpeedIsRefusedRatherThanDropped() {
+	// The dialogue socket takes stability and nothing else, so a voice asked to slow down
+	// would speak at its own pace and nobody would hear why.
+	_, err := NewDialogue(Options{APIKey: "k", Speed: 0.9})
+	s.ErrorContains(err, "takes no speed")
 }
 
 func (s *DialogueSuite) TestNewDefaultsToTheConversationalModel() {

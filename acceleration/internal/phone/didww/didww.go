@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 const apiKeyEnvVar = "DIDWW_API_KEY"
@@ -73,7 +74,7 @@ func New(options Options) (*Provider, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("didww: " + apiKeyEnvVar + " is required")
+		return nil, stack.Wrap(errors.New("didww: " + apiKeyEnvVar + " is required"))
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
@@ -98,7 +99,7 @@ func New(options Options) (*Provider, error) {
 // the only way it will filter on either.
 func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
 	if search.Country == "" {
-		return nil, errors.New("didww: a country is required to search for numbers")
+		return nil, stack.Wrap(errors.New("didww: a country is required to search for numbers"))
 	}
 
 	countryID, err := p.countryID(ctx, search.Country)
@@ -155,7 +156,7 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 // which SKU offers it and which available DID it is, and the order names both.
 func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Number, error) {
 	if order.E164 == "" {
-		return phone.Number{}, errors.New("didww: a number is required")
+		return phone.Number{}, stack.Wrap(errors.New("didww: a number is required"))
 	}
 
 	availableID, skuID, err := p.offerFor(ctx, order.E164)
@@ -212,17 +213,17 @@ func (p *Provider) ReleaseNumber(ctx context.Context, e164 string) error {
 
 // ConfigureInbound is not wrapped for DIDWW.
 func (p *Provider) ConfigureInbound(context.Context, phone.Inbound) error {
-	return fmt.Errorf("%w: didww numbers are bought here but bridged elsewhere", phone.ErrNotImplemented)
+	return stack.Wrap(fmt.Errorf("%w: didww numbers are bought here but bridged elsewhere", phone.ErrNotImplemented))
 }
 
 // Dial is not wrapped for DIDWW.
 func (p *Provider) Dial(context.Context, phone.Outbound) (phone.Dialed, error) {
-	return phone.Dialed{}, fmt.Errorf("%w: didww", phone.ErrNotImplemented)
+	return phone.Dialed{}, stack.Wrap(fmt.Errorf("%w: didww", phone.ErrNotImplemented))
 }
 
 // SendDigits is not wrapped for DIDWW, since nothing here places a DIDWW call to press on.
 func (p *Provider) SendDigits(context.Context, string, string) error {
-	return fmt.Errorf("%w: didww", phone.ErrNotImplemented)
+	return stack.Wrap(fmt.Errorf("%w: didww", phone.ErrNotImplemented))
 }
 
 // Supports is a country, a substring and a number type.
@@ -261,7 +262,7 @@ func (p *Provider) countryID(ctx context.Context, country string) (string, error
 		return "", err
 	}
 	if len(response.Data) == 0 {
-		return "", fmt.Errorf("didww: does not sell numbers in %s", strings.ToUpper(country))
+		return "", stack.Wrap(fmt.Errorf("didww: does not sell numbers in %s", strings.ToUpper(country)))
 	}
 	return response.Data[0].ID, nil
 }
@@ -270,7 +271,7 @@ func (p *Provider) countryID(ctx context.Context, country string) (string, error
 func (p *Provider) groupTypeID(ctx context.Context, kind phone.NumberType) (string, error) {
 	named, ok := kinds[kind]
 	if !ok {
-		return "", fmt.Errorf("didww: does not sell %s numbers", kind)
+		return "", stack.Wrap(fmt.Errorf("didww: does not sell %s numbers", kind))
 	}
 	query := url.Values{"filter[name]": {named}}
 
@@ -283,7 +284,7 @@ func (p *Provider) groupTypeID(ctx context.Context, kind phone.NumberType) (stri
 			return group.ID, nil
 		}
 	}
-	return "", fmt.Errorf("didww: does not sell %s numbers", kind)
+	return "", stack.Wrap(fmt.Errorf("didww: does not sell %s numbers", kind))
 }
 
 // offerFor finds which available DID a number is and which SKU sells it, which is what an
@@ -306,18 +307,18 @@ func (p *Provider) offerFor(ctx context.Context, e164 string) (string, string, e
 		}
 		sku, ok := skus[number.groupID()]
 		if !ok {
-			return "", "", fmt.Errorf("didww: %s is offered without a price to order it at", e164)
+			return "", "", stack.Wrap(fmt.Errorf("didww: %s is offered without a price to order it at", e164))
 		}
 		return number.ID, sku, nil
 	}
-	return "", "", fmt.Errorf("didww: %s is not one of the numbers on offer", e164)
+	return "", "", stack.Wrap(fmt.Errorf("didww: %s is not one of the numbers on offer", e164))
 }
 
 // didID finds DIDWW's identifier for a number this account holds, which is what cancelling
 // it needs.
 func (p *Provider) didID(ctx context.Context, e164 string) (string, error) {
 	if e164 == "" {
-		return "", errors.New("didww: a number is required")
+		return "", stack.Wrap(errors.New("didww: a number is required"))
 	}
 	query := url.Values{"filter[number]": {digits(e164)}}
 
@@ -330,7 +331,7 @@ func (p *Provider) didID(ctx context.Context, e164 string) (string, error) {
 			return did.ID, nil
 		}
 	}
-	return "", fmt.Errorf("didww: %s is not one of this account's numbers", e164)
+	return "", stack.Wrap(fmt.Errorf("didww: %s is not one of this account's numbers", e164))
 }
 
 func (p *Provider) do(ctx context.Context, method, path string, query url.Values, body, into any) error {
@@ -343,14 +344,14 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("didww: encode %s: %w", path, err)
+			return stack.Wrap(fmt.Errorf("didww: encode %s: %w", path, err))
 		}
 		payload = bytes.NewReader(encoded)
 	}
 
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, payload)
 	if err != nil {
-		return fmt.Errorf("didww: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("didww: %s: %w", path, err))
 	}
 	request.Header.Set("Api-Key", p.apiKey)
 	request.Header.Set("Accept", contentType)
@@ -360,20 +361,20 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("didww: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("didww: %s: %w", path, err))
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return fmt.Errorf("didww: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail)))
+		return stack.Wrap(fmt.Errorf("didww: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return fmt.Errorf("didww: decode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("didww: decode %s: %w", path, err))
 	}
 	return nil
 }

@@ -6,7 +6,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...types import UNSET, Response, Unset
 
 
@@ -41,20 +41,25 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Any | Error | None:
+) -> Any | ErrorResponse | None:
     if response.status_code == 101:
         response_101 = cast(Any, None)
         return response_101
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 404:
-        response_404 = Error.from_dict(response.json())
+        response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 500:
+        response_500 = ErrorResponse.from_dict(response.json())
+
+        return response_500
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -64,7 +69,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Any | Error]:
+) -> Response[Any | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -80,23 +85,28 @@ def sync_detailed(
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
     replay_pending_tools: bool | Unset = False,
-) -> Response[Any | Error]:
+) -> Response[Any | ErrorResponse]:
     """Watch the conversation and answer the model's tool calls
 
      A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`,
-    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
-    `conversation_compacted`, `models_changed`, `error` and `left`.
+    `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each
+    a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the
+    reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
+    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error`
+    and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
     tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at,
-    execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools,
-    writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and
-    started_at; tool_ran also includes tool_call_id.
+    execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end
+    user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and
+    title_link: a client shows it as a button opening authorize_url. Once the user finishes that login
+    the message is sent again with the attachment's status set to connected. Activity states are
+    thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes
+    tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
     A respond command carrying command_id emits command_accepted with a nested command receipt
     (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text returns the existing IDs without invoking the
@@ -123,6 +133,9 @@ def sync_detailed(
     is the only frame that must be answered: everything else is a report. Tool calls made by durable
     personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
     cannot be adopted by another command or turn.
+    A call to a tool declared with an `approval` waits for a person. The client reports their answer
+    with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
+    shown when they declined), before it answers the call with `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -142,7 +155,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Error]
+        Response[Any | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -166,23 +179,28 @@ def sync(
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
     replay_pending_tools: bool | Unset = False,
-) -> Any | Error | None:
+) -> Any | ErrorResponse | None:
     """Watch the conversation and answer the model's tool calls
 
      A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`,
-    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
-    `conversation_compacted`, `models_changed`, `error` and `left`.
+    `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each
+    a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the
+    reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
+    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error`
+    and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
     tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at,
-    execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools,
-    writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and
-    started_at; tool_ran also includes tool_call_id.
+    execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end
+    user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and
+    title_link: a client shows it as a button opening authorize_url. Once the user finishes that login
+    the message is sent again with the attachment's status set to connected. Activity states are
+    thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes
+    tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
     A respond command carrying command_id emits command_accepted with a nested command receipt
     (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text returns the existing IDs without invoking the
@@ -209,6 +227,9 @@ def sync(
     is the only frame that must be answered: everything else is a report. Tool calls made by durable
     personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
     cannot be adopted by another command or turn.
+    A call to a tool declared with an `approval` waits for a person. The client reports their answer
+    with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
+    shown when they declined), before it answers the call with `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -228,7 +249,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | Error
+        Any | ErrorResponse
     """
 
     return sync_detailed(
@@ -247,23 +268,28 @@ async def asyncio_detailed(
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
     replay_pending_tools: bool | Unset = False,
-) -> Response[Any | Error]:
+) -> Response[Any | ErrorResponse]:
     """Watch the conversation and answer the model's tool calls
 
      A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`,
-    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
-    `conversation_compacted`, `models_changed`, `error` and `left`.
+    `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each
+    a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the
+    reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
+    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error`
+    and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
     tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at,
-    execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools,
-    writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and
-    started_at; tool_ran also includes tool_call_id.
+    execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end
+    user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and
+    title_link: a client shows it as a button opening authorize_url. Once the user finishes that login
+    the message is sent again with the attachment's status set to connected. Activity states are
+    thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes
+    tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
     A respond command carrying command_id emits command_accepted with a nested command receipt
     (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text returns the existing IDs without invoking the
@@ -290,6 +316,9 @@ async def asyncio_detailed(
     is the only frame that must be answered: everything else is a report. Tool calls made by durable
     personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
     cannot be adopted by another command or turn.
+    A call to a tool declared with an `approval` waits for a person. The client reports their answer
+    with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
+    shown when they declined), before it answers the call with `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -309,7 +338,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Error]
+        Response[Any | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -331,23 +360,28 @@ async def asyncio(
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
     replay_pending_tools: bool | Unset = False,
-) -> Any | Error | None:
+) -> Any | ErrorResponse | None:
     """Watch the conversation and answer the model's tool calls
 
      A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`,
-    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
-    `conversation_compacted`, `models_changed`, `error` and `left`.
+    `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each
+    a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the
+    reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`,
+    `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error`
+    and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
     tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at,
-    execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools,
-    writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and
-    started_at; tool_ran also includes tool_call_id.
+    execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end
+    user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and
+    title_link: a client shows it as a button opening authorize_url. Once the user finishes that login
+    the message is sent again with the attachment's status set to connected. Activity states are
+    thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes
+    tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
     A respond command carrying command_id emits command_accepted with a nested command receipt
     (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text returns the existing IDs without invoking the
@@ -374,6 +408,9 @@ async def asyncio(
     is the only frame that must be answered: everything else is a report. Tool calls made by durable
     personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
     cannot be adopted by another command or turn.
+    A call to a tool declared with an `approval` waits for a person. The client reports their answer
+    with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
+    shown when they declined), before it answers the call with `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -393,7 +430,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | Error
+        Any | ErrorResponse
     """
 
     return (

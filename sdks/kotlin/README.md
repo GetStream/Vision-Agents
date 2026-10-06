@@ -15,25 +15,32 @@ which is what Stream's SDKs require.
 ## Using them
 
 ```kotlin
-val agents = VisionAgents(url = "https://your-router", customerId = "acme")
+val agents = VisionAgents(apiKey = "your_api_key")
+agents.setUser(User(id = "jlahey")) { yourBackend.agentToken() }
 
 // In writing. No call is joined, nothing is transcribed or spoken.
 val chat = agents.agent("docs").chat()
-chat.send("What are your opening hours?")
-// chat.conversation is a StateFlow: the turns grow as the reply streams in, and its state says
-// what the agent is doing.
+chat.responses.create("What are your opening hours?")
+// chat.conversation is a StateFlow: the question shows at once, the turns grow as the reply
+// streams in, and its state says what the agent is doing.
 
 // Out loud. The agent joins a call and so does this device.
 val voice = VoiceSession.start(context, agents, options = SessionOptions(agent = "docs"))
 voice.join(credentials = yourBackend::callCredentials)
 ```
 
+`VisionAgents(apiKey = ...)` reaches Stream's hosted router; pass `url` for another. A router
+running locally with nothing in front of it is reached by customer id instead:
+`VisionAgents(url = "http://localhost:8080", customerId = "acme")`.
+
 The agent is named rather than configured, and `join` is handed a function rather than minting
 its own token. Both are the same fact: writing configs and minting a call token are server-side
 only, so the app is told which agent it talks to and is handed the token to join with.
 
 `AgentSession` owns a coroutine scope and `close()` ends it, so the usual home is a `ViewModel`
-that closes it in `onCleared`. With `vision-agents-ui` a whole conversation is one composable:
+that closes it in `onCleared`. Closing stops the session and keeps what it recorded and
+remembered; `delete()` (or `agents.sessions.delete(id)`) deletes it, turns and memories
+included. With `vision-agents-ui` a whole conversation is one composable:
 
 ```kotlin
 ConversationView(session = chat)
@@ -59,7 +66,26 @@ val chat = agents.agent("docs").chat(lookup)
 ```
 
 Tools are answered inside `AgentSession` whether or not anybody collects `events()`, and a
-`tool_cancel` cancels the coroutine running one.
+`tool_cancel` cancels the coroutine running one. `displayTitle` is what the people in the
+conversation see while it runs, and `executor = AgentTool.Executor.Client` shows the call as
+waiting on the person's device.
+
+### Finding a conversation again
+
+Lists come a page at a time. Pass a page's `nextCursor` back as `cursor`, with the same filters,
+for the next one:
+
+```kotlin
+val sessions = agents.agent("docs").sessions
+val live = SessionQuery(state = Session.State.Live, limit = 20)
+val first = sessions.query(live)
+val next = first.nextCursor?.let { sessions.query(live.copy(cursor = it)) }
+val found = sessions.search("billing")
+```
+
+`update` renames a conversation or relabels it, `chat.update(title = "Billing")` on an open one
+and `sessions.update(id, title = "Billing")` on one that ended. A device may change `title`,
+`description` and `custom` and nothing else; instructions, models and voice are your backend's.
 
 ### Looking something up
 
@@ -70,6 +96,9 @@ one round trip and the answer is for whoever asked:
 val found = agents.router(config = "healthcare").search("perioperative antibiotic guidance")
 ```
 
+The router comes from the client, never from a constructor of its own, and which model answers
+is set in the `healthcare` router config rather than in the call.
+
 ### Going back, and branching off
 
 `rewind` takes back every turn after the one kept, so the next message carries on from there.
@@ -77,14 +106,14 @@ val found = agents.router(config = "healthcare").search("perioperative antibioti
 the `id` of an `AgentResponse`, not the `turnId` a socket event carries:
 
 ```kotlin
-val turns = chat.responses.list()
+val turns = chat.responses.list().items
 chat.responses.rewind(turns[0])
 val branch = agents.attach(chat.fork(ForkOptions(responseId = turns[0].id)).id)
 ```
 
-A conversation kept in Stream Chat (`persistConversation`) cannot be rewound, since its
-transcript would bring the turns back: the router answers 400, so fork it at the response
-instead. An open `AgentSession` keeps the transcript it already showed, so reload it from
+A text session is kept in Stream Chat unless it is `incognito`, and a conversation kept there
+cannot be rewound, since its transcript would bring the turns back: the router answers 400, so
+fork it at the response instead. An open `AgentSession` keeps the transcript it already showed, so reload it from
 `responses` after a rewind.
 
 ### Guests, and who this device is
@@ -101,7 +130,7 @@ when one is needed and again after a 401, never on every request.
 ## What is deliberately not here
 
 The router is server-side only by default: a handful of operations are marked
-`x-client-accessible` in the spec and everything else answers a device 403. This SDK uses twelve
+`x-client-accessible` in the spec and everything else answers a device 403. This SDK uses thirteen
 of them plus the event socket, and `generate.py` fails if the list names anything the spec does
 not open.
 
@@ -110,6 +139,7 @@ not open.
 | Writing a config, syncing a folder, dispatching agents | The agent's name, which is all the app needs |
 | A token to join the agent's call | `CallCredentials`, which `join` is handed |
 | Moving a guest's history onto the account they signed up with | Nothing: the backend that authenticated them does it |
+| Changing a session's instructions, models or voice | Your backend, which has the Go or Node SDK's `update` |
 | Interrupting over HTTP | Nothing: `interrupt()` goes over the socket |
 
 Every request and socket handshake sends `Stream-Auth-Type: jwt`, which is what declares this

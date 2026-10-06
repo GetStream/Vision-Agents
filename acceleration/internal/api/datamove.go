@@ -10,6 +10,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/danielgtaylor/huma/v2"
 )
 
 // defaultChangeLimit and maxChangeLimit bound one page of changes. A page is held in
@@ -48,7 +49,7 @@ func (s *Server) exportData(w http.ResponseWriter, r *http.Request) {
 	// lands while the export is being streamed is in one of the two and not in neither.
 	if err := s.store.StartDataCapture(r.Context(), customerID, s.dataRetention); err != nil {
 		s.logger.Error("could not start recording changes", "customer", customerID, "error", err)
-		writeError(w, http.StatusServiceUnavailable, "changes cannot be recorded, so an export would be a copy nothing could catch up from")
+		writeError(w, unavailable("changes cannot be recorded, so an export would be a copy nothing could catch up from"))
 		return
 	}
 
@@ -65,7 +66,7 @@ func (s *Server) exportData(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if written == 0 {
-			writeError(w, http.StatusServiceUnavailable, "the export could not be read: "+err.Error())
+			writeFailure(w, r, err)
 			return
 		}
 		s.logger.Error("export stopped partway", "customer", customerID, "error", err)
@@ -98,21 +99,21 @@ func (s *Server) importData(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			writeError(w, http.StatusBadRequest, "this is not an export: "+err.Error())
+			writeError(w, invalidRequest("this is not an export: "+err.Error()))
 			return
 		}
 
 		switch {
 		case line.Change != nil:
 			if err := s.store.ApplyChanges(r.Context(), customerID, []store.DataChange{*line.Change}); err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
+				writeError(w, invalidRequest(err.Error()))
 				return
 			}
 			rows++
 			tables[line.Change.Table]++
 		case line.Table != "":
 			if err := s.store.ImportRow(r.Context(), customerID, line.Table, line.Row); err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
+				writeError(w, invalidRequest(err.Error()))
 				return
 			}
 			rows++
@@ -135,14 +136,14 @@ func (s *Server) listDataChanges(w http.ResponseWriter, r *http.Request) {
 
 	after, err := strconv.ParseInt(nonEmpty(r.URL.Query().Get("after"), "0"), 10, 64)
 	if err != nil || after < 0 {
-		writeError(w, http.StatusBadRequest, "after is the cursor the last page ended at")
+		writeError(w, invalidRequest("after is the cursor the last page ended at"))
 		return
 	}
 	limit := defaultChangeLimit
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		limit, err = strconv.Atoi(raw)
 		if err != nil || limit < 1 || limit > maxChangeLimit {
-			writeError(w, http.StatusBadRequest, "limit is between 1 and "+strconv.Itoa(maxChangeLimit))
+			writeError(w, invalidRequest("limit is between 1 and "+strconv.Itoa(maxChangeLimit)))
 			return
 		}
 	}
@@ -150,17 +151,17 @@ func (s *Server) listDataChanges(w http.ResponseWriter, r *http.Request) {
 	// Following the changes is the other half of the move, so it says the customer is
 	// still going rather than letting the recording expire under them.
 	if err := s.store.StartDataCapture(r.Context(), customerID, s.dataRetention); err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeFailure(w, r, err)
 		return
 	}
 
 	changes, cursor, err := s.store.Changes(r.Context(), customerID, after, limit)
 	if errors.Is(err, store.ErrChangesExpired) {
-		writeError(w, http.StatusGone, "the changes since that cursor are no longer kept: export again")
+		writeError(w, gone("the changes since that cursor are no longer kept: export again"))
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeFailure(w, r, err)
 		return
 	}
 
@@ -185,20 +186,19 @@ func (s *Server) listDataChanges(w http.ResponseWriter, r *http.Request) {
 func (s *Server) dataMover(w http.ResponseWriter, r *http.Request) (string, bool) {
 	customerID, known := CustomerFrom(r.Context())
 	if !known {
-		writeError(w, http.StatusUnauthorized, "this operation needs a customer")
+		writeError(w, errMissingCustomer)
 		return "", false
 	}
 	if s.refuseClientSide(w, r) {
 		return "", false
 	}
 	if s.authMode == auth.NoAuth {
-		writeError(w, http.StatusForbidden,
-			"moving data is refused while this router runs without authentication: "+
-				"the customer is whatever the caller says it is, so an export would be anybody's")
+		writeError(w, forbidden("moving data is refused while this router runs without authentication: "+
+			"the customer is whatever the caller says it is, so an export would be anybody's"))
 		return "", false
 	}
 	if s.store == nil {
-		writeError(w, http.StatusServiceUnavailable, "there is no database here to move")
+		writeError(w, unavailable("there is no database here to move"))
 		return "", false
 	}
 	return customerID, true
@@ -215,4 +215,19 @@ func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+// DataChange One thing that happened to one row of the calling app's data.
+type DataChange struct {
+	At    time.Time               `json:"at"`
+	Key   map[string]interface{}  `json:"key" doc:"What identifies the row, which is all a delete has." nullable:"false"`
+	Op    DataChangeOp            `json:"op" enum:"insert,update,delete"`
+	Row   *map[string]interface{} `json:"row,omitempty" doc:"The row as it now reads, absent for a delete and never carrying a credential."`
+	Seq   int64                   `json:"seq" doc:"Where this sits in the order changes happened, and the cursor to resume from."`
+	Table string                  `json:"table" doc:"Which table the row is in." example:"agent_configs"`
+}
+
+func (*DataChange) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "One thing that happened to one row of the calling app's data."
+	return schema
 }

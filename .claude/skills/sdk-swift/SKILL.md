@@ -170,23 +170,28 @@ a decoded error body; a socket close code. Never classify by parsing `localizedD
 
 ## Public API
 
-`VisionAgents(url:customerID:)`. `baseURL`-style naming, `ID` and `URL` capitalised as Swift
-does. The initialiser does no I/O.
-
-Progressive disclosure means the first working example is two lines:
+`VisionAgents(apiKey:)`, defaulting to Stream's hosted router, then `setUser` with a token
+provider: the shape [sdk](../sdk/SKILL.md) gives every client SDK. `ID` and `URL` are
+capitalised as Swift does. The initialiser does no I/O. `VisionAgents(url:customerID:)` is
+only for a router running locally with nothing in front of it.
 
 ```swift
-let agents = VisionAgents(url: url, customerID: "acme")
-let chat = try await agents.chat(agent: "swift_demo")
+let agents = VisionAgents(apiKey: "your_api_key")
+agents.setUser(User(id: "jlahey")) { try await yourBackend.agentToken() }
+let session = try await agents.agent("myagent").sessions.create()
+let turn = try await session.responses.create("Where is order 1042?")
 ```
 
 and the advanced form is a request value, not thirty initialiser parameters:
 
 ```swift
-var options = SessionOptions(agent: "swift_demo")
+var options = SessionOptions(agent: "myagent")
 options.instructions = "..."
-let chat = try await agents.chat(options)
+let session = try await agents.sessions.create(options)
 ```
+
+The key is public and goes in the query, where Stream's proxy and the router both read it;
+the token goes in `Authorization` and never in a URL.
 
 `nil` means "omit the field and let the config or the router decide", never "send a copy of the
 server's default". A schema default copied into the client is how a caller silently loses the
@@ -195,12 +200,10 @@ model their config named.
 Async/await only. No completion handlers, no `.shared` singleton, no configuration read from
 `Info.plist` or the environment.
 
-**A token provider, not a token,** for anything with credentials. `VoiceSession` already passes
-one to StreamVideo so an hour-long call does not drop when the call token expires; handing the
-SDK the same expired token, which the convenience initialiser does by default, would not. When
-the router's api_key mode gets a client story, `Backend` should take
-`@Sendable (TokenRequestReason) async throws -> String` and thread it through requests, the
-socket handshake, the 401 retry and the RTC refresh, single-flighted.
+**A token provider, not a token,** for anything with credentials. `Backend` takes a
+`TokenProvider` in `setUser` and threads it through requests, the socket handshake and a
+single 401 retry, single-flighted. `VoiceSession` passes one to StreamVideo so an hour-long
+call does not drop when the call token expires.
 
 ## SwiftUI
 

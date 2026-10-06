@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // resultBuffer is how many finished tasks may queue before the manager waits on the
@@ -26,10 +28,6 @@ const resultBuffer = 16
 // deadline bounds it too, but a model that has written the same broken program four times
 // is not about to write a fifth that works.
 const toolRounds = 4
-
-// codeDeadline bounds one round of running code, which is not on the live path but is
-// still part of an answer somebody is waiting for.
-const codeDeadline = 60 * time.Second
 
 // manager runs delegated work on the subagent and reports what came of it.
 //
@@ -43,6 +41,8 @@ type manager struct {
 	// retired are subagents a swap replaced, kept open for the tasks still running on them.
 	retired []*opening
 	capture func(context.Context, CaptureRequest) ([]llm.ContentPart, error)
+	// load reads the instructions of a skill that was offered by name alone.
+	load    func(context.Context, string) (string, error)
 	ctx     context.Context
 	cancel  context.CancelFunc
 	warming sync.WaitGroup
@@ -52,6 +52,9 @@ type manager struct {
 	// box is where the subagent runs code, when it has anywhere to run it. Nil means the
 	// tool is not offered, and the subagent works everything out in its head.
 	box sandbox.Sandbox
+	// publish puts the files code hands back where the caller can see them. Nil means
+	// there is nowhere to, and the subagent is told so.
+	publish sandbox.Publisher
 	// overwrites is what the caller asked to change about how the model answers, written
 	// over delegated work as well as over the conversation itself: somebody who asked for
 	// more thinking meant the thinking, which is what runs here.
@@ -83,6 +86,9 @@ type task struct {
 	capture   bool
 	selection CaptureRequest
 	evidence  []string
+	// attached is a task given images the caller sent with the turn, rather than frames it
+	// captures for itself.
+	attached  bool
 	id        string
 	skill     string
 	turnID    string
@@ -103,6 +109,8 @@ type task struct {
 	messages     []llm.Message
 	// rounds is how many times this task has run code.
 	rounds int
+	// files are what its code handed back and was published, the latest of each name.
+	files []sandbox.Attachment
 	// stream is what the subagent is answering on, and closing it is what abandons the
 	// task. It is replaced each time the task runs code and asks again.
 	stream *llm.Stream
@@ -152,7 +160,7 @@ func (m *manager) Create(
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		return "", fmt.Errorf("harness: the conversation has ended")
+		return "", stack.Wrap(fmt.Errorf("harness: the conversation has ended"))
 	}
 	var superseded string
 	if existing, ok := m.bySkill[skill.Name]; ok && m.cancelLocked(existing, ReasonSuperseded) {
@@ -161,7 +169,7 @@ func (m *manager) Create(
 	if m.liveLocked() >= m.limit {
 		m.mu.Unlock()
 		m.abandon(superseded)
-		return "", fmt.Errorf("harness: %d tasks are already running", m.limit)
+		return "", stack.Wrap(fmt.Errorf("harness: %d tasks are already running", m.limit))
 	}
 
 	messages := append(append([]llm.Message(nil), history...), llm.Message{Role: llm.User, Content: prompt})
@@ -179,6 +187,7 @@ func (m *manager) Create(
 	}
 	for _, message := range messages {
 		if message.HasImage() {
+			created.attached = true
 			for _, part := range message.Parts {
 				if part.Text != "" {
 					created.evidence = append(created.evidence, part.Text)
@@ -201,7 +210,25 @@ func (m *manager) Create(
 	return created.id, nil
 }
 
+// Attached reports whether a skill is already looking at images the caller sent with this
+// turn. Delegating the skill again would supersede the one task that has them.
+func (m *manager) Attached(skill, turnID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	running, ok := m.running[m.bySkill[skill]]
+	return ok && running.attached && running.turnID == turnID
+}
+
 func (m *manager) start(created *task) {
+	if created.instructions == "" && m.load != nil {
+		instructions, err := m.load(created.ctx, created.skill)
+		if err != nil {
+			m.report(created, Result{State: Failed, Err: fmt.Errorf("harness: loading skill %s: %w", created.skill, err)})
+			m.drainers.Done()
+			return
+		}
+		created.instructions = instructions
+	}
 	if created.capture && !llm.HasImage(created.messages) {
 		if m.capture == nil {
 			m.report(created, Result{State: Failed, Err: fmt.Errorf("harness: no video source")})
@@ -545,6 +572,9 @@ func (m *manager) report(finished *task, result Result) {
 	}
 	m.mu.Unlock()
 
+	if result.State == Done {
+		result.Files = finished.files
+	}
 	result.Evidence = finished.evidence
 	result.TaskID = finished.id
 	result.Skill = finished.skill
@@ -556,11 +586,9 @@ func (m *manager) report(finished *task, result Result) {
 // returning the stream the new answer arrives on.
 //
 // The deadline is not restarted: running code is part of the work the task was given,
-// not licence to take longer over it.
+// not licence to take longer over it. It is all the code is bounded by besides the
+// sandbox's own limit, so a skill that renders for minutes says so in its deadline.
 func (m *manager) resume(running *task, response llm.Response) (*llm.Stream, bool) {
-	ctx, cancel := context.WithTimeout(running.ctx, codeDeadline)
-	defer cancel()
-
 	messages := append(running.messages, llm.Message{
 		Role:      llm.Assistant,
 		Content:   response.OutputText,
@@ -570,7 +598,7 @@ func (m *manager) resume(running *task, response llm.Response) (*llm.Stream, boo
 		messages = append(messages, llm.Message{
 			Role:       llm.ToolResult,
 			ToolCallID: call.ID,
-			Content:    m.ran(ctx, call),
+			Content:    m.ran(running, call),
 		})
 	}
 
@@ -605,28 +633,74 @@ func (m *manager) resume(running *task, response llm.Response) (*llm.Stream, boo
 //
 // A failure is described rather than returned: the model asked for this mid-thought, and
 // it can only do something sensible about code that did not run if it is told so.
-func (m *manager) ran(ctx context.Context, call llm.ToolCall) string {
+func (m *manager) ran(running *task, call llm.ToolCall) string {
 	if call.Name != sandbox.ToolName {
 		return "There is no tool called " + call.Name + "."
 	}
 
 	var arguments struct {
-		Code string `json:"code"`
+		Code  string   `json:"code"`
+		Files []string `json:"files"`
 	}
 	if err := json.Unmarshal([]byte(call.Arguments), &arguments); err != nil {
 		return "Those arguments are not valid JSON: " + err.Error()
 	}
 
-	result, err := m.box.Run(ctx, arguments.Code)
+	result, err := m.box.Run(running.ctx, arguments.Code, arguments.Files)
 	if err != nil {
 		m.logger.Error("could not run code", "error", err)
 		return "The code could not be run: " + err.Error()
 	}
-	if result.ExitCode != 0 {
-		return fmt.Sprintf("The code exited with %d and printed:\n%s", result.ExitCode, result.Output)
+	var said string
+	switch {
+	case result.ExitCode != 0:
+		said = fmt.Sprintf("The code exited with %d and printed:\n%s", result.ExitCode, result.Output)
+	case strings.TrimSpace(result.Output) == "":
+		said = "The code ran and printed nothing."
+	default:
+		said = result.Output
 	}
-	if strings.TrimSpace(result.Output) == "" {
-		return "The code ran and printed nothing."
+	if files := m.handBack(running, result.Files); files != "" {
+		said += "\n\n" + files
 	}
-	return result.Output
+	if len(result.Missing) > 0 {
+		said += "\n\nThese files were not written, or were too large to return: " + strings.Join(result.Missing, ", ")
+	}
+	return said
+}
+
+// handBack publishes the files a run returned and says what became of them.
+func (m *manager) handBack(running *task, files []sandbox.File) string {
+	if len(files) == 0 {
+		return ""
+	}
+	var names []string
+	for _, file := range files {
+		names = append(names, file.Name)
+	}
+	if m.publish == nil {
+		return "These files were written, but this conversation has nowhere to show them: " + strings.Join(names, ", ")
+	}
+	var shown, failed []string
+	for _, file := range files {
+		attachment, err := m.publish(running.ctx, file)
+		if err != nil {
+			m.logger.Error("could not publish a file", "file", file.Name, "error", err)
+			failed = append(failed, file.Name)
+			continue
+		}
+		m.mu.Lock()
+		running.files = slices.DeleteFunc(running.files, func(kept sandbox.Attachment) bool { return kept.Name == attachment.Name })
+		running.files = append(running.files, attachment)
+		m.mu.Unlock()
+		shown = append(shown, file.Name)
+	}
+	var said []string
+	if len(shown) > 0 {
+		said = append(said, "These files will be attached to the reply the person sees: "+strings.Join(shown, ", "))
+	}
+	if len(failed) > 0 {
+		said = append(said, "These files could not be attached: "+strings.Join(failed, ", "))
+	}
+	return strings.Join(said, "\n")
 }

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
@@ -110,7 +111,7 @@ func New(options Options) (*TTS, error) {
 		options.APIKey = os.Getenv("SPEECHIFY_API_KEY")
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("speechify: api key is required (set SPEECHIFY_API_KEY)")
+		return nil, stack.Wrap(errors.New("speechify: api key is required (set SPEECHIFY_API_KEY)"))
 	}
 	if options.VoiceID == "" {
 		options.VoiceID = DefaultVoiceID
@@ -122,7 +123,7 @@ func New(options Options) (*TTS, error) {
 		options.SampleRate = DefaultSampleRate
 	}
 	if !sampleRates[options.SampleRate] {
-		return nil, fmt.Errorf("speechify: no pcm format at %d Hz", options.SampleRate)
+		return nil, stack.Wrap(fmt.Errorf("speechify: no pcm format at %d Hz", options.SampleRate))
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
@@ -156,7 +157,7 @@ func (t *TTS) Start(ctx context.Context) error {
 	defer t.mu.Unlock()
 
 	if t.started {
-		return errors.New("speechify: already started")
+		return stack.Wrap(errors.New("speechify: already started"))
 	}
 	t.started = true
 	t.ctx, t.cancel = context.WithCancel(context.WithoutCancel(ctx))
@@ -278,15 +279,15 @@ func (t *TTS) accumulate(request tts.Request) (*tts.Synthesis, string, bool, err
 	defer t.mu.Unlock()
 
 	if t.shutdown {
-		return nil, "", false, errors.New("speechify: session closed")
+		return nil, "", false, stack.Wrap(errors.New("speechify: session closed"))
 	}
 	if !t.started {
-		return nil, "", false, errors.New("speechify: not started")
+		return nil, "", false, stack.Wrap(errors.New("speechify: not started"))
 	}
 	// A partial with no id could not be matched to its continuation, so it is a caller
 	// error rather than something to silently drop.
 	if !request.Final && request.ID == "" {
-		return nil, "", false, errors.New("speechify: a partial request needs an id")
+		return nil, "", false, stack.Wrap(errors.New("speechify: a partial request needs an id"))
 	}
 
 	current := t.pending[request.ID]
@@ -303,7 +304,7 @@ func (t *TTS) accumulate(request tts.Request) (*tts.Synthesis, string, bool, err
 	text := strings.TrimSpace(current.text.String())
 	delete(t.pending, request.ID)
 	if text == "" {
-		return nil, "", false, errors.New("speechify: nothing to say")
+		return nil, "", false, stack.Wrap(errors.New("speechify: nothing to say"))
 	}
 
 	current.tracker.AddText(text)

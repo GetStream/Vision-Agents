@@ -37,7 +37,8 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 	wanted := acceleration.AgentConfigRequest{Name: a.options.Name}
 	setString(&wanted.Instructions, a.options.Instructions)
 	setString(&wanted.Guardrail, a.options.Guardrail)
-	setString(&wanted.Subagent, a.options.Harness.Subagent())
+	harness, subagent, sandbox := a.options.Harness.stored()
+	wanted.Harness, wanted.ThinkingLlm, wanted.Sandbox = harness, subagent, sandbox
 	if len(a.options.CostTracking) > 0 {
 		tags := a.options.CostTracking
 		wanted.Tags = &tags
@@ -59,10 +60,11 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 	folder := a.folder
 	skills := a.syncedSkills()
 	hash := fingerprint(folder.Declaration, a.options.Instructions, a.options.Guardrail,
-		skills, folder.Knowledge, folder.KnowledgeURLs)
-	subagent := a.options.Harness.Subagent()
-	if subagent != "" || len(a.options.CostTracking) > 0 {
-		hash = fingerprint(hash, subagent, fmt.Sprint(a.options.CostTracking), nil, nil, nil)
+		skills, folder.Knowledge, folder.KnowledgeURLs, folder.Simulations)
+	harness, subagent, sandbox := a.options.Harness.stored()
+	if harness != nil || subagent != nil || sandbox != nil || len(a.options.CostTracking) > 0 {
+		hash = fingerprint(hash, fmt.Sprint(deref(harness), deref(subagent), deref(sandbox)),
+			fmt.Sprint(a.options.CostTracking), nil, nil, nil, nil)
 	}
 
 	if ReadStamp(folder.Path) == hash {
@@ -94,12 +96,31 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 			declared := acceleration.KnowledgeUrlDeclaration{Url: page.URL}
 			setString(&declared.Title, page.Title)
 			setString(&declared.Description, page.Description)
+			if page.RefreshHours > 0 {
+				hours := int64(page.RefreshHours)
+				declared.RefreshHours = &hours
+			}
 			pages = append(pages, declared)
 		}
 		body.KnowledgeUrls = &pages
 	}
+	if folder.Simulations != nil {
+		declared := make([]acceleration.SimulationDeclaration, 0, len(folder.Simulations))
+		for _, simulation := range folder.Simulations {
+			declared = append(declared, simulationDeclarationOf(simulation))
+		}
+		body.Simulations = &declared
+	}
 	declareSettings(&body, folder.Settings)
-	setString(&body.Subagent, subagent)
+	if harness != nil {
+		body.Harness = harness
+	}
+	if subagent != nil {
+		body.ThinkingLlm = subagent
+	}
+	if sandbox != nil {
+		body.Sandbox = sandbox
+	}
 	if len(a.options.CostTracking) > 0 {
 		tags := map[string]string{}
 		if body.Tags != nil {
@@ -119,6 +140,9 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 	if err != nil {
 		return nil, err
 	}
+	for _, warning := range deref(result.Warnings) {
+		a.logger.Warn("synced with a warning", "agent", a.options.Name, "warning", warning)
+	}
 	if err := WriteStamp(folder.Path, hash); err != nil {
 		return nil, err
 	}
@@ -127,6 +151,41 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 
 // declareSettings carries what agent.yaml declared onto the sync request. Only what the file
 // names is sent, so the router leaves whatever is already stored for the rest.
+// pluginEntries are the plugins a declaration names as the router takes them: an id alone
+// for one with nothing else said about it, or nothing for none.
+func pluginEntries(named []PluginSettings) *[]acceleration.PluginEntry {
+	if len(named) == 0 {
+		return nil
+	}
+	entries := make([]acceleration.PluginEntry, 0, len(named))
+	for _, plugin := range named {
+		var entry acceleration.PluginEntry
+		if !plugin.Readonly && len(plugin.Scopes) == 0 && len(plugin.Toolsets) == 0 && len(plugin.Tools) == 0 {
+			// A string always encodes.
+			_ = entry.FromPluginEntry0(plugin.Name)
+			entries = append(entries, entry)
+			continue
+		}
+		declared := acceleration.PluginWithOptions{Name: plugin.Name}
+		if plugin.Readonly {
+			declared.Readonly = &plugin.Readonly
+		}
+		if len(plugin.Scopes) > 0 {
+			declared.Scopes = &plugin.Scopes
+		}
+		if len(plugin.Toolsets) > 0 {
+			declared.Toolsets = &plugin.Toolsets
+		}
+		if len(plugin.Tools) > 0 {
+			declared.Tools = &plugin.Tools
+		}
+		// Neither does a struct of strings and a bool.
+		_ = entry.FromPluginWithOptions(declared)
+		entries = append(entries, entry)
+	}
+	return &entries
+}
+
 func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 	if settings.Mode != "" {
 		mode := acceleration.AgentMode(settings.Mode)
@@ -136,16 +195,85 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 	setString(&body.Tts, settings.TTS)
 	body.Sts = settings.STS
 	setString(&body.Voice, settings.Voice)
+	if settings.Speed != 0 {
+		body.Speed = &settings.Speed
+	}
 	setString(&body.Llm, settings.LLM)
-	setString(&body.Subagent, settings.Subagent)
+	if settings.Harness != "" {
+		harness := acceleration.Harness(settings.Harness)
+		body.Harness = &harness
+	}
+	if settings.Dispatch != nil {
+		body.Dispatch = &acceleration.AgentDispatch{}
+		if settings.Dispatch.IncomingCall != "" {
+			setting := acceleration.DispatchSetting(settings.Dispatch.IncomingCall)
+			body.Dispatch.IncomingCall = &setting
+		}
+		if settings.Dispatch.Text != "" {
+			setting := acceleration.DispatchSetting(settings.Dispatch.Text)
+			body.Dispatch.Text = &setting
+		}
+	}
+	setString(&body.ThinkingLlm, settings.ThinkingLLM)
 	setString(&body.Search, settings.Search)
 	setString(&body.Greeting, settings.Greeting)
 	if settings.Sandbox != "" {
 		sandbox := acceleration.Sandbox(settings.Sandbox)
 		body.Sandbox = &sandbox
 	}
-	if len(settings.Plugins) > 0 {
-		body.Plugins = &settings.Plugins
+	if options := settings.SandboxOptions; options != nil {
+		timeout := options.timeout.Milliseconds()
+		cpu, memory, disk := int64(options.CPU), int64(options.MemoryGB), int64(options.DiskGB)
+		body.SandboxOptions = &acceleration.SandboxOptions{
+			Image: &options.Image, Setup: &options.Setup, TimeoutMs: &timeout,
+			Cpu: &cpu, MemoryGb: &memory, DiskGb: &disk,
+		}
+	}
+	body.AgentPlugins = pluginEntries(settings.AgentPlugins)
+	body.UserPlugins = pluginEntries(settings.UserPlugins)
+	if len(settings.PluginEvents) > 0 {
+		events := make([]acceleration.PluginEvent, 0, len(settings.PluginEvents))
+		for _, event := range settings.PluginEvents {
+			declared := acceleration.PluginEvent{Plugin: event.Plugin, Event: event.Event}
+			if len(event.Arguments) > 0 {
+				arguments := event.Arguments
+				declared.Arguments = &arguments
+			}
+			if event.Instructions != "" {
+				declared.Instructions = &event.Instructions
+			}
+			events = append(events, declared)
+		}
+		body.PluginEvents = &events
+	}
+	if len(settings.MCPServers) > 0 {
+		servers := make([]acceleration.McpServer, 0, len(settings.MCPServers))
+		for _, server := range settings.MCPServers {
+			declared := acceleration.McpServer{Name: server.Name, Url: server.URL}
+			if len(server.Tools) > 0 {
+				declared.Tools = &server.Tools
+			}
+			if len(server.Scopes) > 0 {
+				declared.Scopes = &server.Scopes
+			}
+			if server.User {
+				declared.User = &server.User
+			}
+			servers = append(servers, declared)
+		}
+		body.McpServers = &servers
+	}
+	if settings.Channels != nil {
+		declared := acceleration.AgentChannels{
+			Whatsapp: channelLine(settings.Channels.WhatsApp),
+			Sms:      channelLine(settings.Channels.SMS),
+			Imessage: channelLine(settings.Channels.IMessage),
+		}
+		if settings.Channels.Identity != "" {
+			identity := acceleration.ChannelIdentity(settings.Channels.Identity)
+			declared.Identity = &identity
+		}
+		body.Channels = &declared
 	}
 	if len(settings.Keyterms) > 0 {
 		body.Keyterms = &settings.Keyterms
@@ -281,6 +409,36 @@ func skillRequestOf(skill Skill) acceleration.SkillRequest {
 	return body
 }
 
+func simulationDeclarationOf(simulation Simulation) acceleration.SimulationDeclaration {
+	declared := acceleration.SimulationDeclaration{
+		Name:      simulation.Name,
+		Scenario:  simulation.Scenario,
+		Assertion: simulation.Assertion,
+	}
+	if simulation.Mode != "" {
+		mode := acceleration.SimulationDeclarationMode(simulation.Mode)
+		declared.Mode = &mode
+	}
+	if simulation.Variations > 0 {
+		variations := int64(simulation.Variations)
+		declared.Variations = &variations
+	}
+	if simulation.MaxTurns > 0 {
+		turns := int64(simulation.MaxTurns)
+		declared.MaxTurns = &turns
+	}
+	setString(&declared.CallerTarget, simulation.CallerTarget)
+	setString(&declared.JudgeTarget, simulation.JudgeTarget)
+	setString(&declared.CallerStt, simulation.CallerSTT)
+	setString(&declared.CallerTts, simulation.CallerTTS)
+	setString(&declared.CallerVoice, simulation.CallerVoice)
+	if len(simulation.Tags) > 0 {
+		tags := maps.Clone(simulation.Tags)
+		declared.Tags = &tags
+	}
+	return declared
+}
+
 // IngestKnowledge fills a knowledge base with documents an agent can look things up in.
 //
 // The documents are cut into passages by the backend, so a directory pushed from here and
@@ -328,6 +486,9 @@ func SubscribeKnowledgeURLs(
 		body := acceleration.KnowledgeUrlRequest{Namespace: namespace, Url: page.URL}
 		setString(&body.Title, page.Title)
 		setString(&body.Description, page.Description)
+		if page.RefreshHours > 0 {
+			body.RefreshHours = &page.RefreshHours
+		}
 
 		added, err := client.AddKnowledgeUrlWithResponse(ctx, body)
 		if err != nil {
@@ -341,20 +502,37 @@ func SubscribeKnowledgeURLs(
 }
 
 // answer returns what the router sent, raising what it said went wrong instead.
-func answer[T any](ok *T, bad, unauthorized, missing *acceleration.Error, status string) (*T, error) {
+func answer[T any](ok *T, bad, unauthorized, missing *acceleration.ErrorResponse, status string) (*T, error) {
 	if ok != nil {
 		return ok, nil
 	}
-	for _, failure := range []*acceleration.Error{bad, unauthorized, missing} {
+	for _, failure := range []*acceleration.ErrorResponse{bad, unauthorized, missing} {
 		if failure != nil {
-			return nil, fmt.Errorf("agents: %s", failure.Error)
+			return nil, fmt.Errorf("agents: %s", failure.Error.Message)
 		}
 	}
 	return nil, fmt.Errorf("agents: the router answered %s", status)
+}
+
+// deref is what a field holds, or its zero value when it holds nothing.
+func deref[T any](field *T) T {
+	var zero T
+	if field == nil {
+		return zero
+	}
+	return *field
 }
 
 func setString(field **string, value string) {
 	if value != "" {
 		*field = &value
 	}
+}
+
+// channelLine is one declared channel for the wire, or nothing when it names no number.
+func channelLine(line *ChannelSettings) *acceleration.ChannelLineRequest {
+	if line == nil || line.Number == "" {
+		return nil
+	}
+	return &acceleration.ChannelLineRequest{Number: line.Number}
 }

@@ -25,6 +25,14 @@ class RouterConfigRequest:
     """
     Attributes:
         name (str): What the config is called, which is unique among the customer's own.
+        llm (LlmOptions | Unset): How this config answers. The names are the response parameters the router already
+            speaks rather than a second vocabulary for the same things. The system prompt is not among them: what the model
+            answers under belongs to the agent asking, not to the config that decides where the asking goes.
+        search (SearchOptions | Unset): How this config finds out today's answers.
+        sts (StsOptions | Unset): How this config holds a conversation with one native audio model, in place of a
+            transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a
+            term, and a request naming a term is routed to a model that declared it or refused, never served by one that
+            ignores it.
         stt (SttOptions | Unset): How this config transcribes, live or from a recording. A field that only means
             something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to
             write subtitles from. A provider that cannot express a term refuses the request rather than dropping it
@@ -32,26 +40,30 @@ class RouterConfigRequest:
         tts (TtsOptions | Unset): How this config speaks. A provider that cannot express a term refuses the request
             rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that
             says it cannot.
-        llm (LlmOptions | Unset): How this config answers. The names are the response parameters the router already
-            speaks rather than a second vocabulary for the same things. The system prompt is not among them: what the model
-            answers under belongs to the agent asking, not to the config that decides where the asking goes.
-        sts (StsOptions | Unset): How this config holds a conversation with one native audio model, in place of a
-            transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a
-            term, and a request naming a term is routed to a model that declared it or refused, never served by one that
-            ignores it.
-        search (SearchOptions | Unset): How this config finds out today's answers.
     """
 
     name: str
+    llm: LlmOptions | Unset = UNSET
+    search: SearchOptions | Unset = UNSET
+    sts: StsOptions | Unset = UNSET
     stt: SttOptions | Unset = UNSET
     tts: TtsOptions | Unset = UNSET
-    llm: LlmOptions | Unset = UNSET
-    sts: StsOptions | Unset = UNSET
-    search: SearchOptions | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name
+
+        llm: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.llm, Unset):
+            llm = self.llm.to_dict()
+
+        search: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.search, Unset):
+            search = self.search.to_dict()
+
+        sts: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.sts, Unset):
+            sts = self.sts.to_dict()
 
         stt: dict[str, Any] | Unset = UNSET
         if not isinstance(self.stt, Unset):
@@ -61,18 +73,6 @@ class RouterConfigRequest:
         if not isinstance(self.tts, Unset):
             tts = self.tts.to_dict()
 
-        llm: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.llm, Unset):
-            llm = self.llm.to_dict()
-
-        sts: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.sts, Unset):
-            sts = self.sts.to_dict()
-
-        search: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.search, Unset):
-            search = self.search.to_dict()
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -80,16 +80,16 @@ class RouterConfigRequest:
                 "name": name,
             }
         )
+        if llm is not UNSET:
+            field_dict["llm"] = llm
+        if search is not UNSET:
+            field_dict["search"] = search
+        if sts is not UNSET:
+            field_dict["sts"] = sts
         if stt is not UNSET:
             field_dict["stt"] = stt
         if tts is not UNSET:
             field_dict["tts"] = tts
-        if llm is not UNSET:
-            field_dict["llm"] = llm
-        if sts is not UNSET:
-            field_dict["sts"] = sts
-        if search is not UNSET:
-            field_dict["search"] = search
 
         return field_dict
 
@@ -103,6 +103,27 @@ class RouterConfigRequest:
 
         d = dict(src_dict)
         name = d.pop("name")
+
+        _llm = d.pop("llm", UNSET)
+        llm: LlmOptions | Unset
+        if isinstance(_llm, Unset):
+            llm = UNSET
+        else:
+            llm = LlmOptions.from_dict(_llm)
+
+        _search = d.pop("search", UNSET)
+        search: SearchOptions | Unset
+        if isinstance(_search, Unset):
+            search = UNSET
+        else:
+            search = SearchOptions.from_dict(_search)
+
+        _sts = d.pop("sts", UNSET)
+        sts: StsOptions | Unset
+        if isinstance(_sts, Unset):
+            sts = UNSET
+        else:
+            sts = StsOptions.from_dict(_sts)
 
         _stt = d.pop("stt", UNSET)
         stt: SttOptions | Unset
@@ -118,34 +139,13 @@ class RouterConfigRequest:
         else:
             tts = TtsOptions.from_dict(_tts)
 
-        _llm = d.pop("llm", UNSET)
-        llm: LlmOptions | Unset
-        if isinstance(_llm, Unset):
-            llm = UNSET
-        else:
-            llm = LlmOptions.from_dict(_llm)
-
-        _sts = d.pop("sts", UNSET)
-        sts: StsOptions | Unset
-        if isinstance(_sts, Unset):
-            sts = UNSET
-        else:
-            sts = StsOptions.from_dict(_sts)
-
-        _search = d.pop("search", UNSET)
-        search: SearchOptions | Unset
-        if isinstance(_search, Unset):
-            search = UNSET
-        else:
-            search = SearchOptions.from_dict(_search)
-
         router_config_request = cls(
             name=name,
+            llm=llm,
+            search=search,
+            sts=sts,
             stt=stt,
             tts=tts,
-            llm=llm,
-            sts=sts,
-            search=search,
         )
 
         router_config_request.additional_properties = d

@@ -8,9 +8,11 @@ use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Folder\Declaration;
 use GetStream\VisionAgents\Folder\Document;
 use GetStream\VisionAgents\Folder\KnowledgeUrl;
+use GetStream\VisionAgents\Folder\Simulation;
 use GetStream\VisionAgents\Generated\AgentConfig;
 use GetStream\VisionAgents\Generated\AgentMode;
 use GetStream\VisionAgents\Generated\CreateSessionRequest;
+use GetStream\VisionAgents\Generated\Harness as HarnessName;
 use GetStream\VisionAgents\Generated\ModelOverwrites;
 use GetStream\VisionAgents\Generated\PlaceCallRequest;
 use GetStream\VisionAgents\Generated\PlacedCall;
@@ -90,7 +92,7 @@ final class Agent
         // A directory's skills are folded in here, so everything downstream reads one harness.
         $fromFolder = $this->folder->skills ?? [];
         if ($fromFolder !== [] && ($harness === null || $harness->skills === [])) {
-            $harness = ($harness ?? new Harness(useSkills: true))->withSkills($fromFolder);
+            $harness = ($harness ?? new Harness())->withSkills($fromFolder);
         }
         $this->harness = $harness;
 
@@ -114,31 +116,30 @@ final class Agent
 
     /**
      * Holds the conversation in writing rather than on a call. Everything between hearing a
-     * question and answering it is unchanged: the same instructions, skills and knowledge.
+     * question and answering it is unchanged: the same instructions, skills and knowledge. It is
+     * kept in Stream Chat unless incognito.
      *
      * @param string $agentId the conversation being answered, which names the channel replies
      *     are written into; a worker answering several conversations has to set it
      * @param array<string, mixed>|null $custom
      */
     public function chat(
-        ?bool $persist = null,
         ?string $conversationId = null,
         string $agentId = '',
         ?string $title = null,
         ?string $description = null,
-        ?string $project = null,
+        ?string $projectId = null,
         ?array $custom = null,
         ?bool $incognito = null,
         ?ModelOverwrites $modelOverwrites = null,
     ): Session {
         return $this->open(
             text: true,
-            persist: $persist,
             conversationId: $conversationId,
             agentId: $agentId === '' ? null : $agentId,
             title: $title,
             description: $description,
-            project: $project,
+            projectId: $projectId,
             custom: $custom,
             incognito: $incognito,
             modelOverwrites: $modelOverwrites,
@@ -154,7 +155,7 @@ final class Agent
         return $this->open(
             callId: $call->callId,
             callType: $call->callType,
-            phone: $call->calledNumber === '' ? null : new SessionPhone($call->calledNumber),
+            phone: $call->calledNumber === '' ? null : new SessionPhone(number: $call->calledNumber),
         );
     }
 
@@ -163,7 +164,7 @@ final class Agent
      */
     public function reply(InboundMessage $message): Session
     {
-        return $this->chat(persist: true, conversationId: $message->conversationId(), agentId: $message->agentId);
+        return $this->chat(conversationId: $message->conversationId(), agentId: $message->agentId);
     }
 
     /**
@@ -191,7 +192,7 @@ final class Agent
             callId: $created->id,
             callType: $created->type,
             navigating: true,
-            phone: new SessionPhone($from, null, $placed->vendorCallId),
+            phone: new SessionPhone(number: $from, vendorCallId: $placed->vendorCallId),
         );
     }
 
@@ -232,22 +233,24 @@ final class Agent
         $skills = $this->harness->skills ?? [];
         $knowledge = $folder->knowledge ?? [];
         $pages = $folder->knowledgeUrls ?? [];
+        $simulations = $folder?->simulations;
         $subagent = $this->harness !== null && $this->harness->subagent !== '' ? $this->harness->subagent : '';
+        $harnessName = $this->harness === null ? '' : ($this->harness->name instanceof HarnessName ? $this->harness->name->value : $this->harness->name);
         $pipeline = $this->pipeline;
 
-        $hash = Folder::fingerprint($folder->declaration ?? '', $this->instructions, $this->guardrail, $skills, $knowledge, $pages);
+        $hash = Folder::fingerprint($folder->declaration ?? '', $this->instructions, $this->guardrail, $skills, $knowledge, $pages, $simulations);
         // What the code set is part of the fingerprint too, so changing it syncs again. With only
-        // a subagent and labels set this is the Go SDK's fingerprint exactly.
+        // a harness, a subagent and labels set this is the Go SDK's fingerprint exactly.
         $coded = self::described([$pipeline->llm, $pipeline->stt, $pipeline->tts, $pipeline->sts, $pipeline->voice, $pipeline->greeting, $this->sandbox?->value]);
-        if ($subagent !== '' || $this->costTracking !== [] || $coded !== '') {
-            $hash = Folder::fingerprint($hash, $subagent, self::sprint($this->costTracking) . $coded);
+        if ($harnessName !== '' || $subagent !== '' || $this->costTracking !== [] || $coded !== '') {
+            $hash = Folder::fingerprint($hash, $harnessName . $subagent, self::sprint($this->costTracking) . $coded);
         }
 
         if ($folder !== null && $folder->stamp() === $hash) {
             // A config deleted since the stamp was written is synced again rather than trusted.
             $stored = self::storedConfig($this->client, $this->name);
             if ($stored !== null) {
-                return new SyncAgentResult(true, $stored);
+                return new SyncAgentResult(config: $stored, unchanged: true);
             }
         }
 
@@ -265,8 +268,10 @@ final class Agent
             tts: $pipeline->tts ?? self::set($declared->tts),
             sts: $pipeline->sts ?? $declared->sts,
             voice: $pipeline->voice ?? self::set($declared->voice),
+            speed: $declared->speed !== 0.0 ? $declared->speed : null,
             llm: $pipeline->llm ?? self::set($declared->llm),
             video: $pipeline->video ?? $declared->video,
+            harness: self::harness($harnessName) ?? self::harness($declared->harness),
             subagent: self::set($subagent) ?? self::set($declared->subagent),
             search: self::set($declared->search),
             greeting: $pipeline->greeting ?? self::set($declared->greeting),
@@ -274,6 +279,8 @@ final class Agent
             keyterms: $pipeline->keyterms ?? ($declared->keyterms === [] ? null : $declared->keyterms),
             sandbox: $this->sandbox ?? ($declared->sandbox === '' ? null : (Sandbox::tryFrom($declared->sandbox) ?? $declared->sandbox)),
             tags: $tags === [] ? null : $tags,
+            dispatch: $declared->dispatch,
+            simulations: $simulations === null ? null : array_map(static fn (Simulation $simulation) => $simulation->toDeclaration(), $simulations),
         );
         $result = SyncAgentResult::fromArray(Json::asObject($this->client->post('/v1/agents/sync', body: $body->toArray())));
         $folder?->writeStamp($hash);
@@ -319,33 +326,29 @@ final class Agent
         ?SessionPhone $phone = null,
         ?bool $navigating = null,
         ?bool $text = null,
-        ?bool $persist = null,
         ?string $conversationId = null,
         ?string $agentId = null,
         ?string $title = null,
         ?string $description = null,
-        ?string $project = null,
+        ?string $projectId = null,
         ?array $custom = null,
         ?bool $incognito = null,
         ?ModelOverwrites $modelOverwrites = null,
     ): Session {
         $pipeline = $this->pipeline;
-        $harness = $this->harness;
-        // An absent skill list and an empty one differ: one leaves the built-in set, the other
-        // turns delegation off.
-        $replaces = $harness !== null && ($harness->skills !== [] || $harness->useSkills === false);
         $tools = $this->tools->declared();
-    
+
+        // The harness, the sandbox and the skills are the config's, written by `sync`, never
+        // the session's.
         $request = new CreateSessionRequest(
             conversationId: $conversationId,
-            persistConversation: $persist,
             callId: $callId,
             text: $text,
             configId: $this->config === '' ? null : $this->resolveConfig(),
             incognito: $incognito,
             title: $title,
             description: $description,
-            project: $project,
+            projectId: $projectId,
             custom: $custom,
             modelOverwrites: $modelOverwrites,
             callType: $callType,
@@ -359,15 +362,11 @@ final class Agent
             stt: $pipeline->stt,
             tts: $pipeline->tts,
             sts: $pipeline->sts,
-            subagent: $harness !== null ? self::set($harness->subagent) : null,
             voice: $pipeline->voice,
             languages: $pipeline->language === null ? null : [$pipeline->language],
             keyterms: $pipeline->keyterms,
             maxTokens: $pipeline->maxTokens,
-            tasks: $harness?->tasks,
-            sandbox: $this->sandbox,
             backchannel: $pipeline->backchannel,
-            skills: $replaces ? array_map(static fn (Skill $skill) => $skill->toSession(), $harness->skills) : null,
             tools: $tools === [] ? null : $tools,
             toolTimeoutMs: $pipeline->toolTimeoutMs,
             tags: $this->costTracking === [] ? null : $this->costTracking,
@@ -393,7 +392,7 @@ final class Agent
             }
             $narrowing[$key] = (string) $value;
         }
-        return new SessionMemory($userId, null, $narrowing === [] ? null : $narrowing);
+        return new SessionMemory(filter: $narrowing === [] ? null : $narrowing, userId: $userId);
     }
 
     /**
@@ -414,6 +413,11 @@ final class Agent
     private static function set(string $value): ?string
     {
         return $value === '' ? null : $value;
+    }
+
+    private static function harness(string $name): HarnessName|string|null
+    {
+        return $name === '' ? null : (HarnessName::tryFrom($name) ?? $name);
     }
 
     /**

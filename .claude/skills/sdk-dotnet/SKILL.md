@@ -105,7 +105,8 @@ Hand-written in `Socket.cs`, because OpenAPI stops at the upgrade. One `Socket` 
   block, like Go and the Python plugin: the router refuses a frame whose target is only in the
   block (see `readStart` in `acceleration/internal/api/streamws.go`), although the spec
   describes only the block.
-- No automatic reconnection: `respond` and `tool_result` are not idempotent.
+- No automatic reconnection on session sockets: `respond` and `tool_result` are not
+  idempotent. `Dispatch` redials its own socket (see below).
 
 ## Sessions and tools
 
@@ -142,7 +143,11 @@ Hand-written in `Socket.cs`, because OpenAPI stops at the upgrade. One `Socket` 
 - `RunAsync` returns quietly when cancelled, even during connect, then drains work in flight
   and closes the agents it made. Dropping work would hang up on whoever is talking.
 - `GetOrCreateAgentAsync` keeps one agent per channel while its session is live, and opens
-  chats with `Persist` and the message's `AgentId`, as Go and Python do.
+  chats with the message's `AgentId`, as Go and Python do.
+- `Host(agentId, tools, timeout)` sends `host_tools` after every `ready`. Hosted calls are
+  tracked work like calls, and `hosting_refused` throws out of `RunAsync`. A connection
+  that ends without a normal close is redialled with backoff (1s doubling to 30s), as in
+  Go. This is the one socket that reconnects: dispatch frames belong to one connection.
 
 ## Tests
 

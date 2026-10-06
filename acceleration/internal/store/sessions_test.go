@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-// opened records a session, defaulting the fields a test does not care about.
+// opened records a session, defaulting the fields a test does not care about. It was last
+// updated when it was opened, at rather than whenever the test ran.
 func (s *StoreSuite) opened(id, customerID string, at time.Time, change func(*AgentSession)) *AgentSession {
 	session := &AgentSession{
 		ID:         id,
@@ -22,6 +23,10 @@ func (s *StoreSuite) opened(id, customerID string, at time.Time, change func(*Ag
 		change(session)
 	}
 	s.Require().NoError(s.store.SaveSession(s.ctx, session))
+	_, err := s.store.db.NewUpdate().Model((*AgentSession)(nil)).
+		Set("updated_at = ?", at).Where("id = ?", id).Exec(s.ctx)
+	s.Require().NoError(err)
+	session.UpdatedAt = at
 	return session
 }
 
@@ -60,7 +65,7 @@ func (s *StoreSuite) TestQueryNarrowsToOnePerson() {
 	s.Equal("mine", found[0].ID)
 }
 
-func (s *StoreSuite) TestQueryOrdersNewestFirst() {
+func (s *StoreSuite) TestQueryOrdersMostRecentlyUpdatedFirst() {
 	s.opened("older", "app", s.base, nil)
 	s.opened("newer", "app", s.base.Add(time.Hour), nil)
 
@@ -69,50 +74,62 @@ func (s *StoreSuite) TestQueryOrdersNewestFirst() {
 	s.Require().Len(found, 2)
 	s.Equal("newer", found[0].ID)
 	s.Equal("older", found[1].ID)
+
+	// Coming back to a conversation moves it up, however long ago it was opened.
+	s.Require().NoError(s.store.DescribeSession(s.ctx, "app", "older", "Picked up again", "", nil))
+	found, err = s.store.QuerySessions(s.ctx, "app", SessionFilter{})
+	s.Require().NoError(err)
+	s.Require().Len(found, 2)
+	s.Equal("older", found[0].ID)
 }
 
-func (s *StoreSuite) TestQueryNarrowsByProjectAndAgentAndState() {
+func (s *StoreSuite) TestQueryNarrowsByProjectAndAgent() {
 	s.opened("health", "app", s.base, func(session *AgentSession) { session.Project = "Health" })
 	s.opened("docs", "app", s.base.Add(time.Minute), func(session *AgentSession) { session.Project = "Docs" })
 	s.opened("other-agent", "app", s.base.Add(2*time.Minute), func(session *AgentSession) {
 		session.AgentName = "sales"
 		session.Project = "Health"
 	})
-	s.Require().NoError(s.store.CloseSession(s.ctx, "docs", s.base.Add(time.Hour)))
 
 	byProject, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{Project: "Health"})
 	s.Require().NoError(err)
-	s.Len(byProject, 2)
+	s.Require().Len(byProject, 2)
+	s.Equal("other-agent", byProject[0].ID)
 
 	byAgent, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{AgentName: "docs"})
 	s.Require().NoError(err)
 	s.Len(byAgent, 2)
-
-	running, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{State: SessionRunning})
-	s.Require().NoError(err)
-	s.Len(running, 2)
-
-	closed, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{State: SessionClosed})
-	s.Require().NoError(err)
-	s.Require().Len(closed, 1)
-	s.Equal("docs", closed[0].ID)
 }
 
-func (s *StoreSuite) TestQueryNarrowsByCustomLabels() {
-	s.opened("both", "app", s.base, func(session *AgentSession) {
-		session.Custom = map[string]any{"tenant": "acme", "plan": "pro"}
-	})
-	s.opened("one", "app", s.base.Add(time.Minute), func(session *AgentSession) {
-		session.Custom = map[string]any{"tenant": "acme"}
-	})
+func (s *StoreSuite) TestASessionIsTextWithoutACallAndVoiceWithOne() {
+	s.opened("written", "app", s.base, nil)
+	s.opened("called", "app", s.base.Add(time.Minute), func(session *AgentSession) { session.CallID = "call-1" })
 
-	// Containment, so asking for two labels wants the session carrying both.
-	found, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{
-		Custom: map[string]string{"tenant": "acme", "plan": "pro"},
-	})
+	written, err := s.store.StoredSession(s.ctx, "app", "written")
 	s.Require().NoError(err)
-	s.Require().Len(found, 1)
-	s.Equal("both", found[0].ID)
+	s.Equal(ModalityText, written.Modality)
+	called, err := s.store.StoredSession(s.ctx, "app", "called")
+	s.Require().NoError(err)
+	s.Equal(ModalityVoice, called.Modality)
+}
+
+func (s *StoreSuite) TestSeeingVideoMakesASessionVideoAndItStaysVideo() {
+	s.opened("called", "app", s.base, func(session *AgentSession) { session.CallID = "call-1" })
+	s.opened("written", "app", s.base.Add(time.Minute), nil)
+
+	s.Require().NoError(s.store.SawVideo(s.ctx, "called"))
+	// A retried save of the row must not take it back to voice.
+	s.opened("called", "app", s.base, func(session *AgentSession) { session.CallID = "call-1" })
+
+	videos, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{Modality: ModalityVideo})
+	s.Require().NoError(err)
+	s.Require().Len(videos, 1)
+	s.Equal("called", videos[0].ID)
+
+	written, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{Modality: ModalityText})
+	s.Require().NoError(err)
+	s.Require().Len(written, 1)
+	s.Equal("written", written[0].ID)
 }
 
 func (s *StoreSuite) TestQueryPages() {
@@ -120,15 +137,61 @@ func (s *StoreSuite) TestQueryPages() {
 		s.opened(id, "app", s.base.Add(time.Duration(i)*time.Minute), nil)
 	}
 
+	// One row past the limit, which is how the caller knows there is another page.
 	first, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{Limit: 2})
 	s.Require().NoError(err)
-	s.Require().Len(first, 2)
+	s.Require().Len(first, 3)
 	s.Equal("c", first[0].ID)
+	s.Equal("b", first[1].ID)
 
-	second, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{Limit: 2, Offset: 2})
+	// A session opened between pages must not shift where the next one starts.
+	s.opened("d", "app", s.base.Add(time.Hour), nil)
+
+	last := first[1]
+	second, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{
+		Limit: 2, Cursor: &SessionPosition{UpdatedAt: last.UpdatedAt, ID: last.ID},
+	})
 	s.Require().NoError(err)
 	s.Require().Len(second, 1)
 	s.Equal("a", second[0].ID)
+}
+
+func (s *StoreSuite) TestQueryPagesThroughSessionsUpdatedAtTheSameInstant() {
+	for _, id := range []string{"a", "b", "c"} {
+		s.opened(id, "app", s.base, nil)
+	}
+
+	first, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{Limit: 1})
+	s.Require().NoError(err)
+	s.Equal("c", first[0].ID)
+
+	second, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{
+		Limit: 1, Cursor: &SessionPosition{UpdatedAt: first[0].UpdatedAt, ID: first[0].ID},
+	})
+	s.Require().NoError(err)
+	s.Equal("b", second[0].ID, "the id breaks the tie, so nothing is skipped or repeated")
+}
+
+func (s *StoreSuite) TestSearchPagesInRankOrder() {
+	s.opened("named", "app", s.base, func(session *AgentSession) { session.Title = "Health check" })
+	s.opened("grouped", "app", s.base.Add(time.Minute), func(session *AgentSession) {
+		session.Project = "Health"
+		session.Title = "Something else"
+	})
+
+	first, err := s.store.SearchSessions(s.ctx, "app", "health", SessionFilter{Limit: 1})
+	s.Require().NoError(err)
+	s.Require().Len(first, 2)
+	s.Equal("named", first[0].ID)
+	s.Positive(first[0].Rank)
+
+	top := first[0]
+	second, err := s.store.SearchSessions(s.ctx, "app", "health", SessionFilter{
+		Limit: 1, Cursor: &SessionPosition{UpdatedAt: top.UpdatedAt, ID: top.ID, Rank: top.Rank},
+	})
+	s.Require().NoError(err)
+	s.Require().Len(second, 1)
+	s.Equal("grouped", second[0].ID)
 }
 
 func (s *StoreSuite) TestSearchFindsWhatTheCallerNamedIt() {
@@ -290,7 +353,7 @@ func (s *StoreSuite) TestItemsUnwindInTheOrderTheyHappened() {
 	s.responded("one", "first", "Is Stream better than Sendbird?", s.base, ItemSaid, ItemToolCall, ItemToolResult, ItemAnswer)
 	s.responded("one", "second", "And cheaper?", s.base.Add(time.Hour), ItemSaid, ItemAnswer)
 
-	items, err := s.store.SessionItems(s.ctx, "app", "one", "", 0, 0)
+	items, err := s.store.SessionItems(s.ctx, "app", "one", "", 0, nil)
 	s.Require().NoError(err)
 	s.Require().Len(items, 6)
 	kinds := make([]string, 0, len(items))
@@ -300,16 +363,50 @@ func (s *StoreSuite) TestItemsUnwindInTheOrderTheyHappened() {
 	s.Equal([]string{ItemSaid, ItemToolCall, ItemToolResult, ItemAnswer, ItemSaid, ItemAnswer}, kinds)
 
 	// One turn's worth, for a caller watching a single response.
-	scoped, err := s.store.SessionItems(s.ctx, "app", "one", "second", 0, 0)
+	scoped, err := s.store.SessionItems(s.ctx, "app", "one", "second", 0, nil)
 	s.Require().NoError(err)
 	s.Len(scoped, 2)
+}
+
+func (s *StoreSuite) TestItemsPageFromWhereTheLastPageEnded() {
+	s.opened("one", "app", s.base, nil)
+	s.responded("one", "first", "hello", s.base, ItemSaid, ItemToolCall, ItemAnswer)
+
+	first, err := s.store.SessionItems(s.ctx, "app", "one", "", 2, nil)
+	s.Require().NoError(err)
+	s.Require().Len(first, 3, "one past the limit says there is another page")
+
+	last := first[1]
+	second, err := s.store.SessionItems(s.ctx, "app", "one", "", 2, &ItemPosition{
+		At: last.At, ResponseID: last.ResponseID, Ordinal: last.Ordinal,
+	})
+	s.Require().NoError(err)
+	s.Require().Len(second, 1)
+	s.Equal(ItemAnswer, second[0].Kind)
+}
+
+func (s *StoreSuite) TestResponsesPageFromWhereTheLastPageEnded() {
+	s.opened("one", "app", s.base, nil)
+	s.responded("one", "first", "one", s.base, ItemSaid)
+	s.responded("one", "second", "two", s.base.Add(time.Hour), ItemSaid)
+
+	first, err := s.store.SessionResponses(s.ctx, "app", "one", 1, nil)
+	s.Require().NoError(err)
+	s.Require().Len(first, 2)
+	s.Equal("first", first[0].ID)
+
+	second, err := s.store.SessionResponses(s.ctx, "app", "one", 1,
+		&ResponsePosition{CreatedAt: first[0].CreatedAt, ID: first[0].ID})
+	s.Require().NoError(err)
+	s.Require().Len(second, 1)
+	s.Equal("second", second[0].ID)
 }
 
 func (s *StoreSuite) TestItemsAreOnlyTheirOwnCustomers() {
 	s.opened("one", "app", s.base, nil)
 	s.responded("one", "first", "hello", s.base, ItemSaid, ItemAnswer)
 
-	items, err := s.store.SessionItems(s.ctx, "somebody-else", "one", "", 0, 0)
+	items, err := s.store.SessionItems(s.ctx, "somebody-else", "one", "", 0, nil)
 	s.Require().NoError(err)
 	s.Empty(items)
 }
@@ -326,7 +423,7 @@ func (s *StoreSuite) TestWritingTheSameItemTwiceIsOneItem() {
 	item.Text = "again"
 	s.Require().NoError(s.store.AppendResponseItems(s.ctx, []AgentResponseItem{item}))
 
-	items, err := s.store.SessionItems(s.ctx, "app", "one", "", 0, 0)
+	items, err := s.store.SessionItems(s.ctx, "app", "one", "", 0, nil)
 	s.Require().NoError(err)
 	s.Require().Len(items, 1)
 	s.Equal("once", items[0].Text, "the first write wins, so a retried flush does not rewrite history")
@@ -349,7 +446,7 @@ func (s *StoreSuite) TestAnInterruptedResponseIsCancelledRatherThanFailed() {
 	}))
 	s.Require().NoError(s.store.FinishResponse(s.ctx, "first", ResponseCancelled, "", s.base.Add(time.Second)))
 
-	responses, err := s.store.SessionResponses(s.ctx, "app", "one", 0, 0)
+	responses, err := s.store.SessionResponses(s.ctx, "app", "one", 0, nil)
 	s.Require().NoError(err)
 	s.Require().Len(responses, 1)
 	s.Equal(ResponseCancelled, responses[0].Status)
@@ -384,12 +481,12 @@ func (s *StoreSuite) TestRewindingTakesLaterTurnsOutOfTheConversation() {
 
 	s.Require().NoError(s.store.RewindResponses(s.ctx, "app", "one", "first", s.base.Add(3*time.Hour)))
 
-	responses, err := s.store.SessionResponses(s.ctx, "app", "one", 0, 0)
+	responses, err := s.store.SessionResponses(s.ctx, "app", "one", 0, nil)
 	s.Require().NoError(err)
 	s.Require().Len(responses, 1)
 	s.Equal("first", responses[0].ID)
 
-	items, err := s.store.SessionItems(s.ctx, "app", "one", "", 0, 0)
+	items, err := s.store.SessionItems(s.ctx, "app", "one", "", 0, nil)
 	s.Require().NoError(err)
 	s.Len(items, 2)
 
@@ -408,18 +505,31 @@ func (s *StoreSuite) TestDeletingASessionTakesItsTurnsWithIt() {
 	s.opened("one", "app", s.base, nil)
 	s.responded("one", "first", "hello", s.base, ItemSaid, ItemAnswer)
 
-	_, err := s.store.DB().NewDelete().Model((*AgentSession)(nil)).Where("id = ?", "one").Exec(s.ctx)
-	s.Require().NoError(err)
+	s.Require().NoError(s.store.DeleteSession(s.ctx, "app", "one"))
 
-	items, err := s.store.SessionItems(s.ctx, "app", "one", "", 0, 0)
+	_, err := s.store.StoredSession(s.ctx, "app", "one")
+	s.Require().Error(err)
+	responses, err := s.store.SessionResponses(s.ctx, "app", "one", 0, nil)
+	s.Require().NoError(err)
+	s.Empty(responses)
+	items, err := s.store.SessionItems(s.ctx, "app", "one", "", 0, nil)
 	s.Require().NoError(err)
 	s.Empty(items)
 }
 
+func (s *StoreSuite) TestDeletingSomebodyElsesSessionDeletesNothing() {
+	s.opened("one", "app", s.base, nil)
+
+	s.Require().NoError(s.store.DeleteSession(s.ctx, "somebody-else", "one"))
+
+	_, err := s.store.StoredSession(s.ctx, "app", "one")
+	s.NoError(err)
+}
+
 func (s *StoreSuite) TestGettingAGuestTwiceIsOneGuest() {
-	guest := &GuestUser{ID: "guest-1", CustomerID: "app", Name: "Guest", CreatedAt: s.base}
+	guest := &User{ID: "guest-1", CustomerID: "app", Name: "Guest", CreatedAt: s.base}
 	s.Require().NoError(s.store.RecordGuest(s.ctx, guest))
-	s.Require().NoError(s.store.RecordGuest(s.ctx, &GuestUser{ID: "guest-1", CustomerID: "app", Name: "Renamed"}))
+	s.Require().NoError(s.store.RecordGuest(s.ctx, &User{ID: "guest-1", CustomerID: "app", Name: "Renamed"}))
 
 	found, err := s.store.Guest(s.ctx, "app", "guest-1")
 	s.Require().NoError(err)
@@ -427,7 +537,7 @@ func (s *StoreSuite) TestGettingAGuestTwiceIsOneGuest() {
 }
 
 func (s *StoreSuite) TestClaimingAGuestMovesTheirConversations() {
-	s.Require().NoError(s.store.RecordGuest(s.ctx, &GuestUser{ID: "guest-1", CustomerID: "app", CreatedAt: s.base}))
+	s.Require().NoError(s.store.RecordGuest(s.ctx, &User{ID: "guest-1", CustomerID: "app", CreatedAt: s.base}))
 	s.opened("theirs", "app", s.base, func(session *AgentSession) {
 		session.UserID = "guest-1"
 		session.CallerKind = "guest"
@@ -454,7 +564,7 @@ func (s *StoreSuite) TestClaimingAGuestMovesTheirConversations() {
 }
 
 func (s *StoreSuite) TestAGuestIsClaimedOnce() {
-	s.Require().NoError(s.store.RecordGuest(s.ctx, &GuestUser{ID: "guest-1", CustomerID: "app", CreatedAt: s.base}))
+	s.Require().NoError(s.store.RecordGuest(s.ctx, &User{ID: "guest-1", CustomerID: "app", CreatedAt: s.base}))
 	_, err := s.store.ClaimGuest(s.ctx, "app", "guest-1", "jlahey")
 	s.Require().NoError(err)
 
@@ -472,13 +582,50 @@ func (s *StoreSuite) TestClaimingSomethingThatWasNeverAGuestFails() {
 }
 
 func (s *StoreSuite) TestAGuestCannotBeClaimedByItself() {
-	s.Require().NoError(s.store.RecordGuest(s.ctx, &GuestUser{ID: "guest-1", CustomerID: "app", CreatedAt: s.base}))
+	s.Require().NoError(s.store.RecordGuest(s.ctx, &User{ID: "guest-1", CustomerID: "app", CreatedAt: s.base}))
 	_, err := s.store.ClaimGuest(s.ctx, "app", "guest-1", "guest-1")
 	s.Require().Error(err)
 }
 
 func (s *StoreSuite) TestAGuestOfAnotherAppIsNotClaimable() {
-	s.Require().NoError(s.store.RecordGuest(s.ctx, &GuestUser{ID: "guest-1", CustomerID: "app", CreatedAt: s.base}))
+	s.Require().NoError(s.store.RecordGuest(s.ctx, &User{ID: "guest-1", CustomerID: "app", CreatedAt: s.base}))
 	_, err := s.store.ClaimGuest(s.ctx, "somebody-else", "guest-1", "jlahey")
+	s.Require().Error(err)
+}
+
+func (s *StoreSuite) TestAnAccountIsNobodysToClaim() {
+	// Everybody is recorded now, so a user id being here no longer says anybody may be
+	// handed their conversations. Only a guest may.
+	s.Require().NoError(s.store.RecordUser(s.ctx, &User{
+		ID: "jlahey", CustomerID: "app", Kind: UserKindAuthenticated, CreatedAt: s.base,
+	}))
+
+	_, err := s.store.Guest(s.ctx, "app", "jlahey")
+	s.Require().Error(err)
+	s.Contains(err.Error(), "is not a guest of app")
+
+	_, err = s.store.ClaimGuest(s.ctx, "app", "jlahey", "randy")
+	s.Require().Error(err)
+}
+
+func (s *StoreSuite) TestTheSameUserIdUnderTwoAppsIsTwoPeople() {
+	s.Require().NoError(s.store.RecordGuest(s.ctx, &User{
+		ID: "jlahey", CustomerID: "app", Name: "Guest", CreatedAt: s.base,
+	}))
+	s.Require().NoError(s.store.RecordUser(s.ctx, &User{
+		ID: "jlahey", CustomerID: "somebody-else", Kind: UserKindAuthenticated, CreatedAt: s.base,
+	}))
+
+	found, err := s.store.Guest(s.ctx, "app", "jlahey")
+	s.Require().NoError(err)
+	s.Equal("Guest", found.Name)
+
+	_, err = s.store.Guest(s.ctx, "somebody-else", "jlahey")
+	s.Require().Error(err, "the other app's user of that name is somebody else")
+}
+
+func (s *StoreSuite) TestAUserHasToSayWhichKindTheyAre() {
+	// Without it a row says somebody called, and nothing says whether anybody checked.
+	err := s.store.RecordUser(s.ctx, &User{ID: "jlahey", CustomerID: "app"})
 	s.Require().Error(err)
 }

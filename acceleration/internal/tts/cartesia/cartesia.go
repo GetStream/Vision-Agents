@@ -24,6 +24,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
@@ -177,7 +178,7 @@ func New(options Options) (*TTS, error) {
 		options.APIKey = os.Getenv("CARTESIA_API_KEY")
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("cartesia: api key is required (set CARTESIA_API_KEY)")
+		return nil, stack.Wrap(errors.New("cartesia: api key is required (set CARTESIA_API_KEY)"))
 	}
 	if options.VoiceID == "" {
 		options.VoiceID = os.Getenv("CARTESIA_VOICE_ID")
@@ -192,8 +193,8 @@ func New(options Options) (*TTS, error) {
 		options.SampleRate = DefaultSampleRate
 	}
 	if !slices.Contains(supportedSampleRates, options.SampleRate) {
-		return nil, fmt.Errorf("cartesia: sample rate %d is not one of %v",
-			options.SampleRate, supportedSampleRates)
+		return nil, stack.Wrap(fmt.Errorf("cartesia: sample rate %d is not one of %v",
+			options.SampleRate, supportedSampleRates))
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
@@ -224,7 +225,7 @@ func (t *TTS) Start(ctx context.Context) error {
 	t.mu.Lock()
 	if t.started {
 		t.mu.Unlock()
-		return errors.New("cartesia: already started")
+		return stack.Wrap(errors.New("cartesia: already started"))
 	}
 	t.started = true
 	t.mu.Unlock()
@@ -248,16 +249,16 @@ func (t *TTS) dial(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, t.url(), header)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("cartesia: dial: %w (http %d)", err, response.StatusCode)
+			return stack.Wrap(fmt.Errorf("cartesia: dial: %w (http %d)", err, response.StatusCode))
 		}
-		return fmt.Errorf("cartesia: dial: %w", err)
+		return stack.Wrap(fmt.Errorf("cartesia: dial: %w", err))
 	}
 
 	t.mu.Lock()
 	if t.shutdown {
 		t.mu.Unlock()
 		conn.Close()
-		return errors.New("cartesia: closed")
+		return stack.Wrap(errors.New("cartesia: closed"))
 	}
 	t.conn = conn
 	t.mu.Unlock()
@@ -327,7 +328,7 @@ func (t *TTS) Synthesize(request tts.Request) error {
 		Continue: !request.Final,
 	}
 	if err := t.send(message); err != nil {
-		return fmt.Errorf("cartesia: send text: %w", err)
+		return stack.Wrap(fmt.Errorf("cartesia: send text: %w", err))
 	}
 	return nil
 }
@@ -354,7 +355,7 @@ func (t *TTS) Interrupt() error {
 	}
 
 	if len(failures) > 0 {
-		return fmt.Errorf("cartesia: interrupt: %w", errors.Join(failures...))
+		return stack.Wrap(fmt.Errorf("cartesia: interrupt: %w", errors.Join(failures...)))
 	}
 	return nil
 }
@@ -430,10 +431,10 @@ func (t *TTS) utteranceFor(request tts.Request) (*utterance, bool, error) {
 	defer t.mu.Unlock()
 
 	if t.shutdown {
-		return nil, false, errors.New("cartesia: session closed")
+		return nil, false, stack.Wrap(errors.New("cartesia: session closed"))
 	}
 	if !t.started || t.conn == nil {
-		return nil, false, errors.New("cartesia: not started")
+		return nil, false, stack.Wrap(errors.New("cartesia: not started"))
 	}
 
 	if request.ID != "" {
@@ -441,9 +442,9 @@ func (t *TTS) utteranceFor(request tts.Request) (*utterance, bool, error) {
 			// Cartesia binds a context to the voice it was opened with, so changing it
 			// halfway would be one utterance said in two voices.
 			if request.Voice != "" && request.Voice != existing.voice {
-				return nil, false, fmt.Errorf(
+				return nil, false, stack.Wrap(fmt.Errorf(
 					"cartesia: utterance %s is being said in voice %s, not %s",
-					request.ID, existing.voice, request.Voice)
+					request.ID, existing.voice, request.Voice))
 			}
 			return existing, false, nil
 		}
@@ -461,7 +462,7 @@ func (t *TTS) utteranceFor(request tts.Request) (*utterance, bool, error) {
 func (t *TTS) send(message any) error {
 	payload, err := json.Marshal(message)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 
 	t.writeMu.Lock()
@@ -471,7 +472,7 @@ func (t *TTS) send(message any) error {
 	conn, shutdown := t.conn, t.shutdown
 	t.mu.Unlock()
 	if shutdown {
-		return errors.New("not connected")
+		return stack.Wrap(errors.New("not connected"))
 	}
 	if conn != nil {
 		if err := conn.WriteMessage(websocket.TextMessage, payload); err == nil {
@@ -484,16 +485,16 @@ func (t *TTS) send(message any) error {
 	// handshake once; not redialling costs the agent its voice for the rest of the call.
 	t.logger.Debug("reconnecting to speak")
 	if err := t.dial(context.Background()); err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 
 	t.mu.Lock()
 	conn = t.conn
 	t.mu.Unlock()
 	if conn == nil {
-		return errors.New("not connected")
+		return stack.Wrap(errors.New("not connected"))
 	}
-	return conn.WriteMessage(websocket.TextMessage, payload)
+	return stack.Wrap(conn.WriteMessage(websocket.TextMessage, payload))
 }
 
 // readLoop translates server frames into events until the connection ends.

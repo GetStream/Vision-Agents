@@ -11,10 +11,10 @@ use GetStream\VisionAgents\Json;
 final readonly class IngestKnowledgeRequest
 {
     public function __construct(
-        // The knowledge base to write into, which is what a config's knowledge_namespace names. Knowledge is never sh...
-        public string $namespace,
         /** @var list<KnowledgeDocument> */
         public array $documents,
+        // The knowledge base to write into, which is what a config's knowledge_namespace names. Knowledge is never sh...
+        public string $namespace,
         // Characters per passage. Zero is the default, which is small enough that several passages fit in front of a...
         public ?int $chunkSize = null,
     ) {
@@ -26,8 +26,8 @@ final readonly class IngestKnowledgeRequest
     public static function fromArray(array $data): self
     {
         return new self(
-            namespace: Json::string($data, 'namespace'),
             documents: array_map(KnowledgeDocument::fromArray(...), Json::objects($data, 'documents')),
+            namespace: Json::string($data, 'namespace'),
             chunkSize: array_key_exists('chunk_size', $data) && $data['chunk_size'] !== null ? Json::int($data, 'chunk_size') : null,
         );
     }
@@ -40,8 +40,8 @@ final readonly class IngestKnowledgeRequest
     public function toArray(): array
     {
         $out = [];
-        $out['namespace'] = $this->namespace;
         $out['documents'] = array_map(static fn (KnowledgeDocument $each): array => $each->toArray(), $this->documents);
+        $out['namespace'] = $this->namespace;
         if ($this->chunkSize !== null) {
             $out['chunk_size'] = $this->chunkSize;
         }

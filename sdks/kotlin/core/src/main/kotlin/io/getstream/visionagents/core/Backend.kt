@@ -43,11 +43,16 @@ public fun interface TokenProvider {
  * proxy and certificate pinning; [close] releases the HTTP client built around it.
  */
 public class Backend(
-    url: String,
+    url: String = DEFAULT_URL,
     public val customerId: String = "",
     public val apiKey: String = "",
     okHttpClient: OkHttpClient? = null,
 ) : AutoCloseable {
+    public companion object {
+        /** Stream's hosted router, which is where a client goes when nothing says otherwise. */
+        public const val DEFAULT_URL: String = "https://accelerate.gcp.stream-io-api.com"
+    }
+
     /** The router's base URL, with no trailing slash. */
     public val url: String = url.trimEnd('/')
 

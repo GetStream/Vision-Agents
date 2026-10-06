@@ -1,7 +1,7 @@
 import { ConfigurationError } from "./errors.js";
 
-/** Where the router is when nothing says otherwise. */
-export const DEFAULT_URL = "http://localhost:8080";
+/** Stream's hosted router, which is where a client goes when nothing says otherwise. */
+export const DEFAULT_URL = "https://accelerate.gcp.stream-io-api.com";
 
 /** The environment the same variables are read from as in the Go and Python clients. */
 export const URL_ENV = "STREAM_ACCELERATION_URL";
@@ -46,7 +46,10 @@ export type WebSocketLike = Pick<
 export type WebSocketConstructor = new (url: string) => WebSocketLike;
 
 export interface BackendOptions {
-  /** The router's base URL. Falls back to `STREAM_ACCELERATION_URL`, then localhost. */
+  /**
+   * The router's base URL. Falls back to `STREAM_ACCELERATION_URL`, then Stream's hosted
+   * router, so only a self-hosted or local router needs it.
+   */
   url?: string;
   /**
    * Who the work is billed to, taken at face value.
@@ -79,7 +82,8 @@ export interface BackendOptions {
    * With `apiSecret` it is sent as a header, which is how a backend says which of its
    * users it is acting for; the sessions it opens then belong to that user, so the user's
    * own device can reach them afterwards. With `token` it is already in the token and
-   * this is ignored.
+   * this is ignored. With `customerId` it is sent as `user_id` in the query, which a router
+   * with nothing in front of it reads the same way.
    */
   userId?: string;
   /**
@@ -93,8 +97,9 @@ export interface BackendOptions {
    * directly needs before it admits a backend, and it is the one thing the proxy refuses
    * outright.
    *
-   * Opt-in rather than inferred from holding a credential, because a Stream key and secret
-   * are in the environment for plenty of reasons that have nothing to do with this router.
+   * On for the hosted router, which is always behind the proxy. Anywhere else it is opt-in
+   * rather than inferred from holding a credential, because a Stream key and secret are in
+   * the environment for plenty of reasons that have nothing to do with this router.
    * Falls back to `STREAM_ACCELERATION_AUTHENTICATE`.
    */
   authenticate?: boolean;
@@ -133,6 +138,8 @@ export class Backend {
   private userIdValue: string;
   private token: TokenSource | undefined;
   private user: StreamUser | undefined;
+  /** The end user `actingFor` named, sent beside this backend's own credential. */
+  private actingForValue = "";
   private readonly fetchImpl: typeof fetch;
   private readonly webSocketImpl: WebSocketConstructor | undefined;
 
@@ -153,10 +160,13 @@ export class Backend {
     this.declaredSecret = Boolean(options.apiSecret);
     this.token = options.token;
     this.userIdValue = options.userId ?? "";
-    this.authenticate = options.authenticate ?? boolean(env(AUTHENTICATE_ENV));
+    this.authenticate =
+      options.authenticate ?? (boolean(env(AUTHENTICATE_ENV)) || this.url === DEFAULT_URL);
     this.webSocketImpl = options.webSocket ?? globalWebSocket();
 
-    const chosen = options.fetch ?? globalThis.fetch;
+    // Bound, because a browser only lets fetch be called on the window: kept as a field and
+    // called as this object's method, it throws "Illegal invocation" on every request.
+    const chosen = options.fetch ?? globalThis.fetch?.bind(globalThis);
     if (!chosen) {
       throw new ConfigurationError(
         "there is no fetch here; pass one as the fetch option or run on Node 22 or newer",
@@ -219,6 +229,21 @@ export class Backend {
   }
 
   /**
+   * This backend's own credential, speaking for one of its end users.
+   *
+   * Unlike `userId` it never mints a token for that user, so the request is still the
+   * server's: what it writes is answered by the model rather than handed back to a dispatch
+   * worker, and no daily limit is counted. The user goes in `X-Stream-User-Id`.
+   */
+  actingFor(userId: string): Backend {
+    const acting = Object.assign(Object.create(Backend.prototype) as Backend, this);
+    acting.userIdValue = "";
+    acting.user = undefined;
+    acting.actingForValue = userId;
+    return acting;
+  }
+
+  /**
    * Refuses a request there is no way to authenticate.
    *
    * Checked here rather than in the constructor because the requested shape supplies the
@@ -258,8 +283,11 @@ export class Backend {
    */
   async headers(): Promise<Record<string, string>> {
     this.assertCredentialed();
+    const acting: Record<string, string> = this.actingForValue
+      ? { "X-Stream-User-Id": this.actingForValue }
+      : {};
     if (!this.apiKey) {
-      return { "X-Customer-Id": this.customerId };
+      return { "X-Customer-Id": this.customerId, ...acting };
     }
 
     if (this.authenticate) {
@@ -270,10 +298,11 @@ export class Backend {
         api_key: this.apiKey,
         "stream-auth-type": "jwt",
         Authorization: `Bearer ${await this.proxyToken()}`,
+        ...acting,
       };
     }
 
-    const headers: Record<string, string> = { "X-Api-Key": this.apiKey };
+    const headers: Record<string, string> = { "X-Api-Key": this.apiKey, ...acting };
     if (this.apiSecret) {
       headers["Authorization"] = `Bearer ${await this.serverToken()}`;
       headers["Stream-Auth-Type"] = "server";
@@ -292,8 +321,9 @@ export class Backend {
    * The WebSocket URL for a path on the router, credentials included.
    *
    * They go in the query string because a browser WebSocket carries no headers of its own.
-   * `Stream-Auth-Type` has no query counterpart on purpose, which is why a socket opened
-   * from a browser cannot claim to be a backend.
+   * A socket never says it is a backend: `Stream-Auth-Type: server` has no query counterpart
+   * on purpose, and the proxy is only ever told `stream-auth-type=jwt`, which is what it
+   * reads for a user whoever the token is for.
    */
   async socketURL(path: string, query: Record<string, string> = {}): Promise<string> {
     this.assertCredentialed();
@@ -303,20 +333,27 @@ export class Backend {
     }
 
     if (this.apiKey) {
+      const token = this.authenticate
+        ? await this.proxyToken()
+        : this.apiSecret
+          ? await this.serverToken()
+          : await this.userToken();
       url.searchParams.set("api_key", this.apiKey);
-      url.searchParams.set(
-        "token",
-        this.authenticate
-          ? await this.proxyToken()
-          : this.apiSecret
-            ? await this.serverToken()
-            : await this.userToken(),
-      );
+      url.searchParams.set("token", token);
+      if (this.authenticate) {
+        // The proxy reads a socket's credential the way it reads a request's, as
+        // `authorization` and `stream-auth-type`, and refuses one carrying only `token`.
+        url.searchParams.set("authorization", token);
+        url.searchParams.set("stream-auth-type", "jwt");
+      }
       if (this.userId) {
         url.searchParams.set("user_id", this.userId);
       }
     } else {
       url.searchParams.set("customer_id", this.customerId);
+      if (this.userId) {
+        url.searchParams.set("user_id", this.userId);
+      }
     }
     return url.toString();
   }
@@ -329,6 +366,17 @@ export class Backend {
       );
     }
     return new this.webSocketImpl(url);
+  }
+
+  /**
+   * What a request carries in its query rather than its headers.
+   *
+   * A router reached by customer id is told the end user as `user_id`: a header would do on
+   * a server, but a page cannot send one the router's CORS does not admit, and the query is
+   * read the same way.
+   */
+  query(): Record<string, string> {
+    return !this.apiKey && this.customerId && this.userId ? { user_id: this.userId } : {};
   }
 
   /** Sends one request. Exposed so the client and the sockets share one fetch. */

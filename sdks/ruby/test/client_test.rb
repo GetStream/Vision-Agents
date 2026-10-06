@@ -22,14 +22,11 @@ class TestClient < LocalRouterTest
   end
 
   def test_query_values_are_rendered_for_the_wire
-    @router.on(:get, "/v1/agents/sessions", body: [])
+    @router.on(:get, "/v1/agents/logs", body: { "items" => [], "has_more" => false })
 
-    client.get("/v1/agents/sessions",
-               query: { custom: { "tenant" => "acme" }, created_after: Time.utc(2026, 1, 2, 3, 4, 5), limit: 5,
-                        project: nil })
+    client.get("/v1/agents/logs", query: { from: Time.utc(2026, 1, 2, 3, 4, 5), limit: 5, config_id: nil })
 
-    assert_equal({ "custom" => '{"tenant":"acme"}', "created_after" => "2026-01-02T03:04:05Z", "limit" => "5" },
-                 @router.last(:get, "/v1/agents/sessions").query)
+    assert_equal({ "from" => "2026-01-02T03:04:05Z", "limit" => "5" }, @router.last(:get, "/v1/agents/logs").query)
   end
 
   def test_nil_body_fields_are_left_out
@@ -83,14 +80,14 @@ class TestClient < LocalRouterTest
 
   def test_a_guest_is_minted_and_acted_for
     @router.on(:post, "/v1/agents/guests", body: { "id" => "guest_1", "token" => "tok", "name" => "Guest" })
-    @router.on(:get, "/v1/agents/sessions", body: [])
+    @router.on(:post, "/v1/agents/sessions/query", body: { "items" => [], "has_more" => false })
     keyed = VA::Client.new(url: @router.url, api_key: "key", api_secret: "secret")
 
     guest = keyed.guest_user(name: "Ada")
-    keyed.as_guest(guest).get("/v1/agents/sessions")
+    keyed.as_guest(guest).agent("support").sessions.query
 
     assert_equal({ "name" => "Ada" }, @router.last(:post, "/v1/agents/guests").json)
-    headers = @router.last(:get, "/v1/agents/sessions").headers
+    headers = @router.last(:post, "/v1/agents/sessions/query").headers
     assert_equal "Bearer tok", headers["authorization"]
     assert_equal "jwt", headers["stream-auth-type"]
     assert_equal "key", headers["x-api-key"]
@@ -106,6 +103,49 @@ class TestClient < LocalRouterTest
 
     device = VA::Client.new(url: @router.url, api_key: "key", token: "user-token", user_id: "ada")
     assert_raises(VA::ConfigurationError) { device.claim_guest_user("guest_1", "ada") }
+  end
+
+  def test_a_router_comes_from_the_client
+    @router.on(:post, "/v1/search", body: { "results" => [] })
+
+    client.router("healthcare", tags: { env: "production" }).search("antibiotics")
+
+    request = @router.last(:post, "/v1/search")
+    assert_equal CUSTOMER, request.headers["x-customer-id"]
+    assert_equal({ "query" => "antibiotics", "options" => {}, "config_id" => "healthcare",
+                   "tags" => { "env" => "production" } }, request.json)
+  end
+
+  def test_simulations_are_written_run_and_read_back
+    @router.on(:post, "/v1/agents/simulations") { |request| [201, request.json.merge("id" => "sim_1")] }
+    @router.on(:put, "/v1/agents/simulations/sim_1") { |request| request.json.merge("id" => "sim_1") }
+    @router.on(:post, "/v1/agents/simulations/sim_1/run", status: 202, body: { "id" => "run_1", "state" => "running" })
+    @router.on(:get, "/v1/agents/simulation-runs/run_1", body: { "id" => "run_1", "state" => "passed" })
+    @router.on(:get, "/v1/agents/simulation-runs", body: [{ "id" => "run_1" }])
+    @router.on(:post, "/v1/agents/simulation-runs/run_1/cancel", body: { "id" => "run_1", "state" => "cancelled" })
+    @router.on(:delete, "/v1/agents/simulations/sim_1", status: 204)
+    simulations = client.simulations
+    fields = { name: "refund", config_id: "cfg_1", scenario: "Ask for a refund", assertion: "A refund is offered" }
+
+    simulation = simulations.create(**fields)
+    simulations.update(simulation["id"], **fields, variations: 2)
+    run = simulations.run(simulation["id"])
+
+    assert_equal "passed", simulations.runs.get(run["id"])["state"]
+    assert_equal [{ "id" => "run_1" }], simulations.runs.list(simulation_id: "sim_1", limit: 5)
+    assert_equal "cancelled", simulations.runs.cancel("run_1")["state"]
+    assert_nil simulations.delete("sim_1")
+    assert_equal fields.transform_keys(&:to_s), @router.last(:post, "/v1/agents/simulations").json
+    assert_equal 2, @router.last(:put, "/v1/agents/simulations/sim_1").json["variations"]
+    assert_equal({ "simulation_id" => "sim_1", "limit" => "5" }, @router.last(:get, "/v1/agents/simulation-runs").query)
+  end
+
+  def test_memories_are_truncated_for_one_user
+    @router.on(:delete, "/v1/agents/users/ada/memories", status: 204)
+
+    assert_nil client.memories.truncate("ada")
+    assert_equal 1, @router.seen(:delete, "/v1/agents/users/ada/memories").size
+    assert_raises(VA::ConfigurationError) { client.memories.truncate("") }
   end
 end
 
@@ -128,6 +168,26 @@ class TestBackend < Minitest::Test
     assert_equal "jwt", headers["stream-auth-type"]
     payload = headers["Authorization"].split(".")[1]
     assert_equal "ada", JSON.parse(payload.tr("-_", "+/").unpack1("m"))["user_id"]
+  end
+
+  def test_acting_for_a_user_keeps_the_customer_header
+    headers = VA::Backend.new(url: "http://router", customer_id: "acme").acting_for("ada").headers
+
+    assert_equal({ "X-Customer-Id" => "acme", "X-Stream-User-Id" => "ada" }, headers)
+  end
+
+  def test_naming_no_router_goes_to_the_hosted_one_through_the_proxy
+    saved = ENV.delete(VA::Backend::URL_ENV)
+    backend = VA::Backend.new(api_key: "key", token: "token-for-ada", user_id: "ada")
+
+    assert_equal VA::Backend::DEFAULT_URL, backend.url
+    assert backend.authenticate?
+  ensure
+    ENV[VA::Backend::URL_ENV] = saved if saved
+  end
+
+  def test_a_router_named_by_url_leaves_the_proxy_off
+    refute VA::Backend.new(url: "http://router", customer_id: "acme").authenticate?
   end
 
   def test_a_key_without_a_secret_or_token_is_refused

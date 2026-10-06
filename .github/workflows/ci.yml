@@ -66,13 +66,13 @@ jobs:
             sdks/go/go.sum
             tui/go.sum
 
-      # The server, the Go client and the Python client all come from one spec, so a spec
-      # edited without regenerating them is a spec the three have already drifted from.
+      # The spec is rendered from the server's Go operations and the clients are generated
+      # from the spec, so any of them left behind has already drifted from the others.
       - name: Check the generated code is in step with the spec
         run: |
-          (cd acceleration && go tool oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml)
+          (cd acceleration && go run ./cmd/openapi)
           (cd sdks/go && go generate ./...)
-          git diff --exit-code -- acceleration/internal/api/generated.go sdks/go/acceleration/generated.go
+          git diff --exit-code -- acceleration/api/openapi.yaml sdks/go/acceleration/generated.go
 
       - name: Vet the backend
         run: go vet ./...

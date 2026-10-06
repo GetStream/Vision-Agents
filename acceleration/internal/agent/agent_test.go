@@ -22,6 +22,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -163,6 +164,8 @@ type stubLLM struct {
 	// reply is streamed one delta per element for each request, unless the test writes the
 	// response itself.
 	reply []string
+	// thinking is streamed as reasoning before the reply.
+	thinking []string
 	// then replaces reply from the second request onward, so a model that asked for help
 	// on the first turn does not ask for it again once the answer has come back.
 	then []string
@@ -227,6 +230,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	s.scripts[params.ID] = script
 	s.order = append(s.order, params.ID)
 	reply := append([]string(nil), s.reply...)
+	thinking := append([]string(nil), s.thinking...)
 	first := len(s.asked) == 1
 	if !first && s.then != nil {
 		reply = append([]string(nil), s.then...)
@@ -243,6 +247,9 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		return script.Stream(), nil
 	}
 
+	for _, delta := range thinking {
+		script.ReasoningText(delta)
+	}
 	for _, delta := range reply {
 		script.OutputText(delta)
 	}
@@ -424,6 +431,7 @@ type stubMemory struct {
 	mu        sync.Mutex
 	knows     []memory.Memory
 	scope     memory.Scope
+	learnedAs memory.Scope
 	learned   [][]llm.Message
 	recallErr error
 }
@@ -438,15 +446,24 @@ func (m *stubMemory) Recall(_ context.Context, query memory.Query) ([]memory.Mem
 	return m.knows, nil
 }
 
-func (m *stubMemory) Remember(_ context.Context, _ memory.Scope, messages []llm.Message) error {
+func (m *stubMemory) Remember(_ context.Context, scope memory.Scope, messages []llm.Message) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.learnedAs = scope
 	m.learned = append(m.learned, messages)
 	return nil
 }
 
-func (m *stubMemory) Provider() string { return "stub" }
-func (m *stubMemory) Close() error     { return nil }
+func (m *stubMemory) writtenAs() memory.Scope {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.learnedAs
+}
+
+func (m *stubMemory) Truncate(context.Context, string, string) error  { return nil }
+func (m *stubMemory) ForgetRun(context.Context, string, string) error { return nil }
+func (m *stubMemory) Provider() string                                { return "stub" }
+func (m *stubMemory) Close() error                                    { return nil }
 
 func (m *stubMemory) remembered() [][]llm.Message {
 	m.mu.Lock()
@@ -468,6 +485,7 @@ func stubConfig() routing.ModalityConfig {
 			Model:     "stub-model",
 			Languages: []string{"en"},
 			Realtime:  true,
+			Terms:     []options.Term{options.Speed},
 		}},
 		Aliases: map[string]routing.Alias{
 			"en-low-latency": {Languages: []string{"en"}, RequireRealtime: true},
@@ -530,8 +548,13 @@ type AgentSuite struct {
 	// duplex is how the agent listens and talks at the same time, off unless a test says
 	// otherwise.
 	duplex DuplexOptions
+	// speculation says whether replies start before the flow controller has ruled, and is
+	// nil, which leaves them on, unless a test says otherwise.
+	speculation *bool
 	// remembers is the memory store the agent joins with, when a test gives it one.
 	remembers *stubMemory
+	// incognito holds the session off the record.
+	incognito bool
 	// knows is what the agent may look things up in, when a test gives it a knowledge
 	// base, and namespace is which one it reads.
 	knows     *stubKnowledge
@@ -550,6 +573,10 @@ type AgentSuite struct {
 	records *store.Store
 	// agentID names the agent, so a test writing turns can find its own rows.
 	agentID string
+	// speed is the voice's rate of delivery the agent joins with, and voiceAsked is what
+	// the voice was opened with.
+	speed      float64
+	voiceAsked routing.Spec
 
 	agent  *Agent
 	events *collector
@@ -563,6 +590,7 @@ func (s *AgentSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.edgeFactory = nil
 	s.remembers = nil
+	s.incognito = false
 	s.knows = nil
 	s.namespace = ""
 	s.finds = nil
@@ -575,6 +603,7 @@ func (s *AgentSuite) SetupTest() {
 	s.tools = harness.Tools{}
 	s.runner = nil
 	s.duplex = DuplexOptions{}
+	s.speculation = nil
 	s.performing = ""
 	if s.agentID == "" {
 		s.agentID = "agent-1"
@@ -698,7 +727,10 @@ func (s *AgentSuite) join(streamingVoice bool) {
 	}
 
 	speech := ttsrouter.NewRegistry()
-	speech.Register("stub", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
+	speech.Register("stub", func(spec routing.Spec) (tts.TTS, error) {
+		s.voiceAsked = spec
+		return s.voice, nil
+	})
 	speaker, err := ttsrouter.New(ttsrouter.Options{
 		Config: stubConfig(), Registry: speech, Logger: logger,
 	})
@@ -741,6 +773,8 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		CustomerID:         "acme",
 		AgentID:            s.agentID,
 		AppID:              "router",
+		SessionID:          "session-1",
+		Incognito:          s.incognito,
 		Store:              s.records,
 		SubagentTarget:     subagentTarget,
 		Skills:             s.skills,
@@ -748,12 +782,14 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		ToolRunner:         running,
 		Tools:              s.tools,
 		Duplex:             s.duplex,
+		SpeculativeReplies: s.speculation,
 		LLM:                reasoner,
 		LLMTarget:          "en-low-latency",
 		STT:                transcriber,
 		STTTarget:          "en-low-latency",
 		TTS:                speaker,
 		TTSTarget:          "en-low-latency",
+		Speed:              s.speed,
 		Memory:             remembering,
 		Knowledge:          reading,
 		KnowledgeNamespace: s.namespace,
@@ -927,6 +963,20 @@ func (s *AgentSuite) TestJoiningEntersTheCall() {
 	s.True(s.edge.joined)
 }
 
+func (s *AgentSuite) TestTheVoiceIsOpenedAtTheSpeedTheAgentWasGiven() {
+	s.speed = 0.9
+	s.join(true)
+
+	s.Require().NotNil(s.voiceAsked.TTS.Speed)
+	s.Equal(0.9, *s.voiceAsked.TTS.Speed)
+}
+
+func (s *AgentSuite) TestAVoiceWithNoSpeedIsNotAskedForOne() {
+	s.join(true)
+
+	s.Nil(s.voiceAsked.TTS.Speed, "naming a speed narrows the voices that may answer")
+}
+
 func (s *AgentSuite) TestJoiningTwiceIsRejected() {
 	s.join(true)
 
@@ -989,6 +1039,157 @@ func (s *AgentSuite) TestASettledTurnIsAnsweredAndSpoken() {
 
 	s.eventually(func() bool { return len(s.edge.heard()) > 0 },
 		"the reply was never published to the call")
+}
+
+func (s *AgentSuite) TestASpeculativeReplyStartsBeforeTheRulingAndIsSpokenOnlyAfterIt() {
+	s.join(true)
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 },
+		"the reply should be asked for while the flow controller is still deciding")
+	s.Len(s.flow.requests(), 1)
+	s.Never(func() bool { return len(s.edge.heard()) > 0 }, 150*time.Millisecond, 10*time.Millisecond,
+		"nothing may be spoken before the ruling says to answer")
+	s.Empty(s.agent.History(), "the words are not the conversation's until they are answered")
+
+	close(ruling)
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 },
+		"a ruling to answer should release the reply already started")
+	s.Len(s.model.requests(), 1, "the reply started early is the one spoken, not a second one")
+	s.eventually(func() bool { return len(s.agent.History()) == 2 }, "the exchange was never kept")
+	s.Equal("hello", s.agent.History()[0].Content)
+}
+
+func (s *AgentSuite) TestASpeculativeReplyIsDroppedWhenTheRulingDoesNotAnswer() {
+	s.join(true)
+	s.flow.reply = []string{`{"disposition":"ignore","floor":"continue"}`}
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "child", Name: "Child"}
+	s.speak(participant)
+
+	s.says(participant, "mom where is my backpack")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 },
+		"the reply should be asked for while the flow controller is still deciding")
+
+	close(ruling)
+
+	s.Never(func() bool { return len(s.edge.heard()) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
+		"a reply to speech the agent was not meant to answer must never be heard")
+	s.Empty(s.agent.History())
+	s.Zero(countOf[Responding](s.reported()))
+}
+
+func (s *AgentSuite) TestAClarifyingRulingStartsAgainRatherThanUsingTheEarlyReply() {
+	// The early reply was written without the note that says the words were ambiguous, so
+	// speaking it would answer a question the caller may not have asked.
+	s.join(true)
+	s.flow.reply = []string{`{"disposition":"clarify","floor":"continue"}`}
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "do it like last time")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the early reply never started")
+
+	close(ruling)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"a clarifying ruling should ask for a reply of its own")
+	s.Contains(s.model.requests()[1].Instructions, "ambiguous")
+	s.NotContains(s.model.requests()[0].Instructions, "ambiguous")
+}
+
+func (s *AgentSuite) TestWithoutSpeculationTheReplyWaitsForTheRuling() {
+	off := false
+	s.speculation = &off
+	s.join(true)
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+	s.eventually(func() bool { return len(s.flow.requests()) == 1 }, "the flow controller was never asked")
+
+	s.Never(func() bool { return len(s.model.requests()) > 0 }, 150*time.Millisecond, 10*time.Millisecond,
+		"without speculation the reply is only asked for once the ruling is in")
+	s.Zero(s.previewsHeld(), "nothing is held ahead of the ruling when speculation is off")
+	close(ruling)
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the reply never started")
+}
+
+// previewsHeld is how many replies started ahead of their ruling are still waiting on it.
+func (s *AgentSuite) previewsHeld() int {
+	s.agent.mu.Lock()
+	defer s.agent.mu.Unlock()
+	return len(s.agent.previews)
+}
+
+func (s *AgentSuite) TestAnAnsweredTurnLeavesNoPreviewHeld() {
+	s.join(true)
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+	s.eventually(func() bool { return s.previewsHeld() == 1 }, "the reply was never started ahead of the ruling")
+	close(ruling)
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the answer was never spoken")
+	s.Zero(s.previewsHeld(), "the answer took the reply that was started for it")
+	s.Len(s.model.requests(), 1, "one reply is started, not one before the ruling and one after it")
+}
+
+func (s *AgentSuite) TestAnIgnoredTurnLetsGoOfItsPreview() {
+	s.join(true)
+	s.flow.reply = []string{`{"disposition":"ignore","floor":"continue"}`}
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "child", Name: "Child"}
+	s.speak(participant)
+
+	s.says(participant, "mom where is my backpack")
+	s.eventually(func() bool { return s.previewsHeld() == 1 }, "the reply was never started ahead of the ruling")
+	close(ruling)
+
+	s.eventually(func() bool { return s.previewsHeld() == 0 }, "an ignored turn kept its preview")
+}
+
+func (s *AgentSuite) TestARulingForWordsThatMovedOnLetsGoOfTheirPreview() {
+	s.join(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	s.agent.mu.Lock()
+	s.agent.previews["gone"] = &replyPreview{cancel: cancel}
+	s.agent.mu.Unlock()
+
+	s.agent.rule(harness.Decided{CandidateID: "gone", Disposition: harness.Respond, Floor: harness.Continue})
+
+	s.Zero(s.previewsHeld())
+	s.Error(ctx.Err(), "the preview was left running")
+}
+
+func (s *AgentSuite) TestClosingTheAgentLetsGoOfAPreview() {
+	s.join(true)
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+	s.eventually(func() bool { return s.previewsHeld() == 1 }, "the reply was never started ahead of the ruling")
+
+	s.Require().NoError(s.agent.Close())
+
+	s.Zero(s.previewsHeld())
 }
 
 func (s *AgentSuite) TestARevisionReplacesTheWordsBeforeCadenceActs() {
@@ -1090,8 +1291,8 @@ func (s *AgentSuite) TestConcurrentDecisionAndReplyReduceTimeToFirstAudio() {
 		turn.SpeechEndToAudioMs, turn.CadenceMs, turn.DecisionMs,
 		turn.ModelToFirstTextMs, turn.TTSToAudioMs)
 	s.Greater(turn.DecisionMs, 500.0)
-	s.Greater(turn.SpeechEndToAudioMs, 850.0)
-	s.Less(turn.SpeechEndToAudioMs, 1250.0,
+	s.Greater(turn.SpeechEndToAudioMs, 650.0)
+	s.Less(turn.SpeechEndToAudioMs, 1000.0,
 		"the two provider waits should overlap instead of adding to the critical path")
 }
 
@@ -1115,14 +1316,14 @@ func (s *AgentSuite) pacedVoiceTurn(flow, reply, voice time.Duration, sttMs floa
 func (s *AgentSuite) TestPacedVoiceTurnWithSlowController() {
 	turn := s.pacedVoiceTurn(1050*time.Millisecond, 825*time.Millisecond,
 		900*time.Millisecond, 170)
-	s.InDelta(2470, turn.SpeechEndToAudioMs, 100,
+	s.InDelta(2180, turn.SpeechEndToAudioMs, 100,
 		"decision and reply should overlap while STT, cadence and TTS remain on the path")
 }
 
 func (s *AgentSuite) TestPacedVoiceTurnWithSlowReply() {
 	turn := s.pacedVoiceTurn(450*time.Millisecond, 650*time.Millisecond,
 		450*time.Millisecond, 120)
-	s.InDelta(1570, turn.SpeechEndToAudioMs, 100,
+	s.InDelta(1280, turn.SpeechEndToAudioMs, 100,
 		"the slower reply should continue through the controller decision")
 }
 
@@ -1512,7 +1713,37 @@ func (s *AgentSuite) TestMemoriesBelongToTheCustomerAndTheApp() {
 	s.remembers = &stubMemory{}
 	s.join(true)
 
-	s.Equal(memory.Scope{AppID: "router", UserID: "acme"}, s.remembers.scopedTo())
+	s.Equal(memory.Scope{
+		AppID: "acme", UserID: "acme", AgentID: "agent-1", RunID: "session-1",
+		Extra: map[string]string{"app_id": "router"},
+	}, s.remembers.scopedTo(), "the app id is always the customer, and a caller's own only narrows it")
+}
+
+func (s *AgentSuite) TestAnAgentWithMemoryButNoSessionIsRefused() {
+	_, err := New(Options{
+		Text:       true,
+		CustomerID: "acme",
+		AgentID:    "agent-1",
+		LLM:        s.reasoner(slog.New(slog.DiscardHandler)),
+		Memory:     &stubMemory{},
+	})
+
+	s.ErrorContains(err, "run id", "a memory written without its session could never be traced back to it")
+}
+
+func (s *AgentSuite) TestAnIncognitoSessionRecallsButRemembersNothing() {
+	s.remembers = &stubMemory{knows: []memory.Memory{{Text: "Prefers to be called Al"}}}
+	s.incognito = true
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "I moved to Austin")
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+	s.Require().NoError(s.agent.Close())
+	s.Contains(s.model.requests()[0].Instructions, "Prefers to be called Al")
+	s.Empty(s.remembers.remembered(), "an incognito session is not kept, in memory or anywhere else")
 }
 
 func (s *AgentSuite) TestAnAgentThatCannotRecallStillTakesTheCall() {
@@ -1537,6 +1768,10 @@ func (s *AgentSuite) TestAFinishedExchangeIsRemembered() {
 	s.says(participant, "I moved to Austin")
 
 	s.eventually(func() bool { return len(s.remembers.remembered()) == 1 }, "nothing was remembered")
+	s.Equal(memory.Scope{
+		AppID: "acme", UserID: "acme", AgentID: "agent-1", RunID: "session-1",
+		Extra: map[string]string{"app_id": "router"},
+	}, s.remembers.writtenAs())
 	exchange := s.remembers.remembered()[0]
 	s.Require().Len(exchange, 2, "what was asked and what was answered")
 	s.Equal(llm.Message{Role: llm.User, Content: "I moved to Austin"}, exchange[0])
@@ -2498,6 +2733,33 @@ func (s *AgentSuite) TestASecondToolDoesNotStartACompetingReply() {
 	s.Len(s.model.requests(), 2, "a second tool must not start a competing generate")
 }
 
+func (s *AgentSuite) TestTheReplyToAToolResultContinuesTheTurnThatAskedForIt() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 2 },
+		"the tool result was never answered")
+	var asked, followed Responding
+	for _, event := range s.reported() {
+		if responding, ok := event.(Responding); ok {
+			if asked.TurnID == "" {
+				asked = responding
+			} else {
+				followed = responding
+			}
+		}
+	}
+	s.Empty(asked.Continues, "a question somebody asked continues nothing")
+	s.Equal(asked.TurnID, followed.Continues)
+}
+
 func (s *AgentSuite) TestAToolResultDoesNotCutOffTheReplyAlreadyBeingSpoken() {
 	// Only a caller talking over the agent abandons a turn. The agent starting one for
 	// itself, to say what a tool came back with, does not: the reply that promised to go
@@ -2797,4 +3059,25 @@ func (s *AgentSuite) TestAConversationInWritingLooksThingsUpTheSameWay() {
 	looked, _ := firstOf[LookedUp](s.reported())
 	s.Equal("refund window", looked.Query)
 	s.Equal(1, looked.Documents)
+}
+
+// TestThinkingInWritingIsReportedApartFromTheReply keeps a reader's view of the model's
+// reasoning separate from the answer: it is reported as it streams and never joins the
+// reply that is stored or remembered.
+func (s *AgentSuite) TestThinkingInWritingIsReportedApartFromTheReply() {
+	s.joinText()
+	s.model.thinking = []string{"The user greets; ", "greet back."}
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "hello"))
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+	responded, _ := firstOf[Responded](s.reported())
+	s.Equal("Hello there. How are you?", responded.Text)
+	var thought strings.Builder
+	for _, event := range s.reported() {
+		if delta, ok := event.(ReasoningDelta); ok {
+			thought.WriteString(delta.Text)
+		}
+	}
+	s.Equal("The user greets; greet back.", thought.String())
 }

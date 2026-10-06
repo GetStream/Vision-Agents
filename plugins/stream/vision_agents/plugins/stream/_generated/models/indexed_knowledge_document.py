@@ -17,35 +17,35 @@ T = TypeVar("T", bound="IndexedKnowledgeDocument")
 class IndexedKnowledgeDocument:
     """
     Attributes:
+        created_at (datetime.datetime):
         id (str):
         namespace (str):
-        source (str): What the document was posted as, and what its passages are keyed by. Example: pricing.md.
         passages (int): How many passages it was last cut into.
-        created_at (datetime.datetime):
+        source (str): What the document was posted as, and what its passages are keyed by. Example: pricing.md.
         updated_at (datetime.datetime): When it was last written.
         text (str | Unset): The document as it was last posted. Only reading one document fills it in, and one written
             before its text was kept has none.
     """
 
+    created_at: datetime.datetime
     id: str
     namespace: str
-    source: str
     passages: int
-    created_at: datetime.datetime
+    source: str
     updated_at: datetime.datetime
     text: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        created_at = self.created_at.isoformat()
+
         id = self.id
 
         namespace = self.namespace
 
-        source = self.source
-
         passages = self.passages
 
-        created_at = self.created_at.isoformat()
+        source = self.source
 
         updated_at = self.updated_at.isoformat()
 
@@ -55,11 +55,11 @@ class IndexedKnowledgeDocument:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "created_at": created_at,
                 "id": id,
                 "namespace": namespace,
-                "source": source,
                 "passages": passages,
-                "created_at": created_at,
+                "source": source,
                 "updated_at": updated_at,
             }
         )
@@ -71,26 +71,26 @@ class IndexedKnowledgeDocument:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
+        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
         id = d.pop("id")
 
         namespace = d.pop("namespace")
 
-        source = d.pop("source")
-
         passages = d.pop("passages")
 
-        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+        source = d.pop("source")
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
         text = d.pop("text", UNSET)
 
         indexed_knowledge_document = cls(
+            created_at=created_at,
             id=id,
             namespace=namespace,
-            source=source,
             passages=passages,
-            created_at=created_at,
+            source=source,
             updated_at=updated_at,
             text=text,
         )

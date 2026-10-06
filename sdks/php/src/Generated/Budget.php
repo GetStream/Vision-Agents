@@ -16,13 +16,13 @@ use GetStream\VisionAgents\Json;
 final readonly class Budget
 {
     public function __construct(
+        public BudgetInterval|string $interval,
         // The cap, in millionths of a dollar.
         public int $limitMicros,
-        public BudgetInterval|string $interval,
-        // What has been spent in the current interval.
-        public ?int $spentMicros = null,
         // When the current interval ends.
         public ?\DateTimeImmutable $resetsAt = null,
+        // What has been spent in the current interval.
+        public ?int $spentMicros = null,
     ) {
     }
 
@@ -32,10 +32,10 @@ final readonly class Budget
     public static function fromArray(array $data): self
     {
         return new self(
-            limitMicros: Json::int($data, 'limit_micros'),
             interval: Json::enum($data, 'interval', BudgetInterval::class),
-            spentMicros: array_key_exists('spent_micros', $data) && $data['spent_micros'] !== null ? Json::int($data, 'spent_micros') : null,
+            limitMicros: Json::int($data, 'limit_micros'),
             resetsAt: array_key_exists('resets_at', $data) && $data['resets_at'] !== null ? Json::date($data, 'resets_at') : null,
+            spentMicros: array_key_exists('spent_micros', $data) && $data['spent_micros'] !== null ? Json::int($data, 'spent_micros') : null,
         );
     }
 
@@ -47,13 +47,13 @@ final readonly class Budget
     public function toArray(): array
     {
         $out = [];
-        $out['limit_micros'] = $this->limitMicros;
         $out['interval'] = Json::enumValue($this->interval);
-        if ($this->spentMicros !== null) {
-            $out['spent_micros'] = $this->spentMicros;
-        }
+        $out['limit_micros'] = $this->limitMicros;
         if ($this->resetsAt !== null) {
             $out['resets_at'] = Json::dateValue($this->resetsAt);
+        }
+        if ($this->spentMicros !== null) {
+            $out['spent_micros'] = $this->spentMicros;
         }
         return $out;
     }

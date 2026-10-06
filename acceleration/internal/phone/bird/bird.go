@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 const accessKeyEnvVar = "BIRD_ACCESS_KEY"
@@ -76,7 +77,7 @@ func New(options Options) (*Provider, error) {
 		options.AccessKey = os.Getenv(accessKeyEnvVar)
 	}
 	if options.AccessKey == "" {
-		return nil, errors.New("bird: " + accessKeyEnvVar + " is required")
+		return nil, stack.Wrap(errors.New("bird: " + accessKeyEnvVar + " is required"))
 	}
 	if options.BaseURL == "" {
 		host, err := hostFor(options.AccessKey)
@@ -109,7 +110,7 @@ func New(options Options) (*Provider, error) {
 func hostFor(accessKey string) (string, error) {
 	parts := strings.Split(accessKey, "_")
 	if len(parts) < 3 || parts[0] != "bk" || parts[1] == "" {
-		return "", fmt.Errorf("bird: %s does not name a region, so there is no host to reach", accessKeyEnvVar)
+		return "", stack.Wrap(fmt.Errorf("bird: %s does not name a region, so there is no host to reach", accessKeyEnvVar))
 	}
 	return "https://" + parts[1] + ".platform.bird.com", nil
 }
@@ -117,7 +118,7 @@ func hostFor(accessKey string) (string, error) {
 // SearchNumbers returns numbers Bird is offering in a country.
 func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
 	if search.Country == "" {
-		return nil, errors.New("bird: a country is required to search for numbers")
+		return nil, stack.Wrap(errors.New("bird: a country is required to search for numbers"))
 	}
 
 	query := url.Values{"country_code": {strings.ToUpper(search.Country)}}
@@ -129,7 +130,7 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 	if search.Type != "" {
 		kind, ok := kinds[search.Type]
 		if !ok {
-			return nil, fmt.Errorf("bird: does not sell %s numbers", search.Type)
+			return nil, stack.Wrap(fmt.Errorf("bird: does not sell %s numbers", search.Type))
 		}
 		query.Set("number_type", kind)
 	}
@@ -166,7 +167,7 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 // BuyNumber orders a number. Bird buys by number, so the order's country is not needed.
 func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Number, error) {
 	if order.E164 == "" {
-		return phone.Number{}, errors.New("bird: a number is required")
+		return phone.Number{}, stack.Wrap(errors.New("bird: a number is required"))
 	}
 
 	key, err := idempotencyKey()
@@ -206,7 +207,7 @@ func (p *Provider) ReleaseNumber(ctx context.Context, e164 string) error {
 
 // ConfigureInbound is not wrapped for Bird.
 func (p *Provider) ConfigureInbound(context.Context, phone.Inbound) error {
-	return fmt.Errorf("%w: bird numbers are bought here but bridged elsewhere", phone.ErrNotImplemented)
+	return stack.Wrap(fmt.Errorf("%w: bird numbers are bought here but bridged elsewhere", phone.ErrNotImplemented))
 }
 
 // Dial calls a person and transfers the answered leg to the Stream trunk.
@@ -217,7 +218,7 @@ func (p *Provider) ConfigureInbound(context.Context, phone.Inbound) error {
 // arranges that before dialling.
 func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dialed, error) {
 	if err := outbound.Validate(); err != nil {
-		return phone.Dialed{}, fmt.Errorf("bird: %w", err)
+		return phone.Dialed{}, stack.Wrap(fmt.Errorf("bird: %w", err))
 	}
 
 	request := callRequest{
@@ -238,7 +239,7 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		return phone.Dialed{}, err
 	}
 	if len(response.Data) == 0 {
-		return phone.Dialed{}, errors.New("bird: placed no call")
+		return phone.Dialed{}, stack.Wrap(errors.New("bird: placed no call"))
 	}
 	return phone.Dialed{
 		VendorCallID: response.Data[0].ID,
@@ -248,7 +249,7 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 
 // SendDigits is not wrapped for Bird, since nothing here places a Bird call to press on.
 func (p *Provider) SendDigits(context.Context, string, string) error {
-	return fmt.Errorf("%w: bird", phone.ErrNotImplemented)
+	return stack.Wrap(fmt.Errorf("%w: bird", phone.ErrNotImplemented))
 }
 
 // Supports is a country, an anchored prefix and a number type. Bird's search knows nothing
@@ -279,7 +280,7 @@ func (p *Provider) Client() *http.Client { return p.client }
 // releasing it needs.
 func (p *Provider) idFor(ctx context.Context, e164 string) (string, error) {
 	if e164 == "" {
-		return "", errors.New("bird: a number is required")
+		return "", stack.Wrap(errors.New("bird: a number is required"))
 	}
 
 	var response page[heldNumber]
@@ -291,7 +292,7 @@ func (p *Provider) idFor(ctx context.Context, e164 string) (string, error) {
 			return number.ID, nil
 		}
 	}
-	return "", fmt.Errorf("bird: %s is not one of this workspace's numbers", e164)
+	return "", stack.Wrap(fmt.Errorf("bird: %s is not one of this workspace's numbers", e164))
 }
 
 func (p *Provider) do(ctx context.Context, method, path string, query url.Values, body, into any) error {
@@ -303,12 +304,12 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 func (p *Provider) doVoice(ctx context.Context, method, path string, payload, into any) error {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("bird: encode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("bird: encode %s: %w", path, err))
 	}
 
 	request, err := http.NewRequestWithContext(ctx, method, p.voiceBaseURL+path, bytes.NewReader(encoded))
 	if err != nil {
-		return fmt.Errorf("bird: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("bird: %s: %w", path, err))
 	}
 	request.Header.Set("Authorization", "AccessKey "+p.accessKey)
 	request.Header.Set("Content-Type", "application/json")
@@ -316,20 +317,20 @@ func (p *Provider) doVoice(ctx context.Context, method, path string, payload, in
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("bird: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("bird: %s: %w", path, err))
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return fmt.Errorf("bird: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail)))
+		return stack.Wrap(fmt.Errorf("bird: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return fmt.Errorf("bird: decode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("bird: decode %s: %w", path, err))
 	}
 	return nil
 }
@@ -351,14 +352,14 @@ func (p *Provider) send(
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("bird: encode %s: %w", path, err)
+			return stack.Wrap(fmt.Errorf("bird: encode %s: %w", path, err))
 		}
 		payload = bytes.NewReader(encoded)
 	}
 
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, payload)
 	if err != nil {
-		return fmt.Errorf("bird: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("bird: %s: %w", path, err))
 	}
 	request.Header.Set("Authorization", "Bearer "+p.accessKey)
 	request.Header.Set("Accept", "application/json")
@@ -373,20 +374,20 @@ func (p *Provider) send(
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("bird: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("bird: %s: %w", path, err))
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return fmt.Errorf("bird: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail)))
+		return stack.Wrap(fmt.Errorf("bird: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return fmt.Errorf("bird: decode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("bird: decode %s: %w", path, err))
 	}
 	return nil
 }
@@ -395,7 +396,7 @@ func (p *Provider) send(
 func idempotencyKey() (string, error) {
 	raw := make([]byte, 16)
 	if _, err := rand.Read(raw); err != nil {
-		return "", fmt.Errorf("bird: an order needs an idempotency key: %w", err)
+		return "", stack.Wrap(fmt.Errorf("bird: an order needs an idempotency key: %w", err))
 	}
 	return hex.EncodeToString(raw), nil
 }

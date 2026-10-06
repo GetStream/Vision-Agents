@@ -329,6 +329,16 @@ func (s *RoutingSuite) TestDefaultConfigPricesEveryProvider() {
 	}
 }
 
+func (s *RoutingSuite) TestDefaultConfigDeclaresAContextWindowForEveryTextModel() {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+
+	for _, provider := range config[LLM].Providers {
+		s.Positivef(provider.ContextWindow, "%s has no context_window, so a long call is never compacted before it overflows",
+			provider.Name())
+	}
+}
+
 func (s *RoutingSuite) TestDefaultConfigMeasuresTextModelsOnIntelligenceAndSpeed() {
 	config, err := DefaultConfig()
 	s.Require().NoError(err)

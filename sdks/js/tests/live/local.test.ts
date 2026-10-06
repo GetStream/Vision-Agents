@@ -73,15 +73,14 @@ describe("the local router", { skip: await unreachable(url) }, () => {
     const session = await agent.sessions.create({
       title,
       description: "opened by the local live suite",
-      project: "docs",
+      project_id: "docs",
       custom: { suite: "local" },
-      persist_conversation: true,
       llm: model,
     });
     remember(session);
 
     assert.equal(session.created.title, title);
-    assert.equal(session.created.project, "docs");
+    assert.equal(session.created.project_id, "docs");
     assert.deepEqual(session.created.custom, { suite: "local" });
     assert.match(
       session.conversationId,
@@ -100,20 +99,20 @@ describe("the local router", { skip: await unreachable(url) }, () => {
 
     const title = `Sendbird ${uniqueId("search")}`;
     const session = remember(
-      await agent.sessions.create({ title, persist_conversation: true, llm: model }),
+      await agent.sessions.create({ title, llm: model }),
     );
     await session.close();
 
     const listed = await agent.sessions.query({ limit: 50 });
     assert.ok(
-      listed.some((each) => each.id === session.id),
+      listed.items.some((each) => each.id === session.id),
       "a conversation that ended is not being listed",
     );
 
     const found = await agent.sessions.search("Sendbird", { limit: 50 });
     assert.ok(
-      found.some((each) => each.id === session.id),
-      `searching for the title found nothing; ${found.length} other results`,
+      found.items.some((each) => each.id === session.id),
+      `searching for the title found nothing; ${found.items.length} other results`,
     );
   });
 
@@ -130,7 +129,7 @@ describe("the local router", { skip: await unreachable(url) }, () => {
     await session.close();
 
     const found = await agent.sessions.search(title, { limit: 50 });
-    assert.equal(found.length, 0, "an incognito conversation was written down after all");
+    assert.equal(found.items.length, 0, "an incognito conversation was written down after all");
   });
 
   it("names the turn it answers, and writes down what the turn was made of", async (t) => {
@@ -140,7 +139,7 @@ describe("the local router", { skip: await unreachable(url) }, () => {
     }
 
     const session = remember(
-      await agent.sessions.create({ persist_conversation: true, llm: model }),
+      await agent.sessions.create({ llm: model }),
     );
 
     const answering = await session.responses.create("Reply with the single word: pong.");
@@ -180,8 +179,7 @@ describe("the local router", { skip: await unreachable(url) }, () => {
     const parent = remember(
       await agent.sessions.create({
         title: "the first ask",
-        project: "docs",
-        persist_conversation: true,
+        project_id: "docs",
         llm: model,
       }),
     );
@@ -191,7 +189,7 @@ describe("the local router", { skip: await unreachable(url) }, () => {
     assert.notEqual(forked.id, parent.id);
     assert.equal(forked.created.forked_from, parent.id);
     assert.equal(forked.created.title, "asked again");
-    assert.equal(forked.created.project, "docs", "what the fork did not mention it inherits");
+    assert.equal(forked.created.project_id, "docs", "what the fork did not mention it inherits");
     assert.notEqual(
       forked.conversationId,
       parent.conversationId,
@@ -202,7 +200,7 @@ describe("the local router", { skip: await unreachable(url) }, () => {
     await parent.close();
   });
 
-  it("rewinds to a turn, taking the later ones out of the conversation", async (t) => {
+  it("forks at a turn, since a stored text conversation cannot be rewound", async (t) => {
     if (!agent) {
       t.skip("this router has no agent configured to address by name");
       return;
@@ -225,14 +223,15 @@ describe("the local router", { skip: await unreachable(url) }, () => {
       }
     }
 
-    const [kept] = await session.responses.list();
+    const {
+      items: [kept],
+    } = await session.responses.list();
     assert.ok(kept, "the first turn was not written down");
-    await session.responses.rewind(kept);
-
-    const left = await session.responses.list();
-    assert.deepEqual(left.map((response) => response.id), [kept.id]);
     const forked = remember(await session.fork({ response_id: kept.id }));
     assert.equal(forked.created.forked_from, session.id);
+
+    const left = await session.responses.list();
+    assert.equal(left.items.length, 2, "the parent keeps every turn it had");
 
     await forked.close();
     await session.close();
@@ -244,7 +243,7 @@ describe("the local router", { skip: await unreachable(url) }, () => {
       return;
     }
 
-    const session = remember(await agent.sessions.create({ persist_conversation: true, llm: model }));
+    const session = remember(await agent.sessions.create({ llm: model }));
 
     await assert.rejects(
       () => session.responses.rewind("anything"),
@@ -288,9 +287,9 @@ describe("the local router", { skip: await unreachable(url) }, () => {
 
     await session.close();
 
-    const running = await agent.sessions.query({ state: "running", limit: 50 });
+    const running = await agent.sessions.query({ state: "live", limit: 50 });
     assert.ok(
-      !running.some((each) => each.id === session.id),
+      !running.items.some((each) => each.id === session.id),
       "a closed session is still listed as running",
     );
   });

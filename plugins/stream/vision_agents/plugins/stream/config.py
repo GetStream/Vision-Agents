@@ -16,12 +16,24 @@ from ._generated.api.default import (
     update_skill,
 )
 from ._generated.models import (
+    AgentChannels,
     AgentConfig,
     AgentConfigRequest,
+    AgentDispatch,
     AgentMode,
-    Error,
+    ChannelIdentity,
+    ChannelLineRequest,
+    DispatchSetting,
+    ErrorResponse,
+    Harness,
     KnowledgeDocument,
     KnowledgeUrlDeclaration,
+    McpServer,
+    PluginWithOptions,
+    SandboxOptions,
+    SimulationDeclaration,
+    SimulationDeclarationMode,
+    SimulationDeclarationTags,
     SkillRequest,
     SessionVideo,
     SyncAgentRequest,
@@ -32,7 +44,10 @@ from ._generated.models import Sandbox as SandboxProvider
 from .folder import (
     AGENT_STAMP,
     Folder,
+    MCPServerSettings,
+    PluginSettings,
     Settings,
+    Simulation,
     find,
     load,
     read_stamp,
@@ -109,8 +124,12 @@ async def sync_agent(
                 declared.title = page.title
             if page.description:
                 declared.description = page.description
+            if page.refresh_hours:
+                declared.refresh_hours = page.refresh_hours
             pages.append(declared)
         body.knowledge_urls = pages
+    if folder.simulations is not None:
+        body.simulations = [_simulation(item) for item in folder.simulations]
     _declare_settings(body, folder.settings)
 
     result = _answer(await sync_agent_request.asyncio(client=client, body=body))
@@ -119,6 +138,9 @@ async def sync_agent(
         logger.info("agent %s is already in sync", folder.name)
     else:
         logger.info("synced agent %s", folder.name)
+    if isinstance(result.warnings, list):
+        for warning in result.warnings:
+            logger.warning("synced agent %s with a warning: %s", folder.name, warning)
     return result
 
 
@@ -160,7 +182,7 @@ async def define_agent(
     name: str,
     instructions: str = "",
     llm: str = "",
-    subagent: str = "",
+    thinking_llm: str = "",
     stt: str = "",
     tts: str = "",
     voice: str = "",
@@ -187,7 +209,8 @@ async def define_agent(
         name: What the config is called, which is also how it is found again.
         instructions: The system prompt.
         llm: The model that answers.
-        subagent: The model delegated work runs on.
+        thinking_llm: The model a voice agent hands its skills to. Only for a voice
+            agent: a text agent runs everything on its llm.
         video_source: Source used by skills that capture video.
         video_max_frames: Number of retained frames to capture, from 1 to 8.
         stt: The model that transcribes, for a config a call will use.
@@ -216,8 +239,8 @@ async def define_agent(
         wanted.instructions = instructions
     if llm:
         wanted.llm = llm
-    if subagent:
-        wanted.subagent = subagent
+    if thinking_llm:
+        wanted.thinking_llm = thinking_llm
     if video_source is not None or video_max_frames is not None:
         wanted.video = SessionVideo()
         if video_source is not None:
@@ -313,34 +336,131 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
         body.sts = settings.sts
     if settings.voice:
         body.voice = settings.voice
+    if settings.speed:
+        body.speed = settings.speed
     if settings.llm:
         body.llm = settings.llm
-    if settings.subagent:
-        body.subagent = settings.subagent
+    if settings.harness:
+        body.harness = Harness(settings.harness)
+    if settings.thinking_llm:
+        body.thinking_llm = settings.thinking_llm
     if settings.video_max_frames:
         body.video = SessionVideo(
             source=settings.video_source, max_frames=settings.video_max_frames
         )
+    if settings.dispatch is not None:
+        body.dispatch = AgentDispatch()
+        if "incoming_call" in settings.dispatch:
+            body.dispatch.incoming_call = DispatchSetting(
+                settings.dispatch["incoming_call"]
+            )
+        if "text" in settings.dispatch:
+            body.dispatch.text = DispatchSetting(settings.dispatch["text"])
     if settings.search:
         body.search = settings.search
     if settings.greeting:
         body.greeting = settings.greeting
-    if settings.plugins:
-        body.plugins = settings.plugins
+    if settings.agent_plugins:
+        body.agent_plugins = [
+            _plugin_entry(plugin) for plugin in settings.agent_plugins
+        ]
+    if settings.user_plugins:
+        body.user_plugins = [_plugin_entry(plugin) for plugin in settings.user_plugins]
+    if settings.mcp_servers:
+        body.mcp_servers = [_mcp_server(server) for server in settings.mcp_servers]
+    if settings.channels is not None:
+        declared = AgentChannels()
+        if settings.channels.whatsapp is not None:
+            declared.whatsapp = ChannelLineRequest(
+                number=settings.channels.whatsapp.number
+            )
+        if settings.channels.sms is not None:
+            declared.sms = ChannelLineRequest(number=settings.channels.sms.number)
+        if settings.channels.imessage is not None:
+            declared.imessage = ChannelLineRequest(
+                number=settings.channels.imessage.number
+            )
+        if settings.channels.identity:
+            declared.identity = ChannelIdentity(settings.channels.identity)
+        body.channels = declared
     if settings.keyterms:
         body.keyterms = settings.keyterms
     if settings.sandbox:
         body.sandbox = SandboxProvider(settings.sandbox)
+    if settings.sandbox_options is not None:
+        options = settings.sandbox_options
+        body.sandbox_options = SandboxOptions(
+            image=options.image,
+            setup=options.setup,
+            timeout_ms=int(options.timeout_seconds * 1000),
+            cpu=options.cpu,
+            memory_gb=options.memory_gb,
+            disk_gb=options.disk_gb,
+        )
     if settings.tags:
         tags = SyncAgentRequestTags()
         tags.additional_properties = dict(settings.tags)
         body.tags = tags
 
 
-def _answer(answer: Union[T, Error, None]) -> T:
+def _plugin_entry(plugin: PluginSettings) -> PluginWithOptions | str:
+    """A plugin as the router takes it: its id alone when nothing else is said about it."""
+    if not (plugin.readonly or plugin.scopes or plugin.toolsets or plugin.tools):
+        return plugin.name
+    declared = PluginWithOptions(name=plugin.name)
+    if plugin.readonly:
+        declared.readonly = True
+    if plugin.scopes:
+        declared.scopes = plugin.scopes
+    if plugin.toolsets:
+        declared.toolsets = plugin.toolsets
+    if plugin.tools:
+        declared.tools = plugin.tools
+    return declared
+
+
+def _mcp_server(server: MCPServerSettings) -> McpServer:
+    declared = McpServer(name=server.name, url=server.url, tools=server.tools)
+    if server.scopes:
+        declared.scopes = server.scopes
+    if server.user:
+        declared.user = True
+    return declared
+
+
+def _simulation(simulation: Simulation) -> SimulationDeclaration:
+    """A declared simulation as the sync request carries it, with the unset ones left out."""
+    declared = SimulationDeclaration(
+        name=simulation.name,
+        scenario=simulation.scenario,
+        assertion=simulation.assertion,
+    )
+    if simulation.mode:
+        declared.mode = SimulationDeclarationMode(simulation.mode)
+    if simulation.variations > 0:
+        declared.variations = simulation.variations
+    if simulation.max_turns > 0:
+        declared.max_turns = simulation.max_turns
+    for name in (
+        "caller_target",
+        "judge_target",
+        "caller_stt",
+        "caller_tts",
+        "caller_voice",
+    ):
+        if getattr(simulation, name):
+            setattr(declared, name, getattr(simulation, name))
+    if simulation.tags:
+        tags = SimulationDeclarationTags()
+        tags.additional_properties = dict(simulation.tags)
+        declared.tags = tags
+    return declared
+
+
+def _answer(answer: Union[T, ErrorResponse, None]) -> T:
     """Return what the router sent, raising what it said went wrong instead."""
-    if isinstance(answer, Error):
-        raise RuntimeError(answer.error)
+    if isinstance(answer, ErrorResponse):
+        raise RuntimeError(answer.error.message)
     if answer is None:
         raise RuntimeError("the router did not answer")
     return answer

@@ -2,6 +2,9 @@ package chatlog
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -10,6 +13,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -35,6 +39,16 @@ func (s *ChatLogSuite) SetupTest() {
 	s.log = log
 }
 
+// useChat points the log at Chat in memory, with its channel there the way Start leaves it.
+func (s *ChatLogSuite) useChat() *chattest.Server {
+	chat := chattest.NewServer(s.T())
+	s.log.client = chat.Client
+	_, err := chat.Client.Chat().GetOrCreateChannel(context.Background(), ChannelType, s.log.channel,
+		&getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &s.log.agent.ID}})
+	s.Require().NoError(err)
+	return chat
+}
+
 // queued returns what is waiting to be written. Nothing is started, so nothing drains it.
 func (s *ChatLogSuite) queued() []message {
 	var waiting []message
@@ -55,12 +69,14 @@ func (s *ChatLogSuite) TestAnAgentIdIsRequiredBecauseItNamesTheChannel() {
 }
 
 func (s *ChatLogSuite) TestCredentialsAreRequiredBecauseTheseAreServerSideWrites() {
-	s.T().Setenv("STREAM_API_KEY", "")
-	s.T().Setenv("STREAM_API_SECRET", "")
+	// Nothing is read from the environment, which names the deployment's app rather than
+	// the one a session is in.
+	s.T().Setenv("STREAM_API_KEY", "deploy-key")
+	s.T().Setenv("STREAM_API_SECRET", "deploy-secret")
 
 	_, err := New(Options{AgentID: "agent-1", Agent: User{ID: "vision-agent"}})
 
-	s.ErrorContains(err, "STREAM_API_KEY")
+	s.ErrorContains(err, "api key and secret")
 }
 
 func (s *ChatLogSuite) TestTheTranscriptIsStoredUnderTheAgentId() {
@@ -168,7 +184,7 @@ func (s *ChatLogSuite) TestAnInterruptedReplyIsClosedOut() {
 }
 
 func (s *ChatLogSuite) TestAFinishedModelReplyStaysUnspokenUntilTheVoiceFinishes() {
-	s.log.client = chattest.Client(s.T())
+	s.useChat()
 	writer := newWriter(s.log)
 	writer.handle(message{author: s.log.agent, text: "1, 2, 3, 4, 5", turnID: "turn-1", kind: piece})
 	writer.handle(message{author: s.log.agent, text: "1, 2, 3, 4, 5", turnID: "turn-1", kind: prepared})
@@ -178,8 +194,49 @@ func (s *ChatLogSuite) TestAFinishedModelReplyStaysUnspokenUntilTheVoiceFinishes
 	s.Empty(writer.writing, "speech finishing is what stores the reply")
 }
 
+func (s *ChatLogSuite) TestASavedArtifactIsStoredEvenWithoutASpokenReply() {
+	s.useChat()
+	s.log.visible = []string{"save_*"}
+	s.log.Record(agent.ToolRan{ID: "tool-one", TurnID: "turn-one", Tool: "save_canvas", Result: `{"schema_version":1,"status":"stored","publication":"pending","attachment":{"type":"canvas","artifact_id":"canvas-one","revision":2,"title":"Lilacs","sha256":"saved"}}`})
+	queued := s.queued()
+	s.Require().Len(queued, 1)
+	writer := newWriter(s.log)
+
+	writer.handle(queued[0])
+	// Repeated delivery has the same stored identity rather than a second card.
+	writer.handle(queued[0])
+
+	id := fmt.Sprintf("voice-artifact-%x", sha256.Sum256([]byte(s.log.channel+"\x00turn-one\x00tool-one")))
+	response, err := s.log.client.Chat().GetMessage(context.Background(), id, &getstream.GetMessageRequest{})
+	s.Require().NoError(err)
+	stored := response.Data.Message
+	s.Equal(SourceAgent, stored.Custom[SourceField])
+	s.Equal(false, stored.Custom[generatingField])
+	s.Require().Len(stored.Attachments, 1)
+	s.Equal("canvas", *stored.Attachments[0].Type)
+	s.Equal("Lilacs", *stored.Attachments[0].Title)
+	s.Equal("canvas-one", stored.Attachments[0].Custom["artifact_id"])
+	s.Equal(float64(2), stored.Attachments[0].Custom["revision"])
+	s.Empty(stored.Text, "the card must not duplicate the speech transcript")
+}
+
+func (s *ChatLogSuite) TestOnlyAShownToolsSuccessfulStoredReceiptMakesACard() {
+	s.log.visible = []string{"save_*"}
+	valid := `{"schema_version":1,"status":"stored","publication":"pending","attachment":{"type":"canvas","artifact_id":"canvas-one","revision":1,"title":"Lilacs"}}`
+	for _, event := range []agent.ToolRan{
+		{ID: "one", TurnID: "turn", Tool: "save_canvas", Result: valid, Err: errors.New("denied")},
+		{ID: "two", TurnID: "turn", Tool: "export_crm", Result: valid},
+		{ID: "three", TurnID: "turn", Tool: "save_canvas", Result: `{"status":"not_stored"}`},
+		{ID: "four", Tool: "save_canvas", Result: valid},
+	} {
+		s.log.Record(event)
+	}
+
+	s.Empty(s.queued())
+}
+
 func (s *ChatLogSuite) TestAnInterruptedReplyIsNotStoredAsFullySpoken() {
-	s.log.client = chattest.Client(s.T())
+	s.useChat()
 	writer := newWriter(s.log)
 	writer.handle(message{author: s.log.agent, text: "1, 2, 3, 4, 5, 6, 7, 8, 9, 10", turnID: "turn-1", kind: piece})
 	writer.show()
@@ -199,7 +256,7 @@ func (s *ChatLogSuite) TestAnInterruptedReplyIsNotStoredAsFullySpoken() {
 }
 
 func (s *ChatLogSuite) TestANativePartialAfterInterruptIsKeptAsInterrupted() {
-	s.log.client = chattest.Client(s.T())
+	s.useChat()
 	writer := newWriter(s.log)
 	writer.handle(message{author: s.log.agent, turnID: "turn-1", kind: interrupt})
 	writer.handle(message{author: s.log.agent, text: "One,", turnID: "turn-1", kind: prepared})
@@ -259,13 +316,13 @@ func (s *ChatLogSuite) TestSomethingTheAgentWroteRatherThanSaidIsStillTheAgents(
 func (s *ChatLogSuite) TestTheTranscriptSaysWhichLinesTheAgentSaid() {
 	// Speakers are user ids, and an agent can be named anything, so whoever reads the
 	// transcript back cannot work out which side of the conversation a line is from.
-	s.log.client = chattest.Client(s.T())
+	s.useChat()
 	writer := newWriter(s.log)
 	writer.handle(message{author: User{ID: "alice"}, text: "hello", kind: whole, source: SourceSpeech})
 	writer.handle(message{author: s.log.agent, text: "hi there", kind: whole, source: SourceAgent})
 	reader := &Reader{client: s.log.client}
 
-	said, err := reader.Transcript(context.Background(), "agent-1")
+	said, err := reader.Transcript(context.Background(), Read{Channel: "agent-1"})
 
 	s.Require().NoError(err)
 	s.Require().Len(said, 2)
@@ -276,8 +333,188 @@ func (s *ChatLogSuite) TestTheTranscriptSaysWhichLinesTheAgentSaid() {
 	s.True(said[1].Agent)
 }
 
+// channel is what the channel holds, oldest first.
+func (s *ChatLogSuite) channel() []getstream.MessageResponse {
+	state := true
+	response, err := s.log.client.Chat().GetOrCreateChannel(context.Background(), ChannelType, s.log.channel,
+		&getstream.GetOrCreateChannelRequest{State: &state})
+	s.Require().NoError(err)
+	return response.Data.Messages
+}
+
+func (s *ChatLogSuite) TestWhatAParticipantIsSayingIsOneMessageThatSettles() {
+	s.useChat()
+	writer := newWriter(s.log)
+	alice := User{ID: "alice"}
+
+	writer.handle(message{author: alice, text: "where is", kind: hearing, source: SourceSpeech})
+	writer.show()
+	s.Require().Len(s.channel(), 1, "watchers see the words before the turn settles")
+	s.Equal(true, s.channel()[0].Custom[generatingField])
+
+	writer.handle(message{author: alice, text: "where is my order", kind: hearing, source: SourceSpeech})
+	writer.show()
+	writer.handle(message{author: alice, text: "Where is my order 1042?", kind: heard, source: SourceSpeech})
+
+	stored := s.channel()
+	s.Require().Len(stored, 1, "revisions update the message rather than adding one each")
+	s.Equal("Where is my order 1042?", stored[0].Text)
+	s.Equal(false, stored[0].Custom[generatingField])
+	s.Equal(SourceSpeech, stored[0].Custom[SourceField])
+	s.Empty(writer.listening)
+}
+
+func (s *ChatLogSuite) TestSpeechTheAgentIgnoredIsNotLeftInTheChannel() {
+	s.useChat()
+	writer := newWriter(s.log)
+	writer.handle(message{author: User{ID: "alice"}, text: "hang on, the door", kind: hearing, source: SourceSpeech})
+	writer.show()
+
+	s.Require().Len(s.channel(), 1, "watchers saw the words while they were heard")
+
+	writer.handle(message{author: User{ID: "alice"}, kind: ignored, source: SourceSpeech})
+
+	s.Empty(s.channel(), "an emptied message would read as one somebody sent")
+	s.Empty(writer.listening)
+}
+
+func (s *ChatLogSuite) TestSpeechThatNeverSettledIsRemovedWhenTheCallEnds() {
+	s.useChat()
+	writer := newWriter(s.log)
+	writer.handle(message{author: User{ID: "alice"}, text: "and one more", kind: hearing, source: SourceSpeech})
+	writer.show()
+
+	writer.closeOut()
+
+	s.Empty(s.channel(), "otherwise it says it is still being said forever, or is left empty")
+}
+
+func (s *ChatLogSuite) TestRetractingLeavesWhatWasSaidBefore() {
+	s.useChat()
+	writer := newWriter(s.log)
+	alice := User{ID: "alice"}
+	writer.handle(message{author: alice, text: "What time is it?", kind: heard, source: SourceSpeech})
+	writer.handle(message{author: alice, text: "hang on", kind: hearing, source: SourceSpeech})
+	writer.show()
+
+	writer.handle(message{author: alice, kind: ignored, source: SourceSpeech})
+
+	stored := s.channel()
+	s.Require().Len(stored, 1)
+	s.Equal("What time is it?", stored[0].Text)
+}
+
 func (s *ChatLogSuite) TestAnEmptyWrittenReplyIsNotStored() {
 	s.log.Reply("")
 
 	s.Empty(s.queued())
+}
+
+func (s *ChatLogSuite) TestATranscriptChannelIsStampedWithItsCustomer() {
+	// Reading a transcript back checks whose channel it is, which only works if the
+	// channel says so: a call row names an agent id, and an agent id is anybody's to pick.
+	chat := chattest.NewServer(s.T())
+	log, err := New(Options{
+		AgentID: "agent-1", CustomerID: "customer-1",
+		Agent: User{ID: "vision-agent"}, APIKey: "key", APISecret: "secret",
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	log.client = chat.Client
+
+	s.Require().NoError(log.Start(context.Background()))
+	log.Close()
+
+	created, ok := chat.Channel("agent-1")
+	s.Require().True(ok)
+	s.Equal("customer-1", created["custom"].(map[string]any)[conversation.CustomerField])
+}
+
+func (s *ChatLogSuite) TestReadingATranscriptCreatesNoChannel() {
+	// A get-or-create here would leave an empty channel in the app for every call that
+	// was asked about and never written.
+	chat := chattest.NewServer(s.T())
+	reader := NewReaderFromClient(chat.Client)
+
+	said, err := reader.Transcript(context.Background(), Read{Channel: "agent-never", Customer: "customer-1"})
+
+	s.Require().NoError(err)
+	s.Empty(said)
+	_, exists := chat.Channel("agent-never")
+	s.False(exists)
+}
+
+func (s *ChatLogSuite) TestATranscriptIsReadOnlyFromAChannelTheCustomerHolds() {
+	chat := s.useChat()
+	_, err := chat.Client.Chat().GetOrCreateChannel(context.Background(), ChannelType, s.log.channel,
+		&getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{
+			CreatedByID: &s.log.agent.ID, Custom: map[string]any{conversation.CustomerField: "customer-2"},
+		}})
+	s.Require().NoError(err)
+	writer := newWriter(s.log)
+	writer.handle(message{author: User{ID: "alice"}, text: "hello", kind: whole, source: SourceSpeech})
+	reader := NewReaderFromClient(chat.Client)
+
+	theirs, err := reader.Transcript(context.Background(), Read{Channel: s.log.channel, Customer: "customer-2"})
+	s.Require().NoError(err)
+	mine, err := reader.Transcript(context.Background(), Read{Channel: s.log.channel, Customer: "customer-1"})
+	s.Require().NoError(err)
+
+	s.Len(theirs, 1)
+	s.Empty(mine, "a channel stamped for another customer is not this one's to read")
+}
+
+func (s *ChatLogSuite) TestAConversationBoundCallsTranscriptHoldsOnlyItsCall() {
+	// A call bound to a conversation writes into that conversation's channel, beside what
+	// was typed before and after it.
+	chat := s.useChat()
+	writer := newWriter(s.log)
+	before := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+	during := before.Add(10 * time.Minute)
+	after := during.Add(10 * time.Minute)
+
+	chat.At(before)
+	s.typed(chat, "alice", "typed before the call")
+	chat.At(during)
+	writer.handle(message{author: User{ID: "alice"}, text: "said on the call", kind: whole, source: SourceSpeech})
+	s.typed(chat, "agent-1", "the conversation's own reply, during the call")
+	chat.At(after)
+	s.typed(chat, "alice", "typed after the call")
+
+	said, err := NewReaderFromClient(chat.Client).Transcript(context.Background(), Read{
+		Channel: s.log.channel, Agent: "agent-1",
+		From: during.Add(-time.Minute), To: during.Add(time.Minute),
+	})
+
+	s.Require().NoError(err)
+	s.Require().Len(said, 2)
+	s.Equal("said on the call", said[0].Text)
+	s.False(said[0].Agent)
+	s.Equal("the conversation's own reply, during the call", said[1].Text)
+	s.True(said[1].Agent, "the conversation service writes no source; its author is the agent")
+}
+
+// typed writes a message the way the conversation service does, with no source.
+func (s *ChatLogSuite) typed(chat *chattest.Server, user, text string) {
+	_, err := chat.Client.Chat().SendMessage(context.Background(), ChannelType, s.log.channel,
+		&getstream.SendMessageRequest{Message: getstream.MessageRequest{Text: &text, UserID: &user}})
+	s.Require().NoError(err)
+}
+
+func (s *ChatLogSuite) TestATranscriptLeavesAnExistingParticipantAlone() {
+	// A participant is a real person in the app. Writing what they said must not replace
+	// their profile with the name the call knew them by.
+	chat := s.useChat()
+	chat.PutUser(map[string]any{"id": "alice", "name": "Alice Example", "image": "https://example.com/alice.png"})
+	writer := newWriter(s.log)
+
+	writer.handle(message{author: User{ID: "alice", Name: "alice"}, text: "hello", kind: whole, source: SourceSpeech})
+	writer.handle(message{author: User{ID: "bob", Name: "Bob"}, text: "hi", kind: whole, source: SourceSpeech})
+
+	alice, _ := chat.User("alice")
+	s.Equal("Alice Example", alice["name"])
+	s.Equal("https://example.com/alice.png", alice["image"])
+	bob, created := chat.User("bob")
+	s.Require().True(created, "somebody the app has never seen is still created")
+	s.Equal("Bob", bob["name"])
 }

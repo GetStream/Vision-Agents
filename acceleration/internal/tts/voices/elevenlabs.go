@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
 )
 
@@ -47,39 +48,39 @@ func NewElevenLabs(options ElevenLabsOptions) (*ElevenLabs, error) {
 // Prepare uploads the recordings and returns the voice id sessions ask for.
 func (e *ElevenLabs) Prepare(ctx context.Context, request Request) (string, error) {
 	if err := request.Validate(); err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 
 	body := newForm()
 	if err := body.field("name", request.Name); err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 	if err := body.field("description", request.Description); err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 	// Every recording goes under the same field name, which is how the endpoint takes
 	// more than one.
 	for _, sample := range request.Samples {
 		if err := body.file("files", sample); err != nil {
-			return "", err
+			return "", stack.Wrap(err)
 		}
 	}
 	content, contentType, err := body.done()
 	if err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 
 	url := strings.TrimSuffix(e.options.BaseURL, "/") + "/v1/voices/add"
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, url, content)
 	if err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 	httpRequest.Header.Set("xi-api-key", e.options.APIKey)
 	httpRequest.Header.Set("Content-Type", contentType)
 
 	response, err := e.client.Do(httpRequest)
 	if err != nil {
-		return "", fmt.Errorf("voices: elevenlabs clone: %w", err)
+		return "", stack.Wrap(fmt.Errorf("voices: elevenlabs clone: %w", err))
 	}
 	defer response.Body.Close()
 
@@ -91,10 +92,10 @@ func (e *ElevenLabs) Prepare(ctx context.Context, request Request) (string, erro
 		VoiceID string `json:"voice_id"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&created); err != nil {
-		return "", fmt.Errorf("voices: elevenlabs clone: decode: %w", err)
+		return "", stack.Wrap(fmt.Errorf("voices: elevenlabs clone: decode: %w", err))
 	}
 	if created.VoiceID == "" {
-		return "", errors.New("voices: elevenlabs took the recordings but named no voice")
+		return "", stack.Wrap(errors.New("voices: elevenlabs took the recordings but named no voice"))
 	}
 	return created.VoiceID, nil
 }
@@ -116,13 +117,13 @@ func (e *ElevenLabs) List(ctx context.Context) ([]Library, error) {
 	url := strings.TrimSuffix(e.options.BaseURL, "/") + "/v1/voices?show_legacy=false"
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return nil, stack.Wrap(err)
 	}
 	httpRequest.Header.Set("xi-api-key", e.options.APIKey)
 
 	response, err := e.client.Do(httpRequest)
 	if err != nil {
-		return nil, fmt.Errorf("voices: elevenlabs list: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("voices: elevenlabs list: %w", err))
 	}
 	defer response.Body.Close()
 
@@ -140,7 +141,7 @@ func (e *ElevenLabs) List(ctx context.Context) ([]Library, error) {
 		} `json:"voices"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&listed); err != nil {
-		return nil, fmt.Errorf("voices: elevenlabs list: decode: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("voices: elevenlabs list: decode: %w", err))
 	}
 
 	found := make([]Library, 0, len(listed.Voices))
@@ -174,13 +175,13 @@ func (e *ElevenLabs) Preview(ctx context.Context, id string) (Speech, error) {
 	url := strings.TrimSuffix(e.options.BaseURL, "/") + "/v1/voices/" + id
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return Speech{}, err
+		return Speech{}, stack.Wrap(err)
 	}
 	httpRequest.Header.Set("xi-api-key", e.options.APIKey)
 
 	response, err := e.client.Do(httpRequest)
 	if err != nil {
-		return Speech{}, fmt.Errorf("voices: elevenlabs preview: %w", err)
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: elevenlabs preview: %w", err))
 	}
 	defer response.Body.Close()
 
@@ -191,10 +192,10 @@ func (e *ElevenLabs) Preview(ctx context.Context, id string) (Speech, error) {
 		PreviewURL string `json:"preview_url"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&voice); err != nil {
-		return Speech{}, fmt.Errorf("voices: elevenlabs preview: decode: %w", err)
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: elevenlabs preview: decode: %w", err))
 	}
 	if voice.PreviewURL == "" {
-		return Speech{}, fmt.Errorf("voices: elevenlabs has published no sample of %s", id)
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: elevenlabs has published no sample of %s", id))
 	}
 	return fetchPreview(ctx, e.client, elevenlabs.ProviderName, voice.PreviewURL, nil, "audio/mpeg")
 }
@@ -208,13 +209,13 @@ func (e *ElevenLabs) Delete(ctx context.Context, externalID string) error {
 	url := strings.TrimSuffix(e.options.BaseURL, "/") + "/v1/voices/" + externalID
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	httpRequest.Header.Set("xi-api-key", e.options.APIKey)
 
 	response, err := e.client.Do(httpRequest)
 	if err != nil {
-		return fmt.Errorf("voices: elevenlabs delete: %w", err)
+		return stack.Wrap(fmt.Errorf("voices: elevenlabs delete: %w", err))
 	}
 	defer response.Body.Close()
 

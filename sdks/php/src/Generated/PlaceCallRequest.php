@@ -18,16 +18,16 @@ final readonly class PlaceCallRequest
         public ?string $callId = null,
         // The Stream call type. Omit for "agent".
         public ?string $callType = null,
-        // How long to ring before giving up. Omit to leave the vendor's default, which is long enough to reach voicem...
-        public ?int $ringTimeoutSeconds = null,
-        // Digits pressed once the person answers, for reaching an extension behind a menu, e.g. "ww1234#". w is a sho...
-        public ?string $initialDigits = null,
         // Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, s...
         /** @var array<string, string>|null */
         public ?array $custom = null,
         // Carried to the person's leg as custom SIP headers. Only some vendors can express these, and one that cannot...
         /** @var array<string, string>|null */
         public ?array $headers = null,
+        // Digits pressed once the person answers, for reaching an extension behind a menu, e.g. "ww1234#". w is a sho...
+        public ?string $initialDigits = null,
+        // How long to ring before giving up. Omit to leave the vendor's default, which is long enough to reach voicem...
+        public ?int $ringTimeoutSeconds = null,
         /** @var array<string, string>|null */
         public ?array $tags = null,
     ) {
@@ -43,10 +43,10 @@ final readonly class PlaceCallRequest
             to: Json::string($data, 'to'),
             callId: array_key_exists('call_id', $data) && $data['call_id'] !== null ? Json::string($data, 'call_id') : null,
             callType: array_key_exists('call_type', $data) && $data['call_type'] !== null ? Json::string($data, 'call_type') : null,
-            ringTimeoutSeconds: array_key_exists('ring_timeout_seconds', $data) && $data['ring_timeout_seconds'] !== null ? Json::int($data, 'ring_timeout_seconds') : null,
-            initialDigits: array_key_exists('initial_digits', $data) && $data['initial_digits'] !== null ? Json::string($data, 'initial_digits') : null,
             custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::stringMap($data, 'custom') : null,
             headers: array_key_exists('headers', $data) && $data['headers'] !== null ? Json::stringMap($data, 'headers') : null,
+            initialDigits: array_key_exists('initial_digits', $data) && $data['initial_digits'] !== null ? Json::string($data, 'initial_digits') : null,
+            ringTimeoutSeconds: array_key_exists('ring_timeout_seconds', $data) && $data['ring_timeout_seconds'] !== null ? Json::int($data, 'ring_timeout_seconds') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
         );
     }
@@ -67,17 +67,17 @@ final readonly class PlaceCallRequest
         if ($this->callType !== null) {
             $out['call_type'] = $this->callType;
         }
-        if ($this->ringTimeoutSeconds !== null) {
-            $out['ring_timeout_seconds'] = $this->ringTimeoutSeconds;
-        }
-        if ($this->initialDigits !== null) {
-            $out['initial_digits'] = $this->initialDigits;
-        }
         if ($this->custom !== null) {
             $out['custom'] = $this->custom;
         }
         if ($this->headers !== null) {
             $out['headers'] = $this->headers;
+        }
+        if ($this->initialDigits !== null) {
+            $out['initial_digits'] = $this->initialDigits;
+        }
+        if ($this->ringTimeoutSeconds !== null) {
+            $out['ring_timeout_seconds'] = $this->ringTimeoutSeconds;
         }
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;

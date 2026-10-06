@@ -225,7 +225,7 @@ func (s *TTSRouterSuite) TestAVendorNamedForALiveCallGetsTheirStreamingModel() {
 	var built []routing.Spec
 	router := s.newStubbedRouter(&built)
 
-	// ElevenLabs has four models here, and eleven_v3 is the one that returns a file
+	// ElevenLabs has six models here, and eleven_v3 is the one that returns a file
 	// rather than streaming. A socket asking for the vendor by name must not get it.
 	session, err := router.Start(s.ctx, Request{
 		CustomerID: "acme",
@@ -271,6 +271,55 @@ func (s *TTSRouterSuite) TestAPolicyNoVoiceMeetsIsRefusedRatherThanServedAnyway(
 
 	s.Error(err, "speaking somewhere the caller ruled out is worse than not speaking")
 	s.Empty(built, "nothing should have been built for a request nobody may serve")
+}
+
+func (s *TTSRouterSuite) TestASpeedIsOnlyAskedOfAVoiceThatCanChangeIt() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+	speed := 0.9
+
+	// The dialogue models are listed first, and none of them can be sped up.
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Options: options.TTS{
+			Providers: []string{"elevenlabs/eleven_v3_conversational", "elevenlabs/eleven_flash_v2_5"},
+			Speed:     &speed,
+		},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("eleven_flash_v2_5", session.Model())
+	s.Require().Len(built, 1)
+	s.Equal(&speed, built[0].TTS.Speed)
+}
+
+func (s *TTSRouterSuite) TestASpeedNoVoiceCanChangeIsRefused() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+	speed := 0.9
+
+	_, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Options: options.TTS{
+			Providers: []string{"elevenlabs/eleven_v3_conversational"},
+			Speed:     &speed,
+		},
+	})
+
+	s.Error(err, "a voice that ignores the speed asked of it is worse than one that says it cannot")
+	s.Empty(built)
+}
+
+func (s *TTSRouterSuite) TestRegistryRefusesASpeedOutsideTheVendorsRange() {
+	s.T().Setenv("ELEVENLABS_API_KEY", "test-key")
+	speed := 1.5
+
+	_, err := DefaultRegistry().Build("elevenlabs", routing.Spec{
+		Model: "eleven_flash_v2_5",
+		TTS:   options.TTS{Speed: &speed},
+	})
+	s.ErrorContains(err, "outside 0.7 to 1.2")
 }
 
 func (s *TTSRouterSuite) TestAnOverwriteReachesTheVendorItNames() {

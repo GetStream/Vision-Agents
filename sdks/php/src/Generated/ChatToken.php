@@ -13,14 +13,14 @@ final readonly class ChatToken
     public function __construct(
         // The Stream app the channel is in, which the browser SDK connects to.
         public string $apiKey,
+        // The channel holding the conversation, which is the agent id.
+        public string $channelId,
+        // Always agent, which is the type a conversation is written to.
+        public string $channelType,
+        public \DateTimeImmutable $expiresAt,
         public string $token,
         public string $userId,
         public string $userName,
-        // Always agent, which is the type a conversation is written to.
-        public string $channelType,
-        // The channel holding the conversation, which is the agent id.
-        public string $channelId,
-        public \DateTimeImmutable $expiresAt,
     ) {
     }
 
@@ -31,12 +31,12 @@ final readonly class ChatToken
     {
         return new self(
             apiKey: Json::string($data, 'api_key'),
+            channelId: Json::string($data, 'channel_id'),
+            channelType: Json::string($data, 'channel_type'),
+            expiresAt: Json::date($data, 'expires_at'),
             token: Json::string($data, 'token'),
             userId: Json::string($data, 'user_id'),
             userName: Json::string($data, 'user_name'),
-            channelType: Json::string($data, 'channel_type'),
-            channelId: Json::string($data, 'channel_id'),
-            expiresAt: Json::date($data, 'expires_at'),
         );
     }
 
@@ -49,12 +49,12 @@ final readonly class ChatToken
     {
         $out = [];
         $out['api_key'] = $this->apiKey;
+        $out['channel_id'] = $this->channelId;
+        $out['channel_type'] = $this->channelType;
+        $out['expires_at'] = Json::dateValue($this->expiresAt);
         $out['token'] = $this->token;
         $out['user_id'] = $this->userId;
         $out['user_name'] = $this->userName;
-        $out['channel_type'] = $this->channelType;
-        $out['channel_id'] = $this->channelId;
-        $out['expires_at'] = Json::dateValue($this->expiresAt);
         return $out;
     }
 }

@@ -5,7 +5,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...models.image_generation import ImageGeneration
 from ...models.image_generation_request import ImageGenerationRequest
 from ...types import Response
@@ -32,31 +32,36 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | ImageGeneration | None:
+) -> ErrorResponse | ImageGeneration | None:
     if response.status_code == 200:
         response_200 = ImageGeneration.from_dict(response.json())
 
         return response_200
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
 
     if response.status_code == 404:
-        response_404 = Error.from_dict(response.json())
+        response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 500:
+        response_500 = ErrorResponse.from_dict(response.json())
+
+        return response_500
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -66,7 +71,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | ImageGeneration]:
+) -> Response[ErrorResponse | ImageGeneration]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -79,7 +84,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ImageGenerationRequest,
-) -> Response[Error | ImageGeneration]:
+) -> Response[ErrorResponse | ImageGeneration]:
     """Draw pictures from a prompt, and return them
 
      Routed like search: a target or a priority list picks the model, failover and billing work as they
@@ -101,7 +106,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | ImageGeneration]
+        Response[ErrorResponse | ImageGeneration]
     """
 
     kwargs = _get_kwargs(
@@ -119,7 +124,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: ImageGenerationRequest,
-) -> Error | ImageGeneration | None:
+) -> ErrorResponse | ImageGeneration | None:
     """Draw pictures from a prompt, and return them
 
      Routed like search: a target or a priority list picks the model, failover and billing work as they
@@ -141,7 +146,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | ImageGeneration
+        ErrorResponse | ImageGeneration
     """
 
     return sync_detailed(
@@ -154,7 +159,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ImageGenerationRequest,
-) -> Response[Error | ImageGeneration]:
+) -> Response[ErrorResponse | ImageGeneration]:
     """Draw pictures from a prompt, and return them
 
      Routed like search: a target or a priority list picks the model, failover and billing work as they
@@ -176,7 +181,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | ImageGeneration]
+        Response[ErrorResponse | ImageGeneration]
     """
 
     kwargs = _get_kwargs(
@@ -192,7 +197,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: ImageGenerationRequest,
-) -> Error | ImageGeneration | None:
+) -> ErrorResponse | ImageGeneration | None:
     """Draw pictures from a prompt, and return them
 
      Routed like search: a target or a priority list picks the model, failover and billing work as they
@@ -214,7 +219,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | ImageGeneration
+        ErrorResponse | ImageGeneration
     """
 
     return (

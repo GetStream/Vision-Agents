@@ -6,25 +6,40 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/getsentry/sentry-go"
 	"github.com/hibiken/asynq"
+	"github.com/redis/rueidis"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/agent/streamedge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/apikey"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2cc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	dlctelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/dlc/telnyx"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eotdefaults"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -35,24 +50,31 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search/exa"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/fish"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/inworld"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/users"
 )
 
 // release is the version this binary was built from, set with -X main.release
@@ -61,21 +83,24 @@ import (
 var release string
 
 const (
-	shutdownGrace     = 10 * time.Second
-	readHeaderTimeout = 10 * time.Second
+	// authKEKEnvVar and authKEKVersionEnvVar name the connector credential keyring: the
+	// keys are authKEKEnvVar with a _V<n> suffix, and authKEKVersionEnvVar says which one
+	// seals new rows.
+	authKEKEnvVar        = "ROUTER_AUTH_KEK"
+	authKEKVersionEnvVar = "ROUTER_AUTH_KEK_VERSION"
+	shutdownGrace        = 10 * time.Second
+	readHeaderTimeout    = 10 * time.Second
 	// crawlTimeout bounds reading one page into a knowledge base. It is generous compared
 	// to a search because nobody is on the phone waiting for it: a page that has to be
 	// crawled live rather than served from an index takes seconds, and giving up on it
 	// leaves a subscription that never works.
 	crawlTimeout = 60 * time.Second
-	// lastUsedInterval throttles how often a key's use is recorded. Writing on every
-	// request would double the writes of a busy key, and recording nothing means nobody
-	// can answer whether a key is still in use, so nobody ever revokes one.
-	lastUsedInterval = time.Minute
 	// sentryFlushTimeout bounds how long the process spends delivering buffered
 	// events on the way out. Short, because this runs while the orchestrator is
 	// already counting down the termination grace period.
 	sentryFlushTimeout = 2 * time.Second
+	// traceFlushTimeout bounds the same thing for spans, on the same reasoning.
+	traceFlushTimeout = 2 * time.Second
 )
 
 // usage is what the binary does besides serving.
@@ -84,6 +109,7 @@ const usage = `usage: router [--config path] [command]
   serve                 serve the API (the default)
   keys create           mint a credential for an app, printing the secret once
   replicate             copy another deployment's data here and follow its changes
+  stream-apps           look after the Stream apps customers registered in app mode
 `
 
 func main() {
@@ -163,6 +189,8 @@ func dispatchCommand(command string, args []string, settings config.Config, logg
 		return runKeys(args, settings, logger)
 	case "replicate":
 		return runReplicate(args, settings, logger)
+	case "stream-apps":
+		return runStreamApps(args, settings, logger)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
@@ -191,12 +219,160 @@ func logLevel(settings config.Config) slog.Level {
 	return level
 }
 
+// newSecretSealer builds the keyring the secrets the router holds for its customers are
+// sealed under: connector credentials, Stream app keys and channel credentials. Connectors
+// and app mode refuse to start without one; channels use it when it is set and are off
+// otherwise, so it is nil only when nothing requires it and no key is set. It does not
+// depend on auth.mode: a proxy deployment holds them as much as an api_key one does.
+//
+// The keyring is every ROUTER_AUTH_KEK_V1, _V2 and so on that is set, with
+// ROUTER_AUTH_KEK_VERSION naming the one that seals new rows. That variable picks the
+// writer and is never a ceiling: moving it back to an older key must leave the newer ones
+// loaded, or the rows sealed under them stop opening. auth.kek is version 1, so a
+// deployment that already has it needs nothing more.
+func newSecretSealer(settings config.Config) (*auth.Sealer, error) {
+	var holders []string
+	if settings.Connectors.Enabled {
+		holders = append(holders, "connectors.enabled")
+	}
+	if settings.Stream.Tenancy == config.TenancyApp {
+		holders = append(holders, "stream.tenancy="+config.TenancyApp)
+	}
+	if len(holders) == 0 {
+		if !keyringSet(settings) {
+			return nil, nil
+		}
+		return loadKeyring(settings, "channels need")
+	}
+	// The setting that needs the keyring is what each refusal names, so whoever reads it
+	// knows which change brought it on.
+	needs := strings.Join(holders, " and ") + " need"
+	if len(holders) == 1 {
+		needs = holders[0] + " needs"
+	}
+	return loadKeyring(settings, needs)
+}
+
+// keyringSet reports whether any key of the keyring is set: auth.kek, or a
+// ROUTER_AUTH_KEK_V<n>.
+func keyringSet(settings config.Config) bool {
+	if settings.Auth.KEK != "" {
+		return true
+	}
+	for _, variable := range os.Environ() {
+		name, key, _ := strings.Cut(variable, "=")
+		if strings.HasPrefix(name, authKEKEnvVar+"_V") && key != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// loadKeyring reads every ROUTER_AUTH_KEK_V<n> and auth.kek into a keyring, with
+// ROUTER_AUTH_KEK_VERSION naming the writer. needs says which setting requires it, for
+// each refusal to name.
+func loadKeyring(settings config.Config, needs string) (*auth.Sealer, error) {
+	current := auth.KEKVersion
+	if configured := os.Getenv(authKEKVersionEnvVar); configured != "" {
+		version, err := strconv.Atoi(configured)
+		if err != nil || version < 1 {
+			// The value is left out on purpose: a key pasted into the wrong variable would
+			// otherwise reach the logs and Sentry with this error.
+			return nil, fmt.Errorf("%s %s to be a positive integer", needs, authKEKVersionEnvVar)
+		}
+		current = version
+	}
+	keys := make(map[int]string)
+	if settings.Auth.KEK != "" {
+		keys[1] = settings.Auth.KEK
+	}
+	for _, variable := range os.Environ() {
+		name, key, _ := strings.Cut(variable, "=")
+		suffix, ok := strings.CutPrefix(name, authKEKEnvVar+"_V")
+		version, err := strconv.Atoi(suffix)
+		// Only the plain spelling counts, so _V01 cannot stand in for _V1 and
+		// ROUTER_AUTH_KEK_VERSION is not read as a key.
+		if !ok || err != nil || version < 1 || strconv.Itoa(version) != suffix || key == "" {
+			continue
+		}
+		if version == 1 && keys[1] != "" && keys[1] != key {
+			return nil, fmt.Errorf("%s and %s_V1 are both version 1 and differ: set one of them",
+				authKEKEnvVar, authKEKEnvVar)
+		}
+		keys[version] = key
+	}
+	if keys[current] == "" {
+		if os.Getenv(authKEKVersionEnvVar) == "" {
+			return nil, fmt.Errorf("%s a key encryption keyring to seal the secrets it holds: "+
+				"set %s_V1 (%s is version 1)", needs, authKEKEnvVar, authKEKEnvVar)
+		}
+		// The version is not named: an all-digit key pasted into ROUTER_AUTH_KEK_VERSION
+		// parses as one, and naming it would send the key to the logs and Sentry. The
+		// versions that are set come from variable names, never from values.
+		return nil, fmt.Errorf("%s a key for the version %s names: "+
+			"set the matching %s_V<n> (versions set: %v)",
+			needs, authKEKVersionEnvVar, authKEKEnvVar, slices.Sorted(maps.Keys(keys)))
+	}
+	return auth.NewSealerWithKeyring(current, keys)
+}
+
+// connectorHTTPTimeout bounds one outbound request oauth2_code or oauth2_client_credentials
+// makes: a discovery fetch, a client registration, a code exchange or a token request. 10 s is the prototype's (defaultHTTPClient in
+// internal/mcp/oauth.go on codex/connector-support at cf62af0d), not a measured one.
+const connectorHTTPTimeout = 10 * time.Second
+
+// newConnectorRegistry is the connector adapters this deployment has: none when connectors
+// are off, so no connection and no custom connector can name a scheme, and oauth2_code,
+// oauth2_client_credentials, api_key, bearer and none when they are on. A new scheme is one more entry in the list
+// below. It follows the sealer: without a keyring no attempt or grant can be sealed,
+// so a scheme registered without one would take connections nothing could ever authorize.
+//
+// ClientMetadataURL is where the API serves the router's client metadata document
+// (api.ConnectorClientMetadataPath under public_url), and empty, which turns CIMD off, when
+// public_url is not https: CIMD section 3 allows only an https client_id URL. clients finds a
+// client registered in advance: the app's own from its record, the operator's from the
+// environment (api.ConnectorClients).
+func newConnectorRegistry(settings config.Config, clients oauth2code.ClientLookup) (core.Registry, error) {
+	if !settings.Connectors.Enabled {
+		return core.Registry{}, nil
+	}
+	code, err := oauth2code.New(connectorSchemeConfig(settings, clients))
+	if err != nil {
+		return core.Registry{}, err
+	}
+	clientCredentials, err := oauth2cc.New(oauth2cc.Config{HTTP: egress.NewClient(connectorHTTPTimeout, nil)})
+	if err != nil {
+		return core.Registry{}, err
+	}
+	schemes := map[string]core.Scheme{}
+	for _, scheme := range []core.Scheme{code, clientCredentials, apikey.New(), bearer.New(), none.New()} {
+		schemes[scheme.Name()] = scheme
+	}
+	// The verifiers a manifest's channel.verifier.kind may name; a new one is one more entry.
+	verifiers := map[string]core.Verifier{}
+	for _, verifier := range []core.Verifier{hmacheader.New()} {
+		verifiers[verifier.Name()] = verifier
+	}
+	return core.Registry{Schemes: schemes, Verifiers: verifiers}, nil
+}
+
+// connectorSchemeConfig is the oauth2code.Config newConnectorRegistry starts the scheme with.
+// A test runs it against a loopback fake by replacing HTTP and PublicEndpoint, which egress
+// refuses loopback for, and keeps the rest.
+func connectorSchemeConfig(settings config.Config, clients oauth2code.ClientLookup) oauth2code.Config {
+	return oauth2code.Config{
+		HTTP:              egress.NewClient(connectorHTTPTimeout, nil),
+		Clients:           clients,
+		ClientMetadataURL: api.ConnectorClientMetadataURL(settings.PublicURL),
+	}
+}
+
 // newAuthenticator builds the authenticator the deployment's mode asks for.
 //
 // api_key needs both a store to look keys up in and the key that unseals their secrets, and
 // says which is missing rather than starting and refusing every request for a reason only
 // visible in a 401.
-func newAuthenticator(settings config.Config, pgStore *store.Store, logger *slog.Logger) (auth.Authenticator, error) {
+func newAuthenticator(settings config.Config, configs *appconfig.Store, logger *slog.Logger) (auth.Authenticator, error) {
 	mode, err := auth.ParseMode(settings.Auth.Mode)
 	if err != nil {
 		return nil, err
@@ -212,54 +388,23 @@ func newAuthenticator(settings config.Config, pgStore *store.Store, logger *slog
 	case auth.Proxy:
 		logger.Warn("authenticating nothing: the caller is whoever the headers in front of "+
 			"this router say, so only a proxy that overwrites them should be able to reach it",
-			"mode", auth.Proxy, "set", "auth.mode")
-		return auth.New(mode, nil)
+			"mode", auth.Proxy, "set", "auth.mode", "proxy_declares_kind", settings.Auth.ProxyDeclaresKind)
+		return auth.NewProxy(auth.ProxyOptions{DeclaresKind: settings.Auth.ProxyDeclaresKind}), nil
 	case auth.Custom:
 		return nil, fmt.Errorf("auth.mode=%s has no authenticator in this binary: a deployment "+
 			"answering for itself embeds the module and passes api.WithAuthenticator", auth.Custom)
 	}
 
-	if pgStore == nil {
+	if configs == nil {
 		return nil, fmt.Errorf("auth.mode=%s needs postgres.dsn, because that is where the keys are",
 			auth.APIKey)
 	}
-	sealer, err := auth.NewSealer(settings.Auth.KEK)
+	sealer, err := loadKeyring(settings, "auth.mode="+string(auth.APIKey)+" needs")
 	if err != nil {
-		return nil, fmt.Errorf("auth.mode=%s needs auth.kek: %w", auth.APIKey, err)
+		return nil, err
 	}
 
-	return auth.New(mode, func(ctx context.Context, key string) (auth.App, error) {
-		// The shape of the key is checked before the database is, so a truncated paste
-		// costs nothing to reject.
-		if !auth.ValidKey(key) {
-			return auth.App{}, auth.ErrUnauthenticated
-		}
-		owner, err := pgStore.LiveAPIKey(ctx, key)
-		if err != nil {
-			return auth.App{}, auth.ErrUnauthenticated
-		}
-		secret, err := sealer.Open(owner.Sealed)
-		if err != nil {
-			return auth.App{}, fmt.Errorf("unseal key %s: %w", key, err)
-		}
-		if err := pgStore.TouchAPIKey(ctx, key, lastUsedInterval); err != nil {
-			logger.Debug("could not record key use", "key", key, "error", err)
-		}
-		// The app's settings came back on the same row, so which levels of end user it
-		// admits costs nothing beyond the lookup that was already happening. They are
-		// inverted on the way across because auth measures a caller against a zero value
-		// in the three modes that resolve no app at all, and that zero value has to admit
-		// everybody.
-		return auth.App{
-			OrganizationID: owner.OrganizationID,
-			AppID:          owner.AppID,
-			Secret:         secret,
-			Levels: auth.Levels{
-				NoAnonymous: !owner.Settings.AnonymousAllowed(),
-				NoGuest:     !owner.Settings.GuestAllowed(),
-			},
-		}, nil
-	})
+	return auth.New(mode, configs.Lookup(sealer))
 }
 
 func run(settings config.Config, logger *slog.Logger) error {
@@ -269,6 +414,32 @@ func run(settings config.Config, logger *slog.Logger) error {
 	capabilities, err := routing.LoadConfig(settings.RoutingConfig)
 	if err != nil {
 		return err
+	}
+
+	// Traces go nowhere unless the deployment names a collector in the environment, so
+	// this is a no-op on a laptop and on every deployment that has not asked for them.
+	flushTraces, err := tracing.Setup(ctx, "acceleration-router", release)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), traceFlushTimeout)
+		defer cancel()
+		if err := flushTraces(shutdown); err != nil {
+			logger.Error("could not flush the last traces", "error", err)
+		}
+	}()
+
+	// Checked before anything is opened, so a deployment that turned on something holding
+	// secrets without a keyring is refused at startup rather than on its first secret.
+	secrets, err := newSecretSealer(settings)
+	if err != nil {
+		return err
+	}
+	// Connectors seal under the same keyring, and only when they are on.
+	var connectorSecrets *auth.Sealer
+	if settings.Connectors.Enabled {
+		connectorSecrets = secrets
 	}
 
 	// Postgres and Redis are optional so the API can be brought up for inspection before
@@ -282,6 +453,17 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer pgStore.Close()
 	} else {
 		logger.Warn("no database configured, statistics will not be recorded", "setting", "postgres.dsn")
+	}
+	// After the store, which holds the apps' own OAuth clients oauth2_code looks up.
+	connectors, err := newConnectorRegistry(settings, api.ConnectorClients(pgStore, connectorSecrets, os.Getenv))
+	if err != nil {
+		return err
+	}
+	// Nothing asks it for a credential yet: the session's dispatcher will (T21, AI-851). The
+	// events endpoint revokes through it.
+	connectorResolver, err := newConnectorResolver(connectors, pgStore, connectorSecrets)
+	if err != nil {
+		return err
 	}
 
 	var liveClient *live.Client
@@ -322,15 +504,57 @@ func run(settings config.Config, logger *slog.Logger) error {
 			"messages", limits.MessagesPerDay, "tokens", limits.TokensPerDay)
 	}
 
+	// What every request is measured against -- the key it presented, the app behind it,
+	// their policies and what they have configured -- read through Redis and the cache
+	// rueidis keeps beside it. Without Redis it is Postgres on every read, which is what
+	// this deployment did before the cache existed.
+	var configs *appconfig.Store
+	if pgStore != nil {
+		configs, err = appconfig.New(appconfig.Options{
+			Store:    pgStore,
+			Address:  settings.Redis.Addr,
+			Username: settings.Redis.Username,
+			Password: settings.Redis.Password,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer configs.Close()
+	}
+
+	// Who each app is acting for, written down once per user rather than once per
+	// request: an LRU of the last few thousand this process saw, a key the replicas share
+	// in Redis, and the row underneath.
+	var endUsers *users.Recorder
+	if pgStore != nil {
+		endUsers, err = users.New(users.Options{
+			Store:    pgStore,
+			Address:  settings.Redis.Addr,
+			Username: settings.Redis.Username,
+			Password: settings.Redis.Password,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer endUsers.Close()
+	}
+
 	// Budgets, data policies and prompt injection screening are stored per organization
 	// and app, so a deployment without a database enforces none of them.
 	var policies *policy.Enforcer
 	var gate routing.Gate
-	if pgStore != nil {
-		if policies, err = policy.New(pgStore, logger); err != nil {
+	if configs != nil {
+		if policies, err = policy.New(configs, logger); err != nil {
 			return err
 		}
 		gate = policies
+	}
+
+	if !settings.Agent.SpeculativeReplies {
+		logger.Info("asking for each reply only once the flow controller has ruled",
+			"env", "ROUTER_SPECULATIVE_REPLIES")
 	}
 
 	trustedProxies, err := api.TrustedProxies(settings.TrustedProxies)
@@ -346,8 +570,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// resolver only reads the tables, so a deployment with a database but no bucket can
 	// still speak in voices another one prepared.
 	var resolver routing.VoiceResolver
-	if pgStore != nil {
-		resolver = voices.NewResolver(pgStore)
+	if configs != nil {
+		resolver = voices.NewResolver(configs)
 	}
 
 	bucket, err := blob.Open(ctx, settings.VoicesBucketURL)
@@ -448,6 +672,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		}
 		defer judging.Close()
 		routers[routing.LCM] = judging
+		streams.LCM = judging
 	}
 
 	if section, ok := capabilities[routing.LLM]; ok {
@@ -531,7 +756,32 @@ func run(settings config.Config, logger *slog.Logger) error {
 		streams.Image = imaging
 	}
 
-	telephony, err := buildPhone(settings, pgStore, liveClient, logger)
+	// Every Stream action taken for a customer, a call joined, a line made, a transcript
+	// written, a token minted, is taken in the app this resolves for them.
+	streamClients, err := newStreamClients(settings, pgStore, secrets, logger)
+	if err != nil {
+		return err
+	}
+	if err := checkDeploymentApp(ctx, settings, streamClients); err != nil {
+		return err
+	}
+	// An app whose policies require one of its own is never written into the deployment's.
+	if stored, ok := streamClients.Stored(); ok && policies != nil {
+		stored.SetFloor(policies.RequiresOwnStreamApp)
+	}
+	if pgStore != nil {
+		pgStore.SetStreamPins(streamPins(streamClients))
+	}
+	go learnDeploymentApp(ctx, streamClients, logger)
+
+	registrations, dlcGate, err := buildDLC(settings, pgStore, liveClient, logger)
+	if err != nil {
+		return err
+	}
+	if registrations != nil {
+		go registrations.Run(ctx, dlcPollEvery)
+	}
+	telephony, err := buildPhone(settings, pgStore, liveClient, streamClients, dlcGate, logger)
 	if err != nil {
 		return err
 	}
@@ -546,14 +796,41 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer base.Close()
 	}
 
+	// Which node is running which session. A socket is reached by the relay below, and
+	// everything else a session is asked over HTTP is carried to the node that can answer
+	// it, which first has to be findable.
+	directory, err := newDirectory(settings, liveClient, logger)
+	if err != nil {
+		return err
+	}
+	if directory != nil {
+		defer directory.Close()
+	}
+
+	pluginAuth := &plugins.Auth{
+		PublicURL:    settings.PublicURL,
+		DashboardURL: settings.DashboardURL,
+		Clients:      session.PluginClients(pgStore, secrets),
+	}
+
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
-	sessions, err := buildSessions(settings, streams, pgStore, liveClient, telephony, base, finding, judging, logger)
+	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, streamClients, pluginAuth, logger)
 	if err != nil {
 		return err
 	}
 	if sessions != nil {
 		defer sessions.Shutdown()
+	}
+	// In app mode every connected app is checked on, and what the router stops acting in
+	// takes the sessions pinned to it with it.
+	if stored, ok := streamClients.Source().(*streamapp.Stored); ok {
+		ended := func(customer string, app int64) {
+			if sessions != nil {
+				sessions.EndPinned(customer, app)
+			}
+		}
+		go stored.Watch(ctx, streamClients, streamapp.WatchEvery, ended)
 	}
 
 	// A campaign is a phone call, a conversation and a row, so it runs only where all
@@ -570,6 +847,23 @@ func run(settings config.Config, logger *slog.Logger) error {
 			return err
 		}
 		defer campaigns.Close()
+	}
+
+	// A plugin event opens a conversation and is subscribed to from a row, so events need
+	// both. Elsewhere a config's plugin_events are stored and nothing subscribes to them.
+	var events *pluginevents.Service
+	if pgStore != nil && sessions != nil {
+		events, err = pluginevents.New(pluginevents.Options{
+			Store:    pgStore,
+			Sessions: sessions,
+			Auth:     pluginAuth,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		events.Start()
+		defer events.Close()
 	}
 
 	// A simulation is a conversation, a model to judge it and a row, so it too runs only
@@ -599,19 +893,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 		}
 	}
 
-	// Reading a transcript back needs the same credentials writing one does. Without
-	// them the calls are still listed; only what was said on them is missing.
-	var transcripts *chatlog.Reader
-	if reader, err := chatlog.NewReader(chatlog.ReaderOptions{}); err != nil {
-		logger.Debug("transcripts will not be readable", "error", err)
-	} else {
-		transcripts = reader
-	}
-
 	// Bringing a voice needs somewhere to keep the recordings, a place to record them and
 	// at least one provider willing to be taught. Missing any of those, the voice paths
 	// say so rather than half-working.
-	voiceService, err := buildVoices(pgStore, bucket, logger)
+	voiceService, err := buildVoices(configs, bucket, logger)
 	if err != nil {
 		return err
 	}
@@ -638,7 +923,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		sessions.HostTools(workers)
 	}
 
-	authenticator, err := newAuthenticator(settings, pgStore, logger)
+	authenticator, err := newAuthenticator(settings, configs, logger)
 	if err != nil {
 		return err
 	}
@@ -653,46 +938,114 @@ func run(settings config.Config, logger *slog.Logger) error {
 		go pruneDataChanges(ctx, pgStore, settings.DataMove.Retention, logger)
 	}
 
+	// A session lives in one process's memory, so a deployment running more than one
+	// node needs the sessions reachable from whichever node a socket lands on. The relay
+	// is what reaches them, and Redis is all it takes: a single-node deployment gets one
+	// anyway and nothing is published that nobody asks for.
+	var sessionRelay *relay.Bus
+	if liveClient != nil {
+		sessionRelay, err = relay.New(relay.Options{Redis: liveClient.Redis(), Logger: logger})
+		if err != nil {
+			return err
+		}
+	} else {
+		logger.Warn("no redis configured, so a session is only reachable on the node running it",
+			"setting", "redis.addr")
+	}
+
 	options := api.Options{
-		Routers:        routers,
-		Voices:         voiceService,
-		VoiceLibrary:   buildLibrary(logger),
-		KnowledgeURLs:  pages,
-		Store:          pgStore,
-		Live:           liveClient,
-		Phone:          telephony,
-		Sessions:       sessions,
-		Streams:        streams,
-		Transcripts:    transcripts,
-		Campaigns:      campaigns,
-		Simulations:    simulations,
-		Dispatch:       workers,
-		Quota:          limiter,
-		Policies:       policies,
-		TrustedProxies: trustedProxies,
-		AuthMode:       authMode,
-		DataRetention:  settings.DataMove.Retention,
-		StreamSecret:   settings.Stream.APISecret,
-		StreamKey:      settings.Stream.APIKey,
-		CORSOrigins:    settings.CORSOrigins,
-		PublicURL:      settings.PublicURL,
-		DashboardURL:   settings.DashboardURL,
-		Auth:           authenticator,
-		Logger:         logger,
+		Routers:           routers,
+		Voices:            voiceService,
+		VoiceLibrary:      buildLibrary(logger),
+		KnowledgeURLs:     pages,
+		Store:             pgStore,
+		Configs:           configs,
+		Users:             endUsers,
+		Live:              liveClient,
+		Phone:             telephony,
+		Sessions:          sessions,
+		Relay:             sessionRelay,
+		Directory:         directory,
+		Streams:           streams,
+		Stream:            streamClients,
+		ProxyDeclaresKind: settings.Auth.ProxyDeclaresKind,
+		TrustAPIKeyHeader: settings.Stream.TrustAPIKeyHeader,
+		DenyRegistration:  settings.Stream.DenyRegistration,
+		HookSecret:        settings.Stream.APISecret,
+		Campaigns:         campaigns,
+		Simulations:       simulations,
+		PluginEvents:      events,
+		DLC:               registrations,
+		Gate:              dlcGate,
+		OpsKey:            settings.Auth.OpsKey,
+		Dispatch:          workers,
+		Quota:             limiter,
+		Policies:          policies,
+		Connectors:        connectors,
+		ConnectorSecrets:  connectorSecrets,
+		TrustedProxies:    trustedProxies,
+		AuthMode:          authMode,
+		DataRetention:     settings.DataMove.Retention,
+		CORSOrigins:       settings.CORSOrigins,
+		PublicURL:         settings.PublicURL,
+		DashboardURL:      settings.DashboardURL,
+		Auth:              authenticator,
+		Logger:            logger,
 	}
-	if options.StreamSecret == "" {
-		logger.Warn("no stream.api_secret set, so inbound calls cannot be dispatched: "+
-			"the call events Stream sends cannot be told apart from anyone who found the url",
-			"hook", "POST /v1/phone/hooks/stream")
+	// A nil *resolver.Resolver in the interface would not be a nil interface, so the absence
+	// stays absent, and the events endpoint takes no events without it.
+	if connectorResolver != nil {
+		options.ConnectorResolver = connectorResolver
+		options.ConnectorEventSecrets = api.ConnectorEventSecrets(os.Getenv)
 	}
-	if options.StreamKey == "" {
-		logger.Warn("no stream.api_key set, so nobody can join a call from a browser",
-			"endpoint", "POST /v1/agents/calls/{id}/token")
+	if streamClients.PerApp() {
+		// Each registered app signs its own hooks and mints its own tokens, so only work in
+		// the deployment's own app goes without.
+		if settings.Stream.APIKey == "" {
+			logger.Info("no stream.api_key or stream.api_secret set, so only registered apps act in Stream: " +
+				"nothing is written into a deployment app, and the old hook paths accept nothing")
+		}
+	} else {
+		if options.HookSecret == "" {
+			logger.Warn("no stream.api_secret set, so inbound calls cannot be dispatched: "+
+				"the call events Stream sends cannot be told apart from anyone who found the url",
+				"hook", "POST /v1/phone/hooks/stream")
+		}
+		if settings.Stream.APIKey == "" {
+			logger.Warn("no stream.api_key set, so nobody can join a call from a browser",
+				"endpoint", "POST /v1/agents/calls/{id}/token")
+		}
 	}
 	// A nil *turbopuffer.Store in an interface is not a nil interface, so the absence has
 	// to stay absent rather than becoming a value that says it is there.
 	if base != nil {
 		options.Knowledge = base
+	}
+	// A channel's provider credentials are sealed under the same keyring as the other
+	// secrets the router holds. Without one the channel paths refuse to hold them, which is
+	// better than keeping a WhatsApp token in the clear, and nothing is delivered because
+	// nothing can be connected. A message that arrives opens a conversation from a row, so
+	// answering one needs a database and sessions as well.
+	if secrets != nil {
+		options.Secrets = secrets
+		if pgStore != nil && sessions != nil {
+			inbound, err := channels.New(channels.Options{
+				Store:    pgStore,
+				Sessions: sessions,
+				Secrets:  options.Secrets,
+				Gate:     dlcGate,
+				Logger:   logger,
+			})
+			if err != nil {
+				return err
+			}
+			options.Channels = inbound
+			defer inbound.Close()
+		}
+	} else {
+		logger.Warn("no key encryption keyring set (ROUTER_AUTH_KEK_V1), so no channel can be "+
+			"connected: there is nowhere safe to keep a provider's credentials",
+			"endpoint", "POST /v1/agents/channels")
 	}
 
 	server, err := api.NewServer(options)
@@ -764,7 +1117,54 @@ func openStore(ctx context.Context, settings config.Config) (*store.Store, error
 		pgStore.Close()
 		return nil, err
 	}
+	// Seeded whether connectors are on or not: the built-ins are data with no secret in
+	// them, and a deployment that turns connectors on later finds them already there.
+	if err := pgStore.SeedConnectorDefinitions(ctx, providers.FS); err != nil {
+		pgStore.Close()
+		return nil, err
+	}
 	return pgStore, nil
+}
+
+// newDirectory wires the register of which node of this deployment is running which
+// session, which is what lets a request about a session land on any of them.
+//
+// It needs Redis to keep the register in and an address this node's peers reach it at.
+// Without either it returns nil, and the deployment behaves as a single node did: a
+// session is only reachable through the process running it.
+//
+// The address is not asked for in the ordinary case. A node listens on every interface
+// and is reached on one of them, so the port it listens on and the address this host
+// answers at are enough to work it out; node.advertise is for the deployment where that
+// is not what a peer can reach, which is any of them behind network address translation.
+func newDirectory(
+	settings config.Config,
+	liveClient *live.Client,
+	logger *slog.Logger,
+) (*node.Directory, error) {
+	// The absence is already reported where the relay is built, which is missing for the
+	// same reason.
+	if liveClient == nil {
+		return nil, nil
+	}
+
+	address := settings.Node.Advertise
+	if address == "" {
+		found, err := node.Address(settings.Addr)
+		if err != nil {
+			return nil, fmt.Errorf("could not work out the address this node's peers reach it at, "+
+				"so set node.advertise: %w", err)
+		}
+		address = found
+	}
+	logger.Info("reachable by this deployment's other nodes", "address", address,
+		"setting", "node.advertise")
+
+	return node.NewDirectory(node.DirectoryOptions{
+		Redis:   liveClient.Redis(),
+		Address: address,
+		Logger:  logger,
+	})
 }
 
 // buildSessions wires the part of the router that holds conversations rather than
@@ -777,11 +1177,15 @@ func buildSessions(
 	settings config.Config,
 	streams *api.Streams,
 	pgStore *store.Store,
+	configs *appconfig.Store,
 	liveClient *live.Client,
+	directory *node.Directory,
 	telephony *phone.Service,
 	base *turbopuffer.Store,
 	finding *searchrouter.Router,
 	judging *lcmrouter.Router,
+	stream *streamapp.Clients,
+	pluginAuth *plugins.Auth,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.LLM == nil {
@@ -828,33 +1232,18 @@ func buildSessions(
 		Search:       finding,
 		Classifier:   judging,
 		Phone:        telephony,
-		// The same app secret that verifies Stream's inbound hooks, now signing one going
-		// the other way. A customer who wants to decide for themselves whether a turn may
-		// be answered already holds it, so there is no second secret to hand out.
-		WebhookSecret: settings.Stream.APISecret,
-		Store:         pgStore,
-		Live:          liveClient,
-		Logger:        logger,
-		Edge: func(spec session.Spec, logger *slog.Logger) (agent.Edge, error) {
-			return streamedge.New(streamedge.Options{
-				CallID:   spec.CallID,
-				CallType: spec.CallType,
-				User:     streamedge.User{ID: spec.UserID, Name: spec.UserName},
-				Logger:   logger,
-			})
-		},
-		Transcript: func(spec session.Spec, logger *slog.Logger) (session.Transcript, error) {
-			channel := strings.TrimPrefix(spec.ConversationID, "agent:")
-			if channel == spec.ConversationID {
-				channel = ""
-			}
-			return chatlog.New(chatlog.Options{
-				AgentID: spec.AgentID,
-				Channel: channel,
-				Agent:   chatlog.User{ID: spec.UserID, Name: spec.UserName},
-				Logger:  logger,
-			})
-		},
+		// Off unless the deployment asks: a reply started before its ruling is paid for
+		// whether or not it is spoken.
+		SpeculativeReplies: &settings.Agent.SpeculativeReplies,
+		Stream:             stream,
+		Store:              pgStore,
+		Live:               liveClient,
+		Logger:             logger,
+		Edge:               edgeFor(stream),
+		Transcript:         transcriptFor(),
+		Configs:            configs,
+		Directory:          directory,
+		PluginAuth:         pluginAuth,
 	})
 }
 
@@ -947,12 +1336,12 @@ func buildLibrary(logger *slog.Logger) *voices.Catalogue {
 // teach them to. The voice paths report the absence rather than failing halfway through an
 // upload.
 func buildVoices(
-	pgStore *store.Store,
+	configs *appconfig.Store,
 	bucket *blob.Bucket,
 	logger *slog.Logger,
 ) (*voices.Service, error) {
-	if pgStore == nil || bucket == nil {
-		logger.Debug("not serving voices of your own", "database", pgStore != nil, "bucket", bucket != nil)
+	if configs == nil || bucket == nil {
+		logger.Debug("not serving voices of your own", "database", configs != nil, "bucket", bucket != nil)
 		return nil, nil
 	}
 
@@ -972,7 +1361,7 @@ func buildVoices(
 	}
 
 	return voices.NewService(voices.Options{
-		Store:   pgStore,
+		Store:   configs,
 		Bucket:  bucket,
 		Cloners: cloners,
 		Logger:  logger,
@@ -986,18 +1375,16 @@ func buildPhone(
 	settings config.Config,
 	pgStore *store.Store,
 	liveClient *live.Client,
+	stream *streamapp.Clients,
+	gate *dlc.Gate,
 	logger *slog.Logger,
 ) (*phone.Service, error) {
 	vendorConfig, err := phone.LoadConfig(settings.PhoneConfig)
 	if err != nil {
 		return nil, err
 	}
-
-	var stream *phone.Stream
-	if streaming, err := phone.NewStream(phone.StreamOptions{}); err == nil {
-		stream = streaming
-	} else {
-		logger.Warn("no stream credentials, numbers cannot be attached to a call", "error", err)
+	if settings.Stream.APIKey == "" || settings.Stream.APISecret == "" {
+		logger.Warn("no stream credentials, numbers cannot be attached to a call in the deployment's app")
 	}
 
 	var recorder *routing.Recorder
@@ -1008,9 +1395,55 @@ func buildPhone(
 	return phone.NewService(phone.ServiceOptions{
 		Registry:  vendors.Registry(vendorConfig),
 		Store:     pgStore,
-		Stream:    stream,
+		Apps:      phoneApps{clients: stream},
 		Recorder:  recorder,
+		Gate:      gate,
 		PublicURL: settings.PublicURL,
 		Logger:    logger,
 	})
+}
+
+// dlcPollEvery is how often the use cases a vendor holds are asked after, for the reports
+// its hook missed. A campaign takes days, so this is not what makes one quick.
+const dlcPollEvery = 15 * time.Minute
+
+// buildDLC wires 10DLC review and the gate every text and call passes. Without a database
+// there is nothing to register or enforce. Without a Telnyx key Stream's approval is final,
+// which is a deployment registering with no vendor of ours.
+func buildDLC(
+	settings config.Config,
+	pgStore *store.Store,
+	liveClient *live.Client,
+	logger *slog.Logger,
+) (*dlc.Service, *dlc.Gate, error) {
+	if pgStore == nil {
+		return nil, nil, nil
+	}
+	var counters rueidis.Client
+	if liveClient != nil {
+		counters = liveClient.Redis()
+	}
+	gate := dlc.NewGate(pgStore, counters, dlc.Sandbox{
+		Enabled:            settings.Sandbox.Enabled,
+		Recipients:         settings.Sandbox.Recipients,
+		MessagesPerDay:     settings.Sandbox.MessagesPerDay,
+		AudioMinutesPerDay: settings.Sandbox.AudioMinutesPerDay,
+	}, logger)
+	if settings.Sandbox.Enabled {
+		logger.Info("sandboxing apps with no approved 10DLC use case",
+			"recipients", settings.Sandbox.Recipients, "messages", settings.Sandbox.MessagesPerDay,
+			"audio_minutes", settings.Sandbox.AudioMinutesPerDay)
+	}
+
+	options := dlc.Options{Store: pgStore, PublicURL: settings.PublicURL, Logger: logger}
+	if registrar, err := dlctelnyx.New(dlctelnyx.Options{}); err == nil {
+		options.Registrar = registrar
+	} else {
+		logger.Debug("no 10DLC registrar, Stream's approval of a use case is final", "error", err)
+	}
+	service, err := dlc.NewService(options)
+	if err != nil {
+		return nil, nil, err
+	}
+	return service, gate, nil
 }

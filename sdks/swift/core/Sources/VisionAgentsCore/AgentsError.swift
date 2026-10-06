@@ -13,6 +13,8 @@ public enum AgentsError: Error, Sendable {
     case socketClosed(code: Int, reason: String)
     /// The router answered with something this SDK cannot read.
     case unreadable(String)
+    /// The SDK was set up in a way no request can go out under, like an API key with no user.
+    case configuration(String)
 }
 
 extension AgentsError: LocalizedError {
@@ -28,6 +30,8 @@ extension AgentsError: LocalizedError {
                 : "the session socket closed (\(code)): \(reason)"
         case .unreadable(let what):
             return "could not read the router's answer: \(what)"
+        case .configuration(let what):
+            return what
         }
     }
 }

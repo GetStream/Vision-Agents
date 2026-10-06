@@ -38,9 +38,12 @@ export {
 
 export { AgentHandle } from "./handle.js";
 
+export { Memories } from "./memories.js";
+
+export { SimulationRuns, Simulations, type SimulationRunQuery } from "./simulations.js";
+
 export {
   Sessions,
-  timestamp,
   type CreateSessionOptions,
   type SessionQuery,
   type SessionSpec,
@@ -65,7 +68,12 @@ export {
   type GuestUserOptions,
 } from "./guests.js";
 
-export { ConfigurationError, RouterError, SocketClosedError } from "./errors.js";
+export {
+  ConfigurationError,
+  HostingRefusedError,
+  RouterError,
+  SocketClosedError,
+} from "./errors.js";
 
 export type { components, operations, paths } from "./generated/api.js";
 
@@ -123,5 +131,6 @@ export {
   Dispatch,
   type CallHandler,
   type DispatchOptions,
+  type HostOptions,
   type MessageHandler,
 } from "./dispatch.js";

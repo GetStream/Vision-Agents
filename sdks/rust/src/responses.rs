@@ -34,7 +34,7 @@ impl Responses {
     pub async fn create(&self, text: &str) -> Result<AgentResponse> {
         self.create_with(&types::CreateResponseRequest {
             text: text.into(),
-            images: None,
+            ..Default::default()
         })
         .await
     }
@@ -54,14 +54,15 @@ impl Responses {
         })
     }
 
-    /// The turns so far, oldest first.
+    /// One page of the turns so far, oldest first. `None` for the cursor is the first page,
+    /// and the page's `next_cursor` the next.
     pub async fn list(
         &self,
         limit: Option<i64>,
-        offset: Option<i64>,
-    ) -> Result<Vec<types::AgentResponse>> {
+        cursor: Option<String>,
+    ) -> Result<types::AgentResponsePage> {
         self.client
-            .list_responses(&self.session_id, &ListResponsesQuery { limit, offset })
+            .list_responses(&self.session_id, &ListResponsesQuery { limit, cursor })
             .await
     }
 
@@ -122,16 +123,17 @@ impl Items {
         }
     }
 
-    /// One page, for a caller doing its own paging.
+    /// One page, for a caller doing its own paging. `None` for the cursor is the first page,
+    /// and the page's `next_cursor` the next.
     pub async fn list(
         &self,
         limit: Option<i64>,
-        offset: Option<i64>,
-    ) -> Result<Vec<types::AgentResponseItem>> {
+        cursor: Option<String>,
+    ) -> Result<types::AgentResponseItemPage> {
         let query = ListResponseItemsQuery {
             response_id: (!self.response_id.is_empty()).then(|| self.response_id.clone()),
             limit,
-            offset,
+            cursor,
         };
         self.client
             .list_response_items(&self.session_id, &query)
@@ -141,15 +143,13 @@ impl Items {
     /// Every item, oldest first, a page at a time.
     pub async fn all(&self) -> Result<Vec<types::AgentResponseItem>> {
         let mut collected = Vec::new();
+        let mut cursor = None;
         loop {
-            let page = self
-                .list(Some(ITEM_PAGE), Some(collected.len() as i64))
-                .await?;
-            let last = (page.len() as i64) < ITEM_PAGE;
-            collected.extend(page);
-            // A short page is the last page.
-            if last {
-                return Ok(collected);
+            let page = self.list(Some(ITEM_PAGE), cursor).await?;
+            collected.extend(page.items);
+            match page.next_cursor {
+                Some(next) if page.has_more => cursor = Some(next),
+                _ => return Ok(collected),
             }
         }
     }

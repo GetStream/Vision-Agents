@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 const (
@@ -73,7 +74,7 @@ func New(options Options) (*Provider, error) {
 		options.AuthToken = os.Getenv(authTokenEnvVar)
 	}
 	if options.AccountSID == "" || options.AuthToken == "" {
-		return nil, errors.New("twilio: " + accountSIDEnvVar + " and " + authTokenEnvVar + " are required")
+		return nil, stack.Wrap(errors.New("twilio: " + accountSIDEnvVar + " and " + authTokenEnvVar + " are required"))
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
@@ -96,7 +97,7 @@ func New(options Options) (*Provider, error) {
 // SearchNumbers returns numbers Twilio is offering in a country.
 func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
 	if search.Country == "" {
-		return nil, errors.New("twilio: a country is required to search for numbers")
+		return nil, stack.Wrap(errors.New("twilio: a country is required to search for numbers"))
 	}
 
 	query := url.Values{}
@@ -133,7 +134,7 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 	}
 	resource, ok := resources[kind]
 	if !ok {
-		return nil, fmt.Errorf("twilio: does not sell %s numbers", kind)
+		return nil, stack.Wrap(fmt.Errorf("twilio: does not sell %s numbers", kind))
 	}
 	path := fmt.Sprintf("/2010-04-01/Accounts/%s/AvailablePhoneNumbers/%s/%s.json",
 		p.accountSID, strings.ToUpper(search.Country), resource)
@@ -187,7 +188,7 @@ func (p *Provider) Dials(feature phone.CallFeature) bool {
 // number, so the order's country is not needed.
 func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Number, error) {
 	if order.E164 == "" {
-		return phone.Number{}, errors.New("twilio: a number is required")
+		return phone.Number{}, stack.Wrap(errors.New("twilio: a number is required"))
 	}
 
 	form := url.Values{"PhoneNumber": {order.E164}}
@@ -256,7 +257,7 @@ func (p *Provider) ConfigureInbound(ctx context.Context, inbound phone.Inbound) 
 // trunk runs.
 func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dialed, error) {
 	if err := outbound.Validate(); err != nil {
-		return phone.Dialed{}, fmt.Errorf("twilio: %w", err)
+		return phone.Dialed{}, stack.Wrap(fmt.Errorf("twilio: %w", err))
 	}
 
 	instructions, err := dialBridge(outbound.Bridge)
@@ -273,9 +274,9 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 	if outbound.RingTimeout > 0 {
 		seconds := int(outbound.RingTimeout.Seconds())
 		if seconds > maxRingSeconds {
-			return phone.Dialed{}, fmt.Errorf(
+			return phone.Dialed{}, stack.Wrap(fmt.Errorf(
 				"twilio: %ds is longer than the %ds twilio will ring for",
-				seconds, maxRingSeconds)
+				seconds, maxRingSeconds))
 		}
 		form.Set("Timeout", strconv.Itoa(seconds))
 	}
@@ -300,8 +301,8 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 // carries this at all, and Client reaches Twilio's own API for a deployment that decides
 // the trade is worth making.
 func (p *Provider) SendDigits(context.Context, string, string) error {
-	return fmt.Errorf("%w: twilio cannot press digits without ending the call they are "+
-		"pressed on", phone.ErrNotImplemented)
+	return stack.Wrap(fmt.Errorf("%w: twilio cannot press digits without ending the call they are "+
+		"pressed on", phone.ErrNotImplemented))
 }
 
 // Vendor is the name this provider is recorded under.
@@ -315,7 +316,7 @@ func (p *Provider) Client() *http.Client { return p.client }
 // changing or releasing it needs.
 func (p *Provider) sidFor(ctx context.Context, e164 string) (string, error) {
 	if e164 == "" {
-		return "", errors.New("twilio: a number is required")
+		return "", stack.Wrap(errors.New("twilio: a number is required"))
 	}
 
 	path := fmt.Sprintf("/2010-04-01/Accounts/%s/IncomingPhoneNumbers.json", p.accountSID)
@@ -329,7 +330,7 @@ func (p *Provider) sidFor(ctx context.Context, e164 string) (string, error) {
 			return number.SID, nil
 		}
 	}
-	return "", fmt.Errorf("twilio: %s is not one of this account's numbers", e164)
+	return "", stack.Wrap(fmt.Errorf("twilio: %s is not one of this account's numbers", e164))
 }
 
 func (p *Provider) get(ctx context.Context, path string, query url.Values, into any) error {
@@ -353,7 +354,7 @@ func (p *Provider) do(ctx context.Context, method, path string, query, form url.
 
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, body)
 	if err != nil {
-		return fmt.Errorf("twilio: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("twilio: %s: %w", path, err))
 	}
 	request.SetBasicAuth(p.accountSID, p.authToken)
 	request.Header.Set("Accept", "application/json")
@@ -363,20 +364,20 @@ func (p *Provider) do(ctx context.Context, method, path string, query, form url.
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("twilio: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("twilio: %s: %w", path, err))
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return fmt.Errorf("twilio: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail)))
+		return stack.Wrap(fmt.Errorf("twilio: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return fmt.Errorf("twilio: decode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("twilio: decode %s: %w", path, err))
 	}
 	return nil
 }
@@ -398,7 +399,7 @@ func dialBridge(bridge phone.Bridge) (string, error) {
 	}
 	encoded, err := xml.Marshal(instructions)
 	if err != nil {
-		return "", fmt.Errorf("twilio: encode twiml: %w", err)
+		return "", stack.Wrap(fmt.Errorf("twilio: encode twiml: %w", err))
 	}
 	return xml.Header + string(encoded), nil
 }

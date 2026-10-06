@@ -25,6 +25,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // maxInitialDigits is how many keys can be pressed when a call is answered. Twilio takes
@@ -206,10 +208,10 @@ type Bridge struct {
 // Validate reports whether the bridge is usable.
 func (b Bridge) Validate() error {
 	if b.URI == "" {
-		return errors.New("phone: a bridge uri is required")
+		return stack.Wrap(errors.New("phone: a bridge uri is required"))
 	}
 	if !strings.HasPrefix(b.URI, "sip:") && !strings.HasPrefix(b.URI, "sips:") {
-		return fmt.Errorf("phone: %q is not a sip uri", b.URI)
+		return stack.Wrap(fmt.Errorf("phone: %q is not a sip uri", b.URI))
 	}
 	return nil
 }
@@ -290,21 +292,21 @@ func (o Outbound) Unsupported(provider Provider) []CallFeature {
 // Validate reports whether the call can be placed as described.
 func (o Outbound) Validate() error {
 	if o.From == "" || o.To == "" {
-		return errors.New("phone: a call needs a from and a to")
+		return stack.Wrap(errors.New("phone: a call needs a from and a to"))
 	}
 	if err := o.Bridge.Validate(); err != nil {
 		return err
 	}
 	if o.RingTimeout < 0 {
-		return errors.New("phone: a call cannot ring for less than no time")
+		return stack.Wrap(errors.New("phone: a call cannot ring for less than no time"))
 	}
 	if o.InitialDigits != "" {
 		if err := ValidateDigits(o.InitialDigits); err != nil {
 			return err
 		}
 		if len(o.InitialDigits) > maxInitialDigits {
-			return fmt.Errorf("phone: %d digits is more than the %d every vendor takes on answer",
-				len(o.InitialDigits), maxInitialDigits)
+			return stack.Wrap(fmt.Errorf("phone: %d digits is more than the %d every vendor takes on answer",
+				len(o.InitialDigits), maxInitialDigits))
 		}
 	}
 	return nil
@@ -416,7 +418,7 @@ func (n *notImplemented) Vendor() string { return n.vendor }
 func (n *notImplemented) Client() *http.Client { return n.client }
 
 func (n *notImplemented) err() error {
-	return fmt.Errorf("%w: %s", ErrNotImplemented, n.vendor)
+	return stack.Wrap(fmt.Errorf("%w: %s", ErrNotImplemented, n.vendor))
 }
 
 // ValidateDigits reports whether a string can be pressed on a keypad.
@@ -428,14 +430,14 @@ func (n *notImplemented) err() error {
 // silent no-op on the call.
 func ValidateDigits(digits string) error {
 	if digits == "" {
-		return errors.New("phone: pressing needs digits to press")
+		return stack.Wrap(errors.New("phone: pressing needs digits to press"))
 	}
 	for _, key := range digits {
 		switch {
 		case key >= '0' && key <= '9', key >= 'A' && key <= 'D',
 			key == '*', key == '#', key == 'w', key == 'W':
 		default:
-			return fmt.Errorf("phone: %q is not something a keypad can press", string(key))
+			return stack.Wrap(fmt.Errorf("phone: %q is not something a keypad can press", string(key)))
 		}
 	}
 	return nil

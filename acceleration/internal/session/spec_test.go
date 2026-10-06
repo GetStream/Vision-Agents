@@ -1,13 +1,20 @@
 package session
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -34,13 +41,19 @@ func (s *SpecSuite) TestAConfigsKeytermsBecomeTheSessions() {
 	s.Equal([]string{"Vision Agents", "Stream"}, spec.Keyterms)
 }
 
+func (s *SpecSuite) TestAConfigsSpeedBecomesTheSessions() {
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Speed: 0.9})
+
+	s.Equal(0.9, spec.Speed)
+}
+
 func (s *SpecSuite) TestAConfigsPluginsBecomeTheSessions() {
 	spec := FromConfig(store.AgentConfig{
-		CustomerID: "acme",
-		Plugins:    []string{"slack", "calendly"},
+		CustomerID:   "acme",
+		AgentPlugins: []store.PluginEntry{{Name: "slack"}, {Name: "calendly"}},
 	})
 
-	s.Equal([]string{"slack", "calendly"}, spec.Plugins)
+	s.Equal([]store.PluginEntry{{Name: "slack"}, {Name: "calendly"}}, spec.AgentPlugins)
 }
 
 func (s *SpecSuite) TestAConfigsSandboxBecomesTheSessions() {
@@ -50,6 +63,58 @@ func (s *SpecSuite) TestAConfigsSandboxBecomesTheSessions() {
 	})
 
 	s.Equal(daytonaProvider, spec.Sandbox)
+}
+
+func (s *SpecSuite) TestHowAConfigsSandboxIsBuiltBecomesTheSessions() {
+	options := sandbox.Config{Setup: []string{"pip install bpy==5.2.2"}, TimeoutMs: 300_000, MemoryGB: 4}
+
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Sandbox: daytonaProvider, SandboxOptions: options})
+
+	s.Equal(options, spec.SandboxOptions)
+}
+
+func (s *SpecSuite) TestAConfigsMCPServersBecomeTheSessions() {
+	servers := []store.MCPServer{{Name: "tablejourney", URL: "https://tablejourney.com/mcp"}}
+
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", MCPServers: servers})
+
+	s.Equal(servers, spec.MCPServers)
+}
+
+func (s *SpecSuite) TestAnMCPServersToolsAndInstructionsJoinTheSession() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+		}
+		s.Require().NoError(json.NewDecoder(r.Body).Decode(&body))
+		var result any
+		switch body.Method {
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+			return
+		case "initialize":
+			result = map[string]any{"protocolVersion": "2025-03-26", "instructions": "Keep booking links whole."}
+		case "tools/list":
+			result = map[string]any{"tools": []map[string]any{{"name": "search_places", "inputSchema": map[string]any{"type": "object"}}}}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": body.ID, "result": result})
+	}))
+	defer server.Close()
+	needsLogin := false
+	spec := Spec{
+		Instructions: "Be brief.",
+		MCPServers:   []store.MCPServer{{Name: "tablejourney", URL: server.URL, NeedsLogin: &needsLogin}},
+	}
+
+	mcp, tools, _ := attachPlugins(context.Background(), spec, nil, &plugins.Auth{HTTP: server.Client()}, slog.New(slog.DiscardHandler))
+	defer mcp.Close()
+	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp)
+
+	s.Require().Len(tools, 1)
+	s.Equal("tablejourney__search_places", tools[0].Name)
+	s.True(strings.HasPrefix(spec.prompt(), "Be brief.\n\nThe tablejourney tools"), spec.prompt())
+	s.True(strings.HasSuffix(spec.prompt(), "Keep booking links whole."), spec.prompt())
 }
 
 func (s *SpecSuite) TestKeytermsAreTidiedOnTheWayIn() {
@@ -89,7 +154,6 @@ func (s *SpecSuite) TestTheLargestListAProviderTakesIsAllowed() {
 func (s *SpecSuite) TestNativeSessionsKeepDelegatedWork() {
 	for _, spec := range []Spec{
 		{SkillNames: []string{"think"}},
-		{Skills: &harness.Skills{Skills: []harness.Skill{{Name: "think"}}}},
 		{SubagentTarget: "llm-thinking"},
 	} {
 		spec.STSTarget = "openai/gpt-realtime-2"
@@ -134,10 +198,16 @@ func (s *SpecSuite) TestThinkingBecomesTheReasoningEffort() {
 	s.Equal("high", spec.LLMOverwrites().ReasoningEffort)
 }
 
-func (s *SpecSuite) TestOverwritingTheSubagentBeatsTheConfigs() {
-	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Subagent: "llm-flow"})
-	spec.CallID = "call-1"
-	spec.ModelOverwrites = store.ModelOverwrites{Subagent: "llm-thinking"}
+func (s *SpecSuite) TestATextSessionThinksOnItsOwnModel() {
+	spec := Spec{CustomerID: "acme", Text: true, LLMTarget: "llm-fast", SubagentTarget: "llm-thinking"}
+
+	s.Require().NoError(spec.Normalize())
+
+	s.Equal("llm-fast", spec.SubagentTarget)
+}
+
+func (s *SpecSuite) TestAVoiceSessionKeepsItsThinkingModel() {
+	spec := Spec{CustomerID: "acme", CallID: "call", LLMTarget: "llm-fast", SubagentTarget: "llm-thinking"}
 
 	s.Require().NoError(spec.Normalize())
 

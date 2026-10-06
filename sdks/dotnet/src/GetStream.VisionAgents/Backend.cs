@@ -13,7 +13,10 @@ namespace GetStream.VisionAgents;
 /// </remarks>
 public sealed record VisionAgentsOptions
 {
-    /// <summary>The router's base URL. Falls back to <c>STREAM_ACCELERATION_URL</c>, then localhost.</summary>
+    /// <summary>
+    /// The router's base URL. Falls back to <c>STREAM_ACCELERATION_URL</c>, then Stream's hosted
+    /// router, so only a self-hosted or local router needs it.
+    /// </summary>
     public string? Url { get; init; }
 
     /// <summary>
@@ -44,10 +47,11 @@ public sealed record VisionAgentsOptions
 
     /// <summary>
     /// Whether the router is reached through Stream's authenticating proxy, which every
-    /// hosted deployment sits behind. Falls back to <c>STREAM_ACCELERATION_AUTHENTICATE</c>.
+    /// hosted deployment sits behind. On for the hosted router; anywhere else it falls back to
+    /// <c>STREAM_ACCELERATION_AUTHENTICATE</c>.
     /// </summary>
     /// <remarks>
-    /// Opt-in rather than inferred from holding a credential, because a Stream key and
+    /// Away from the hosted router it is opt-in rather than inferred from holding a credential, because a Stream key and
     /// secret are in the environment for plenty of reasons that have nothing to do with how
     /// this router is reached.
     /// </remarks>
@@ -59,7 +63,8 @@ public sealed record VisionAgentsOptions
 /// </summary>
 internal sealed class Backend
 {
-    public const string DefaultUrl = "http://localhost:8080";
+    /// <summary>Stream's hosted router, which is where a client goes when nothing says otherwise.</summary>
+    public const string DefaultUrl = "https://accelerate.gcp.stream-io-api.com";
     public const string UrlEnv = "STREAM_ACCELERATION_URL";
     public const string CustomerEnv = "STREAM_ACCELERATION_CUSTOMER_ID";
     public const string ApiKeyEnv = "STREAM_API_KEY";
@@ -82,7 +87,7 @@ internal sealed class Backend
         ApiSecret = options.ApiSecret ?? (options.Token is null && ApiKey != "" ? Env(ApiSecretEnv) ?? "" : "");
         Token = options.Token ?? "";
         UserId = options.UserId ?? "";
-        Authenticate = options.Authenticate ?? Flag(Env(AuthenticateEnv));
+        Authenticate = options.Authenticate ?? (Flag(Env(AuthenticateEnv)) || Url == DefaultUrl);
 
         if (ApiKey == "" && CustomerId == "")
         {
@@ -96,16 +101,36 @@ internal sealed class Backend
         }
     }
 
+    private Backend(Backend from)
+    {
+        Url = from.Url;
+        CustomerId = from.CustomerId;
+        ApiKey = from.ApiKey;
+        ApiSecret = from.ApiSecret;
+        Token = from.Token;
+        UserId = from.UserId;
+        Authenticate = from.Authenticate;
+    }
+
     public string Url { get; }
     public string CustomerId { get; }
     public string ApiKey { get; }
     public string ApiSecret { get; }
     public string Token { get; }
-    public string UserId { get; }
+    public string UserId { get; private init; }
     public bool Authenticate { get; }
+
+    /// <summary>
+    /// The end user this server-side credential speaks for. Unlike <see cref="UserId"/> it
+    /// keeps the server's token, so what it writes is answered by the model rather than
+    /// handed to a dispatch worker.
+    /// </summary>
+    public string ActingFor { get; private init; } = "";
 
     /// <summary>Whether this speaks for a process the customer runs rather than a device.</summary>
     public bool ServerSide => ApiSecret != "" || (ApiKey == "" && CustomerId != "");
+
+    public Backend Acting(string userId) => new(this) { UserId = "", ActingFor = userId };
 
     public Backend As(string userId, string token) => new(new VisionAgentsOptions
     {
@@ -124,6 +149,10 @@ internal sealed class Backend
     /// </summary>
     public IReadOnlyList<KeyValuePair<string, string>> Headers()
     {
+        if (ActingFor != "")
+        {
+            return [.. new Backend(this).Headers(), new("X-Stream-User-Id", ActingFor)];
+        }
         if (ApiKey == "")
         {
             return [new("X-Customer-Id", CustomerId)];

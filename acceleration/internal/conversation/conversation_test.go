@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
+	"path"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -27,8 +27,28 @@ type chatStore struct {
 	messages        map[string]map[string]any
 	order           []string
 	patches         []map[string]any
+	updates         int
+	events          []sentEvent
 	fail            bool
 	failAfterCreate bool
+	// rateLimited refuses live (ephemeral) updates with a 429, as Stream does when its
+	// throttle is spent; liveAttempts counts every live update tried.
+	rateLimited  bool
+	liveAttempts int
+	// uploads are the files stored on a channel, by the endpoint that took them.
+	uploads []upload
+}
+
+// upload is one file a channel was sent.
+type upload struct {
+	endpoint, name, user string
+	data                 []byte
+}
+
+// sentEvent is a channel event as the fake received it, with the stored updates made before it.
+type sentEvent struct {
+	body    map[string]any
+	updates int
 }
 
 func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
@@ -43,6 +63,19 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 			_, _ = w.Write([]byte(`{"code":1,"message":"offline"}`))
 			return
 		}
+		if r.Method == http.MethodPost && (strings.HasSuffix(r.URL.Path, "/image") || strings.HasSuffix(r.URL.Path, "/file")) {
+			file, header, err := r.FormFile("file")
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			data, _ := io.ReadAll(file)
+			name := path.Base(header.Filename)
+			endpoint := path.Base(r.URL.Path)
+			db.uploads = append(db.uploads, upload{endpoint: endpoint, name: name, user: r.FormValue("user"), data: data})
+			_ = json.NewEncoder(w).Encode(map[string]any{"file": "https://cdn.fake/" + endpoint + "/" + name})
+			return
+		}
 		var body map[string]any
 		if r.Body != nil {
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -50,6 +83,10 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 		parts := strings.Split(r.URL.Path, "/")
 		result := map[string]any{}
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/event"):
+			event := body["event"].(map[string]any)
+			db.events = append(db.events, sentEvent{body: event, updates: db.updates})
+			result["event"] = event
 		case r.Method == http.MethodPatch && len(parts) > 2 && parts[len(parts)-2] == "agent":
 			id := parts[len(parts)-1]
 			for k, v := range body["set"].(map[string]any) {
@@ -86,6 +123,7 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 			if _, exists := db.messages[id]; !exists {
 				db.order = append(db.order, id)
 				m["cid"] = "agent:" + parts[len(parts)-2]
+				m["user"] = map[string]any{"id": m["user_id"]}
 				db.messages[id] = m
 			}
 			result["message"] = db.messages[id]
@@ -99,10 +137,20 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 			id := parts[len(parts)-1]
 			if id == "ephemeral" {
 				id = parts[len(parts)-2]
+				db.liveAttempts++
+				if db.rateLimited {
+					w.Header().Set("Retry-After", "1")
+					w.WriteHeader(http.StatusTooManyRequests)
+					_, _ = w.Write([]byte(`{"code":9,"message":"Too many requests","StatusCode":429}`))
+					return
+				}
 				db.patches = append(db.patches, body["set"].(map[string]any))
 			} else if r.Method == "PUT" {
+				db.updates++
 				for k, v := range body["set"].(map[string]any) {
-					if k == "text" || k == "attachments" {
+					if k == "attachments" {
+						db.messages[id][k] = partiallySetAttachments(v)
+					} else if k == "text" {
 						db.messages[id][k] = v
 					} else {
 						db.messages[id]["custom"].(map[string]any)[k] = v
@@ -138,8 +186,7 @@ func saved(t *testing.T, c *Conversation) {
 // conversation rather than refusing the resume for failing to guess it.
 func TestAConversationIsResumedWithoutKnowingWhichAgentOpenedIt(t *testing.T) {
 	_, client := newChat(t)
-	s, err := newService(t.TempDir(), client)
-	require.NoError(t, err)
+	s := NewForChat(client)
 	defer s.Close()
 
 	c, _, _, err := s.Open(context.Background(), "customer", "session-one", "")
@@ -163,8 +210,7 @@ func TestAConversationIsResumedWithoutKnowingWhichAgentOpenedIt(t *testing.T) {
 
 	// And one that has never seen it, which is every other replica: the owner is read
 	// back off the channel instead of out of memory.
-	cold, err := newService(t.TempDir(), client)
-	require.NoError(t, err)
+	cold := NewForChat(client)
 	defer cold.Close()
 	resumed, _, _, err := cold.Open(context.Background(), "customer", "", cid)
 	require.NoError(t, err)
@@ -177,13 +223,13 @@ func TestAConversationIsResumedWithoutKnowingWhichAgentOpenedIt(t *testing.T) {
 
 func TestActivityPersistsAndRestores(t *testing.T) {
 	db, client := newChat(t)
-	s, err := newService(t.TempDir(), client)
-	require.NoError(t, err)
+	s := NewForChat(client)
 	defer s.Close()
 	c, h, tr, err := s.Open(context.Background(), "customer", "support-agent", "")
 	require.NoError(t, err)
 	require.Empty(t, h)
 	require.False(t, tr)
+	c.ShowTools([]string{"lookup_record", "search_*"})
 	require.NoError(t, c.Begin("question"))
 	require.Equal(t, "thinking", current(c).State)
 	require.Error(t, c.Begin("overlapping"))
@@ -230,7 +276,8 @@ func TestActivityPersistsAndRestores(t *testing.T) {
 	require.Len(t, page.Messages, 2)
 	require.Len(t, page.Messages[1].Tools, 2)
 	require.Equal(t, "lookup_record", page.Messages[1].Tools[0].Name)
-	require.Equal(t, "Verified 2 source citations", page.Messages[1].Tools[0].Summary)
+	require.Equal(t, "completed", page.Messages[1].Tools[0].Status)
+	require.Equal(t, "Didn’t complete.", page.Messages[1].Tools[1].Summary)
 	raw, _ = json.Marshal(page)
 	require.NotContains(t, string(raw), "not for attachment")
 	_, _, _, err = s.Open(context.Background(), "customer", "support-agent", c.CID())
@@ -245,8 +292,7 @@ func TestActivityPersistsAndRestores(t *testing.T) {
 
 func TestContextForCallerSeedsCompletedTurnsWithoutOpeningTheConversation(t *testing.T) {
 	_, client := newChat(t)
-	service, err := newService(t.TempDir(), client)
-	require.NoError(t, err)
+	service := NewForChat(client)
 	t.Cleanup(service.Close)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
@@ -272,89 +318,33 @@ func TestContextForCallerSeedsCompletedTurnsWithoutOpeningTheConversation(t *tes
 	require.False(t, truncated)
 	require.Empty(t, empty)
 }
-func TestOutboxFailureRestartAndDeduplication(t *testing.T) {
+
+// TestAReplyCutOffByAStopIsInterruptedWhenReopened covers a process that stopped mid-reply:
+// nothing local survives it, so the next process to open the conversation reads the
+// unfinished reply off Stream and settles it there.
+func TestAReplyCutOffByAStopIsInterruptedWhenReopened(t *testing.T) {
 	db, client := newChat(t)
-	root := t.TempDir()
-	s, err := newService(root, client)
-	require.NoError(t, err)
+	s := NewForChat(client)
 	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
 	require.NoError(t, err)
-	db.mu.Lock()
-	db.fail = true
-	db.mu.Unlock()
-	require.NoError(t, c.Begin("persist me"))
-	c.Observe(agent.ToolStarted{ID: "tool", Tool: "investigate_sdk", StartedAt: time.Now().UTC()})
-	c.Progress("tool", "queued")
-	require.Eventually(t, func() bool { return current(c).Error != "" }, 3*time.Second, 20*time.Millisecond)
-	require.False(t, current(c).Saved)
-	snapshot, err := loadDisk(c.dir())
-	require.NoError(t, err)
-	require.NotEmpty(t, snapshot.Pending)
+	require.NoError(t, c.Begin("question"))
+	c.Observe(agent.ResponseDelta{Text: "Half an answer"})
+	id := current(c).ID
 	s.Close() // Simulate process stopping without the session's graceful cancellation.
-	db.mu.Lock()
-	db.fail = false
-	db.failAfterCreate = true
-	db.mu.Unlock()
-	recovered, err := newService(root, client)
+
+	restarted := NewForChat(client)
+	defer restarted.Close()
+	resumed, _, _, err := restarted.Open(context.Background(), "customer", "support-agent", c.CID())
 	require.NoError(t, err)
-	defer recovered.Close()
-	resumed := recovered.all[c.CID()]
 	saved(t, resumed)
 	m := current(resumed)
+	require.Equal(t, id, m.ID)
 	require.Equal(t, "interrupted", m.State)
 	require.NotNil(t, m.FinishedAt)
-	require.NotNil(t, m.Tools[0].FinishedAt)
-	require.Equal(t, "cancelled", m.Tools[0].Status)
 	db.mu.Lock()
+	defer db.mu.Unlock()
 	require.Len(t, db.order, 2)
-	db.mu.Unlock()
-	snapshot, err = loadDisk(c.dir())
-	require.NoError(t, err)
-	require.Empty(t, snapshot.Pending)
-}
-func TestQueuedUserMessageKeepsItsAcceptedAuthorAfterRestart(t *testing.T) {
-	for _, legacy := range []bool{false, true} {
-		t.Run(fmt.Sprintf("legacy=%t", legacy), func(t *testing.T) {
-			db, client := newChat(t)
-			root := t.TempDir()
-			s, err := newService(root, client)
-			require.NoError(t, err)
-			t.Cleanup(s.Close)
-			c, _, _, err := s.OpenForCaller(t.Context(), "customer", "agent", "", "employee-one")
-			require.NoError(t, err)
-			db.mu.Lock()
-			db.fail = true
-			db.mu.Unlock()
-			receipt, err := c.BeginCommand("accepted-command", "queued question")
-			require.NoError(t, err)
-			s.Close()
-			snapshot, err := loadDisk(c.dir())
-			require.NoError(t, err)
-			require.NotEmpty(t, snapshot.Pending)
-			require.Equal(t, "employee-one", snapshot.Pending[0].Author)
-			if legacy {
-				// Existing single-owner outboxes must still publish as that owner.
-				snapshot.Pending[0].Author = ""
-			} else {
-				// Changing the session owner must not reattribute accepted writes.
-				// This exercises persistence only; it grants no conversation access.
-				snapshot.Owner = "employee-two"
-			}
-			require.NoError(t, writeJSON(filepath.Join(c.dir(), "state.json"), snapshot))
-			db.mu.Lock()
-			db.fail = false
-			db.mu.Unlock()
-			recovered, err := newService(root, client)
-			require.NoError(t, err)
-			defer recovered.Close()
-			saved(t, recovered.all[c.CID()])
-			db.mu.Lock()
-			defer db.mu.Unlock()
-			require.Len(t, db.order, 2)
-			require.Equal(t, "employee-one", db.messages[receipt.UserMessageID]["user_id"])
-			require.Equal(t, "agent", db.messages[receipt.AssistantMessageID]["user_id"])
-		})
-	}
+	require.Equal(t, "interrupted", db.messages[id]["custom"].(map[string]any)["support_message"].(map[string]any)["state"])
 }
 
 func TestBoundedOrdinaryHistory(t *testing.T) {
@@ -370,8 +360,7 @@ func TestBoundedOrdinaryHistory(t *testing.T) {
 }
 func TestCancelAndSkillsStopTimers(t *testing.T) {
 	_, client := newChat(t)
-	s, err := newService(t.TempDir(), client)
-	require.NoError(t, err)
+	s := NewForChat(client)
 	defer s.Close()
 	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
 	require.NoError(t, err)
@@ -391,8 +380,7 @@ func TestCancelAndSkillsStopTimers(t *testing.T) {
 
 func TestLatePreviousTurnDoesNotCancelNextQuestion(t *testing.T) {
 	_, client := newChat(t)
-	s, err := newService(t.TempDir(), client)
-	require.NoError(t, err)
+	s := NewForChat(client)
 	defer s.Close()
 	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
 	require.NoError(t, err)
@@ -421,8 +409,7 @@ func TestLatePreviousTurnDoesNotCancelNextQuestion(t *testing.T) {
 
 func TestHistoryPaginationAndPendingOverlay(t *testing.T) {
 	db, client := newChat(t)
-	s, err := newService(t.TempDir(), client)
-	require.NoError(t, err)
+	s := NewForChat(client)
 	defer s.Close()
 	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
 	require.NoError(t, err)
@@ -452,8 +439,7 @@ func TestHistoryPaginationAndPendingOverlay(t *testing.T) {
 
 func TestConcurrentSkillsKeepActivityUntilAllSettle(t *testing.T) {
 	_, client := newChat(t)
-	s, err := newService(t.TempDir(), client)
-	require.NoError(t, err)
+	s := NewForChat(client)
 	defer s.Close()
 	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
 	require.NoError(t, err)
@@ -478,8 +464,7 @@ func TestConcurrentSkillsKeepActivityUntilAllSettle(t *testing.T) {
 
 func TestConversationKeepsItsMemoryScopeAcrossResumeAndRestart(t *testing.T) {
 	_, client := newChat(t)
-	service, err := newService(t.TempDir(), client)
-	require.NoError(t, err)
+	service := NewForChat(client)
 	scope := memory.Scope{UserID: "organization-cats"}
 	c, _, _, err := service.Open(t.Context(), "customer", "agent", "", scope)
 	require.NoError(t, err)
@@ -494,8 +479,7 @@ func TestConversationKeepsItsMemoryScopeAcrossResumeAndRestart(t *testing.T) {
 	c.Release()
 	service.Close()
 	// Empty local state: the binding must come from Stream's channel metadata.
-	service, err = newService(t.TempDir(), client)
-	require.NoError(t, err)
+	service = NewForChat(client)
 	defer service.Close()
 	_, _, _, err = service.Open(t.Context(), "customer", "agent", cid, memory.Scope{UserID: "organization-dogs"})
 	require.ErrorContains(t, err, "another memory scope")
@@ -509,8 +493,7 @@ func TestConversationKeepsItsMemoryScopeAcrossResumeAndRestart(t *testing.T) {
 // cannot decide whose conversation it is.
 func TestACreatedChannelCarriesTheCallersCustomButNotItsOwnership(t *testing.T) {
 	db, client := newChat(t)
-	service, err := newService(t.TempDir(), client)
-	require.NoError(t, err)
+	service := NewForChat(client)
 	defer service.Close()
 
 	c, _, _, err := service.OpenForCallerWithCustom(t.Context(), "customer", "agent", "", "guest-reader", "",
@@ -533,28 +516,25 @@ func TestACreatedChannelCarriesTheCallersCustomButNotItsOwnership(t *testing.T) 
 
 func TestDescribeNamesTheChannel(t *testing.T) {
 	db, client := newChat(t)
-	service, err := newService(t.TempDir(), client)
-	require.NoError(t, err)
+	service := NewForChat(client)
 	defer service.Close()
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "guest-reader")
 	require.NoError(t, err)
 	defer c.Release()
 
-	require.NoError(t, service.Describe(t.Context(), c.CID(), "Add push to an Android app", "They asked how to register a device."))
+	require.NoError(t, service.Describe(t.Context(), "customer", c.CID(), "Add push to an Android app", "They asked how to register a device."))
 
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	channel := db.channels[strings.TrimPrefix(c.CID(), "agent:")]
 	require.Equal(t, "Add push to an Android app", channel["name"])
 	require.Equal(t, "They asked how to register a device.", channel["description"])
-	require.Error(t, service.Describe(t.Context(), "messaging:general", "title", ""))
+	require.Error(t, service.Describe(t.Context(), "customer", "messaging:general", "title", ""))
 }
 
 func TestPersonalConversationBindsMembershipMessagesAndHistoryToCaller(t *testing.T) {
 	db, client := newChat(t)
-	root := t.TempDir()
-	service, err := newService(root, client)
-	require.NoError(t, err)
+	service := NewForChat(client)
 	scope := memory.Scope{UserID: "shared-project-memory"}
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee-one", scope)
 	require.NoError(t, err)
@@ -580,36 +560,31 @@ func TestPersonalConversationBindsMembershipMessagesAndHistoryToCaller(t *testin
 	db.mu.Unlock()
 	c.Release()
 	service.Close()
-	// Ownership must survive both local restart and loss of local cache/outbox.
-	for _, directory := range []string{root, t.TempDir()} {
-		service, err = newService(directory, client)
-		require.NoError(t, err)
-		for _, caller := range []string{"employee-two", ""} {
-			_, _, _, err = service.OpenForCaller(t.Context(), "customer", "agent", cid, caller, scope)
-			require.Error(t, err)
-			_, err = service.HistoryForCaller(t.Context(), "customer", "agent", cid, "", caller)
-			require.ErrorContains(t, err, "another user")
-		}
-		page, err := service.HistoryForCaller(t.Context(), "customer", "agent", cid, "", "employee-one")
-		require.NoError(t, err)
-		require.Len(t, page.Messages, 2)
-		c, _, _, err = service.OpenForCaller(t.Context(), "customer", "agent", cid, "employee-one", scope)
-		require.NoError(t, err)
-		c.Release()
-		service.Close()
+	// Ownership must survive a restart, which keeps nothing local.
+	service = NewForChat(client)
+	defer service.Close()
+	for _, caller := range []string{"employee-two", ""} {
+		_, _, _, err = service.OpenForCaller(t.Context(), "customer", "agent", cid, caller, scope)
+		require.Error(t, err)
+		_, err = service.HistoryForCaller(t.Context(), "customer", "agent", cid, "", caller)
+		require.ErrorContains(t, err, "another user")
 	}
+	page, err := service.HistoryForCaller(t.Context(), "customer", "agent", cid, "", "employee-one")
+	require.NoError(t, err)
+	require.Len(t, page.Messages, 2)
+	c, _, _, err = service.OpenForCaller(t.Context(), "customer", "agent", cid, "employee-one", scope)
+	require.NoError(t, err)
+	c.Release()
 }
 
 func TestSharedMembersResumeContextWithTheirOwnCommandsAndLoseAccessOnRemoval(t *testing.T) {
 	db, client := newChat(t)
-	root := t.TempDir()
-	s, err := newService(root, client)
-	require.NoError(t, err)
+	s := NewForChat(client)
 	t.Cleanup(s.Close)
 	alice, _, _, err := s.OpenForCaller(t.Context(), "customer", "agent", "", "alice")
 	require.NoError(t, err)
 	cid := alice.CID()
-	aliceReceipt, err := alice.BeginCommand("alice-command", "Remember TEAM_CANVAS_42")
+	aliceReceipt, err := alice.BeginCommand("alice-command", "Remember TEAM_CANVAS_42", "")
 	require.NoError(t, err)
 	alice.Observe(agent.ResponseDelta{Text: "Remembered TEAM_CANVAS_42"})
 	alice.Observe(agent.Responded{})
@@ -642,7 +617,7 @@ func TestSharedMembersResumeContextWithTheirOwnCommandsAndLoseAccessOnRemoval(t 
 	require.Contains(t, previous[1].Content, "TEAM_CANVAS_42")
 	require.Contains(t, previous[1].Content, `"user_id":"alice","display_name":"Alice"`)
 	require.NoError(t, bob.CheckCaller(t.Context(), "bob"))
-	_, err = bob.BeginCommand("alice-command", "Remember TEAM_CANVAS_42")
+	_, err = bob.BeginCommand("alice-command", "Remember TEAM_CANVAS_42", "")
 	require.ErrorIs(t, err, ErrCommandNotFound)
 	_, err = bob.Command("alice-command")
 	require.ErrorIs(t, err, ErrCommandNotFound)
@@ -650,7 +625,7 @@ func TestSharedMembersResumeContextWithTheirOwnCommandsAndLoseAccessOnRemoval(t 
 	require.ErrorIs(t, err, ErrCommandNotFound)
 	_, err = s.CommandForCaller(t.Context(), "customer", "agent", cid, "bob", "alice-command")
 	require.ErrorIs(t, err, ErrCommandNotFound)
-	bobReceipt, err := bob.BeginCommand("bob-command", "What is the codeword?")
+	bobReceipt, err := bob.BeginCommand("bob-command", "What is the codeword?", "")
 	require.NoError(t, err)
 	bob.Observe(agent.ResponseDelta{Text: "TEAM_CANVAS_42"})
 	bob.Observe(agent.Responded{})
@@ -658,17 +633,16 @@ func TestSharedMembersResumeContextWithTheirOwnCommandsAndLoseAccessOnRemoval(t 
 	bob.Release()
 	s.Close()
 
-	restarted, err := newService(root, client)
-	require.NoError(t, err)
+	restarted := NewForChat(client)
 	defer restarted.Close()
 	bob, previous, _, err = restarted.OpenForCaller(t.Context(), "customer", "agent", cid, "bob")
 	require.NoError(t, err)
 	require.Len(t, previous, 5)
-	duplicate, err := bob.BeginCommand("bob-command", "What is the codeword?")
+	duplicate, err := bob.BeginCommand("bob-command", "What is the codeword?", "")
 	require.NoError(t, err)
 	require.True(t, duplicate.Duplicate)
 	require.Equal(t, bobReceipt.UserMessageID, duplicate.UserMessageID)
-	_, err = bob.BeginCommand("alice-command", "Remember TEAM_CANVAS_42")
+	_, err = bob.BeginCommand("alice-command", "Remember TEAM_CANVAS_42", "")
 	require.ErrorIs(t, err, ErrCommandNotFound)
 	reconciled, err := restarted.CommandForCaller(t.Context(), "customer", "agent", cid, "alice", "alice-command")
 	require.NoError(t, err)
@@ -711,22 +685,18 @@ func TestMalformedSharedMetadataDoesNotRelaxOwnership(t *testing.T) {
 
 func TestEmptyCallerOwnedChannelInitializesCommandLedgerWithoutRecreatingIt(t *testing.T) {
 	db, client := newChat(t)
-	root := t.TempDir()
-	service, err := newService(root, client)
-	require.NoError(t, err)
+	service := NewForChat(client)
 	conversation, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
 	cid := conversation.CID()
 	conversation.Release()
 	service.Close()
-	require.NoError(t, os.RemoveAll(filepath.Join(root, strings.TrimPrefix(cid, "agent:"))))
 
-	service, err = newService(root, client)
-	require.NoError(t, err)
+	service = NewForChat(client)
 	t.Cleanup(service.Close)
 	conversation, _, _, err = service.OpenForCaller(t.Context(), "customer", "agent", cid, "employee")
 	require.NoError(t, err)
-	receipt, err := conversation.BeginCommand("external-command", "Question")
+	receipt, err := conversation.BeginCommand("external-command", "Question", "")
 	require.NoError(t, err)
 	require.Equal(t, "thinking", receipt.State)
 	conversation.Release()
@@ -742,11 +712,26 @@ func TestEmptyCallerOwnedChannelInitializesCommandLedgerWithoutRecreatingIt(t *t
 	require.ErrorContains(t, err, "not a channel member")
 }
 
+func TestUserMessageIsStoredUnderItsCommandID(t *testing.T) {
+	db, client := newChat(t)
+	s := NewForChat(client)
+	t.Cleanup(s.Close)
+	c, _, _, err := s.OpenForCaller(t.Context(), "customer", "agent", "", "employee-one")
+	require.NoError(t, err)
+	receipt, err := c.BeginCommand("3f2a9c1e-5b7d-4e8f-9a01-2b3c4d5e6f70", "question", "")
+	require.NoError(t, err)
+	require.Equal(t, "3f2a9c1e-5b7d-4e8f-9a01-2b3c4d5e6f70", receipt.UserMessageID)
+	require.NotEqual(t, receipt.UserMessageID, receipt.AssistantMessageID)
+	saved(t, c)
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	require.Equal(t, "question", db.messages[receipt.UserMessageID]["text"])
+	require.Equal(t, "employee-one", db.messages[receipt.UserMessageID]["user_id"])
+}
+
 func TestCommandAcceptanceIsAtomicAndDuplicateSafeAcrossRestart(t *testing.T) {
 	db, client := newChat(t)
-	root := t.TempDir()
-	service, err := newService(root, client)
-	require.NoError(t, err)
+	service := NewForChat(client)
 	t.Cleanup(service.Close)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
@@ -757,7 +742,7 @@ func TestCommandAcceptanceIsAtomicAndDuplicateSafeAcrossRestart(t *testing.T) {
 	receipts := make([]CommandReceipt, 16)
 	errors := make([]error, len(receipts))
 	for i := range receipts {
-		workers.Go(func() { receipts[i], errors[i] = c.BeginCommand("submission-1", "one question") })
+		workers.Go(func() { receipts[i], errors[i] = c.BeginCommand("submission-1", "one question", "") })
 	}
 	workers.Wait()
 	started := 0
@@ -770,15 +755,14 @@ func TestCommandAcceptanceIsAtomicAndDuplicateSafeAcrossRestart(t *testing.T) {
 		require.Equal(t, receipts[0].AssistantMessageID, receipt.AssistantMessageID)
 	}
 	require.Equal(t, 1, started)
-	snapshot, err := loadDisk(c.dir())
-	require.NoError(t, err)
-	require.Len(t, snapshot.Pending, 2)
-	require.Equal(t, receipts[0].UserMessageID, snapshot.Pending[0].Message.ID)
-	require.Equal(t, receipts[0].AssistantMessageID, snapshot.Pending[1].Message.ID)
-	require.Equal(t, receipts[0].AssistantMessageID, snapshot.Commands["submission-1"].AssistantMessageID)
-	_, err = c.BeginCommand("submission-1", "different question")
+	c.mu.Lock()
+	require.Len(t, c.data.Pending, 2)
+	require.Equal(t, receipts[0].UserMessageID, c.data.Pending[0].Message.ID)
+	require.Equal(t, receipts[0].AssistantMessageID, c.data.Pending[1].Message.ID)
+	c.mu.Unlock()
+	_, err = c.BeginCommand("submission-1", "different question", "")
 	require.ErrorIs(t, err, ErrCommandConflict)
-	_, err = c.BeginCommand("submission-2", "another question")
+	_, err = c.BeginCommand("submission-2", "another question", "")
 	require.ErrorContains(t, err, "already running")
 	db.mu.Lock()
 	db.fail = false
@@ -788,142 +772,77 @@ func TestCommandAcceptanceIsAtomicAndDuplicateSafeAcrossRestart(t *testing.T) {
 	saved(t, c)
 	c.Release()
 	service.Close()
-	recovered, err := newService(root, client)
-	require.NoError(t, err)
+	// A restart keeps nothing local: the command is known again from Stream alone.
+	recovered := NewForChat(client)
 	t.Cleanup(recovered.Close)
 	c, _, _, err = recovered.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
 	require.NoError(t, err)
-	replay, err := c.BeginCommand("submission-1", "one question")
+	replay, err := c.BeginCommand("submission-1", "one question", "")
 	require.NoError(t, err)
 	require.True(t, replay.Duplicate)
 	require.Equal(t, "completed", replay.State)
 	require.Equal(t, receipts[0].UserMessageID, replay.UserMessageID)
 	require.Equal(t, receipts[0].AssistantMessageID, replay.AssistantMessageID)
+	_, err = c.BeginCommand("submission-1", "different question", "")
+	require.ErrorIs(t, err, ErrCommandConflict)
 	db.mu.Lock()
 	count := len(db.order)
 	db.mu.Unlock()
 	require.Equal(t, 2, count)
-	// A remote channel alone cannot recover the complete historical command ledger.
-	other, err := newService(t.TempDir(), client)
-	require.NoError(t, err)
-	t.Cleanup(other.Close)
-	remote, _, _, err := other.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
-	require.NoError(t, err)
-	_, err = remote.BeginCommand("submission-1", "one question")
-	require.ErrorContains(t, err, "ledger is unavailable")
 }
 
 func TestInterruptedCommandNeverReceivesASecondExecutionClaim(t *testing.T) {
 	_, client := newChat(t)
-	root := t.TempDir()
-	service, err := newService(root, client)
-	require.NoError(t, err)
+	service := NewForChat(client)
 	c, _, _, err := service.Open(t.Context(), "customer", "agent", "")
 	require.NoError(t, err)
-	first, err := c.BeginCommand("interrupted", "question")
+	first, err := c.BeginCommand("interrupted", "question", "")
 	require.NoError(t, err)
 	service.Close() // No terminal model event, as after an interrupted worker.
-	recovered, err := newService(root, client)
-	require.NoError(t, err)
+	recovered := NewForChat(client)
 	defer recovered.Close()
 	c, _, _, err = recovered.Open(t.Context(), "customer", "agent", c.CID())
 	require.NoError(t, err)
-	replay, err := c.BeginCommand("interrupted", "question")
+	replay, err := c.BeginCommand("interrupted", "question", "")
 	require.NoError(t, err)
 	require.True(t, replay.Duplicate)
 	require.Equal(t, "interrupted", replay.State)
 	require.Equal(t, first.AssistantMessageID, replay.AssistantMessageID)
 }
 
-func TestOutboxRootHasOneWriterAndLegacyMigrationDoesNotReimport(t *testing.T) {
-	_, client := newChat(t)
-	root := t.TempDir()
-	service, err := newService(root, client)
-	require.NoError(t, err)
-	_, err = newService(root, client)
-	require.ErrorContains(t, err, "already owned")
-	service.Close()
-	service, err = newService(root, client)
-	require.NoError(t, err)
-	service.Close()
-	dir := t.TempDir()
-	require.NoError(t, os.Mkdir(filepath.Join(dir, "ops"), 0700))
-	require.NoError(t, writeJSON(filepath.Join(dir, "state.json"), disk{CID: "agent:test"}))
-	file := filepath.Join(dir, "ops", "001.json")
-	require.NoError(t, writeJSON(file, operation{Message: Message{ID: "one"}, Create: true}))
-	state, err := loadDisk(dir)
-	require.NoError(t, err)
-	require.Len(t, state.Pending, 1)
-	// Simulate crashing after the versioned snapshot committed, before old-file removal.
-	require.NoError(t, writeJSON(file, operation{Message: Message{ID: "one"}, Create: true}))
-	state, err = loadDisk(dir)
-	require.NoError(t, err)
-	require.Len(t, state.Pending, 1)
-}
-
-func TestFailedAcceptanceDoesNotGrantAClaimOrPublishUncommittedWrites(t *testing.T) {
-	db, client := newChat(t)
-	service, err := newService(t.TempDir(), client)
-	require.NoError(t, err)
-	defer service.Close()
-	c, _, _, err := service.Open(t.Context(), "customer", "agent", "")
-	require.NoError(t, err)
-	// Make atomic rename fail without depending on platform-specific permission rules.
-	statePath := filepath.Join(c.dir(), "state.json")
-	require.NoError(t, os.Remove(statePath))
-	require.NoError(t, os.MkdirAll(statePath, 0700))
-	_, err = c.BeginCommand("failed-write", "question")
-	require.Error(t, err)
-	require.False(t, c.flush())
-	db.mu.Lock()
-	count := len(db.order)
-	db.mu.Unlock()
-	require.Zero(t, count)
-	require.NoError(t, os.Remove(statePath))
-	// Once persistence recovers, a retry exposes failure rather than another claim.
-	replay, err := c.BeginCommand("failed-write", "question")
-	require.NoError(t, err)
-	require.True(t, replay.Duplicate)
-	require.Equal(t, "failed", replay.State)
-}
-
 func TestBlankConversationRetainsItsLedgerAcrossRestart(t *testing.T) {
 	_, client := newChat(t)
-	root := t.TempDir()
-	service, err := newService(root, client)
-	require.NoError(t, err)
+	service := NewForChat(client)
 	c, _, _, err := service.Open(t.Context(), "customer", "agent", "")
 	require.NoError(t, err)
 	service.Close()
-	_, err = c.BeginCommand("after-close", "must not write")
+	_, err = c.BeginCommand("after-close", "must not write", "")
 	require.Error(t, err)
-	recovered, err := newService(root, client)
-	require.NoError(t, err)
+	recovered := NewForChat(client)
 	defer recovered.Close()
 	c, _, _, err = recovered.Open(t.Context(), "customer", "agent", c.CID())
 	require.NoError(t, err)
-	receipt, err := c.BeginCommand("first-submission", "question")
+	receipt, err := c.BeginCommand("first-submission", "question", "")
 	require.NoError(t, err)
 	require.False(t, receipt.Duplicate)
 }
 
 func TestCommandLookupDoesNotAcceptOrChangeTheActiveReply(t *testing.T) {
 	_, client := newChat(t)
-	service, err := newService(t.TempDir(), client)
-	require.NoError(t, err)
+	service := NewForChat(client)
 	t.Cleanup(service.Close)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
 	_, err = c.Command("missing")
 	require.ErrorIs(t, err, ErrCommandNotFound)
-	first, err := c.BeginCommand("first", "Question one")
+	first, err := c.BeginCommand("first", "Question one", "")
 	require.NoError(t, err)
 	known, err := c.Command("first")
 	require.NoError(t, err)
 	require.Equal(t, first, known)
 	c.Observe(agent.ResponseDelta{Text: "Answer one"})
 	c.Observe(agent.Responded{})
-	second, err := c.BeginCommand("second", "Question two")
+	second, err := c.BeginCommand("second", "Question two", "")
 	require.NoError(t, err)
 	terminal, err := c.Command("first")
 	require.NoError(t, err)
@@ -944,21 +863,20 @@ func TestCommandLookupDoesNotAcceptOrChangeTheActiveReply(t *testing.T) {
 
 func TestCancelCommandPreservesOtherCommandsAndDurableReceipts(t *testing.T) {
 	_, client := newChat(t)
-	service, err := newService(t.TempDir(), client)
-	require.NoError(t, err)
+	service := NewForChat(client)
 	t.Cleanup(service.Close)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
-	first, err := c.BeginCommand("first-stop", "Question one")
+	first, err := c.BeginCommand("first-stop", "Question one", "")
 	require.NoError(t, err)
 	cancelled, err := c.CancelCommand(first.CommandID)
 	require.NoError(t, err)
 	require.Equal(t, "cancelled", cancelled.State)
 	require.Equal(t, first.AssistantMessageID, cancelled.AssistantMessageID)
-	snapshot, err := loadDisk(c.dir())
+	known, err := c.Command(first.CommandID)
 	require.NoError(t, err)
-	require.Equal(t, "cancelled", snapshot.Commands[first.CommandID].State)
-	second, err := c.BeginCommand("second-stop", "Question two")
+	require.Equal(t, "cancelled", known.State)
+	second, err := c.BeginCommand("second-stop", "Question two", "")
 	require.NoError(t, err)
 	replayed, err := c.CancelCommand(first.CommandID)
 	require.NoError(t, err)
@@ -970,42 +888,13 @@ func TestCancelCommandPreservesOtherCommandsAndDurableReceipts(t *testing.T) {
 	require.Equal(t, second, active)
 }
 
-func TestCancelCommandPersistenceFailureRemainsUnconfirmedUntilRetry(t *testing.T) {
-	_, client := newChat(t)
-	service, err := newService(t.TempDir(), client)
-	require.NoError(t, err)
-	t.Cleanup(service.Close)
-	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
-	require.NoError(t, err)
-	accepted, err := c.BeginCommand("stop-persist", "Question")
-	require.NoError(t, err)
-	statePath := filepath.Join(c.dir(), "state.json")
-	c.mu.Lock()
-	removeErr := os.Remove(statePath)
-	mkdirErr := os.Mkdir(statePath, 0700)
-	c.mu.Unlock()
-	require.NoError(t, removeErr)
-	require.NoError(t, mkdirErr)
-	receipt, err := c.CancelCommand(accepted.CommandID)
-	require.ErrorContains(t, err, "persistence outcome unknown")
-	require.Empty(t, receipt.CommandID)
-	require.NoError(t, os.Remove(statePath))
-	receipt, err = c.CancelCommand(accepted.CommandID)
-	require.NoError(t, err)
-	require.Equal(t, "cancelled", receipt.State)
-	snapshot, err := loadDisk(c.dir())
-	require.NoError(t, err)
-	require.Equal(t, receipt, snapshot.Commands[accepted.CommandID].CommandReceipt)
-}
-
 func TestLateOutputFromAStoppedCommandNeverJoinsTheNextReply(t *testing.T) {
 	_, client := newChat(t)
-	service, err := newService(t.TempDir(), client)
-	require.NoError(t, err)
+	service := NewForChat(client)
 	t.Cleanup(service.Close)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
-	_, err = c.BeginCommand("stopped", "First question")
+	_, err = c.BeginCommand("stopped", "First question", "")
 	require.NoError(t, err)
 	c.BindTurn("stopped", "turn-first")
 	c.Observe(agent.ResponseDelta{TurnID: "turn-first", Text: "Partial answer"})
@@ -1013,7 +902,7 @@ func TestLateOutputFromAStoppedCommandNeverJoinsTheNextReply(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "cancelled", cancelled.State)
 
-	next, err := c.BeginCommand("next", "Second question")
+	next, err := c.BeginCommand("next", "Second question", "")
 	require.NoError(t, err)
 	c.BindTurn("next", "turn-second")
 	// The interrupted generation is still running where the model is, so its events keep
@@ -1043,12 +932,10 @@ func TestLateOutputFromAStoppedCommandNeverJoinsTheNextReply(t *testing.T) {
 
 func TestACommandIsReconcilableAfterItsConversationClosed(t *testing.T) {
 	_, client := newChat(t)
-	root := t.TempDir()
-	service, err := newService(root, client)
-	require.NoError(t, err)
+	service := NewForChat(client)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
-	accepted, err := c.BeginCommand("abandoned", "Question")
+	accepted, err := c.BeginCommand("abandoned", "Question", "")
 	require.NoError(t, err)
 	cid := c.CID()
 
@@ -1066,25 +953,25 @@ func TestACommandIsReconcilableAfterItsConversationClosed(t *testing.T) {
 	_, err = service.CommandForCaller(t.Context(), "another-customer", "agent", cid, "employee", "abandoned")
 	require.ErrorIs(t, err, ErrCommandNotFound)
 
-	// After a restart the durable record is all there is, and it must still answer.
+	// After a restart Stream is all there is, and it must still answer.
 	service.Close()
-	restarted, err := newService(root, client)
-	require.NoError(t, err)
+	restarted := NewForChat(client)
 	t.Cleanup(restarted.Close)
 	recovered, err := restarted.CommandForCaller(t.Context(), "customer", "agent", cid, "employee", "abandoned")
 	require.NoError(t, err)
 	require.Equal(t, accepted.AssistantMessageID, recovered.AssistantMessageID)
-	require.Contains(t, []string{"cancelled", "interrupted"}, recovered.State)
+	require.Equal(t, "cancelled", recovered.State)
+	_, err = restarted.CommandForCaller(t.Context(), "customer", "agent", cid, "somebody-else", "abandoned")
+	require.ErrorIs(t, err, ErrCommandNotFound)
 }
 
 func TestConcurrentOldCommandStopsPreserveTheNextReply(t *testing.T) {
 	_, client := newChat(t)
-	service, err := newService(t.TempDir(), client)
-	require.NoError(t, err)
+	service := NewForChat(client)
 	t.Cleanup(service.Close)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
-	_, err = c.BeginCommand("old", "First question")
+	_, err = c.BeginCommand("old", "First question", "")
 	require.NoError(t, err)
 	var workers sync.WaitGroup
 	failures := make(chan error, 16)
@@ -1094,7 +981,7 @@ func TestConcurrentOldCommandStopsPreserveTheNextReply(t *testing.T) {
 	var next CommandReceipt
 	require.Eventually(t, func() bool {
 		var err error
-		next, err = c.BeginCommand("next", "Second question")
+		next, err = c.BeginCommand("next", "Second question", "")
 		return err == nil
 	}, time.Second, time.Millisecond)
 	workers.Wait()
@@ -1133,4 +1020,89 @@ func TestSharedHistoryPreservesAuthorsAsUserData(t *testing.T) {
 	messages, truncated = history(page)
 	require.Empty(t, messages)
 	require.True(t, truncated, "author data must count toward history budget")
+}
+
+// attachmentFields are the fields Chat keeps as an attachment's own.
+var attachmentFields = map[string]bool{"type": true, "title": true, "title_link": true, "text": true,
+	"fallback": true, "image_url": true, "thumb_url": true, "asset_url": true, "og_scrape_url": true}
+
+// partiallySetAttachments stores attachments the way Chat leaves those a partial update
+// sets: every key it does not know is custom data, which a server-side read returns under
+// "custom" and a client reads off the attachment itself. A key named "custom" is not the
+// custom data there, only one more custom field.
+func partiallySetAttachments(value any) any {
+	list, _ := value.([]any)
+	stored := make([]any, 0, len(list))
+	for _, item := range list {
+		attachment, _ := item.(map[string]any)
+		own, custom := map[string]any{}, map[string]any{}
+		for key, field := range attachment {
+			if attachmentFields[key] {
+				own[key] = field
+			} else {
+				custom[key] = field
+			}
+		}
+		if len(custom) > 0 {
+			own["custom"] = custom
+		}
+		stored = append(stored, own)
+	}
+	return stored
+}
+
+// TestRepliesFollowStreamAIProtocol covers what Stream's AI components need from a reply:
+// ai_generated on the assistant's message only, an AI indicator that follows the reply
+// through thinking, a search and writing, and a clear that only comes once the final
+// text is stored.
+func TestRepliesFollowStreamAIProtocol(t *testing.T) {
+	db, client := newChat(t)
+	s := NewForChat(client)
+	defer s.Close()
+	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
+	require.NoError(t, err)
+	require.NoError(t, c.Begin("question"))
+	id := current(c).ID
+	states := func() []string {
+		db.mu.Lock()
+		defer db.mu.Unlock()
+		var seen []string
+		for _, e := range db.events {
+			custom, _ := e.body["custom"].(map[string]any)
+			require.Equal(t, id, custom["message_id"])
+			if e.body["type"] == "ai_indicator.clear" {
+				seen = append(seen, "clear")
+			} else {
+				seen = append(seen, custom["ai_state"].(string))
+			}
+		}
+		return seen
+	}
+	thinking := []string{"AI_STATE_THINKING"}
+	require.Eventually(t, func() bool { return slices.Equal(states(), thinking) }, 3*time.Second, 20*time.Millisecond)
+
+	db.mu.Lock()
+	for _, m := range db.messages {
+		custom := m["custom"].(map[string]any)
+		role := custom["support_runtime"].(map[string]any)["role"]
+		require.Equal(t, role == "assistant", custom["ai_generated"] == true, "ai_generated on a %v message", role)
+	}
+	db.mu.Unlock()
+
+	c.Observe(agent.ToolStarted{ID: "one", Tool: "search", StartedAt: time.Now().UTC()})
+	searching := append(thinking, "AI_STATE_EXTERNAL_SOURCES")
+	require.Eventually(t, func() bool { return slices.Equal(states(), searching) }, 3*time.Second, 20*time.Millisecond)
+	c.Observe(agent.ToolRan{ID: "one", Result: `{}`})
+	c.Observe(agent.ResponseDelta{Text: "The answer."})
+	require.Eventually(t, func() bool { return slices.Contains(states(), "AI_STATE_GENERATING") }, 3*time.Second, 20*time.Millisecond)
+
+	c.Observe(agent.Responded{})
+	saved(t, c)
+	require.Eventually(t, func() bool { return slices.Contains(states(), "clear") }, 3*time.Second, 20*time.Millisecond)
+	db.mu.Lock()
+	last := db.events[len(db.events)-1]
+	db.mu.Unlock()
+	require.Equal(t, "ai_indicator.clear", last.body["type"])
+	require.Equal(t, 1, last.updates, "the indicator cleared before the final text was stored")
+	c.Release()
 }

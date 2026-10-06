@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using System.Net.WebSockets;
 using System.Text.Json.Nodes;
 
 namespace GetStream.VisionAgents;
@@ -33,15 +34,29 @@ public sealed record DispatchOptions
 /// </para>
 /// <para>
 /// A message only arrives when no agent is running on its channel; one written to an agent
-/// that is running is answered by that session. Several workers can wait at once, and the
-/// work is shared between them.
+/// that is running is answered by that session, unless the agent leaves text to dispatch, in
+/// which case it arrives with its <see cref="InboundMessage.SessionId"/> and
+/// <see cref="AnswerAsync"/> answers it. Several workers can wait at once, and the work is
+/// shared between them.
+/// </para>
+/// <para>
+/// A worker can also <see cref="Host"/> tools: the router offers them to every session
+/// opened under an agent id, and sends each call down this connection.
 /// </para>
 /// </remarks>
 public sealed class Dispatch
 {
     private const string Path = "/v1/dispatch";
+    // Bounds on the wait between attempts to reach a router that dropped this worker. A
+    // router being redeployed is back within seconds; one down for longer is not worth
+    // asking twice a second.
+    private static readonly TimeSpan LastRetry = TimeSpan.FromSeconds(30);
+    // How long a connection has to have lasted for its loss to be a fresh drop rather than
+    // another failed attempt, so the wait starts again from the first.
+    private static readonly TimeSpan SteadyAfter = TimeSpan.FromMinutes(1);
 
     private readonly TimeSpan _reportEvery;
+    private readonly List<(string AgentId, Tools Tools, TimeSpan Timeout)> _hosted = [];
     private readonly ConcurrentDictionary<long, Task> _running = new();
     // A channel is one conversation, so the agent that answered the last message on it is
     // the one that knows what has been said and should answer the next.
@@ -54,6 +69,9 @@ public sealed class Dispatch
     private TaskCompletionSource _pong = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private double _latencyMs;
     private long _handed;
+    // The calls and messages alone, which is what the router counts against this worker's
+    // capacity. A hosted tool call is not one: the router tracks those by their answer.
+    private int _handling;
 
     /// <summary>Waits for one customer's work on a router.</summary>
     /// <exception cref="ConfigurationException">The capacity is not a number of calls.</exception>
@@ -81,10 +99,12 @@ public sealed class Dispatch
     /// <summary>How much is being handled right now.</summary>
     public int Active => _running.Count;
 
+    internal TimeSpan FirstRetry { get; init; } = TimeSpan.FromSeconds(1);
+
     /// <summary>
     /// What to do with an arriving call. It runs as its own task, so one long call does not
-    /// stop the next from being answered. The router is told the call was accepted when it
-    /// returns, and rejected, with the reason, when it throws.
+    /// stop the next from being answered. The router is told the call is done when it
+    /// returns, with what it threw if it throws.
     /// </summary>
     public Dispatch WaitForCall(Func<InboundCall, Task> handler)
     {
@@ -93,13 +113,19 @@ public sealed class Dispatch
     }
 
     /// <summary>
-    /// What to do with a message written to an agent that is not running. It runs as its
-    /// own task, the way a call's does.
+    /// What to do with a message written to an agent that is not running, or to a running
+    /// session whose agent leaves text to dispatch. It runs as its own task, the way a call's
+    /// does.
     /// </summary>
     /// <example>
     /// <code>
     /// dispatch.WaitForMessage(async message =>
     /// {
+    ///     if (message.SessionId != "")
+    ///     {
+    ///         await dispatch.AnswerAsync(message);
+    ///         return;
+    ///     }
     ///     var agent = await dispatch.GetOrCreateAgentAsync(message, () => new Agent(new() { Config = "support" }));
     ///     await agent.Responses.CreateAsync(message.Text);
     /// });
@@ -113,6 +139,24 @@ public sealed class Dispatch
     }
 
     /// <summary>
+    /// Runs these tools for every session opened under an agent id, whoever opened it.
+    /// </summary>
+    /// <remarks>
+    /// A session's own tools run in the process that opened it, which is no use to a
+    /// conversation opened from a browser. Hosting is the other direction: the router offers
+    /// these to each session naming the agent and sends every call here. Call before
+    /// <see cref="RunAsync"/>.
+    /// </remarks>
+    /// <param name="agentId">The agent whose sessions are offered the tools.</param>
+    /// <param name="tools">The tools, registered the way <see cref="Agent.Tools"/> are.</param>
+    /// <param name="timeout">How long the router gives one call; null takes its default.</param>
+    public Dispatch Host(string agentId, Tools tools, TimeSpan? timeout = null)
+    {
+        _hosted.Add((agentId, tools, timeout ?? TimeSpan.Zero));
+        return this;
+    }
+
+    /// <summary>
     /// The agent answering on this message's channel, started in writing if none is.
     /// </summary>
     /// <remarks>
@@ -120,12 +164,17 @@ public sealed class Dispatch
     /// still open and knows what has been said; only a channel nothing is answering calls
     /// <paramref name="createAgent"/>. Agents are kept until this worker stops waiting.
     /// </remarks>
+    /// <exception cref="InvalidOperationException">A session is already holding the message.</exception>
     public Task<Agent> GetOrCreateAgentAsync(InboundMessage message, Func<Agent> createAgent, CancellationToken cancellationToken = default) =>
         GetOrCreateAgentAsync(message, _ => Task.FromResult(createAgent()), cancellationToken);
 
     /// <inheritdoc cref="GetOrCreateAgentAsync(InboundMessage, Func{Agent}, CancellationToken)"/>
     public async Task<Agent> GetOrCreateAgentAsync(InboundMessage message, Func<CancellationToken, Task<Agent>> createAgent, CancellationToken cancellationToken = default)
     {
+        if (message.SessionId != "")
+        {
+            throw new InvalidOperationException("a session is already holding this conversation; answer it there with AnswerAsync");
+        }
         await _agentsLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -134,7 +183,7 @@ public sealed class Dispatch
                 return answering;
             }
             var agent = await createAgent(cancellationToken).ConfigureAwait(false);
-            await agent.ChatAsync(new SessionOptions { Persist = true, AgentId = message.AgentId }, cancellationToken).ConfigureAwait(false);
+            await agent.ChatAsync(new SessionOptions { AgentId = message.AgentId }, cancellationToken).ConfigureAwait(false);
             _agents[message.ChannelId] = agent;
             return agent;
         }
@@ -145,42 +194,96 @@ public sealed class Dispatch
     }
 
     /// <summary>
-    /// Waits for calls and messages until cancelled or until the router closes the connection.
+    /// Has the model answer a message written to a running session whose agent leaves text
+    /// to dispatch, which is what the person who wrote it is waiting on.
     /// </summary>
     /// <remarks>
+    /// The response is created with this worker's own credential, acting for whoever wrote
+    /// the message, so it reaches a conversation that belongs to them and goes to the model
+    /// rather than back to a worker. It carries the message's command, so the answer lands on it.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">No session is holding the message.</exception>
+    public async Task<Response> AnswerAsync(InboundMessage message, CancellationToken cancellationToken = default)
+    {
+        if (message.SessionId == "")
+        {
+            throw new InvalidOperationException("no session is holding this message; open one with GetOrCreateAgentAsync");
+        }
+        using var acting = Client.ActingFor(message.UserId);
+        return await new Responses(acting, message.SessionId)
+            .CreateAsync(message.Text, commandId: message.CommandId, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Waits for work until cancelled, until the router closes the connection on purpose, or
+    /// until it refuses the tools this worker hosts.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A connection that drops any other way, a router being redeployed or a load balancer
+    /// ending an idle socket, is opened again and the router told again what this worker
+    /// hosts. Only the first connection failing is thrown, since that is a worker that was
+    /// never going to work.
+    /// </para>
+    /// <para>
     /// Returns rather than throws when cancelled. Work still being handled is waited for
     /// either way, because dropping a call would hang up on whoever is talking.
+    /// </para>
     /// </remarks>
-    /// <exception cref="InvalidOperationException">No handler is registered, so work would arrive with nothing to do it.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// No handler is registered and nothing is hosted, so work would arrive with nothing to do
+    /// it; or the router refused the hosted tools.
+    /// </exception>
     public async Task RunAsync(CancellationToken cancellationToken = default)
     {
-        if (_onCall is null && _onMessage is null)
+        if (_onCall is null && _onMessage is null && _hosted.Count == 0)
         {
-            throw new InvalidOperationException("register a handler with WaitForCall or WaitForMessage before running");
+            throw new InvalidOperationException("register a handler with WaitForCall or WaitForMessage, or Host tools, before running");
         }
 
         Socket socket;
         try
         {
-            socket = await Socket.ConnectAsync(Client.Backend,
-                Client.Backend.SocketUrl(Path, new Dictionary<string, string> { ["capacity"] = Capacity.ToString(CultureInfo.InvariantCulture) }),
-                cancellationToken).ConfigureAwait(false);
+            socket = await Socket.ConnectAsync(Client.Backend, Waiting(), cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             return;
         }
 
-        _socket = socket;
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var reporting = ReportAsync(stop.Token);
         try
         {
-            while (await socket.ReceiveAsync(stop.Token).ConfigureAwait(false) is { } message)
+            var retry = FirstRetry;
+            while (true)
             {
-                if (message.Frame is { } frame)
+                _socket = socket;
+                var opened = _clock.Elapsed;
+                if (!await ServeAsync(socket, cancellationToken).ConfigureAwait(false))
                 {
-                    Read(frame);
+                    return;
+                }
+                _socket = null;
+                await socket.DisposeAsync().ConfigureAwait(false);
+                if (_clock.Elapsed - opened >= SteadyAfter)
+                {
+                    retry = FirstRetry;
+                }
+
+                while (true)
+                {
+                    await Task.Delay(retry, cancellationToken).ConfigureAwait(false);
+                    retry = TimeSpan.FromTicks(Math.Min(retry.Ticks * 2, LastRetry.Ticks));
+                    try
+                    {
+                        socket = await Socket.ConnectAsync(Client.Backend, Waiting(), cancellationToken).ConfigureAwait(false);
+                        break;
+                    }
+                    catch (RouterException)
+                    {
+                        // Still away; the next attempt waits longer.
+                    }
                 }
             }
         }
@@ -215,6 +318,8 @@ public sealed class Dispatch
         ChannelType = frame.Text("channel_type"),
         AgentId = frame.Text("agent_id"),
         ConfigId = frame.Text("config_id"),
+        SessionId = frame.Text("session_id"),
+        CommandId = frame.Text("command_id"),
         Text = frame.Text("text"),
         MessageId = frame.Text("message_id"),
         UserId = frame.Text("user_id"),
@@ -223,21 +328,67 @@ public sealed class Dispatch
         At = TimeOf(frame),
     };
 
-    private void Read(Frame frame)
+    /// <summary>
+    /// What this worker says about itself on the way in: how much it can hold, how much it is
+    /// still holding from before a reconnect, and which kinds of work it answers. On the
+    /// handshake rather than in a frame, because the router may hand over work before reading
+    /// anything; <c>handles</c> is sent even when empty, for a worker that only hosts tools.
+    /// </summary>
+    private Uri Waiting() => Client.Backend.SocketUrl(Path, new Dictionary<string, string>
+    {
+        ["capacity"] = Capacity.ToString(CultureInfo.InvariantCulture),
+        ["active"] = Volatile.Read(ref _handling).ToString(CultureInfo.InvariantCulture),
+        ["handles"] = string.Join(',', new[] { _onCall is null ? null : "call", _onMessage is null ? null : "message" }.OfType<string>()),
+    });
+
+    /// <summary>
+    /// Reads one connection until it ends, reporting whether the router dropped it rather
+    /// than closing it on purpose. Going away is a router shutting down, which is when a
+    /// worker should find the one replacing it.
+    /// </summary>
+    private async Task<bool> ServeAsync(Socket socket, CancellationToken cancellationToken)
+    {
+        while (await socket.ReceiveAsync(cancellationToken).ConfigureAwait(false) is { } message)
+        {
+            if (message.Frame is { } frame)
+            {
+                await ReadAsync(frame, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        return !cancellationToken.IsCancellationRequested && socket.CloseStatus != WebSocketCloseStatus.NormalClosure;
+    }
+
+    private async Task ReadAsync(Frame frame, CancellationToken cancellationToken)
     {
         switch (frame.Type)
         {
-            case "call" when _onCall is { } onCall:
-                var call = CallOf(frame);
-                Track(() => AnswerAsync(onCall, call));
+            case "call":
+                await HandleAsync(frame.Text("work_id"), _onCall is { } onCall ? () => onCall(CallOf(frame)) : null,
+                    "this worker answers no calls").ConfigureAwait(false);
                 break;
-            case "message" when _onMessage is { } onMessage:
-                var message = MessageOf(frame);
-                Track(() => ReplyAsync(onMessage, message));
+            case "message":
+                await HandleAsync(frame.Text("work_id"), _onMessage is { } onMessage ? () => onMessage(MessageOf(frame)) : null,
+                    "this worker answers no messages").ConfigureAwait(false);
                 break;
             case "ready":
                 WorkerId = frame.Text("worker_id");
+                foreach (var (agentId, tools, timeout) in _hosted)
+                {
+                    await TellAsync(Frames.Of("host_tools", ("agent_id", agentId), ("tools", tools.Declared()),
+                        ("timeout_ms", (long)timeout.TotalMilliseconds))).ConfigureAwait(false);
+                }
                 break;
+            case "tool_call":
+                await RunHostedAsync(frame, cancellationToken).ConfigureAwait(false);
+                break;
+            case "hosting":
+                Trace.TraceInformation("the router sends tools for agent {0} to this worker", frame.Text("agent_id"));
+                break;
+            case "hosting_refused":
+                // A worker whose tools were refused is one nobody will call; saying so beats
+                // sitting connected looking healthy.
+                throw new InvalidOperationException(
+                    $"the router refused to host tools for agent {frame.Text("agent_id")}: {frame.Text("reason")}");
             case "pong":
                 _latencyMs = (_clock.Elapsed.TotalSeconds - frame.Number("at")) * 1000;
                 _pong.TrySetResult();
@@ -266,38 +417,70 @@ public sealed class Dispatch
     }
 
     /// <summary>
-    /// Runs the handler for one call and tells the router how it went. Whatever it throws is
-    /// somebody else's code failing, so it is reported rather than let escape.
+    /// Starts one hosted call, off the read loop like any other work, and answers with what
+    /// the tool returned or what it threw.
     /// </summary>
-    private async Task AnswerAsync(Func<InboundCall, Task> handler, InboundCall call)
+    private async Task RunHostedAsync(Frame frame, CancellationToken cancellationToken)
     {
-        try
+        var id = frame.Text("id");
+        var name = frame.Text("name");
+        if (_hosted.Select(offer => offer.Tools).FirstOrDefault(tools => tools.Runs(name)) is not { } tools)
         {
-            await handler(call).ConfigureAwait(false);
-        }
-        catch (Exception failure)
-        {
-            await TellAsync(Frames.Of("rejected", ("call_id", call.CallId), ("reason", failure.Message))).ConfigureAwait(false);
+            await TellAsync(Frames.Of("tool_result", ("id", id), ("error", $"this worker does not run {name}"))).ConfigureAwait(false);
             return;
         }
-        await TellAsync(Frames.Of("accepted", ("call_id", call.CallId))).ConfigureAwait(false);
+        Track(async () =>
+        {
+            JsonObject result;
+            try
+            {
+                result = Frames.Of("tool_result", ("id", id),
+                    ("output", await tools.CallAsync(name, frame.Text("arguments"), cancellationToken).ConfigureAwait(false)));
+            }
+            catch (Exception failure)
+            {
+                // Whatever a tool throws is the model's to hear about, not this loop's.
+                result = Frames.Of("tool_result", ("id", id), ("error", failure.Message));
+            }
+            await TellAsync(result).ConfigureAwait(false);
+        });
     }
 
     /// <summary>
-    /// Runs the handler for one message. Nothing is reported back: accepting and rejecting are
-    /// about a caller waiting on a line, and there is no line here.
+    /// Runs the handler for one call or message and tells the router it is done. Whatever it
+    /// throws is somebody else's code failing, so it is reported rather than let escape. Work
+    /// with no handler is reported done too, because the router holds its room until then.
     /// </summary>
-    private static async Task ReplyAsync(Func<InboundMessage, Task> handler, InboundMessage message)
+    private async Task HandleAsync(string workId, Func<Task>? handler, string unhandled)
     {
-        try
+        if (handler is null)
         {
-            await handler(message).ConfigureAwait(false);
+            await DoneAsync(workId, unhandled).ConfigureAwait(false);
+            return;
         }
-        catch (Exception)
+        Interlocked.Increment(ref _handling);
+        Track(async () =>
         {
-            // A message nobody answered is the handler's to log; the worker carries on.
-        }
+            string? failed = null;
+            try
+            {
+                await handler().ConfigureAwait(false);
+            }
+            catch (Exception failure)
+            {
+                failed = failure.Message;
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _handling);
+            }
+            await DoneAsync(workId, failed).ConfigureAwait(false);
+        });
     }
+
+    private Task DoneAsync(string workId, string? error) => TellAsync(error is null
+        ? Frames.Of("done", ("work_id", workId))
+        : Frames.Of("done", ("work_id", workId), ("error", error)));
 
     /// <summary>Tells the router how this process is doing, on a timer.</summary>
     private async Task ReportAsync(CancellationToken cancellationToken)

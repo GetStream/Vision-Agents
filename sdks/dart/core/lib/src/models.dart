@@ -24,6 +24,16 @@ enum SessionMode {
   unknown,
 }
 
+/// How the user took part.
+enum SessionModality {
+  text,
+  voice,
+  video,
+
+  /// A modality this SDK has never heard of.
+  unknown,
+}
+
 /// A running or finished conversation.
 final class Session {
   const Session({
@@ -36,6 +46,7 @@ final class Session {
     this.isText = false,
     this.state = SessionState.live,
     this.mode = SessionMode.unknown,
+    this.modality = SessionModality.unknown,
     this.agent = '',
     this.configId = '',
     this.conversationId = '',
@@ -47,7 +58,7 @@ final class Session {
     this.voice = '',
     this.title = '',
     this.description = '',
-    this.project = '',
+    this.projectId = '',
     this.custom = const {},
     this.incognito = false,
     this.forkedFrom = '',
@@ -72,13 +83,14 @@ final class Session {
   final bool isText;
   final SessionState state;
   final SessionMode mode;
+  final SessionModality modality;
 
   /// The agent config's name, as the session was opened against it.
   final String agent;
   final String configId;
 
-  /// The Stream Chat channel the conversation is kept in, as `type:id`. Empty unless the
-  /// session was opened with `persistConversation`.
+  /// The Stream Chat channel the conversation is kept in, as `type:id`. Empty for a call and
+  /// for an incognito session.
   final String conversationId;
   final String instructions;
 
@@ -92,7 +104,7 @@ final class Session {
   /// The labels a person finds the conversation by again. Never shown to the model.
   final String title;
   final String description;
-  final String project;
+  final String projectId;
 
   /// The caller's own, handed back untouched.
   final Map<String, Object?> custom;
@@ -266,7 +278,6 @@ final class ModelOverwrites {
     this.stt,
     this.tts,
     this.sts,
-    this.subagent,
     this.search,
     this.thinking,
     this.temperature,
@@ -278,7 +289,6 @@ final class ModelOverwrites {
   final String? stt;
   final String? tts;
   final String? sts;
-  final String? subagent;
   final String? search;
   final Thinking? thinking;
 
@@ -306,6 +316,7 @@ final class AgentImage {
 /// null is left out of the request, never sent as a copy of the server's default.
 final class SessionOptions {
   const SessionOptions({
+    this.id,
     this.agent,
     this.configId,
     this.instructions,
@@ -316,15 +327,18 @@ final class SessionOptions {
     this.voice,
     this.title,
     this.description,
-    this.project,
+    this.projectId,
     this.custom,
     this.incognito,
-    this.persistConversation,
     this.conversationId,
     this.modelOverwrites,
     this.tools = const [],
     this.tags = const {},
   });
+
+  /// A UUID to hold the session by, for a caller that wants to know it before the session
+  /// exists. One already taken is refused with a 409. Left out, the router generates one.
+  final String? id;
 
   /// The agent config to start from, by the name it was stored under.
   final String? agent;
@@ -349,7 +363,7 @@ final class SessionOptions {
   final String? description;
 
   /// What the conversation belongs to, which is also its "project" cost tag.
-  final String? project;
+  final String? projectId;
 
   /// Anything of the caller's own. Sessions can be queried by it.
   final Map<String, Object?>? custom;
@@ -357,9 +371,6 @@ final class SessionOptions {
   /// Hold the conversation and record nothing about it. It cannot be found, rewound or
   /// forked afterwards, which is the point.
   final bool? incognito;
-
-  /// Keep a text conversation in Stream Chat.
-  final bool? persistConversation;
 
   /// A Stream Chat channel, as `type:id`, to resume. Leave it out on a first open: the
   /// channel is the backend's to name, and a resume passes the one the first open was given.
@@ -383,7 +394,7 @@ final class ForkOptions {
     this.configId,
     this.title,
     this.description,
-    this.project,
+    this.projectId,
     this.custom,
     this.instructions,
     this.incognito,
@@ -405,7 +416,7 @@ final class ForkOptions {
   final String? configId;
   final String? title;
   final String? description;
-  final String? project;
+  final String? projectId;
   final Map<String, Object?>? custom;
   final String? instructions;
   final bool? incognito;
@@ -419,41 +430,54 @@ final class ForkOptions {
   final String? callId;
 }
 
-/// Whether a query wants the sessions still running, the ones that ended, or both.
-enum SessionFilter { running, closed }
-
 /// Which conversations to list.
 final class SessionQuery {
   const SessionQuery({
     this.agent,
-    this.configId,
-    this.project,
+    this.agentId,
+    this.projectId,
     this.userId,
+    this.modality,
     this.state,
-    this.custom,
-    this.createdAfter,
-    this.createdBefore,
     this.limit,
-    this.offset,
+    this.cursor,
   });
 
   /// Only those opened against this agent name.
   final String? agent;
-  final String? configId;
-  final String? project;
+
+  /// Only those created with this agent id.
+  final String? agentId;
+
+  /// Only this project's. A search covers every project, so the router refuses one with it.
+  final String? projectId;
 
   /// Only this user's. A device is narrowed to its own whatever it asks for.
   final String? userId;
 
-  /// Omitted is both.
-  final SessionFilter? state;
+  /// Only those the user took part in this way.
+  final SessionModality? modality;
 
-  /// Labels a session must carry, every one of them.
-  final Map<String, Object?>? custom;
-  final DateTime? createdAfter;
-  final DateTime? createdBefore;
+  /// Only the running ones, or only the ones that ended. Omitted is both.
+  final SessionState? state;
 
-  /// Up to 200. Omitted is 25, and a page shorter than the limit is the last one.
+  /// Up to 200. Omitted is 25.
   final int? limit;
-  final int? offset;
+
+  /// The [ListPage.nextCursor] of the page before, asked with the same filters. Omitted is
+  /// the first page.
+  final String? cursor;
+}
+
+/// One page of a list, and where the next one starts.
+final class ListPage<T> {
+  const ListPage(this.items, {this.hasMore = false, this.nextCursor});
+
+  final List<T> items;
+
+  /// Whether there is a page after this one.
+  final bool hasMore;
+
+  /// What to ask for the next page with, null on the last one.
+  final String? nextCursor;
 }

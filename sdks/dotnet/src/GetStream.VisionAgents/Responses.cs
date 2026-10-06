@@ -70,33 +70,34 @@ public sealed class Items
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         page = Math.Clamp(page <= 0 ? Page : page, 1, Ceiling);
-        var offset = 0;
+        string? cursor = null;
         while (true)
         {
-            var read = await ListAsync(page, offset, cancellationToken).ConfigureAwait(false);
-            foreach (var item in read)
+            var read = await ListAsync(page, cursor, cancellationToken).ConfigureAwait(false);
+            foreach (var item in read.Items)
             {
                 yield return item;
             }
-            // A short page is the last one; asking again to see an empty one would double
-            // the requests for every conversation that is an exact multiple of the page.
-            if (read.Count < page)
+            if (!read.HasMore || read.NextCursor is not { Length: > 0 } next)
             {
                 yield break;
             }
-            offset += read.Count;
+            cursor = next;
         }
     }
 
-    /// <summary>One page of items, for a caller doing its own paging.</summary>
-    public Task<List<AgentResponseItem>> ListAsync(int? limit = null, int? offset = null, CancellationToken cancellationToken = default) =>
-        _client.GetAsync<List<AgentResponseItem>>(
+    /// <summary>
+    /// One page of items, for a caller doing its own paging. A null limit leaves the router's
+    /// own; a null cursor is the first page, and the page's <c>NextCursor</c> the next.
+    /// </summary>
+    public Task<AgentResponseItemPage> ListAsync(int? limit = null, string? cursor = null, CancellationToken cancellationToken = default) =>
+        _client.GetAsync<AgentResponseItemPage>(
             $"/v1/agents/sessions/{VisionAgentsClient.Escape(_sessionId)}/responses/items",
             new Dictionary<string, string?>
             {
                 ["response_id"] = VisionAgentsClient.Blank(_responseId),
                 ["limit"] = VisionAgentsClient.Number(limit),
-                ["offset"] = VisionAgentsClient.Number(offset),
+                ["cursor"] = VisionAgentsClient.Blank(cursor),
             },
             cancellationToken);
 
@@ -142,22 +143,34 @@ public sealed class Responses
     /// An incognito session records nothing, so the turn it hands back has no id: there is
     /// nothing to read back afterwards, which is what incognito means.
     /// </remarks>
-    public async Task<Response> CreateAsync(string text, IReadOnlyList<ImageSource>? images = null, CancellationToken cancellationToken = default)
+    /// <param name="text">What to answer.</param>
+    /// <param name="images">Images to show the agent with it.</param>
+    /// <param name="commandId">The durable command this answers, reused on a retry; null sends none.</param>
+    /// <param name="cancellationToken">Stops waiting.</param>
+    public async Task<Response> CreateAsync(string text, IReadOnlyList<ImageSource>? images = null, string? commandId = null, CancellationToken cancellationToken = default)
     {
-        var request = new CreateResponseRequest { Text = text, Images = images is { Count: > 0 } ? [.. images] : null };
+        var request = new CreateResponseRequest
+        {
+            Text = text,
+            Images = images is { Count: > 0 } ? [.. images] : null,
+            CommandId = VisionAgentsClient.Blank(commandId),
+        };
         var created = await _client.PostAsync<AgentResponse>(
             $"/v1/agents/sessions/{VisionAgentsClient.Escape(_sessionId)}/responses", request, cancellationToken).ConfigureAwait(false);
         return new Response(_client, created);
     }
 
-    /// <summary>The turns so far, oldest first.</summary>
-    public Task<List<AgentResponse>> ListAsync(int? limit = null, int? offset = null, CancellationToken cancellationToken = default) =>
-        _client.GetAsync<List<AgentResponse>>(
+    /// <summary>
+    /// A page of the turns so far, oldest first. A null limit leaves the router's own; a null
+    /// cursor is the first page, and the page's <c>NextCursor</c> the next.
+    /// </summary>
+    public Task<AgentResponsePage> ListAsync(int? limit = null, string? cursor = null, CancellationToken cancellationToken = default) =>
+        _client.GetAsync<AgentResponsePage>(
             $"/v1/agents/sessions/{VisionAgentsClient.Escape(_sessionId)}/responses",
             new Dictionary<string, string?>
             {
                 ["limit"] = VisionAgentsClient.Number(limit),
-                ["offset"] = VisionAgentsClient.Number(offset),
+                ["cursor"] = VisionAgentsClient.Blank(cursor),
             },
             cancellationToken);
 

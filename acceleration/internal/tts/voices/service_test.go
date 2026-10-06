@@ -13,11 +13,12 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
-	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // dsnEnvVar is where the tests look for a Postgres to run against.
@@ -27,6 +28,7 @@ type ServiceSuite struct {
 	suite.Suite
 	ctx      context.Context
 	store    *store.Store
+	configs  *appconfig.Store
 	bucket   *blob.Bucket
 	service  *Service
 	resolver *Resolver
@@ -49,11 +51,15 @@ func (s *ServiceSuite) SetupSuite() {
 
 	s.ctx = context.Background()
 
-	opened, err := store.Open(dsn)
+	// A database of this suite's own, since it empties the voices between tests.
+	opened, err := store.Open(testenv.Database(dsn, "voices"))
 	s.Require().NoError(err)
 	s.store = opened
 	s.Require().NoError(opened.Migrate(s.ctx))
-	s.resolver = NewResolver(opened)
+	configs, err := appconfig.New(appconfig.Options{Store: opened})
+	s.Require().NoError(err)
+	s.configs = configs
+	s.resolver = NewResolver(configs)
 }
 
 func (s *ServiceSuite) TearDownSuite() {
@@ -89,7 +95,7 @@ func (s *ServiceSuite) SetupTest() {
 	cloners := NewRegistry()
 	cloners.Register("elevenlabs", cloner)
 
-	service, err := NewService(Options{Store: s.store, Bucket: bucket, Cloners: cloners})
+	service, err := NewService(Options{Store: s.configs, Bucket: bucket, Cloners: cloners})
 	s.Require().NoError(err)
 	s.service = service
 }

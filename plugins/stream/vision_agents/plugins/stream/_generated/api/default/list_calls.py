@@ -7,27 +7,29 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.call import Call
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
+    running: bool | Unset = False,
+    limit: int | Unset = 50,
     agent_id: str | Unset = UNSET,
     campaign_id: str | Unset = UNSET,
-    running: bool | Unset = False,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
-    limit: int | Unset = 50,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
 
+    params["running"] = running
+
+    params["limit"] = limit
+
     params["agent_id"] = agent_id
 
     params["campaign_id"] = campaign_id
-
-    params["running"] = running
 
     json_from_: str | Unset = UNSET
     if not isinstance(from_, Unset):
@@ -38,8 +40,6 @@ def _get_kwargs(
     if not isinstance(to, Unset):
         json_to = to.isoformat()
     params["to"] = json_to
-
-    params["limit"] = limit
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -54,7 +54,7 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | list[Call] | None:
+) -> ErrorResponse | list[Call] | None:
     if response.status_code == 200:
         response_200 = []
         _response_200 = response.json()
@@ -66,19 +66,24 @@ def _parse_response(
         return response_200
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
+
+    if response.status_code == 500:
+        response_500 = ErrorResponse.from_dict(response.json())
+
+        return response_500
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -88,7 +93,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | list[Call]]:
+) -> Response[ErrorResponse | list[Call]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -100,13 +105,13 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
+    running: bool | Unset = False,
+    limit: int | Unset = 50,
     agent_id: str | Unset = UNSET,
     campaign_id: str | Unset = UNSET,
-    running: bool | Unset = False,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
-    limit: int | Unset = 50,
-) -> Response[Error | list[Call]]:
+) -> Response[ErrorResponse | list[Call]]:
     """The calls the calling customer has run
 
      A session lives in memory and is gone when the process is, so a call is recorded as it starts and
@@ -114,28 +119,28 @@ def sync_detailed(
     restart.
 
     Args:
-        agent_id (str | Unset):
-        campaign_id (str | Unset):
         running (bool | Unset):  Default: False.
-        from_ (datetime.datetime | Unset):
-        to (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
+        agent_id (str | Unset): Narrow to one agent.
+        campaign_id (str | Unset): Narrow to the calls one campaign placed.
+        from_ (datetime.datetime | Unset): Only calls that started at or after this, inclusive.
+        to (datetime.datetime | Unset): Only calls that started before this, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[Call]]
+        Response[ErrorResponse | list[Call]]
     """
 
     kwargs = _get_kwargs(
+        running=running,
+        limit=limit,
         agent_id=agent_id,
         campaign_id=campaign_id,
-        running=running,
         from_=from_,
         to=to,
-        limit=limit,
     )
 
     response = client.get_httpx_client().request(
@@ -148,13 +153,13 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
+    running: bool | Unset = False,
+    limit: int | Unset = 50,
     agent_id: str | Unset = UNSET,
     campaign_id: str | Unset = UNSET,
-    running: bool | Unset = False,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
-    limit: int | Unset = 50,
-) -> Error | list[Call] | None:
+) -> ErrorResponse | list[Call] | None:
     """The calls the calling customer has run
 
      A session lives in memory and is gone when the process is, so a call is recorded as it starts and
@@ -162,42 +167,42 @@ def sync(
     restart.
 
     Args:
-        agent_id (str | Unset):
-        campaign_id (str | Unset):
         running (bool | Unset):  Default: False.
-        from_ (datetime.datetime | Unset):
-        to (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
+        agent_id (str | Unset): Narrow to one agent.
+        campaign_id (str | Unset): Narrow to the calls one campaign placed.
+        from_ (datetime.datetime | Unset): Only calls that started at or after this, inclusive.
+        to (datetime.datetime | Unset): Only calls that started before this, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[Call]
+        ErrorResponse | list[Call]
     """
 
     return sync_detailed(
         client=client,
+        running=running,
+        limit=limit,
         agent_id=agent_id,
         campaign_id=campaign_id,
-        running=running,
         from_=from_,
         to=to,
-        limit=limit,
     ).parsed
 
 
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
+    running: bool | Unset = False,
+    limit: int | Unset = 50,
     agent_id: str | Unset = UNSET,
     campaign_id: str | Unset = UNSET,
-    running: bool | Unset = False,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
-    limit: int | Unset = 50,
-) -> Response[Error | list[Call]]:
+) -> Response[ErrorResponse | list[Call]]:
     """The calls the calling customer has run
 
      A session lives in memory and is gone when the process is, so a call is recorded as it starts and
@@ -205,28 +210,28 @@ async def asyncio_detailed(
     restart.
 
     Args:
-        agent_id (str | Unset):
-        campaign_id (str | Unset):
         running (bool | Unset):  Default: False.
-        from_ (datetime.datetime | Unset):
-        to (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
+        agent_id (str | Unset): Narrow to one agent.
+        campaign_id (str | Unset): Narrow to the calls one campaign placed.
+        from_ (datetime.datetime | Unset): Only calls that started at or after this, inclusive.
+        to (datetime.datetime | Unset): Only calls that started before this, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[Call]]
+        Response[ErrorResponse | list[Call]]
     """
 
     kwargs = _get_kwargs(
+        running=running,
+        limit=limit,
         agent_id=agent_id,
         campaign_id=campaign_id,
-        running=running,
         from_=from_,
         to=to,
-        limit=limit,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -237,13 +242,13 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
+    running: bool | Unset = False,
+    limit: int | Unset = 50,
     agent_id: str | Unset = UNSET,
     campaign_id: str | Unset = UNSET,
-    running: bool | Unset = False,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
-    limit: int | Unset = 50,
-) -> Error | list[Call] | None:
+) -> ErrorResponse | list[Call] | None:
     """The calls the calling customer has run
 
      A session lives in memory and is gone when the process is, so a call is recorded as it starts and
@@ -251,29 +256,29 @@ async def asyncio(
     restart.
 
     Args:
-        agent_id (str | Unset):
-        campaign_id (str | Unset):
         running (bool | Unset):  Default: False.
-        from_ (datetime.datetime | Unset):
-        to (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
+        agent_id (str | Unset): Narrow to one agent.
+        campaign_id (str | Unset): Narrow to the calls one campaign placed.
+        from_ (datetime.datetime | Unset): Only calls that started at or after this, inclusive.
+        to (datetime.datetime | Unset): Only calls that started before this, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[Call]
+        ErrorResponse | list[Call]
     """
 
     return (
         await asyncio_detailed(
             client=client,
+            running=running,
+            limit=limit,
             agent_id=agent_id,
             campaign_id=campaign_id,
-            running=running,
             from_=from_,
             to=to,
-            limit=limit,
         )
     ).parsed

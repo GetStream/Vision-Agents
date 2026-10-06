@@ -56,11 +56,11 @@ module GetStream
           body: "ClaimGuestRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
-        "closeSession" => {
-          method: :delete, path: "/v1/agents/sessions/{id}",
-          path_params: %w[id].freeze, query: [].freeze,
-          body: nil, body_required: false,
-          socket: false, client_accessible: true
+        "classify" => {
+          method: :post, path: "/v1/classify",
+          path_params: [].freeze, query: [].freeze,
+          body: "ClassifyRequest", body_required: true,
+          socket: false, client_accessible: false
         }.freeze,
         "createAgentConfig" => {
           method: :post, path: "/v1/agents/configs",
@@ -152,6 +152,18 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "deleteSession" => {
+          method: :delete, path: "/v1/agents/sessions/{id}",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
+        }.freeze,
+        "deleteSessionMemories" => {
+          method: :delete, path: "/v1/agents/sessions/{id}/memories",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "deleteSimulation" => {
           method: :delete, path: "/v1/agents/simulations/{id}",
           path_params: %w[id].freeze, query: [].freeze,
@@ -178,7 +190,7 @@ module GetStream
         }.freeze,
         "dispatchCalls" => {
           method: :get, path: "/v1/dispatch",
-          path_params: [].freeze, query: %w[capacity].freeze,
+          path_params: [].freeze, query: %w[capacity active handles].freeze,
           body: nil, body_required: false,
           socket: true, client_accessible: false
         }.freeze,
@@ -502,13 +514,13 @@ module GetStream
         }.freeze,
         "listResponseItems" => {
           method: :get, path: "/v1/agents/sessions/{id}/responses/items",
-          path_params: %w[id].freeze, query: %w[response_id limit offset].freeze,
+          path_params: %w[id].freeze, query: %w[response_id limit cursor].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: true
         }.freeze,
         "listResponses" => {
           method: :get, path: "/v1/agents/sessions/{id}/responses",
-          path_params: %w[id].freeze, query: %w[limit offset].freeze,
+          path_params: %w[id].freeze, query: %w[limit cursor].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: true
         }.freeze,
@@ -523,12 +535,6 @@ module GetStream
           path_params: %w[modality].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
-        }.freeze,
-        "listSessions" => {
-          method: :get, path: "/v1/agents/sessions",
-          path_params: [].freeze, query: %w[agent config_id user_id project state custom created_after created_before limit offset].freeze,
-          body: nil, body_required: false,
-          socket: false, client_accessible: true
         }.freeze,
         "listSimulationRuns" => {
           method: :get, path: "/v1/agents/simulation-runs",
@@ -558,6 +564,12 @@ module GetStream
           method: :get, path: "/v1/agents/voices",
           path_params: [].freeze, query: [].freeze,
           body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "patchAgentConfig" => {
+          method: :patch, path: "/v1/agents/configs/{id}",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: "AgentConfigPatch", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
         "pauseCampaign" => {
@@ -601,6 +613,12 @@ module GetStream
           path_params: %w[id].freeze, query: [].freeze,
           body: "VoicePreviewRequest", body_required: true,
           socket: false, client_accessible: false
+        }.freeze,
+        "querySessions" => {
+          method: :post, path: "/v1/agents/sessions/query",
+          path_params: [].freeze, query: [].freeze,
+          body: "SessionQuery", body_required: false,
+          socket: false, client_accessible: true
         }.freeze,
         "recordSpeech" => {
           method: :post, path: "/v1/tts/recordings",
@@ -662,12 +680,6 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
-        "searchSessions" => {
-          method: :get, path: "/v1/agents/sessions/search",
-          path_params: [].freeze, query: %w[q agent config_id user_id project state custom created_after created_before limit offset].freeze,
-          body: nil, body_required: false,
-          socket: false, client_accessible: true
-        }.freeze,
         "setSessionInstructions" => {
           method: :put, path: "/v1/agents/sessions/{id}/instructions",
           path_params: %w[id].freeze, query: [].freeze,
@@ -685,6 +697,12 @@ module GetStream
           path_params: %w[id].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
+        }.freeze,
+        "stopSession" => {
+          method: :post, path: "/v1/agents/sessions/{id}/stop",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
         }.freeze,
         "streamAgentLogs" => {
           method: :get, path: "/v1/agents/logs/stream",
@@ -716,6 +734,12 @@ module GetStream
           body: "TransferCallRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "truncateMemories" => {
+          method: :delete, path: "/v1/agents/users/{user_id}/memories",
+          path_params: %w[user_id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "updateAgentConfig" => {
           method: :put, path: "/v1/agents/configs/{id}",
           path_params: %w[id].freeze, query: [].freeze,
@@ -738,6 +762,12 @@ module GetStream
           method: :put, path: "/v1/router/configs/{id}",
           path_params: %w[id].freeze, query: [].freeze,
           body: "RouterConfigRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
+        "updateSession" => {
+          method: :patch, path: "/v1/agents/sessions/{id}",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: "UpdateSessionRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
         "updateSimulation" => {
@@ -768,39 +798,55 @@ module GetStream
 
       SCHEMAS = {
         "ActivityBucket" => {
-          properties: %w[bucket active_users sessions messages calls voice_minutes phone_minutes].freeze,
+          properties: %w[active_users bucket calls messages phone_minutes sessions voice_minutes].freeze,
           required: %w[bucket active_users sessions messages calls voice_minutes phone_minutes].freeze, open: false
         }.freeze,
         "AgentConfig" => {
-          properties: %w[id name mode stt tts sts voice llm video subagent search instructions greeting guardrail skills plugins keyterms knowledge_namespace sandbox tags sync_hash created_at updated_at].freeze,
+          properties: %w[created_at dispatch greeting guardrail harness id instructions keyterms knowledge_namespace llm mode name plugins sandbox search skills speed sts stt subagent sync_hash tags tts updated_at video visible_tools voice].freeze,
           required: %w[id name mode created_at updated_at].freeze, open: false
         }.freeze,
+        "AgentConfigPatch" => {
+          properties: %w[dispatch greeting guardrail harness instructions keyterms knowledge_namespace llm mode name plugins sandbox search skills speed sts stt subagent tags tts video visible_tools voice].freeze,
+          required: [].freeze, open: false
+        }.freeze,
         "AgentConfigRequest" => {
-          properties: %w[name mode stt tts sts voice llm video subagent search instructions greeting guardrail skills plugins keyterms knowledge_namespace sandbox tags].freeze,
+          properties: %w[dispatch greeting guardrail harness instructions keyterms knowledge_namespace llm mode name plugins sandbox search skills speed sts stt subagent tags tts video visible_tools voice].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
+        "AgentDispatch" => {
+          properties: %w[incoming_call text].freeze,
+          required: [].freeze, open: false
+        }.freeze,
         "AgentLog" => {
-          properties: %w[id cursor config_id agent_id session_id user_id source severity event_type message occurred_at ingested_at details].freeze,
+          properties: %w[agent_id config_id cursor details event_type id ingested_at message occurred_at session_id severity source user_id].freeze,
           required: %w[id config_id agent_id session_id source severity event_type message occurred_at ingested_at].freeze, open: false
         }.freeze,
         "AgentLogPage" => {
-          properties: %w[items has_more next_cursor resume_cursor dropped_logs coverage].freeze,
+          properties: %w[coverage dropped_logs has_more items next_cursor resume_cursor].freeze,
           required: %w[items has_more next_cursor resume_cursor dropped_logs coverage].freeze, open: false
         }.freeze,
         "AgentResponse" => {
-          properties: %w[id session_id said status error created_at finished_at].freeze,
+          properties: %w[created_at error finished_at id said session_id status].freeze,
           required: %w[id session_id status created_at].freeze, open: false
         }.freeze,
         "AgentResponseItem" => {
-          properties: %w[response_id ordinal session_id kind text tool_name payload at].freeze,
+          properties: %w[at kind ordinal payload response_id session_id text tool_name].freeze,
           required: %w[response_id ordinal kind at].freeze, open: false
         }.freeze,
+        "AgentResponseItemPage" => {
+          properties: %w[has_more items next_cursor].freeze,
+          required: %w[items has_more].freeze, open: false
+        }.freeze,
+        "AgentResponsePage" => {
+          properties: %w[has_more items next_cursor].freeze,
+          required: %w[items has_more].freeze, open: false
+        }.freeze,
         "AttachNumberRequest" => {
-          properties: %w[call_id call_type allowed_ips].freeze,
+          properties: %w[allowed_ips call_id call_type].freeze,
           required: [].freeze, open: false
         }.freeze,
         "AttachedNumber" => {
-          properties: %w[trunk_id route_id sip_uri].freeze,
+          properties: %w[route_id sip_uri trunk_id].freeze,
           required: %w[trunk_id route_id sip_uri].freeze, open: false
         }.freeze,
         "AuthorizePluginRequest" => {
@@ -808,27 +854,27 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "AvailableNumber" => {
-          properties: %w[e164 vendor country region locality number_type capabilities monthly_cost_micros].freeze,
+          properties: %w[capabilities country e164 locality monthly_cost_micros number_type region vendor].freeze,
           required: %w[e164 vendor country capabilities].freeze, open: false
         }.freeze,
         "Budget" => {
-          properties: %w[limit_micros interval spent_micros resets_at].freeze,
+          properties: %w[interval limit_micros resets_at spent_micros].freeze,
           required: %w[limit_micros interval].freeze, open: false
         }.freeze,
         "BuyNumberRequest" => {
-          properties: %w[vendor e164 country tags].freeze,
+          properties: %w[country e164 tags vendor].freeze,
           required: %w[vendor e164].freeze, open: false
         }.freeze,
         "Call" => {
-          properties: %w[id call_id agent_id config_id campaign_id contact_id user_id from_number to_number direction started_at ended_at stt tts sts llm subagent stt_used tts_used sts_used llm_used subagent_used voice voice_used mode instructions skills summary usage review_score review_notes tags].freeze,
+          properties: %w[agent_id call_id campaign_id config_id contact_id direction ended_at from_number id instructions llm llm_used mode review_notes review_score skills started_at sts sts_used stt stt_used subagent subagent_used summary tags to_number tts tts_used usage user_id voice voice_used].freeze,
           required: %w[id call_id agent_id direction started_at].freeze, open: false
         }.freeze,
         "CallEvent" => {
-          properties: %w[at kind reason turn_id participant said latency_ms].freeze,
+          properties: %w[at kind latency_ms participant reason said turn_id].freeze,
           required: %w[at kind reason].freeze, open: false
         }.freeze,
         "CallToken" => {
-          properties: %w[api_key token user_id user_name call_id call_type expires_at].freeze,
+          properties: %w[api_key call_id call_type expires_at token user_id user_name].freeze,
           required: %w[api_key token user_id user_name call_id call_type expires_at].freeze, open: false
         }.freeze,
         "CallTokenRequest" => {
@@ -836,23 +882,23 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "CallUsage" => {
-          properties: %w[input_tokens cached_input_tokens output_tokens cost_micros requests].freeze,
+          properties: %w[cached_input_tokens cost_micros input_tokens output_tokens requests].freeze,
           required: %w[input_tokens cached_input_tokens output_tokens cost_micros requests].freeze, open: false
         }.freeze,
         "Campaign" => {
-          properties: %w[id name config_id from_number concurrency state tags created_at started_at finished_at].freeze,
+          properties: %w[concurrency config_id created_at finished_at from_number id name started_at state tags].freeze,
           required: %w[id name config_id from_number concurrency state created_at].freeze, open: false
         }.freeze,
         "CampaignRequest" => {
-          properties: %w[name config_id from_number concurrency tags].freeze,
+          properties: %w[concurrency config_id from_number name tags].freeze,
           required: %w[name config_id from_number].freeze, open: false
         }.freeze,
         "Candidate" => {
-          properties: %w[provider model health].freeze,
+          properties: %w[health model provider].freeze,
           required: %w[provider model health].freeze, open: false
         }.freeze,
         "ChatToken" => {
-          properties: %w[api_key token user_id user_name channel_type channel_id expires_at].freeze,
+          properties: %w[api_key channel_id channel_type expires_at token user_id user_name].freeze,
           required: %w[api_key token user_id user_name channel_type channel_id expires_at].freeze, open: false
         }.freeze,
         "ChatTokenRequest" => {
@@ -864,15 +910,35 @@ module GetStream
           required: %w[guest_id user_id].freeze, open: false
         }.freeze,
         "ClaimGuestResult" => {
-          properties: %w[guest_id user_id sessions_moved].freeze,
+          properties: %w[guest_id sessions_moved user_id].freeze,
           required: %w[guest_id user_id sessions_moved].freeze, open: false
         }.freeze,
+        "ClassifyAnswer" => {
+          properties: %w[chosen confidence legend level probabilities type yes].freeze,
+          required: %w[type].freeze, open: false
+        }.freeze,
+        "ClassifyQuestion" => {
+          properties: %w[instructions levels no options type yes].freeze,
+          required: %w[type instructions].freeze, open: false
+        }.freeze,
+        "ClassifyRequest" => {
+          properties: %w[questions state tags target].freeze,
+          required: %w[state questions].freeze, open: false
+        }.freeze,
+        "ClassifyResult" => {
+          properties: %w[answers model provider usage].freeze,
+          required: %w[provider model answers usage].freeze, open: false
+        }.freeze,
+        "ClassifyUsage" => {
+          properties: %w[input_tokens output_tokens].freeze,
+          required: %w[input_tokens output_tokens].freeze, open: false
+        }.freeze,
         "CommandReceipt" => {
-          properties: %w[command_id user_message_id assistant_message_id state duplicate].freeze,
+          properties: %w[assistant_message_id command_id duplicate state user_message_id].freeze,
           required: %w[command_id user_message_id assistant_message_id state duplicate].freeze, open: false
         }.freeze,
         "Contact" => {
-          properties: %w[id to_number instructions state attempts call_id vendor_call_id error].freeze,
+          properties: %w[attempts call_id error id instructions state to_number vendor_call_id].freeze,
           required: %w[id to_number state attempts].freeze, open: false
         }.freeze,
         "ContactsRequest" => {
@@ -880,23 +946,23 @@ module GetStream
           required: %w[contacts].freeze, open: false
         }.freeze,
         "CreateResponseRequest" => {
-          properties: %w[text images].freeze,
+          properties: %w[command_id images text videos].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
         "CreateSessionRequest" => {
-          properties: %w[conversation_id persist_conversation context_truncated call_id text config_id agent incognito title description project custom model_overwrites call_type user_id user_name agent_id instructions greeting navigating llm stt tts sts subagent search voice languages keyterms max_tokens tasks sandbox backchannel min_confidence skills skill_names tools tool_timeout_ms tags memory phone video].freeze,
+          properties: %w[agent agent_id backchannel call_id call_type config_id context_truncated conversation_id custom description greeting id incognito instructions keyterms languages llm max_tokens memory min_confidence model_overwrites navigating phone project_id search sts stt tags text title tool_timeout_ms tools tts user_id user_name video voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "DataChange" => {
-          properties: %w[seq table op key row at].freeze,
+          properties: %w[at key op row seq table].freeze,
           required: %w[seq table op key at].freeze, open: false
         }.freeze,
         "DataChangePage" => {
-          properties: %w[changes cursor caught_up].freeze,
+          properties: %w[caught_up changes cursor].freeze,
           required: %w[changes cursor].freeze, open: false
         }.freeze,
         "DataImport" => {
-          properties: %w[rows tables cursor].freeze,
+          properties: %w[cursor rows tables].freeze,
           required: %w[rows].freeze, open: false
         }.freeze,
         "DataPolicy" => {
@@ -908,55 +974,55 @@ module GetStream
           required: %w[error].freeze, open: false
         }.freeze,
         "ForkSessionRequest" => {
-          properties: %w[agent config_id title description project custom model_overwrites instructions incognito messages response_id call_id].freeze,
+          properties: %w[agent call_id config_id custom description incognito instructions messages model_overwrites project_id response_id title].freeze,
           required: [].freeze, open: false
         }.freeze,
         "GeneratedImage" => {
-          properties: %w[media_type width height seed data].freeze,
+          properties: %w[data height media_type seed width].freeze,
           required: %w[media_type width height data].freeze, open: false
         }.freeze,
         "GuestUser" => {
-          properties: %w[id token name custom expires_at].freeze,
+          properties: %w[custom expires_at id name token].freeze,
           required: %w[id token].freeze, open: false
         }.freeze,
         "GuestUserRequest" => {
-          properties: %w[id name custom].freeze,
+          properties: %w[custom id name].freeze,
           required: [].freeze, open: false
         }.freeze,
         "HealthStatus" => {
-          properties: %w[status dependencies].freeze,
+          properties: %w[dependencies status].freeze,
           required: %w[status dependencies].freeze, open: false
         }.freeze,
         "ImageContentPart" => {
-          properties: %w[type image_url].freeze,
+          properties: %w[image_url type].freeze,
           required: %w[type image_url].freeze, open: false
         }.freeze,
         "ImageGeneration" => {
-          properties: %w[id status provider model images cost_micros error_code error].freeze,
+          properties: %w[cost_micros error error_code id images model provider status].freeze,
           required: %w[id status images cost_micros].freeze, open: false
         }.freeze,
         "ImageGenerationRequest" => {
-          properties: %w[prompt options tags].freeze,
+          properties: %w[options prompt tags].freeze,
           required: %w[prompt].freeze, open: false
         }.freeze,
         "ImageOptions" => {
-          properties: %w[target providers size aspect_ratio n seed negative_prompt output_format].freeze,
+          properties: %w[aspect_ratio n negative_prompt output_format providers seed size target].freeze,
           required: [].freeze, open: false
         }.freeze,
         "ImageSource" => {
-          properties: %w[url detail].freeze,
+          properties: %w[detail url].freeze,
           required: %w[url].freeze, open: false
         }.freeze,
         "IndexedKnowledgeDocument" => {
-          properties: %w[id namespace source passages text created_at updated_at].freeze,
+          properties: %w[created_at id namespace passages source text updated_at].freeze,
           required: %w[id namespace source passages created_at updated_at].freeze, open: false
         }.freeze,
         "IngestKnowledgeRequest" => {
-          properties: %w[namespace documents chunk_size].freeze,
+          properties: %w[chunk_size documents namespace].freeze,
           required: %w[namespace documents].freeze, open: false
         }.freeze,
         "IngestedKnowledge" => {
-          properties: %w[namespace documents passages].freeze,
+          properties: %w[documents namespace passages].freeze,
           required: %w[namespace documents passages].freeze, open: false
         }.freeze,
         "InstructionsRequest" => {
@@ -972,31 +1038,35 @@ module GetStream
           required: %w[id source text].freeze, open: false
         }.freeze,
         "KnowledgeUrl" => {
-          properties: %w[id namespace url title description state error passages last_indexed_at created_at updated_at].freeze,
+          properties: %w[created_at description error id last_indexed_at namespace passages refresh_hours state title updated_at url].freeze,
           required: %w[id namespace url state passages created_at updated_at].freeze, open: false
         }.freeze,
         "KnowledgeUrlDeclaration" => {
-          properties: %w[url title description].freeze,
+          properties: %w[description refresh_hours title url].freeze,
           required: %w[url].freeze, open: false
         }.freeze,
         "KnowledgeUrlRequest" => {
-          properties: %w[namespace url title description].freeze,
+          properties: %w[description namespace refresh_hours title url].freeze,
           required: %w[namespace url].freeze, open: false
         }.freeze,
         "LibraryVoice" => {
-          properties: %w[provider id name description gender accent language tags own preview].freeze,
+          properties: %w[accent description gender id language name own preview provider tags].freeze,
           required: %w[provider id name].freeze, open: false
         }.freeze,
         "LibraryVoices" => {
-          properties: %w[voices providers unavailable].freeze,
+          properties: %w[providers unavailable voices].freeze,
           required: %w[voices providers].freeze, open: false
         }.freeze,
         "LlmOptions" => {
-          properties: %w[target providers max_output_tokens temperature reasoning_effort format verbosity tool_choice store prompt_cache_key metadata].freeze,
+          properties: %w[format max_output_tokens metadata prompt_cache_key providers reasoning_effort store target temperature tool_choice verbosity].freeze,
           required: [].freeze, open: false
         }.freeze,
+        "ModelCallTiming" => {
+          properties: %w[duration_ms input_tokens model operation_id output_tokens provider purpose started_at success ttft_ms].freeze,
+          required: %w[started_at provider model success].freeze, open: false
+        }.freeze,
         "ModelOverwrites" => {
-          properties: %w[llm stt tts sts subagent search thinking temperature max_output_tokens verbosity].freeze,
+          properties: %w[llm max_output_tokens search sts stt temperature thinking tts verbosity].freeze,
           required: [].freeze, open: false
         }.freeze,
         "NumberSearchResult" => {
@@ -1004,23 +1074,23 @@ module GetStream
           required: %w[numbers skipped].freeze, open: false
         }.freeze,
         "PhoneNumber" => {
-          properties: %w[e164 vendor country capabilities monthly_cost_micros tags stream_trunk_id purchased_at released_at].freeze,
+          properties: %w[capabilities country e164 monthly_cost_micros purchased_at released_at stream_trunk_id tags vendor].freeze,
           required: %w[e164 vendor country capabilities monthly_cost_micros purchased_at].freeze, open: false
         }.freeze,
         "PhoneVendor" => {
-          properties: %w[vendor implemented ready operations capabilities missing_credentials].freeze,
+          properties: %w[capabilities implemented missing_credentials operations ready vendor].freeze,
           required: %w[vendor implemented ready capabilities].freeze, open: false
         }.freeze,
         "PlaceCallRequest" => {
-          properties: %w[from to call_id call_type ring_timeout_seconds initial_digits custom headers tags].freeze,
+          properties: %w[call_id call_type custom from headers initial_digits ring_timeout_seconds tags to].freeze,
           required: %w[from to].freeze, open: false
         }.freeze,
         "PlacedCall" => {
-          properties: %w[vendor_call_id status vendor call_id call_type].freeze,
+          properties: %w[call_id call_type status vendor vendor_call_id].freeze,
           required: %w[vendor_call_id status].freeze, open: false
         }.freeze,
         "Plugin" => {
-          properties: %w[id name category description instance_required instance_hint].freeze,
+          properties: %w[category description id instance_hint instance_required name].freeze,
           required: %w[id name category description].freeze, open: false
         }.freeze,
         "PluginAuthorization" => {
@@ -1028,11 +1098,11 @@ module GetStream
           required: %w[authorize_url].freeze, open: false
         }.freeze,
         "PluginConnection" => {
-          properties: %w[plugin_id name category description instance_required instance_hint instance_url status].freeze,
+          properties: %w[category description instance_hint instance_required instance_url name plugin_id status].freeze,
           required: %w[plugin_id name status].freeze, open: false
         }.freeze,
         "Policy" => {
-          properties: %w[budget data_policy prompt_injection].freeze,
+          properties: %w[allowed_models budget data_policy prompt_injection tags].freeze,
           required: [].freeze, open: false
         }.freeze,
         "PrepareVoiceRequest" => {
@@ -1040,19 +1110,19 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "PressDigitsRequest" => {
-          properties: %w[vendor digits].freeze,
+          properties: %w[digits vendor].freeze,
           required: %w[vendor digits].freeze, open: false
         }.freeze,
         "Provider" => {
-          properties: %w[provider model description languages realtime tier health usage_share benchmark price].freeze,
+          properties: %w[benchmark description health languages model price provider realtime tier usage_share].freeze,
           required: %w[provider model languages realtime tier health].freeze, open: false
         }.freeze,
         "ProviderBenchmark" => {
-          properties: %w[elo characters_per_second word_error_rate latency_ms search_index cost_per_task intelligence_index output_tokens_per_second].freeze,
+          properties: %w[characters_per_second cost_per_task elo intelligence_index latency_ms output_tokens_per_second search_index word_error_rate].freeze,
           required: [].freeze, open: false
         }.freeze,
         "ProviderHealth" => {
-          properties: %w[available requests errors error_rate latency_ms_avg].freeze,
+          properties: %w[available error_rate errors latency_ms_avg requests].freeze,
           required: %w[available requests errors error_rate latency_ms_avg].freeze, open: false
         }.freeze,
         "ProviderPrice" => {
@@ -1060,11 +1130,11 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "RecordingSource" => {
-          properties: %w[url audio].freeze,
+          properties: %w[audio url].freeze,
           required: [].freeze, open: false
         }.freeze,
         "RespondRequest" => {
-          properties: %w[text command_id].freeze,
+          properties: %w[client_id command_id text].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
         "RewindSessionRequest" => {
@@ -1072,23 +1142,23 @@ module GetStream
           required: %w[response_id].freeze, open: false
         }.freeze,
         "RollupRequest" => {
-          properties: %w[granularity from to].freeze,
+          properties: %w[from granularity to].freeze,
           required: %w[from to].freeze, open: false
         }.freeze,
         "RollupResult" => {
-          properties: %w[granularity buckets_written].freeze,
+          properties: %w[buckets_written granularity].freeze,
           required: %w[granularity buckets_written].freeze, open: false
         }.freeze,
         "Route" => {
-          properties: %w[id title description candidates].freeze,
+          properties: %w[candidates description id title].freeze,
           required: %w[id title description candidates].freeze, open: false
         }.freeze,
         "RouterConfig" => {
-          properties: %w[id name stt tts llm sts search created_at updated_at].freeze,
+          properties: %w[created_at id llm name search sts stt tts updated_at].freeze,
           required: %w[id name created_at updated_at].freeze, open: false
         }.freeze,
         "RouterConfigRequest" => {
-          properties: %w[name stt tts llm sts search].freeze,
+          properties: %w[llm name search sts stt tts].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
         "SayRequest" => {
@@ -1096,183 +1166,211 @@ module GetStream
           required: %w[text].freeze, open: false
         }.freeze,
         "SearchAnswer" => {
-          properties: %w[provider model answer results].freeze,
+          properties: %w[answer model provider results].freeze,
           required: %w[provider model results].freeze, open: false
         }.freeze,
         "SearchOptions" => {
-          properties: %w[target providers depth results include_domains exclude_domains category max_age_hours location contents output_schema].freeze,
+          properties: %w[category contents depth exclude_domains include_domains location max_age_hours output_schema providers results target].freeze,
           required: [].freeze, open: false
         }.freeze,
         "SearchRequest" => {
-          properties: %w[config_id query options tags].freeze,
+          properties: %w[config_id options query tags].freeze,
           required: %w[query].freeze, open: false
         }.freeze,
         "SearchResult" => {
-          properties: %w[title url text score].freeze,
+          properties: %w[score text title url].freeze,
           required: %w[url].freeze, open: false
         }.freeze,
         "Session" => {
-          properties: %w[conversation_id persist_conversation context_truncated id call_id text call_type user_id agent_id state created_at llm tts sts stt subagent voice mode video instructions agent config_id incognito title description project custom model_overwrites forked_from closed_at last_response_at].freeze,
-          required: %w[id call_id call_type user_id agent_id state created_at].freeze, open: false
+          properties: %w[agent agent_id call_id call_type closed_at config_id context_truncated conversation_id created_at custom description forked_from id incognito instructions last_response_at llm modality mode model_overwrites project_id state sts stt subagent text title tts user_id video voice].freeze,
+          required: %w[id call_id call_type user_id agent_id state modality created_at].freeze, open: false
+        }.freeze,
+        "SessionFilter" => {
+          properties: %w[agent agent_id modality project_id state text user_id].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "SessionMemory" => {
-          properties: %w[user_id app_id filter].freeze,
+          properties: %w[app_id filter user_id].freeze,
           required: [].freeze, open: false
+        }.freeze,
+        "SessionPage" => {
+          properties: %w[has_more items next_cursor].freeze,
+          required: %w[items has_more].freeze, open: false
         }.freeze,
         "SessionPhone" => {
           properties: %w[number vendor vendor_call_id].freeze,
           required: %w[number].freeze, open: false
         }.freeze,
+        "SessionQuery" => {
+          properties: %w[cursor filter limit sort].freeze,
+          required: [].freeze, open: false
+        }.freeze,
         "SessionRespondCommand" => {
-          properties: %w[type text command_id images].freeze,
+          properties: %w[command_id images text type].freeze,
           required: %w[type text].freeze, open: false
         }.freeze,
         "SessionSettingsRequest" => {
-          properties: %w[llm stt tts sts subagent voice thinking temperature max_output_tokens verbosity].freeze,
+          properties: %w[llm max_output_tokens sts stt temperature thinking tts verbosity voice].freeze,
           required: [].freeze, open: false
         }.freeze,
-        "SessionSkill" => {
-          properties: %w[name revision description capture_video instructions deadline_ms].freeze,
-          required: %w[name description instructions].freeze, open: false
+        "SessionSort" => {
+          properties: %w[direction field].freeze,
+          required: %w[field].freeze, open: false
         }.freeze,
         "SessionTool" => {
-          properties: %w[name description parameters].freeze,
+          properties: %w[description display_title executor name parameters].freeze,
           required: %w[name description].freeze, open: false
         }.freeze,
         "SessionVideo" => {
-          properties: %w[source max_frames].freeze,
+          properties: %w[max_frames source].freeze,
           required: [].freeze, open: false
         }.freeze,
         "Simulation" => {
-          properties: %w[id name mode config_id scenario assertion variations judge_target caller_target caller_tts caller_stt caller_voice max_turns tags created_at updated_at].freeze,
+          properties: %w[assertion caller_stt caller_target caller_tts caller_voice config_id created_at id judge_target max_turns mode name scenario tags updated_at variations].freeze,
           required: %w[id name mode config_id scenario assertion variations max_turns created_at].freeze, open: false
         }.freeze,
         "SimulationCase" => {
-          properties: %w[id variation scenario state call_id transcript turns passed verdict score ended error started_at finished_at].freeze,
+          properties: %w[call_id ended error finished_at id passed scenario score started_at state transcript turns variation verdict].freeze,
           required: %w[id variation scenario state turns started_at].freeze, open: false
         }.freeze,
+        "SimulationDeclaration" => {
+          properties: %w[assertion caller_stt caller_target caller_tts caller_voice judge_target max_turns mode name scenario tags variations].freeze,
+          required: %w[name scenario assertion].freeze, open: false
+        }.freeze,
         "SimulationLine" => {
-          properties: %w[caller text intended at].freeze,
+          properties: %w[at caller intended text].freeze,
           required: %w[caller text].freeze, open: false
         }.freeze,
         "SimulationRequest" => {
-          properties: %w[name mode config_id scenario assertion variations judge_target caller_target caller_tts caller_stt caller_voice max_turns tags].freeze,
+          properties: %w[assertion caller_stt caller_target caller_tts caller_voice config_id judge_target max_turns mode name scenario tags variations].freeze,
           required: %w[name config_id scenario assertion].freeze, open: false
         }.freeze,
         "SimulationRun" => {
-          properties: %w[id simulation_id state cases passed failed mode config_id scenario assertion judge_target error started_at finished_at conversations].freeze,
+          properties: %w[assertion cases config_id conversations error failed finished_at id judge_target mode passed scenario simulation_id started_at state].freeze,
           required: %w[id simulation_id state cases passed failed started_at].freeze, open: false
         }.freeze,
         "Skill" => {
-          properties: %w[id config_id name description capture_video instructions deadline_ms created_at updated_at].freeze,
+          properties: %w[capture_video config_id created_at deadline_ms description id instructions name updated_at].freeze,
           required: %w[id config_id name description instructions created_at updated_at].freeze, open: false
         }.freeze,
         "SkillRequest" => {
-          properties: %w[config_id name description capture_video instructions deadline_ms].freeze,
+          properties: %w[capture_video config_id deadline_ms description instructions name].freeze,
           required: %w[config_id name description instructions].freeze, open: false
         }.freeze,
         "SkippedVendor" => {
-          properties: %w[vendor reason].freeze,
+          properties: %w[reason vendor].freeze,
           required: %w[vendor reason].freeze, open: false
         }.freeze,
         "Speech" => {
-          properties: %w[id status provider model format url audio audio_duration_ms characters error created_at updated_at completed_at].freeze,
+          properties: %w[audio audio_duration_ms characters completed_at created_at error format id model provider status updated_at url].freeze,
           required: %w[id status created_at updated_at].freeze, open: false
         }.freeze,
         "SpeechRequest" => {
-          properties: %w[inline config_id text options callback tags].freeze,
+          properties: %w[callback config_id inline options tags text].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
         "SpendBucket" => {
-          properties: %w[bucket value cost_micros_total request_count].freeze,
+          properties: %w[bucket cost_micros_total request_count value].freeze,
           required: %w[bucket value cost_micros_total request_count].freeze, open: false
         }.freeze,
         "StatsBucket" => {
-          properties: %w[provider model bucket audio_ms_total characters_total input_tokens_total cached_input_tokens_total output_tokens_total images_total cost_micros_total request_count error_count latency_p50_ms latency_p95_ms uptime].freeze,
+          properties: %w[audio_ms_total bucket cached_input_tokens_total characters_total cost_micros_total error_count images_total input_tokens_total latency_p50_ms latency_p95_ms model output_tokens_total provider request_count uptime].freeze,
           required: %w[provider model bucket audio_ms_total characters_total input_tokens_total cached_input_tokens_total output_tokens_total images_total cost_micros_total request_count error_count].freeze, open: false
         }.freeze,
         "StsOptions" => {
-          properties: %w[target providers instructions voice languages turn_detection silence_ms prefix_padding_ms interrupt_response input_transcript output_transcript tools text images data_policy overwrites].freeze,
+          properties: %w[data_policy images input_transcript instructions interrupt_response languages output_transcript overwrites prefix_padding_ms providers silence_ms target text tools turn_detection voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "SttOptions" => {
-          properties: %w[target providers languages detect_language sample_rate interim endpointing silence_ms utterance_end_ms diarize max_speakers keyterms format redact events channels words output summary entities profanity_filter mode data_policy overwrites].freeze,
+          properties: %w[channels data_policy detect_language diarize eager_end_of_turn endpointing entities events format interim keyterms languages max_speakers mode output overwrites profanity_filter providers redact sample_rate silence_ms summary target utterance_end_ms words].freeze,
           required: [].freeze, open: false
         }.freeze,
         "SyncAgentRequest" => {
-          properties: %w[name hash instructions guardrail skills knowledge knowledge_urls mode stt tts sts voice llm video subagent search greeting plugins keyterms sandbox tags].freeze,
+          properties: %w[dispatch greeting guardrail harness hash instructions keyterms knowledge knowledge_urls llm mode name plugins sandbox search simulations skills speed sts stt subagent tags tts video voice].freeze,
           required: %w[name hash].freeze, open: false
         }.freeze,
         "SyncAgentResult" => {
-          properties: %w[unchanged config].freeze,
+          properties: %w[config unchanged].freeze,
           required: %w[unchanged config].freeze, open: false
         }.freeze,
         "TagKeySummary" => {
-          properties: %w[key value_count cost_micros_total request_count coverage top_values].freeze,
+          properties: %w[cost_micros_total coverage key request_count top_values value_count].freeze,
           required: %w[key value_count cost_micros_total request_count coverage top_values].freeze, open: false
         }.freeze,
         "TagStatsBucket" => {
-          properties: %w[tag_key tag_value bucket audio_ms_total characters_total input_tokens_total cached_input_tokens_total output_tokens_total images_total cost_micros_total request_count error_count latency_p50_ms latency_p95_ms uptime].freeze,
+          properties: %w[audio_ms_total bucket cached_input_tokens_total characters_total cost_micros_total error_count images_total input_tokens_total latency_p50_ms latency_p95_ms output_tokens_total request_count tag_key tag_value uptime].freeze,
           required: %w[tag_key tag_value bucket audio_ms_total characters_total input_tokens_total cached_input_tokens_total output_tokens_total images_total cost_micros_total request_count error_count].freeze, open: false
         }.freeze,
         "TagValueSummary" => {
-          properties: %w[value cost_micros_total request_count share].freeze,
+          properties: %w[cost_micros_total request_count share value].freeze,
           required: %w[value cost_micros_total request_count share].freeze, open: false
         }.freeze,
         "TextContentPart" => {
-          properties: %w[type text].freeze,
+          properties: %w[text type].freeze,
           required: %w[type text].freeze, open: false
         }.freeze,
+        "TextMatch" => {
+          properties: %w[$q].freeze,
+          required: %w[$q].freeze, open: false
+        }.freeze,
         "TimelineEntry" => {
-          properties: %w[turn_id started_at heard said roundtrip_ms stt_latency_ms llm_ttft_ms tts_ttfb_ms speech_end_to_audio_ms audio_out_ms interrupted].freeze,
+          properties: %w[audio_out_ms cadence_ms decision_ms heard interrupted llm_ttft_ms model_calls model_to_first_text_ms roundtrip_ms said speech_end_to_audio_ms started_at stt_latency_ms text_to_tts_ms tts_to_audio_ms tts_ttfb_ms turn_id].freeze,
           required: %w[turn_id started_at].freeze, open: false
         }.freeze,
         "ToolResultCommand" => {
-          properties: %w[type tool_call_id command_id turn_id output error].freeze,
+          properties: %w[command_id error output tool_call_id turn_id type].freeze,
           required: %w[type tool_call_id].freeze, open: false
         }.freeze,
         "TranscriptEntity" => {
-          properties: %w[type text start_ms end_ms].freeze,
+          properties: %w[end_ms start_ms text type].freeze,
           required: %w[type text].freeze, open: false
         }.freeze,
         "TranscriptMessage" => {
-          properties: %w[speaker name agent text created_at].freeze,
+          properties: %w[agent created_at name speaker text].freeze,
           required: %w[speaker text created_at].freeze, open: false
         }.freeze,
         "TranscriptWord" => {
-          properties: %w[text start_ms end_ms confidence speaker].freeze,
+          properties: %w[confidence end_ms speaker start_ms text].freeze,
           required: %w[text start_ms end_ms].freeze, open: false
         }.freeze,
         "Transcription" => {
-          properties: %w[id status provider model language text words speakers subtitles summary entities audio_duration_ms error created_at updated_at completed_at].freeze,
+          properties: %w[audio_duration_ms completed_at created_at entities error id language model provider speakers status subtitles summary text updated_at words].freeze,
           required: %w[id status created_at updated_at].freeze, open: false
         }.freeze,
         "TranscriptionRequest" => {
-          properties: %w[inline config_id source options callback tags].freeze,
+          properties: %w[callback config_id inline options source tags].freeze,
           required: %w[source].freeze, open: false
         }.freeze,
         "TransferCallRequest" => {
-          properties: %w[from to call_id call_type tags].freeze,
+          properties: %w[call_id call_type from tags to].freeze,
           required: %w[from to call_id].freeze, open: false
         }.freeze,
         "TtsOptions" => {
-          properties: %w[target providers voice languages speed volume emotion style stability similarity format pronunciations chunk_schedule data_policy overwrites].freeze,
+          properties: %w[chunk_schedule data_policy emotion format languages overwrites pronunciations providers similarity speed stability style target voice volume].freeze,
           required: [].freeze, open: false
         }.freeze,
         "TurnStatsBucket" => {
-          properties: %w[agent_id bucket turn_count interrupted_count audio_out_ms_total stt_latency_p50_ms stt_latency_p95_ms llm_ttft_p50_ms llm_ttft_p95_ms tts_ttfb_p50_ms tts_ttfb_p95_ms roundtrip_p50_ms roundtrip_p95_ms roundtrip_p99_ms].freeze,
+          properties: %w[agent_id audio_out_ms_total bucket interrupted_count llm_ttft_p50_ms llm_ttft_p95_ms roundtrip_p50_ms roundtrip_p95_ms roundtrip_p99_ms stt_latency_p50_ms stt_latency_p95_ms tts_ttfb_p50_ms tts_ttfb_p95_ms turn_count].freeze,
           required: %w[agent_id bucket turn_count interrupted_count audio_out_ms_total].freeze, open: false
         }.freeze,
+        "UpdateSessionRequest" => {
+          properties: %w[custom description instructions llm max_output_tokens sts stt temperature thinking title tts verbosity voice].freeze,
+          required: [].freeze, open: false
+        }.freeze,
+        "VideoSource" => {
+          properties: %w[max_frames url].freeze,
+          required: %w[url].freeze, open: false
+        }.freeze,
         "Voice" => {
-          properties: %w[id name description samples bindings created_at updated_at].freeze,
+          properties: %w[bindings created_at description id name samples updated_at].freeze,
           required: %w[id name created_at updated_at].freeze, open: false
         }.freeze,
         "VoiceBinding" => {
-          properties: %w[provider external_id state error updated_at synced_at].freeze,
+          properties: %w[error external_id provider state synced_at updated_at].freeze,
           required: %w[provider state].freeze, open: false
         }.freeze,
         "VoicePreview" => {
-          properties: %w[provider content_type audio].freeze,
+          properties: %w[audio content_type provider].freeze,
           required: %w[provider content_type audio].freeze, open: false
         }.freeze,
         "VoicePreviewRequest" => {
@@ -1284,15 +1382,15 @@ module GetStream
           required: %w[providers].freeze, open: false
         }.freeze,
         "VoiceRequest" => {
-          properties: %w[name description].freeze,
+          properties: %w[description name].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
         "VoiceSample" => {
-          properties: %w[id filename content_type bytes transcript created_at].freeze,
+          properties: %w[bytes content_type created_at filename id transcript].freeze,
           required: %w[id created_at].freeze, open: false
         }.freeze,
         "VoiceSampleRequest" => {
-          properties: %w[audio filename content_type transcript].freeze,
+          properties: %w[audio content_type filename transcript].freeze,
           required: %w[audio].freeze, open: false
         }.freeze,
       }.freeze

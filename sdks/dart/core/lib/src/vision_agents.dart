@@ -28,7 +28,7 @@ import 'wire.dart';
 /// The constructor does no I/O.
 final class VisionAgents {
   VisionAgents({
-    required Uri url,
+    Uri? url,
     String customerId = '',
     String apiKey = '',
     String userId = '',
@@ -154,9 +154,9 @@ final class VisionAgents {
       await session.start();
     } on AgentsException {
       // The agent is in the conversation whether or not anybody here can follow it, so it is
-      // ended rather than left holding a call nobody is listening to.
+      // stopped rather than left holding a call nobody is listening to.
       try {
-        await sessions.close(session.id);
+        await sessions.stop(session.id);
       } on AgentsException {
         // Reporting why the socket did not open matters more than this.
       }

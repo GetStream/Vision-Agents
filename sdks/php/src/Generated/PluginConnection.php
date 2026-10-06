@@ -14,13 +14,13 @@ use GetStream\VisionAgents\Json;
 final readonly class PluginConnection
 {
     public function __construct(
-        public string $pluginId,
         public string $name,
+        public string $pluginId,
         public string $status,
         public ?string $category = null,
         public ?string $description = null,
-        public ?bool $instanceRequired = null,
         public ?string $instanceHint = null,
+        public ?bool $instanceRequired = null,
         public ?string $instanceUrl = null,
     ) {
     }
@@ -31,13 +31,13 @@ final readonly class PluginConnection
     public static function fromArray(array $data): self
     {
         return new self(
-            pluginId: Json::string($data, 'plugin_id'),
             name: Json::string($data, 'name'),
+            pluginId: Json::string($data, 'plugin_id'),
             status: Json::string($data, 'status'),
             category: array_key_exists('category', $data) && $data['category'] !== null ? Json::string($data, 'category') : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
-            instanceRequired: array_key_exists('instance_required', $data) && $data['instance_required'] !== null ? Json::bool($data, 'instance_required') : null,
             instanceHint: array_key_exists('instance_hint', $data) && $data['instance_hint'] !== null ? Json::string($data, 'instance_hint') : null,
+            instanceRequired: array_key_exists('instance_required', $data) && $data['instance_required'] !== null ? Json::bool($data, 'instance_required') : null,
             instanceUrl: array_key_exists('instance_url', $data) && $data['instance_url'] !== null ? Json::string($data, 'instance_url') : null,
         );
     }
@@ -50,8 +50,8 @@ final readonly class PluginConnection
     public function toArray(): array
     {
         $out = [];
-        $out['plugin_id'] = $this->pluginId;
         $out['name'] = $this->name;
+        $out['plugin_id'] = $this->pluginId;
         $out['status'] = $this->status;
         if ($this->category !== null) {
             $out['category'] = $this->category;
@@ -59,11 +59,11 @@ final readonly class PluginConnection
         if ($this->description !== null) {
             $out['description'] = $this->description;
         }
-        if ($this->instanceRequired !== null) {
-            $out['instance_required'] = $this->instanceRequired;
-        }
         if ($this->instanceHint !== null) {
             $out['instance_hint'] = $this->instanceHint;
+        }
+        if ($this->instanceRequired !== null) {
+            $out['instance_required'] = $this->instanceRequired;
         }
         if ($this->instanceUrl !== null) {
             $out['instance_url'] = $this->instanceUrl;

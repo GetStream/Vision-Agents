@@ -34,13 +34,22 @@ final readonly class Knowledge
      * The router queues the read and cuts the page into passages; this waits for it, so what
      * comes back already says whether it worked. It stays a subscription: the passages are
      * keyed by the url, and reading it again replaces them.
+     *
+     * @param ?int $refreshHours hours between the backend's own reads of it; null is never.
+     *     Adding a page again replaces it, so leaving this out turns a schedule off.
      */
-    public function addUrl(string $url, string $title = '', string $description = ''): KnowledgeUrl
+    public function addUrl(string $url, string $title = '', string $description = '', ?int $refreshHours = null): KnowledgeUrl
     {
         if ($this->namespace === '') {
             throw new ConfigurationException('a knowledge base is named by the agent it belongs to, and this one has no name');
         }
-        $body = new KnowledgeUrlRequest($this->namespace, $url, $title === '' ? null : $title, $description === '' ? null : $description);
+        $body = new KnowledgeUrlRequest(
+            namespace: $this->namespace,
+            url: $url,
+            description: $description === '' ? null : $description,
+            refreshHours: $refreshHours,
+            title: $title === '' ? null : $title,
+        );
         $page = KnowledgeUrl::fromArray(Json::asObject($this->client->post('/v1/agents/knowledge/urls', body: $body->toArray())));
 
         $deadline = microtime(true) + $this->timeout;

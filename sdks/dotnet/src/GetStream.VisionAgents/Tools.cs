@@ -22,10 +22,15 @@ public sealed class Tools
     /// Registers a function whose arguments are read as <typeparamref name="TArguments"/>,
     /// with the parameter schema taken from that type.
     /// </summary>
+    /// <param name="name">How the model asks for it.</param>
+    /// <param name="description">What the model chooses it by.</param>
+    /// <param name="function">What runs.</param>
+    /// <param name="displayTitle">At most 80 characters, shown on the reply's <c>ai_tool_call</c> attachment.</param>
     public Tools Register<TArguments, TResult>(
         string name,
         string description,
-        Func<TArguments, CancellationToken, Task<TResult>> function)
+        Func<TArguments, CancellationToken, Task<TResult>> function,
+        string? displayTitle = null)
     {
         var schema = Json.Options.GetJsonSchemaAsNode(typeof(TArguments));
         return Register(name, description, schema as JsonObject ?? [], async (arguments, cancellationToken) =>
@@ -33,23 +38,33 @@ public sealed class Tools
             var read = arguments.Deserialize<TArguments>(Json.Options)
                 ?? throw new ArgumentException($"{name} was called with no arguments");
             return await function(read, cancellationToken).ConfigureAwait(false);
-        });
+        }, displayTitle);
     }
 
     /// <summary>Registers a function with its parameter schema written out by hand.</summary>
+    /// <param name="name">How the model asks for it.</param>
+    /// <param name="description">What the model chooses it by.</param>
+    /// <param name="parameters">The JSON schema of its arguments.</param>
+    /// <param name="function">What runs.</param>
+    /// <param name="displayTitle">At most 80 characters, shown on the reply's <c>ai_tool_call</c> attachment.</param>
     public Tools Register(
         string name,
         string description,
         JsonObject parameters,
-        Func<JsonElement, CancellationToken, Task<object?>> function)
+        Func<JsonElement, CancellationToken, Task<object?>> function,
+        string? displayTitle = null)
     {
         if (string.IsNullOrEmpty(name))
         {
             throw new ConfigurationException("a tool needs a name");
         }
+        if (displayTitle is { Length: > 80 })
+        {
+            throw new ConfigurationException($"the display title of {name} is longer than 80 characters");
+        }
         lock (_lock)
         {
-            _registered[name] = new Registered(description, parameters, function);
+            _registered[name] = new Registered(description, parameters, function, VisionAgentsClient.Blank(displayTitle));
         }
         return this;
     }
@@ -66,6 +81,15 @@ public sealed class Tools
         }
     }
 
+    /// <summary>Whether a function by this name is registered.</summary>
+    internal bool Runs(string name)
+    {
+        lock (_lock)
+        {
+            return _registered.ContainsKey(name);
+        }
+    }
+
     /// <summary>The functions as the session request declares them.</summary>
     internal List<SessionTool> Declared()
     {
@@ -76,6 +100,7 @@ public sealed class Tools
                 Name = pair.Key,
                 Description = pair.Value.Description,
                 Parameters = JsonSerializer.Deserialize<JsonElement>(pair.Value.Parameters.ToJsonString()),
+                DisplayTitle = pair.Value.DisplayTitle,
             }).ToList();
         }
     }
@@ -111,5 +136,6 @@ public sealed class Tools
     private sealed record Registered(
         string Description,
         JsonObject Parameters,
-        Func<JsonElement, CancellationToken, Task<object?>> Function);
+        Func<JsonElement, CancellationToken, Task<object?>> Function,
+        string? DisplayTitle);
 }

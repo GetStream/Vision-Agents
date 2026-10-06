@@ -28,7 +28,6 @@ async def main() -> None:
             stt="gemini/gemini-3.5-transcribe-live",
             tts="inworld/inworld-tts-2-flash",
             model="gemini/gemini-3.8-flash",
-            subagent="openai/gpt-5.6-sol",
         ),
     )
     call = await agent.create_call("default", "customer-support")

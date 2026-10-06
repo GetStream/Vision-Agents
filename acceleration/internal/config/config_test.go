@@ -253,6 +253,157 @@ func (s *ConfigSuite) TestSettingsAreReadableFromTheEnvironmentAfterwards() {
 		"cmd/agent and the suites find the database the same way")
 }
 
+func (s *ConfigSuite) TestSpeculativeRepliesAreOnUnlessTurnedOff() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.True(config.Agent.SpeculativeReplies)
+
+	s.T().Setenv("ROUTER_SPECULATIVE_REPLIES", "false")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.False(config.Agent.SpeculativeReplies)
+
+	s.T().Setenv("ROUTER_SPECULATIVE_REPLIES", "true")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.True(config.Agent.SpeculativeReplies)
+}
+
+func (s *ConfigSuite) TestConnectorsAreOffUnlessAskedFor() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.False(config.Connectors.Enabled)
+
+	s.T().Setenv("ROUTER_CONNECTORS_ENABLED", "true")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.True(config.Connectors.Enabled)
+}
+
+func (s *ConfigSuite) TestTheProxyDeclaresNoKindUnlessAskedFor() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.False(config.Auth.ProxyDeclaresKind)
+
+	s.T().Setenv("ROUTER_AUTH_PROXY_DECLARES_KIND", "true")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.True(config.Auth.ProxyDeclaresKind)
+}
+
+func (s *ConfigSuite) TestStreamTenancyDefaultsToDeployment() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(config.Stream.Tenancy)
+
+	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyDeployment)
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(TenancyDeployment, config.Stream.Tenancy)
+}
+
+func (s *ConfigSuite) TestStreamTenancyIsDeploymentOrApp() {
+	s.T().Setenv("ROUTER_STREAM_TENANCY", "shared")
+	_, _, err := Load("")
+	s.ErrorContains(err, "stream.tenancy")
+}
+
+func (s *ConfigSuite) TestAppModeIsRefusedWithoutPostgres() {
+	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
+	s.T().Setenv("ROUTER_POSTGRES_DSN", "")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "postgres.dsn")
+}
+
+func (s *ConfigSuite) TestAppModeRefusesAUserTokenInTheEnvironment() {
+	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
+	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
+	s.T().Setenv("STREAM_USER_TOKEN", "one-apps-token")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "stream.user_token")
+	s.NotContains(err.Error(), "one-apps-token")
+}
+
+func (s *ConfigSuite) TestAppModeStartsWithPostgresAndNoUserToken() {
+	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
+	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
+
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Equal(TenancyApp, config.Stream.Tenancy)
+}
+
+func (s *ConfigSuite) TestAppModeRefusesNoAuth() {
+	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
+	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
+	s.T().Setenv("ROUTER_AUTH_MODE", "noauth")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "auth.mode=noauth")
+}
+
+func (s *ConfigSuite) TestAppModeRefusesAProxyThatDeclaresNoKind() {
+	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
+	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
+	s.T().Setenv("ROUTER_AUTH_MODE", "proxy")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "auth.proxy_declares_kind")
+}
+
+func (s *ConfigSuite) TestAppModeStartsBehindAProxyThatDeclaresKinds() {
+	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
+	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
+	s.T().Setenv("ROUTER_AUTH_MODE", "proxy")
+	s.T().Setenv("ROUTER_AUTH_PROXY_DECLARES_KIND", "true")
+
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Equal(TenancyApp, config.Stream.Tenancy)
+}
+
+func (s *ConfigSuite) TestStreamFallbackDefaultsToRefuseInAppMode() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(config.Stream.Fallback)
+	s.Equal(FallbackRefuse, config.Stream.EffectiveFallback())
+
+	s.T().Setenv("ROUTER_STREAM_FALLBACK", FallbackDeployment)
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(FallbackDeployment, config.Stream.EffectiveFallback())
+
+	s.T().Setenv("ROUTER_STREAM_FALLBACK", "maybe")
+	_, _, err = Load("")
+	s.ErrorContains(err, "stream.fallback")
+}
+
+func (s *ConfigSuite) TestTheDeploymentsAppIDIsReadAsANumber() {
+	s.T().Setenv("ROUTER_STREAM_APP_ID", "1234")
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(int64(1234), config.Stream.AppID)
+
+	s.T().Setenv("ROUTER_STREAM_APP_ID", "-4")
+	_, _, err = Load("")
+	s.ErrorContains(err, "stream.app_id")
+}
+
+func (s *ConfigSuite) TestTheStreamBaseURLIsReadOnce() {
+	s.T().Setenv("STREAM_BASE_URL", "https://chat.example.test")
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal("https://chat.example.test", config.Stream.BaseURL)
+}
+
 func (s *ConfigSuite) TestANegativeLimitIsRefused() {
 	s.T().Setenv("ROUTER_RATE_LIMIT_MESSAGES_PER_DAY", "-1")
 	_, _, err := Load("")
@@ -263,4 +414,18 @@ func (s *ConfigSuite) TestALimitThatIsNotANumberIsRefused() {
 	s.T().Setenv("ROUTER_RATE_LIMIT_TOKENS_PER_DAY", "lots")
 	_, _, err := Load("")
 	s.Error(err)
+}
+
+func (s *ConfigSuite) TestRegistrationSettingsAreOffAndEmptyUnlessSet() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.False(config.Stream.TrustAPIKeyHeader)
+	s.Empty(config.Stream.DenyRegistration)
+
+	s.T().Setenv("ROUTER_STREAM_TRUST_API_KEY_HEADER", "true")
+	s.T().Setenv("ROUTER_STREAM_DENY_REGISTRATION", "11,22")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.True(config.Stream.TrustAPIKeyHeader)
+	s.Equal([]string{"11", "22"}, config.Stream.DenyRegistration)
 }

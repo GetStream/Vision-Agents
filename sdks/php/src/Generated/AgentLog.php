@@ -11,20 +11,20 @@ use GetStream\VisionAgents\Json;
 final readonly class AgentLog
 {
     public function __construct(
-        public string $id,
-        public string $configId,
         public string $agentId,
-        public string $sessionId,
-        public string $source,
-        public string $severity,
+        public string $configId,
         public string $eventType,
+        public string $id,
+        public \DateTimeImmutable $ingestedAt,
         public string $message,
         public \DateTimeImmutable $occurredAt,
-        public \DateTimeImmutable $ingestedAt,
+        public string $sessionId,
+        public string $severity,
+        public string $source,
         public ?string $cursor = null,
-        public ?string $userId = null,
         /** @var array<string, mixed>|null */
         public ?array $details = null,
+        public ?string $userId = null,
     ) {
     }
 
@@ -34,19 +34,19 @@ final readonly class AgentLog
     public static function fromArray(array $data): self
     {
         return new self(
-            id: Json::string($data, 'id'),
-            configId: Json::string($data, 'config_id'),
             agentId: Json::string($data, 'agent_id'),
-            sessionId: Json::string($data, 'session_id'),
-            source: Json::string($data, 'source'),
-            severity: Json::string($data, 'severity'),
+            configId: Json::string($data, 'config_id'),
             eventType: Json::string($data, 'event_type'),
+            id: Json::string($data, 'id'),
+            ingestedAt: Json::date($data, 'ingested_at'),
             message: Json::string($data, 'message'),
             occurredAt: Json::date($data, 'occurred_at'),
-            ingestedAt: Json::date($data, 'ingested_at'),
+            sessionId: Json::string($data, 'session_id'),
+            severity: Json::string($data, 'severity'),
+            source: Json::string($data, 'source'),
             cursor: array_key_exists('cursor', $data) && $data['cursor'] !== null ? Json::string($data, 'cursor') : null,
-            userId: array_key_exists('user_id', $data) && $data['user_id'] !== null ? Json::string($data, 'user_id') : null,
             details: array_key_exists('details', $data) && $data['details'] !== null ? Json::object($data, 'details') : null,
+            userId: array_key_exists('user_id', $data) && $data['user_id'] !== null ? Json::string($data, 'user_id') : null,
         );
     }
 
@@ -58,24 +58,24 @@ final readonly class AgentLog
     public function toArray(): array
     {
         $out = [];
-        $out['id'] = $this->id;
-        $out['config_id'] = $this->configId;
         $out['agent_id'] = $this->agentId;
-        $out['session_id'] = $this->sessionId;
-        $out['source'] = $this->source;
-        $out['severity'] = $this->severity;
+        $out['config_id'] = $this->configId;
         $out['event_type'] = $this->eventType;
+        $out['id'] = $this->id;
+        $out['ingested_at'] = Json::dateValue($this->ingestedAt);
         $out['message'] = $this->message;
         $out['occurred_at'] = Json::dateValue($this->occurredAt);
-        $out['ingested_at'] = Json::dateValue($this->ingestedAt);
+        $out['session_id'] = $this->sessionId;
+        $out['severity'] = $this->severity;
+        $out['source'] = $this->source;
         if ($this->cursor !== null) {
             $out['cursor'] = $this->cursor;
         }
-        if ($this->userId !== null) {
-            $out['user_id'] = $this->userId;
-        }
         if ($this->details !== null) {
             $out['details'] = Json::objectValue($this->details);
+        }
+        if ($this->userId !== null) {
+            $out['user_id'] = $this->userId;
         }
         return $out;
     }

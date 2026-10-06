@@ -11,31 +11,31 @@ use GetStream\VisionAgents\Json;
 final readonly class SimulationRequest
 {
     public function __construct(
-        public string $name,
-        // The agent being tested.
-        public string $configId,
-        // What to ask, in your own words and over as many turns as it takes. This is a brief for the caller rather th...
-        public string $scenario,
         // What has to be true at the end for the run to have passed.
         public string $assertion,
-        // Text hands the agent the words, which tests everything between hearing and answering. Audio generates speec...
-        public ?string $mode = null,
-        // How many ways of asking the same thing one run tries, up to ten. The scenario as written is always the firs...
-        public ?int $variations = null,
-        // The model that rules on the conversations, named the way any other routing target is. Empty takes llm-judge...
-        public ?string $judgeTarget = null,
+        // The agent being tested.
+        public string $configId,
+        public string $name,
+        // What to ask, in your own words and over as many turns as it takes. This is a brief for the caller rather th...
+        public string $scenario,
+        // How the caller hears the agent. Audio simulations only.
+        public ?string $callerStt = null,
         // The model that plays the caller. Empty takes llm-scenario-runner, the deployment's fast-tier default.
         public ?string $callerTarget = null,
         // How the caller speaks. Audio simulations only.
         public ?string $callerTts = null,
-        // How the caller hears the agent. Audio simulations only.
-        public ?string $callerStt = null,
         // The voice the caller speaks in. Audio simulations only.
         public ?string $callerVoice = null,
+        // The model that rules on the conversations, named the way any other routing target is. Empty takes llm-judge...
+        public ?string $judgeTarget = null,
         // How many times the caller may speak, up to two hundred. It is what stops a caller that never decides it is...
         public ?int $maxTurns = null,
+        // Text hands the agent the words, which tests everything between hearing and answering. Audio generates speec...
+        public ?string $mode = null,
         /** @var array<string, string>|null */
         public ?array $tags = null,
+        // How many ways of asking the same thing one run tries, up to ten. The scenario as written is always the firs...
+        public ?int $variations = null,
     ) {
     }
 
@@ -45,19 +45,19 @@ final readonly class SimulationRequest
     public static function fromArray(array $data): self
     {
         return new self(
-            name: Json::string($data, 'name'),
-            configId: Json::string($data, 'config_id'),
-            scenario: Json::string($data, 'scenario'),
             assertion: Json::string($data, 'assertion'),
-            mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::string($data, 'mode') : null,
-            variations: array_key_exists('variations', $data) && $data['variations'] !== null ? Json::int($data, 'variations') : null,
-            judgeTarget: array_key_exists('judge_target', $data) && $data['judge_target'] !== null ? Json::string($data, 'judge_target') : null,
+            configId: Json::string($data, 'config_id'),
+            name: Json::string($data, 'name'),
+            scenario: Json::string($data, 'scenario'),
+            callerStt: array_key_exists('caller_stt', $data) && $data['caller_stt'] !== null ? Json::string($data, 'caller_stt') : null,
             callerTarget: array_key_exists('caller_target', $data) && $data['caller_target'] !== null ? Json::string($data, 'caller_target') : null,
             callerTts: array_key_exists('caller_tts', $data) && $data['caller_tts'] !== null ? Json::string($data, 'caller_tts') : null,
-            callerStt: array_key_exists('caller_stt', $data) && $data['caller_stt'] !== null ? Json::string($data, 'caller_stt') : null,
             callerVoice: array_key_exists('caller_voice', $data) && $data['caller_voice'] !== null ? Json::string($data, 'caller_voice') : null,
+            judgeTarget: array_key_exists('judge_target', $data) && $data['judge_target'] !== null ? Json::string($data, 'judge_target') : null,
             maxTurns: array_key_exists('max_turns', $data) && $data['max_turns'] !== null ? Json::int($data, 'max_turns') : null,
+            mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::string($data, 'mode') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
+            variations: array_key_exists('variations', $data) && $data['variations'] !== null ? Json::int($data, 'variations') : null,
         );
     }
 
@@ -69,18 +69,12 @@ final readonly class SimulationRequest
     public function toArray(): array
     {
         $out = [];
-        $out['name'] = $this->name;
-        $out['config_id'] = $this->configId;
-        $out['scenario'] = $this->scenario;
         $out['assertion'] = $this->assertion;
-        if ($this->mode !== null) {
-            $out['mode'] = $this->mode;
-        }
-        if ($this->variations !== null) {
-            $out['variations'] = $this->variations;
-        }
-        if ($this->judgeTarget !== null) {
-            $out['judge_target'] = $this->judgeTarget;
+        $out['config_id'] = $this->configId;
+        $out['name'] = $this->name;
+        $out['scenario'] = $this->scenario;
+        if ($this->callerStt !== null) {
+            $out['caller_stt'] = $this->callerStt;
         }
         if ($this->callerTarget !== null) {
             $out['caller_target'] = $this->callerTarget;
@@ -88,17 +82,23 @@ final readonly class SimulationRequest
         if ($this->callerTts !== null) {
             $out['caller_tts'] = $this->callerTts;
         }
-        if ($this->callerStt !== null) {
-            $out['caller_stt'] = $this->callerStt;
-        }
         if ($this->callerVoice !== null) {
             $out['caller_voice'] = $this->callerVoice;
+        }
+        if ($this->judgeTarget !== null) {
+            $out['judge_target'] = $this->judgeTarget;
         }
         if ($this->maxTurns !== null) {
             $out['max_turns'] = $this->maxTurns;
         }
+        if ($this->mode !== null) {
+            $out['mode'] = $this->mode;
+        }
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;
+        }
+        if ($this->variations !== null) {
+            $out['variations'] = $this->variations;
         }
         return $out;
     }

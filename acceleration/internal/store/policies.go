@@ -10,6 +10,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // PolicyScope is what a policy document belongs to.
@@ -79,6 +80,15 @@ type PolicyDocument struct {
 	DataPolicy options.DataPolicy `json:"data_policy,omitzero"`
 	// PromptInjection screens what an LLM is asked for injection attempts.
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
+	// AllowedModels are the "provider/model" names requests may be routed to. Nil allows
+	// every model, and an empty list allows none.
+	AllowedModels *[]string `json:"allowed_models,omitempty"`
+	// Tags are laid over the request's own on every row of usage.
+	Tags map[string]string `json:"tags,omitempty"`
+	// RequireOwnStreamApp keeps an app out of the deployment's own Stream app: it is never
+	// written there for want of one of its own, and what it wrote there before can only be
+	// read. An organization's is set only by the operator.
+	RequireOwnStreamApp *bool `json:"require_own_stream_app,omitempty"`
 }
 
 // Policy is one scope's stored document.
@@ -104,7 +114,7 @@ type AppOrganization struct {
 // empty document rather than an error, since that is what almost every scope is.
 func (s *Store) Policy(ctx context.Context, scope PolicyScope, id string) (PolicyDocument, error) {
 	if id == "" {
-		return PolicyDocument{}, errors.New("store: a policy needs a scope id")
+		return PolicyDocument{}, stack.Wrap(errors.New("store: a policy needs a scope id"))
 	}
 	var policy Policy
 	err := s.db.NewSelect().Model(&policy).
@@ -115,24 +125,33 @@ func (s *Store) Policy(ctx context.Context, scope PolicyScope, id string) (Polic
 		return PolicyDocument{}, nil
 	}
 	if err != nil {
-		return PolicyDocument{}, fmt.Errorf("store: policy: %w", err)
+		return PolicyDocument{}, stack.Wrap(fmt.Errorf("store: policy: %w", err))
 	}
 	return policy.Document, nil
 }
 
-// SavePolicy replaces a scope's document.
+// SavePolicy replaces a scope's document. An organization's document that leaves
+// RequireOwnStreamApp out keeps the one stored.
 func (s *Store) SavePolicy(ctx context.Context, scope PolicyScope, id string, document PolicyDocument) error {
 	if id == "" {
-		return errors.New("store: a policy needs a scope id")
+		return stack.Wrap(errors.New("store: a policy needs a scope id"))
 	}
 	policy := &Policy{Scope: scope, ScopeID: id, Document: document, UpdatedAt: time.Now().UTC()}
+	replace := "document = EXCLUDED.document"
+	if scope == ScopeOrganization {
+		// The operator sets an organization's require_own_stream_app, and anybody else saves
+		// its document without it. The stored value is kept in the same statement that writes
+		// the rest, so a save that read the document before the operator wrote cannot undo it.
+		replace = "document = jsonb_strip_nulls(jsonb_build_object('require_own_stream_app', " +
+			"pol.document->'require_own_stream_app')) || EXCLUDED.document"
+	}
 	_, err := s.db.NewInsert().Model(policy).
 		On("CONFLICT (scope, scope_id) DO UPDATE").
-		Set("document = EXCLUDED.document").
+		Set(replace).
 		Set("updated_at = EXCLUDED.updated_at").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: save policy: %w", err)
+		return stack.Wrap(fmt.Errorf("store: save policy: %w", err))
 	}
 	return nil
 }
@@ -163,7 +182,7 @@ func (s *Store) OrganizationOf(ctx context.Context, appID string) (string, error
 		return "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("store: organization of: %w", err)
+		return "", stack.Wrap(fmt.Errorf("store: organization of: %w", err))
 	}
 	return membership.OrganizationID, nil
 }
@@ -177,7 +196,7 @@ func (s *Store) SpendSince(ctx context.Context, customerID string, since time.Ti
 		Where("started_at >= ?", since).
 		Scan(ctx, &spent)
 	if err != nil {
-		return 0, fmt.Errorf("store: spend since: %w", err)
+		return 0, stack.Wrap(fmt.Errorf("store: spend since: %w", err))
 	}
 	return spent, nil
 }
@@ -193,7 +212,7 @@ func (s *Store) OrganizationSpendSince(ctx context.Context, organizationID strin
 		Where("started_at >= ?", since).
 		Scan(ctx, &spent)
 	if err != nil {
-		return 0, fmt.Errorf("store: organization spend since: %w", err)
+		return 0, stack.Wrap(fmt.Errorf("store: organization spend since: %w", err))
 	}
 	return spent, nil
 }

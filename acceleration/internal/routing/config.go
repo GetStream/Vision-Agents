@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // defaultConfigFS carries the built-in capability config so the router works without an
@@ -190,15 +191,15 @@ type Tags map[string]string
 // Validate reports the first label the rollups could not carry.
 func (t Tags) Validate() error {
 	if len(t) > tagLimit {
-		return fmt.Errorf("routing: at most %d tags are allowed, got %d", tagLimit, len(t))
+		return stack.Wrap(fmt.Errorf("routing: at most %d tags are allowed, got %d", tagLimit, len(t)))
 	}
 	// Sorted so a request with two bad labels always reports the same one.
 	for _, key := range slices.Sorted(maps.Keys(t)) {
 		if !tagKeyPattern.MatchString(key) {
-			return fmt.Errorf("routing: tag key %q must match %s", key, tagKeyPattern)
+			return stack.Wrap(fmt.Errorf("routing: tag key %q must match %s", key, tagKeyPattern))
 		}
 		if len(t[key]) > tagValueLimit {
-			return fmt.Errorf("routing: tag %q is longer than %d characters", key, tagValueLimit)
+			return stack.Wrap(fmt.Errorf("routing: tag %q is longer than %d characters", key, tagValueLimit))
 		}
 	}
 	return nil
@@ -240,6 +241,9 @@ type ProviderConfig struct {
 	// InputModalities are extra input kinds this model accepts, e.g. "image". Empty
 	// means text only, and a request carrying anything else is not routed here.
 	InputModalities []string `yaml:"input_modalities"`
+	// ContextWindow is how many tokens of prompt this host serves the model with, which
+	// can be less than its maker's. Compaction reads it; routing does not.
+	ContextWindow int64 `yaml:"context_window"`
 }
 
 // Supports reports whether this model can express every term a request named.

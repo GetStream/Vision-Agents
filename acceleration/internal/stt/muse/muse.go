@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -191,13 +192,13 @@ func New(options Options) (*STT, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, fmt.Errorf("muse: api key is required (set %s)", apiKeyEnvVar)
+		return nil, stack.Wrap(fmt.Errorf("muse: api key is required (set %s)", apiKeyEnvVar))
 	}
 	if options.URL == "" {
 		options.URL = DefaultURL
 	}
 	if !strings.HasPrefix(options.URL, "ws://") && !strings.HasPrefix(options.URL, "wss://") {
-		return nil, fmt.Errorf("muse: url must be ws:// or wss://, got %s", options.URL)
+		return nil, stack.Wrap(fmt.Errorf("muse: url must be ws:// or wss://, got %s", options.URL))
 	}
 	if options.Model == "" {
 		options.Model = DefaultModel
@@ -208,12 +209,12 @@ func New(options Options) (*STT, error) {
 	switch options.Mode {
 	case ModePushToTalk, ModeEndpointing, ModeDiarization:
 	default:
-		return nil, fmt.Errorf("muse: mode must be one of %s, %s or %s, got %s",
-			ModePushToTalk, ModeEndpointing, ModeDiarization, options.Mode)
+		return nil, stack.Wrap(fmt.Errorf("muse: mode must be one of %s, %s or %s, got %s",
+			ModePushToTalk, ModeEndpointing, ModeDiarization, options.Mode))
 	}
 	options.Keyterms = stt.CleanKeyterms(options.Keyterms)
 	if len(options.Keyterms) > stt.MaxKeyterms {
-		return nil, fmt.Errorf("muse: at most %d keyterms, got %d", stt.MaxKeyterms, len(options.Keyterms))
+		return nil, stack.Wrap(fmt.Errorf("muse: at most %d keyterms, got %d", stt.MaxKeyterms, len(options.Keyterms)))
 	}
 	if options.HandshakeTimeout == 0 {
 		options.HandshakeTimeout = 15 * time.Second
@@ -241,7 +242,7 @@ func (s *STT) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
-		return errors.New("muse: already started")
+		return stack.Wrap(errors.New("muse: already started"))
 	}
 	s.started = true
 	s.mu.Unlock()
@@ -250,9 +251,9 @@ func (s *STT) Start(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, s.endpoint(), nil)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("muse: dial: %w (http %d)", err, response.StatusCode)
+			return stack.Wrap(fmt.Errorf("muse: dial: %w (http %d)", err, response.StatusCode))
 		}
-		return fmt.Errorf("muse: dial: %w", err)
+		return stack.Wrap(fmt.Errorf("muse: dial: %w", err))
 	}
 	s.conn = conn
 
@@ -345,10 +346,10 @@ func (s *STT) setup() error {
 		Keywords:      s.options.Keyterms,
 	})
 	if err != nil {
-		return fmt.Errorf("muse: encode setup: %w", err)
+		return stack.Wrap(fmt.Errorf("muse: encode setup: %w", err))
 	}
 	if err := s.write(websocket.TextMessage, payload); err != nil {
-		return fmt.Errorf("muse: send setup: %w", err)
+		return stack.Wrap(fmt.Errorf("muse: send setup: %w", err))
 	}
 	return nil
 }
@@ -372,7 +373,7 @@ func (s *STT) flush() {
 func (s *STT) write(messageType int, payload []byte) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.conn.WriteMessage(messageType, payload)
+	return stack.Wrap(s.conn.WriteMessage(messageType, payload))
 }
 
 // readLoop translates server frames into events until the connection ends.

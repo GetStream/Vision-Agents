@@ -14,20 +14,20 @@ T = TypeVar("T", bound="IngestedKnowledge")
 class IngestedKnowledge:
     """
     Attributes:
-        namespace (str):
         documents (int): How many documents were read.
+        namespace (str):
         passages (int): How many passages they were cut into and written as.
     """
 
-    namespace: str
     documents: int
+    namespace: str
     passages: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        namespace = self.namespace
-
         documents = self.documents
+
+        namespace = self.namespace
 
         passages = self.passages
 
@@ -35,8 +35,8 @@ class IngestedKnowledge:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "namespace": namespace,
                 "documents": documents,
+                "namespace": namespace,
                 "passages": passages,
             }
         )
@@ -46,15 +46,15 @@ class IngestedKnowledge:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        namespace = d.pop("namespace")
-
         documents = d.pop("documents")
+
+        namespace = d.pop("namespace")
 
         passages = d.pop("passages")
 
         ingested_knowledge = cls(
-            namespace=namespace,
             documents=documents,
+            namespace=namespace,
             passages=passages,
         )
 

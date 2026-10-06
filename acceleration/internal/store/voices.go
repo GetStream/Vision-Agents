@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ErrNoVoice says a customer holds no such voice. It is a sentinel because asking for a
@@ -16,10 +18,10 @@ var ErrNoVoice = errors.New("store: no such voice")
 // CreateVoice stores a new voice and fills in its id and timestamps.
 func (s *Store) CreateVoice(ctx context.Context, voice *Voice) error {
 	if voice.CustomerID == "" {
-		return errors.New("store: customer id is required")
+		return stack.Wrap(errors.New("store: customer id is required"))
 	}
 	if voice.Name == "" {
-		return errors.New("store: a voice needs a name")
+		return stack.Wrap(errors.New("store: a voice needs a name"))
 	}
 
 	voice.ID = newID()
@@ -29,7 +31,7 @@ func (s *Store) CreateVoice(ctx context.Context, voice *Voice) error {
 	voice.DeletedAt = nil
 
 	if _, err := s.db.NewInsert().Model(voice).Exec(ctx); err != nil {
-		return fmt.Errorf("store: create voice: %w", err)
+		return stack.Wrap(fmt.Errorf("store: create voice: %w", err))
 	}
 	return nil
 }
@@ -38,10 +40,10 @@ func (s *Store) CreateVoice(ctx context.Context, voice *Voice) error {
 // touched: they are what the voice sounds like, not what it is called.
 func (s *Store) UpdateVoice(ctx context.Context, voice *Voice) error {
 	if voice.CustomerID == "" || voice.ID == "" {
-		return errors.New("store: a customer and a voice id are required")
+		return stack.Wrap(errors.New("store: a customer and a voice id are required"))
 	}
 	if voice.Name == "" {
-		return errors.New("store: a voice needs a name")
+		return stack.Wrap(errors.New("store: a voice needs a name"))
 	}
 
 	voice.UpdatedAt = time.Now().UTC()
@@ -53,11 +55,11 @@ func (s *Store) UpdateVoice(ctx context.Context, voice *Voice) error {
 		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: update voice: %w", err)
+		return stack.Wrap(fmt.Errorf("store: update voice: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: update voice: %w", err)
+		return stack.Wrap(fmt.Errorf("store: update voice: %w", err))
 	}
 	if affected == 0 {
 		return unknownVoice(voice.ID)
@@ -69,7 +71,7 @@ func (s *Store) UpdateVoice(ctx context.Context, voice *Voice) error {
 // still name it.
 func (s *Store) DeleteVoice(ctx context.Context, customerID, id string) error {
 	if customerID == "" || id == "" {
-		return errors.New("store: a customer and a voice id are required")
+		return stack.Wrap(errors.New("store: a customer and a voice id are required"))
 	}
 
 	result, err := s.db.NewUpdate().Model((*Voice)(nil)).
@@ -79,11 +81,11 @@ func (s *Store) DeleteVoice(ctx context.Context, customerID, id string) error {
 		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: delete voice: %w", err)
+		return stack.Wrap(fmt.Errorf("store: delete voice: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: delete voice: %w", err)
+		return stack.Wrap(fmt.Errorf("store: delete voice: %w", err))
 	}
 	if affected == 0 {
 		return unknownVoice(id)
@@ -94,7 +96,7 @@ func (s *Store) DeleteVoice(ctx context.Context, customerID, id string) error {
 // Voice returns one voice a customer holds.
 func (s *Store) Voice(ctx context.Context, customerID, id string) (Voice, error) {
 	if customerID == "" || id == "" {
-		return Voice{}, errors.New("store: a customer and a voice id are required")
+		return Voice{}, stack.Wrap(errors.New("store: a customer and a voice id are required"))
 	}
 
 	var voice Voice
@@ -108,7 +110,7 @@ func (s *Store) Voice(ctx context.Context, customerID, id string) (Voice, error)
 		return Voice{}, unknownVoice(id)
 	}
 	if err != nil {
-		return Voice{}, fmt.Errorf("store: voice: %w", err)
+		return Voice{}, stack.Wrap(fmt.Errorf("store: voice: %w", err))
 	}
 	return voice, nil
 }
@@ -117,7 +119,7 @@ func (s *Store) Voice(ctx context.Context, customerID, id string) (Voice, error)
 // voice the way a person would rather than by id.
 func (s *Store) VoiceNamed(ctx context.Context, customerID, name string) (Voice, error) {
 	if customerID == "" || name == "" {
-		return Voice{}, errors.New("store: a customer and a voice name are required")
+		return Voice{}, stack.Wrap(errors.New("store: a customer and a voice name are required"))
 	}
 
 	var voice Voice
@@ -131,7 +133,7 @@ func (s *Store) VoiceNamed(ctx context.Context, customerID, name string) (Voice,
 		return Voice{}, unknownVoice(name)
 	}
 	if err != nil {
-		return Voice{}, fmt.Errorf("store: voice named: %w", err)
+		return Voice{}, stack.Wrap(fmt.Errorf("store: voice named: %w", err))
 	}
 	return voice, nil
 }
@@ -139,7 +141,7 @@ func (s *Store) VoiceNamed(ctx context.Context, customerID, name string) (Voice,
 // CustomerVoices returns the voices a customer holds, newest first.
 func (s *Store) CustomerVoices(ctx context.Context, customerID string) ([]Voice, error) {
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
 	var voices []Voice
@@ -149,7 +151,7 @@ func (s *Store) CustomerVoices(ctx context.Context, customerID string) ([]Voice,
 		Order("created_at DESC").
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("store: customer voices: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer voices: %w", err))
 	}
 	return voices, nil
 }
@@ -157,17 +159,17 @@ func (s *Store) CustomerVoices(ctx context.Context, customerID string) ([]Voice,
 // AddVoiceSample records a recording that has been stored.
 func (s *Store) AddVoiceSample(ctx context.Context, sample *VoiceSample) error {
 	if sample.VoiceID == "" {
-		return errors.New("store: a sample belongs to a voice")
+		return stack.Wrap(errors.New("store: a sample belongs to a voice"))
 	}
 	if sample.ObjectKey == "" {
-		return errors.New("store: a sample needs an object key")
+		return stack.Wrap(errors.New("store: a sample needs an object key"))
 	}
 
 	sample.ID = newID()
 	sample.CreatedAt = time.Now().UTC()
 
 	if _, err := s.db.NewInsert().Model(sample).Exec(ctx); err != nil {
-		return fmt.Errorf("store: add voice sample: %w", err)
+		return stack.Wrap(fmt.Errorf("store: add voice sample: %w", err))
 	}
 	return nil
 }
@@ -176,7 +178,7 @@ func (s *Store) AddVoiceSample(ctx context.Context, sample *VoiceSample) error {
 // given and so the order a provider should hear them in.
 func (s *Store) VoiceSamples(ctx context.Context, voiceID string) ([]VoiceSample, error) {
 	if voiceID == "" {
-		return nil, errors.New("store: a voice id is required")
+		return nil, stack.Wrap(errors.New("store: a voice id is required"))
 	}
 
 	var samples []VoiceSample
@@ -185,7 +187,7 @@ func (s *Store) VoiceSamples(ctx context.Context, voiceID string) ([]VoiceSample
 		Order("created_at").
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("store: voice samples: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: voice samples: %w", err))
 	}
 	return samples, nil
 }
@@ -194,7 +196,7 @@ func (s *Store) VoiceSamples(ctx context.Context, voiceID string) ([]VoiceSample
 // it before: two answers to which id to use would be one too many.
 func (s *Store) SaveVoiceBinding(ctx context.Context, binding *VoiceBinding) error {
 	if binding.VoiceID == "" || binding.Provider == "" {
-		return errors.New("store: a binding needs a voice and a provider")
+		return stack.Wrap(errors.New("store: a binding needs a voice and a provider"))
 	}
 
 	now := time.Now().UTC()
@@ -219,7 +221,7 @@ func (s *Store) SaveVoiceBinding(ctx context.Context, binding *VoiceBinding) err
 		Set("synced_at = COALESCE(EXCLUDED.synced_at, vb.synced_at)").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: save voice binding: %w", err)
+		return stack.Wrap(fmt.Errorf("store: save voice binding: %w", err))
 	}
 	return nil
 }
@@ -227,7 +229,7 @@ func (s *Store) SaveVoiceBinding(ctx context.Context, binding *VoiceBinding) err
 // VoiceBindings returns what every provider made of a voice.
 func (s *Store) VoiceBindings(ctx context.Context, voiceID string) ([]VoiceBinding, error) {
 	if voiceID == "" {
-		return nil, errors.New("store: a voice id is required")
+		return nil, stack.Wrap(errors.New("store: a voice id is required"))
 	}
 
 	var bindings []VoiceBinding
@@ -236,7 +238,7 @@ func (s *Store) VoiceBindings(ctx context.Context, voiceID string) ([]VoiceBindi
 		Order("provider").
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("store: voice bindings: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: voice bindings: %w", err))
 	}
 	return bindings, nil
 }
@@ -246,7 +248,7 @@ func (s *Store) VoiceBindings(ctx context.Context, voiceID string) ([]VoiceBindi
 // unknown: speaking in the wrong voice is worse than not speaking through this provider.
 func (s *Store) ReadyVoiceBinding(ctx context.Context, customerID, voiceID, provider string) (string, error) {
 	if customerID == "" || voiceID == "" || provider == "" {
-		return "", errors.New("store: a customer, a voice and a provider are required")
+		return "", stack.Wrap(errors.New("store: a customer, a voice and a provider are required"))
 	}
 
 	var binding VoiceBinding
@@ -260,14 +262,14 @@ func (s *Store) ReadyVoiceBinding(ctx context.Context, customerID, voiceID, prov
 		Limit(1).
 		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("%w: voice %s has no ready %s binding", ErrNoVoice, voiceID, provider)
+		return "", stack.Wrap(fmt.Errorf("%w: voice %s has no ready %s binding", ErrNoVoice, voiceID, provider))
 	}
 	if err != nil {
-		return "", fmt.Errorf("store: ready voice binding: %w", err)
+		return "", stack.Wrap(fmt.Errorf("store: ready voice binding: %w", err))
 	}
 	return binding.ExternalID, nil
 }
 
 func unknownVoice(id string) error {
-	return fmt.Errorf("%w: %s", ErrNoVoice, id)
+	return stack.Wrap(fmt.Errorf("%w: %s", ErrNoVoice, id))
 }

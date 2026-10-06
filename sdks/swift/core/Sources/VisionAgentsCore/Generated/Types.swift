@@ -11,34 +11,47 @@ import struct Foundation.Date
 #endif
 /// A type that performs HTTP operations defined by the OpenAPI document.
 internal protocol APIProtocol: Sendable {
-    /// The sessions the calling customer is running
-    ///
-    /// Without filters this is what is happening now, which is what it has always been. With any of them it is a query over what has happened as well: the sessions this process is still holding and the rows recorded for the ones that ended, as one list deduplicated by id, because a caller asking for their conversations does not care which of them this instance happens to be holding.
-    /// A backend gets its customer's sessions; an end user gets their own, whatever they ask for. That is not a filter they can widen, and it is why listing is safe to expose to a page: one person's conversations are not a way to find another's. An anonymous caller who named nobody gets nothing at all, since they reach their own session by holding its id.
-    ///
-    ///
-    /// - Remark: HTTP `GET /v1/agents/sessions`.
-    /// - Remark: Generated from `#/paths//v1/agents/sessions/get(listSessions)`.
-    func listSessions(_ input: Operations.ListSessions.Input) async throws -> Operations.ListSessions.Output
     /// Join a call as a voice agent
     ///
     /// The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.
     /// It returns once the agent is in the call, so a session that comes back is one that is already listening. Tools declared here are the caller's own: the model asks for them over the events socket and waits for the caller to answer.
     ///
-    ///
     /// - Remark: HTTP `POST /v1/agents/sessions`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/post(createSession)`.
     func createSession(_ input: Operations.CreateSession.Input) async throws -> Operations.CreateSession.Output
-    /// Leave the call and end the session
+    /// One session
+    ///
+    /// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/{id}`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)`.
+    func getSession(_ input: Operations.GetSession.Input) async throws -> Operations.GetSession.Output
+    /// Change a session
+    ///
+    /// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+    ///
+    /// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+    ///
+    /// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+    ///
+    /// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+    ///
+    /// - Remark: HTTP `PATCH /v1/agents/sessions/{id}`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/patch(updateSession)`.
+    func updateSession(_ input: Operations.UpdateSession.Input) async throws -> Operations.UpdateSession.Output
+    /// Delete a session
+    ///
+    /// Deletes the session, running or stopped: it is stopped first if it is running, then its turns and their items are deleted, and so is everything it taught the memory store. Memories other sessions learned about the same user are kept. The transcript a conversation in writing kept in Stream Chat is not deleted.
+    ///
+    /// To end a call and keep the conversation, stop the session instead.
     ///
     /// - Remark: HTTP `DELETE /v1/agents/sessions/{id}`.
-    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(closeSession)`.
-    func closeSession(_ input: Operations.CloseSession.Input) async throws -> Operations.CloseSession.Output
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(deleteSession)`.
+    func deleteSession(_ input: Operations.DeleteSession.Input) async throws -> Operations.DeleteSession.Output
     /// Continue a conversation as a new one
     ///
     /// Opens a session from another's spec, carrying its history across by default, and records where it came from. The usual reason is to ask the same question of a different model without losing the original answer, which is why anything in the request is written over what the parent was opened with.
     /// The parent is untouched and keeps running if it was running. Forking an incognito session is refused rather than answered with an empty conversation: there is nothing recorded to fork from, and pretending otherwise would hand back a session that quietly lost everything the caller thought they were continuing.
-    ///
     ///
     /// - Remark: HTTP `POST /v1/agents/sessions/{id}/fork`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/fork/post(forkSession)`.
@@ -47,23 +60,61 @@ internal protocol APIProtocol: Sendable {
     ///
     /// Oldest first, which read in order are the conversation. This is the shape of it rather than the text: what was asked, whether the turn finished, and how long it took. The items endpoint is what carries what happened inside each one.
     ///
-    ///
     /// - Remark: HTTP `GET /v1/agents/sessions/{id}/responses`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/get(listResponses)`.
     func listResponses(_ input: Operations.ListResponses.Input) async throws -> Operations.ListResponses.Output
+    /// Ask the agent something and get a handle on the answer
+    ///
+    /// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
+    /// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/responses`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)`.
+    func createResponse(_ input: Operations.CreateResponse.Input) async throws -> Operations.CreateResponse.Output
+    /// What the agent did, turn by turn, in the order it happened
+    ///
+    /// One flat stream across every turn rather than a list per turn, because that is how a conversation reads and how it is rendered: the question, what the agent did about it, what it said, then the next question. Naming a response narrows it to that turn.
+    /// Deltas are not here. A hundred fragments of one sentence are the sentence, and keeping them would make this mostly punctuation; a caller watching a turn happen reads the deltas off the events socket, and a caller reading one back wants the shape of it.
+    /// Nothing is returned for an incognito session, which has no items to return.
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/{id}/responses/items`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/items/get(listResponseItems)`.
+    func listResponseItems(_ input: Operations.ListResponseItems.Input) async throws -> Operations.ListResponseItems.Output
     /// Go back to a response and carry on from there
     ///
     /// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
     /// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
     ///
-    ///
     /// - Remark: HTTP `POST /v1/agents/sessions/{id}/rewind`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/rewind/post(rewindSession)`.
     func rewindSession(_ input: Operations.RewindSession.Input) async throws -> Operations.RewindSession.Output
+    /// Stop a running session
+    ///
+    /// The agent leaves the call and the session stops running. Everything it recorded is kept: it can still be read back, renamed and forked, and what it remembered carries into the next conversation. Deleting a session is what takes those away.
+    ///
+    /// A conversation in writing has nothing to hang up, so it is usually left running rather than stopped. Stopping is for a call, where the agent is holding a line open.
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/stop`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/stop/post(stopSession)`.
+    func stopSession(_ input: Operations.StopSession.Input) async throws -> Operations.StopSession.Output
+    /// List or search the caller's sessions
+    ///
+    /// Three queries are supported, each over the sessions still running and the ones that ended:
+    ///
+    /// - every session, sorted by `updated_at`
+    /// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
+    /// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+    ///
+    /// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+    ///
+    /// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/query`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/query/post(querySessions)`.
+    func querySessions(_ input: Operations.QuerySessions.Input) async throws -> Operations.QuerySessions.Output
     /// Answer a question out of what is true now
     ///
     /// The fourth routed modality, reachable on its own rather than only as a tool an agent reaches for. One question, one answer: routed, failed over and billed like the rest, and with no socket because nothing arrives in pieces.
-    ///
     ///
     /// - Remark: HTTP `POST /v1/search`.
     /// - Remark: Generated from `#/paths//v1/search/post(search)`.
@@ -72,28 +123,10 @@ internal protocol APIProtocol: Sendable {
 
 /// Convenience overloads for operation inputs.
 extension APIProtocol {
-    /// The sessions the calling customer is running
-    ///
-    /// Without filters this is what is happening now, which is what it has always been. With any of them it is a query over what has happened as well: the sessions this process is still holding and the rows recorded for the ones that ended, as one list deduplicated by id, because a caller asking for their conversations does not care which of them this instance happens to be holding.
-    /// A backend gets its customer's sessions; an end user gets their own, whatever they ask for. That is not a filter they can widen, and it is why listing is safe to expose to a page: one person's conversations are not a way to find another's. An anonymous caller who named nobody gets nothing at all, since they reach their own session by holding its id.
-    ///
-    ///
-    /// - Remark: HTTP `GET /v1/agents/sessions`.
-    /// - Remark: Generated from `#/paths//v1/agents/sessions/get(listSessions)`.
-    internal func listSessions(
-        query: Operations.ListSessions.Input.Query = .init(),
-        headers: Operations.ListSessions.Input.Headers = .init()
-    ) async throws -> Operations.ListSessions.Output {
-        try await listSessions(Operations.ListSessions.Input(
-            query: query,
-            headers: headers
-        ))
-    }
     /// Join a call as a voice agent
     ///
     /// The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.
     /// It returns once the agent is in the call, so a session that comes back is one that is already listening. Tools declared here are the caller's own: the model asks for them over the events socket and waits for the caller to answer.
-    ///
     ///
     /// - Remark: HTTP `POST /v1/agents/sessions`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/post(createSession)`.
@@ -106,15 +139,57 @@ extension APIProtocol {
             body: body
         ))
     }
-    /// Leave the call and end the session
+    /// One session
+    ///
+    /// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/{id}`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)`.
+    internal func getSession(
+        path: Operations.GetSession.Input.Path,
+        headers: Operations.GetSession.Input.Headers = .init()
+    ) async throws -> Operations.GetSession.Output {
+        try await getSession(Operations.GetSession.Input(
+            path: path,
+            headers: headers
+        ))
+    }
+    /// Change a session
+    ///
+    /// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+    ///
+    /// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+    ///
+    /// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+    ///
+    /// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+    ///
+    /// - Remark: HTTP `PATCH /v1/agents/sessions/{id}`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/patch(updateSession)`.
+    internal func updateSession(
+        path: Operations.UpdateSession.Input.Path,
+        headers: Operations.UpdateSession.Input.Headers = .init(),
+        body: Operations.UpdateSession.Input.Body
+    ) async throws -> Operations.UpdateSession.Output {
+        try await updateSession(Operations.UpdateSession.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Delete a session
+    ///
+    /// Deletes the session, running or stopped: it is stopped first if it is running, then its turns and their items are deleted, and so is everything it taught the memory store. Memories other sessions learned about the same user are kept. The transcript a conversation in writing kept in Stream Chat is not deleted.
+    ///
+    /// To end a call and keep the conversation, stop the session instead.
     ///
     /// - Remark: HTTP `DELETE /v1/agents/sessions/{id}`.
-    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(closeSession)`.
-    internal func closeSession(
-        path: Operations.CloseSession.Input.Path,
-        headers: Operations.CloseSession.Input.Headers = .init()
-    ) async throws -> Operations.CloseSession.Output {
-        try await closeSession(Operations.CloseSession.Input(
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(deleteSession)`.
+    internal func deleteSession(
+        path: Operations.DeleteSession.Input.Path,
+        headers: Operations.DeleteSession.Input.Headers = .init()
+    ) async throws -> Operations.DeleteSession.Output {
+        try await deleteSession(Operations.DeleteSession.Input(
             path: path,
             headers: headers
         ))
@@ -123,7 +198,6 @@ extension APIProtocol {
     ///
     /// Opens a session from another's spec, carrying its history across by default, and records where it came from. The usual reason is to ask the same question of a different model without losing the original answer, which is why anything in the request is written over what the parent was opened with.
     /// The parent is untouched and keeps running if it was running. Forking an incognito session is refused rather than answered with an empty conversation: there is nothing recorded to fork from, and pretending otherwise would hand back a session that quietly lost everything the caller thought they were continuing.
-    ///
     ///
     /// - Remark: HTTP `POST /v1/agents/sessions/{id}/fork`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/fork/post(forkSession)`.
@@ -142,7 +216,6 @@ extension APIProtocol {
     ///
     /// Oldest first, which read in order are the conversation. This is the shape of it rather than the text: what was asked, whether the turn finished, and how long it took. The items endpoint is what carries what happened inside each one.
     ///
-    ///
     /// - Remark: HTTP `GET /v1/agents/sessions/{id}/responses`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/get(listResponses)`.
     internal func listResponses(
@@ -156,11 +229,47 @@ extension APIProtocol {
             headers: headers
         ))
     }
+    /// Ask the agent something and get a handle on the answer
+    ///
+    /// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
+    /// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/responses`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)`.
+    internal func createResponse(
+        path: Operations.CreateResponse.Input.Path,
+        headers: Operations.CreateResponse.Input.Headers = .init(),
+        body: Operations.CreateResponse.Input.Body
+    ) async throws -> Operations.CreateResponse.Output {
+        try await createResponse(Operations.CreateResponse.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// What the agent did, turn by turn, in the order it happened
+    ///
+    /// One flat stream across every turn rather than a list per turn, because that is how a conversation reads and how it is rendered: the question, what the agent did about it, what it said, then the next question. Naming a response narrows it to that turn.
+    /// Deltas are not here. A hundred fragments of one sentence are the sentence, and keeping them would make this mostly punctuation; a caller watching a turn happen reads the deltas off the events socket, and a caller reading one back wants the shape of it.
+    /// Nothing is returned for an incognito session, which has no items to return.
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/{id}/responses/items`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/items/get(listResponseItems)`.
+    internal func listResponseItems(
+        path: Operations.ListResponseItems.Input.Path,
+        query: Operations.ListResponseItems.Input.Query = .init(),
+        headers: Operations.ListResponseItems.Input.Headers = .init()
+    ) async throws -> Operations.ListResponseItems.Output {
+        try await listResponseItems(Operations.ListResponseItems.Input(
+            path: path,
+            query: query,
+            headers: headers
+        ))
+    }
     /// Go back to a response and carry on from there
     ///
     /// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
     /// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
-    ///
     ///
     /// - Remark: HTTP `POST /v1/agents/sessions/{id}/rewind`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/rewind/post(rewindSession)`.
@@ -175,10 +284,49 @@ extension APIProtocol {
             body: body
         ))
     }
+    /// Stop a running session
+    ///
+    /// The agent leaves the call and the session stops running. Everything it recorded is kept: it can still be read back, renamed and forked, and what it remembered carries into the next conversation. Deleting a session is what takes those away.
+    ///
+    /// A conversation in writing has nothing to hang up, so it is usually left running rather than stopped. Stopping is for a call, where the agent is holding a line open.
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/stop`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/stop/post(stopSession)`.
+    internal func stopSession(
+        path: Operations.StopSession.Input.Path,
+        headers: Operations.StopSession.Input.Headers = .init()
+    ) async throws -> Operations.StopSession.Output {
+        try await stopSession(Operations.StopSession.Input(
+            path: path,
+            headers: headers
+        ))
+    }
+    /// List or search the caller's sessions
+    ///
+    /// Three queries are supported, each over the sessions still running and the ones that ended:
+    ///
+    /// - every session, sorted by `updated_at`
+    /// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
+    /// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+    ///
+    /// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+    ///
+    /// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/query`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/query/post(querySessions)`.
+    internal func querySessions(
+        headers: Operations.QuerySessions.Input.Headers = .init(),
+        body: Operations.QuerySessions.Input.Body? = nil
+    ) async throws -> Operations.QuerySessions.Output {
+        try await querySessions(Operations.QuerySessions.Input(
+            headers: headers,
+            body: body
+        ))
+    }
     /// Answer a question out of what is true now
     ///
     /// The fourth routed modality, reachable on its own rather than only as a tool an agent reaches for. One question, one answer: routed, failed over and billed like the rest, and with no socket because nothing arrives in pieces.
-    ///
     ///
     /// - Remark: HTTP `POST /v1/search`.
     /// - Remark: Generated from `#/paths//v1/search/post(search)`.

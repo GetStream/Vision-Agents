@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // DSNEnvVar is where the tests look for a Postgres to run against.
@@ -20,7 +20,10 @@ const DSNEnvVar = "ROUTER_POSTGRES_DSN"
 type StoreSuite struct {
 	suite.Suite
 	store *Store
-	ctx   context.Context
+	// dsn is the suite's own database, for a test that needs another pool on it, as a second
+	// router would have.
+	dsn string
+	ctx context.Context
 	// base is the start of a fixed hour, so bucket boundaries are predictable.
 	base time.Time
 }
@@ -35,7 +38,10 @@ func (s *StoreSuite) SetupSuite() {
 		s.T().Skipf("%s not set", DSNEnvVar)
 	}
 
-	store, err := Open(dsn)
+	// A database of this suite's own: it drops the schema and empties tables between
+	// tests, which is not something to do to a database another package is reading.
+	s.dsn = testenv.Database(dsn, "store")
+	store, err := Open(s.dsn)
 	s.Require().NoError(err)
 	s.store = store
 	s.ctx = context.Background()
@@ -64,9 +70,10 @@ func (s *StoreSuite) SetupTest() {
 		s.ctx,
 		"TRUNCATE requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily,"+
 			" turns, turn_stats_hourly, turn_stats_daily, calls, call_events, phone_numbers,"+
-			" voices, agent_sessions, agent_responses, agent_response_items, guest_users,"+
+			" voices, agent_sessions, agent_responses, agent_response_items, users,"+
 			" policies, app_organizations, call_resources, organizations, agent_configs,"+
-			" agent_plugin_connections, data_changes, data_change_capture CASCADE",
+			" agent_plugin_connections, agent_plugin_clients, data_changes, data_change_capture, stream_apps, connector_definitions,"+
+			" connector_connections, connector_authorization_attempts, connector_oauth_clients CASCADE",
 	)
 	s.Require().NoError(err)
 }
@@ -643,7 +650,7 @@ func (s *StoreSuite) TestANumberRemembersWhichTrunkItsCallsArriveOn() {
 	}))
 
 	s.Require().NoError(s.store.AttachNumber(
-		s.ctx, "acme", "+15125551234", "trunk-7", "default", "phone-+15125551234"))
+		s.ctx, "acme", "+15125551234", NumberAttachment{TrunkID: "trunk-7", CallType: "default", CallID: "phone-+15125551234"}))
 
 	number, err := s.store.Number(s.ctx, "acme", "+15125551234")
 	s.Require().NoError(err)
@@ -658,9 +665,9 @@ func (s *StoreSuite) TestAnArrivingCallNamesTheCustomerWhoseNumberWasRung() {
 		CustomerID: "acme", PurchasedAt: s.base,
 	}))
 	s.Require().NoError(s.store.AttachNumber(
-		s.ctx, "acme", "+15125551234", "trunk-7", "support", "the-support-line"))
+		s.ctx, "acme", "+15125551234", NumberAttachment{TrunkID: "trunk-7", CallType: "support", CallID: "the-support-line"}))
 
-	number, err := s.store.NumberByCall(s.ctx, "support", "the-support-line")
+	number, err := s.store.NumberByCallInApp(s.ctx, AppScope{Unpinned: true}, "support", "the-support-line")
 
 	s.Require().NoError(err)
 	s.Equal("acme", number.CustomerID)
@@ -679,7 +686,7 @@ func (s *StoreSuite) TestANumberAttachedBeforeItsCallWasRecordedIsStillFound() {
 		Exec(s.ctx)
 	s.Require().NoError(err)
 
-	number, err := s.store.NumberByCall(s.ctx, "default", "phone-+15125551234")
+	number, err := s.store.NumberByCallInApp(s.ctx, AppScope{Unpinned: true}, "default", "phone-+15125551234")
 
 	s.Require().NoError(err)
 	s.Equal("acme", number.CustomerID)
@@ -691,7 +698,7 @@ func (s *StoreSuite) TestACallNoNumberReachesIsNotAttributedToAnybody() {
 		CustomerID: "acme", PurchasedAt: s.base,
 	}))
 
-	_, err := s.store.NumberByCall(s.ctx, "default", "some-video-call")
+	_, err := s.store.NumberByCallInApp(s.ctx, AppScope{Unpinned: true}, "default", "some-video-call")
 
 	s.ErrorContains(err, "no number reaches call default:some-video-call")
 }
@@ -702,10 +709,10 @@ func (s *StoreSuite) TestAReleasedNumbersCallIsNotAttributedToItsFormerHolder() 
 		CustomerID: "acme", PurchasedAt: s.base,
 	}))
 	s.Require().NoError(s.store.AttachNumber(
-		s.ctx, "acme", "+15125551234", "trunk-7", "default", "phone-+15125551234"))
+		s.ctx, "acme", "+15125551234", NumberAttachment{TrunkID: "trunk-7", CallType: "default", CallID: "phone-+15125551234"}))
 	s.Require().NoError(s.store.ReleaseNumber(s.ctx, "acme", "+15125551234", s.base.Add(time.Hour)))
 
-	_, err := s.store.NumberByCall(s.ctx, "default", "phone-+15125551234")
+	_, err := s.store.NumberByCallInApp(s.ctx, AppScope{Unpinned: true}, "default", "phone-+15125551234")
 
 	s.ErrorContains(err, "no number reaches call")
 }

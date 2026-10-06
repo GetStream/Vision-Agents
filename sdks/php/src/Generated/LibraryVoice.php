@@ -16,20 +16,20 @@ use GetStream\VisionAgents\Json;
 final readonly class LibraryVoice
 {
     public function __construct(
-        public string $provider,
         // What to put in the voice field, in the provider's own terms.
         public string $id,
         public string $name,
+        public string $provider,
+        public ?string $accent = null,
         public ?string $description = null,
         public ?string $gender = null,
-        public ?string $accent = null,
         public ?string $language = null,
-        /** @var list<string>|null */
-        public ?array $tags = null,
         // A voice this account made, rather than one from the public library.
         public ?bool $own = null,
         // Whether the voice can be heard.
         public ?bool $preview = null,
+        /** @var list<string>|null */
+        public ?array $tags = null,
     ) {
     }
 
@@ -39,16 +39,16 @@ final readonly class LibraryVoice
     public static function fromArray(array $data): self
     {
         return new self(
-            provider: Json::string($data, 'provider'),
             id: Json::string($data, 'id'),
             name: Json::string($data, 'name'),
+            provider: Json::string($data, 'provider'),
+            accent: array_key_exists('accent', $data) && $data['accent'] !== null ? Json::string($data, 'accent') : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
             gender: array_key_exists('gender', $data) && $data['gender'] !== null ? Json::string($data, 'gender') : null,
-            accent: array_key_exists('accent', $data) && $data['accent'] !== null ? Json::string($data, 'accent') : null,
             language: array_key_exists('language', $data) && $data['language'] !== null ? Json::string($data, 'language') : null,
-            tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::strings($data, 'tags') : null,
             own: array_key_exists('own', $data) && $data['own'] !== null ? Json::bool($data, 'own') : null,
             preview: array_key_exists('preview', $data) && $data['preview'] !== null ? Json::bool($data, 'preview') : null,
+            tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::strings($data, 'tags') : null,
         );
     }
 
@@ -60,29 +60,29 @@ final readonly class LibraryVoice
     public function toArray(): array
     {
         $out = [];
-        $out['provider'] = $this->provider;
         $out['id'] = $this->id;
         $out['name'] = $this->name;
+        $out['provider'] = $this->provider;
+        if ($this->accent !== null) {
+            $out['accent'] = $this->accent;
+        }
         if ($this->description !== null) {
             $out['description'] = $this->description;
         }
         if ($this->gender !== null) {
             $out['gender'] = $this->gender;
         }
-        if ($this->accent !== null) {
-            $out['accent'] = $this->accent;
-        }
         if ($this->language !== null) {
             $out['language'] = $this->language;
-        }
-        if ($this->tags !== null) {
-            $out['tags'] = $this->tags;
         }
         if ($this->own !== null) {
             $out['own'] = $this->own;
         }
         if ($this->preview !== null) {
             $out['preview'] = $this->preview;
+        }
+        if ($this->tags !== null) {
+            $out['tags'] = $this->tags;
         }
         return $out;
     }

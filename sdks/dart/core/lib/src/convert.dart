@@ -12,6 +12,7 @@ Session sessionOf(api.Session wire) => Session(
   isText: wire.text ?? false,
   state: _named(SessionState.values, wire.state, SessionState.unknown),
   mode: _named(SessionMode.values, wire.mode, SessionMode.unknown),
+  modality: _named(SessionModality.values, wire.modality, SessionModality.unknown),
   agent: wire.agent ?? '',
   configId: wire.configId ?? '',
   conversationId: wire.conversationId ?? '',
@@ -23,7 +24,7 @@ Session sessionOf(api.Session wire) => Session(
   voice: wire.voice ?? '',
   title: wire.title ?? '',
   description: wire.description ?? '',
-  project: wire.project ?? '',
+  projectId: wire.projectId ?? '',
   custom: wire.custom ?? const {},
   incognito: wire.incognito ?? false,
   forkedFrom: wire.forkedFrom ?? '',
@@ -75,6 +76,7 @@ GuestUser guestOf(api.GuestUser wire) => GuestUser(
 /// no config of their own.
 api.CreateSessionRequest createRequestOf(SessionOptions options, {String? callId, String? agent}) =>
     api.CreateSessionRequest(
+      id: _set(options.id),
       callId: _set(callId),
       // Held in writing unless a call was named: a conversation with no call is one typed.
       text: _set(callId) == null ? true : null,
@@ -88,10 +90,9 @@ api.CreateSessionRequest createRequestOf(SessionOptions options, {String? callId
       voice: _set(options.voice),
       title: options.title,
       description: options.description,
-      project: options.project,
+      projectId: options.projectId,
       custom: options.custom,
       incognito: options.incognito,
-      persistConversation: options.persistConversation,
       conversationId: _set(options.conversationId),
       modelOverwrites: overwritesOf(options.modelOverwrites),
       tools: options.tools.isEmpty
@@ -102,6 +103,8 @@ api.CreateSessionRequest createRequestOf(SessionOptions options, {String? callId
                   name: tool.name,
                   description: tool.description,
                   parameters: tool.parameters,
+                  displayTitle: _set(tool.displayTitle),
+                  executor: tool.executor?.name,
                 ),
             ],
       tags: options.tags.isEmpty ? null : options.tags,
@@ -113,7 +116,7 @@ api.ForkSessionRequest forkRequestOf(ForkOptions options) => api.ForkSessionRequ
   configId: _set(options.configId),
   title: options.title,
   description: options.description,
-  project: options.project,
+  projectId: options.projectId,
   custom: options.custom,
   instructions: options.instructions,
   incognito: options.incognito,
@@ -131,7 +134,6 @@ api.ModelOverwrites? overwritesOf(ModelOverwrites? overwrites) => overwrites == 
         stt: _set(overwrites.stt),
         tts: _set(overwrites.tts),
         sts: _set(overwrites.sts),
-        subagent: _set(overwrites.subagent),
         search: _set(overwrites.search),
         thinking: overwrites.thinking?.name,
         temperature: overwrites.temperature,

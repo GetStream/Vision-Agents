@@ -6,6 +6,7 @@ import io.getstream.visionagents.core.generated.GuestUser as GuestSchema
 import io.getstream.visionagents.core.generated.ImageSource as ImageSchema
 import io.getstream.visionagents.core.generated.ModelOverwrites as OverwritesSchema
 import io.getstream.visionagents.core.generated.Session as SessionSchema
+import io.getstream.visionagents.core.generated.SessionModality
 import io.getstream.visionagents.core.generated.SessionState
 import kotlin.time.Instant
 import kotlinx.serialization.json.JsonElement
@@ -28,13 +29,15 @@ public data class Session(
     val configId: String,
     val isText: Boolean,
     val state: State,
+    /** How the user took part. It only moves up, from text or voice to video. */
+    val modality: Modality,
     val title: String,
     val description: String,
-    val project: String,
+    val projectId: String,
     val custom: JsonObject,
     val instructions: String,
     val llm: String,
-    /** The Stream Chat channel a persistent text conversation is kept in, or empty. */
+    /** The Stream Chat channel a text conversation is kept in, or empty when it is incognito. */
     val conversationId: String,
     /** The session this one was forked from, or empty. */
     val forkedFrom: String,
@@ -48,6 +51,17 @@ public data class Session(
         Ended,
     }
 
+    public enum class Modality {
+        /** Held in writing. */
+        Text,
+        /** A call. */
+        Voice,
+        /** A call in which the agent has seen the user's video. */
+        Video,
+        /** A modality this SDK has never heard of. */
+        Unknown,
+    }
+
     internal companion object {
         fun of(schema: SessionSchema): Session = Session(
             id = schema.id,
@@ -58,9 +72,15 @@ public data class Session(
             configId = schema.configId.orEmpty(),
             isText = schema.text ?: false,
             state = if (schema.state == SessionState.live) State.Live else State.Ended,
+            modality = when (schema.modality) {
+                SessionModality.text -> Modality.Text
+                SessionModality.voice -> Modality.Voice
+                SessionModality.video -> Modality.Video
+                else -> Modality.Unknown
+            },
             title = schema.title.orEmpty(),
             description = schema.description.orEmpty(),
-            project = schema.project.orEmpty(),
+            projectId = schema.projectId.orEmpty(),
             custom = JsonObject(schema.custom.orEmpty()),
             instructions = schema.instructions.orEmpty(),
             llm = schema.llm.orEmpty(),
@@ -73,6 +93,14 @@ public data class Session(
         )
     }
 }
+
+/** One page of a list, and where the next one starts. */
+public data class Page<T>(
+    val items: List<T>,
+    val hasMore: Boolean,
+    /** Pass as `cursor`, with the same filters, for the next page. Null on the last one. */
+    val nextCursor: String?,
+)
 
 /**
  * One turn of a session as the router wrote it down: what was asked, and how answering it
@@ -217,7 +245,6 @@ public data class ModelOverwrites(
     val stt: String? = null,
     val tts: String? = null,
     val sts: String? = null,
-    val subagent: String? = null,
     val search: String? = null,
     val thinking: Thinking? = null,
     /** Zero is a real request for a deterministic model, which null is not. */
@@ -235,7 +262,6 @@ public data class ModelOverwrites(
             stt = stt,
             tts = tts,
             sts = sts,
-            subagent = subagent,
             search = search,
             thinking = thinking?.let { OverwritesSchema.Thinking.valueOf(it.name.lowercase()) },
             temperature = temperature,

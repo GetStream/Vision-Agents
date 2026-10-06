@@ -7,6 +7,7 @@ namespace GetStream\VisionAgents;
 use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Generated\AgentResponse as ResponseRow;
 use GetStream\VisionAgents\Generated\AgentResponseItem;
+use GetStream\VisionAgents\Generated\AgentResponsePage;
 use GetStream\VisionAgents\Generated\CreateResponseRequest;
 use GetStream\VisionAgents\Generated\ImageSource;
 use GetStream\VisionAgents\Generated\RewindSessionRequest;
@@ -34,10 +35,11 @@ final readonly class Responses
      * takes seconds, and a request that waited them out would time out on anything worth asking.
      *
      * @param list<ImageSource> $images
+     * @param ?string $commandId the durable command this answers, so the reply lands on it
      */
-    public function create(string $text, array $images = []): AgentResponse
+    public function create(string $text, array $images = [], ?string $commandId = null): AgentResponse
     {
-        $body = new CreateResponseRequest($text, $images === [] ? null : $images);
+        $body = new CreateResponseRequest(text: $text, images: $images === [] ? null : $images, commandId: $commandId === '' ? null : $commandId);
         $created = $this->client->post('/v1/agents/sessions/{id}/responses', ['id' => $this->sessionId], body: $body->toArray());
         return new AgentResponse($this->client, ResponseRow::fromArray(Json::asObject($created)));
     }
@@ -64,13 +66,11 @@ final readonly class Responses
     }
 
     /**
-     * The turns so far, oldest first.
-     *
-     * @return list<ResponseRow>
+     * A page of the turns so far, oldest first. Pass its `nextCursor` back for the next one.
      */
-    public function list(?int $limit = null, ?int $offset = null): array
+    public function list(?int $limit = null, ?string $cursor = null): AgentResponsePage
     {
-        $listed = $this->client->get('/v1/agents/sessions/{id}/responses', ['id' => $this->sessionId], ['limit' => $limit, 'offset' => $offset]);
-        return array_map(ResponseRow::fromArray(...), Json::objects(['rows' => $listed], 'rows'));
+        $listed = $this->client->get('/v1/agents/sessions/{id}/responses', ['id' => $this->sessionId], ['limit' => $limit, 'cursor' => $cursor]);
+        return AgentResponsePage::fromArray(Json::asObject($listed));
     }
 }

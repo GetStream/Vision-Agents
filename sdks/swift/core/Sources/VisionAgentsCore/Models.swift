@@ -13,6 +13,15 @@ public struct Session: Sendable, Hashable, Identifiable {
     public let agentID: String
     public let isText: Bool
     public let state: State
+    /// How the user took part. It only moves up, from text or voice to video.
+    public let modality: Modality
+    /// The Stream Chat channel a text session is kept in. Empty for one kept nowhere.
+    public let conversationID: String
+    public let projectID: String
+    public let title: String
+    public let description: String
+    /// The caller's own labels.
+    public let custom: [String: JSONValue]
     public let instructions: String
     public let llm: String
     public let createdAt: Date
@@ -22,6 +31,14 @@ public struct Session: Sendable, Hashable, Identifiable {
         case ended
     }
 
+    public enum Modality: String, Sendable {
+        case text
+        case voice
+        case video
+        /// A modality this SDK has never heard of.
+        case unknown
+    }
+
     init(_ schema: Components.Schemas.Session) {
         id = schema.id
         callID = schema.callId
@@ -29,9 +46,52 @@ public struct Session: Sendable, Hashable, Identifiable {
         agentID = schema.agentId
         isText = schema.text ?? false
         state = State(rawValue: schema.state.rawValue) ?? .ended
+        modality = Modality(rawValue: schema.modality.rawValue) ?? .unknown
+        conversationID = schema.conversationId ?? ""
+        projectID = schema.projectId ?? ""
+        title = schema.title ?? ""
+        description = schema.description ?? ""
+        custom =
+            schema.custom.flatMap { try? JSONEncoder().encode($0) }
+            .flatMap { try? JSONDecoder().decode([String: JSONValue].self, from: $0) } ?? [:]
         instructions = schema.instructions ?? ""
         llm = schema.llm ?? ""
         createdAt = schema.createdAt
+    }
+}
+
+/// One page of a list, and where the next one starts.
+public struct Page<Item: Sendable>: Sendable {
+    public let items: [Item]
+    /// Whether there is another page after this one.
+    public let hasMore: Bool
+    /// Pass as `cursor` for the next page. Nil on the last one.
+    public let nextCursor: String?
+}
+
+extension Page: Equatable where Item: Equatable {}
+extension Page: Hashable where Item: Hashable {}
+
+/// Which of this caller's conversations to list.
+///
+/// `nil` leaves a filter out. A device is always narrowed to its own user's sessions.
+public struct SessionQuery: Sendable, Hashable {
+    /// Only this project's. A search covers every project, so it refuses this.
+    public var projectID: String?
+    /// Only the ones the user took part in this way.
+    public var modality: Session.Modality?
+    /// Only the ones still running, or only the ones over.
+    public var state: Session.State?
+    /// Only the ones created with this agent id.
+    public var agentID: String?
+    /// Up to 200. Nil is 25.
+    public var limit: Int?
+    /// The `nextCursor` of the page before, sent with the same filters. Nil is the first page.
+    public var cursor: String?
+
+    public init(limit: Int? = nil, cursor: String? = nil) {
+        self.limit = limit
+        self.cursor = cursor
     }
 }
 
@@ -69,6 +129,58 @@ public struct Response: Sendable, Hashable, Identifiable {
     }
 }
 
+/// One thing the agent did while answering a response: what was said, thought, answered,
+/// blocked or failed, in the order it happened.
+public struct ResponseItem: Sendable, Hashable {
+    public let responseID: String
+    /// Where this falls within its response.
+    public let ordinal: Int
+    public let kind: Kind
+    public let text: String
+    /// The tool called, for an item that records a tool call.
+    public let toolName: String
+
+    public enum Kind: String, Sendable {
+        case said
+        case thought
+        case answer
+        case blocked
+        case error
+        /// A kind this SDK has never heard of.
+        case unknown
+    }
+
+    init(_ schema: Components.Schemas.AgentResponseItem) {
+        responseID = schema.responseId
+        ordinal = schema.ordinal
+        kind = Kind(rawValue: schema.kind.rawValue) ?? .unknown
+        text = schema.text ?? ""
+        toolName = schema.toolName ?? ""
+    }
+}
+
+/// An image to show the agent with what is asked, by URL or as a data URI.
+public struct ImageSource: Sendable, Hashable {
+    public var url: String
+    /// How closely the model looks. Nil lets the model decide.
+    public var detail: Detail?
+
+    public enum Detail: String, Sendable {
+        case auto
+        case low
+        case high
+    }
+
+    public init(url: String, detail: Detail? = nil) {
+        self.url = url
+        self.detail = detail
+    }
+
+    var schema: Components.Schemas.ImageSource {
+        .init(detail: detail.flatMap { .init(rawValue: $0.rawValue) }, url: url)
+    }
+}
+
 /// What to change about a conversation while continuing it as a new one.
 ///
 /// `nil` means the fork keeps what the parent had.
@@ -78,6 +190,7 @@ public struct ForkOptions: Sendable {
     /// Another agent config to continue as, by id.
     public var agent: String?
     public var title: String?
+    public var projectID: String?
     public var instructions: String?
     /// Start the fork with none of the parent's history. Cannot be combined with
     /// `responseID`, which is a point in that history.

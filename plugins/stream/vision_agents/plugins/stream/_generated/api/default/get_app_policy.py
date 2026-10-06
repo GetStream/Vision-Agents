@@ -5,7 +5,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...models.policy import Policy
 from ...types import Response
 
@@ -22,26 +22,31 @@ def _get_kwargs() -> dict[str, Any]:
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | Policy | None:
+) -> ErrorResponse | Policy | None:
     if response.status_code == 200:
         response_200 = Policy.from_dict(response.json())
 
         return response_200
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
+
+    if response.status_code == 500:
+        response_500 = ErrorResponse.from_dict(response.json())
+
+        return response_500
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -51,7 +56,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | Policy]:
+) -> Response[ErrorResponse | Policy]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -63,19 +68,20 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Error | Policy]:
-    """The calling app's budget, data policy and prompt injection setting
+) -> Response[ErrorResponse | Policy]:
+    """The calling app's policy
 
      What the app itself decided. Its organization's policy applies as well, as a floor the app can
-    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt
-    injection is screened if either turns it on.
+    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt
+    injection is screened if either turns it on, only a model both allow may be routed to, and the
+    organization's tags win over the app's.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | Policy]
+        Response[ErrorResponse | Policy]
     """
 
     kwargs = _get_kwargs()
@@ -90,19 +96,20 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-) -> Error | Policy | None:
-    """The calling app's budget, data policy and prompt injection setting
+) -> ErrorResponse | Policy | None:
+    """The calling app's policy
 
      What the app itself decided. Its organization's policy applies as well, as a floor the app can
-    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt
-    injection is screened if either turns it on.
+    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt
+    injection is screened if either turns it on, only a model both allow may be routed to, and the
+    organization's tags win over the app's.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | Policy
+        ErrorResponse | Policy
     """
 
     return sync_detailed(
@@ -113,19 +120,20 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Error | Policy]:
-    """The calling app's budget, data policy and prompt injection setting
+) -> Response[ErrorResponse | Policy]:
+    """The calling app's policy
 
      What the app itself decided. Its organization's policy applies as well, as a floor the app can
-    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt
-    injection is screened if either turns it on.
+    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt
+    injection is screened if either turns it on, only a model both allow may be routed to, and the
+    organization's tags win over the app's.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | Policy]
+        Response[ErrorResponse | Policy]
     """
 
     kwargs = _get_kwargs()
@@ -138,19 +146,20 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-) -> Error | Policy | None:
-    """The calling app's budget, data policy and prompt injection setting
+) -> ErrorResponse | Policy | None:
+    """The calling app's policy
 
      What the app itself decided. Its organization's policy applies as well, as a floor the app can
-    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, and prompt
-    injection is screened if either turns it on.
+    tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt
+    injection is screened if either turns it on, only a model both allow may be routed to, and the
+    organization's tags win over the app's.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | Policy
+        ErrorResponse | Policy
     """
 
     return (

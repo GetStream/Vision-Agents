@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -50,6 +51,8 @@ type recordWrite struct {
 	items []store.AgentResponseItem
 	// described is a session given a new title and description, nil otherwise.
 	described *described
+	// sawVideo is the session whose user's video the agent saw.
+	sawVideo string
 	// flushed is closed once everything queued before it has been written.
 	flushed chan struct{}
 }
@@ -65,6 +68,10 @@ type recorder interface {
 	Responded(id, status, failure string, at time.Time)
 	// Item says one thing that happened during it.
 	Item(item store.AgentResponseItem)
+	// Described says the session was renamed. A nil custom leaves the labels as they were.
+	Described(customerID, id, title, description string, custom map[string]any)
+	// SawVideo says the agent saw the user's video.
+	SawVideo(id string)
 	// Flush waits until everything said so far has been written, which is what reading the
 	// conversation back straight after it happened needs.
 	Flush(ctx context.Context) error
@@ -115,12 +122,18 @@ func (r *sessionRecorder) Closed(id string, at time.Time) {
 // described is what a session was renamed to.
 type described struct {
 	customerID, id, title, description string
+	custom                             map[string]any
 }
 
 // Described queues a session's new name. It goes through the queue rather than straight to
 // the store so it cannot be written before the row it renames.
-func (r *sessionRecorder) Described(customerID, id, title, description string) {
-	r.queueWrite(recordWrite{described: &described{customerID, id, title, description}})
+func (r *sessionRecorder) Described(customerID, id, title, description string, custom map[string]any) {
+	r.queueWrite(recordWrite{described: &described{customerID, id, title, description, custom}})
+}
+
+// SawVideo queues that a session became a video one, behind the row it changes.
+func (r *sessionRecorder) SawVideo(id string) {
+	r.queueWrite(recordWrite{sawVideo: id})
 }
 
 // Responding queues a turn that has just begun.
@@ -146,13 +159,13 @@ func (r *sessionRecorder) Flush(ctx context.Context) error {
 	select {
 	case r.queue <- recordWrite{flushed: flushed}:
 	case <-ctx.Done():
-		return ctx.Err()
+		return stack.Wrap(ctx.Err())
 	}
 	select {
 	case <-flushed:
 		return nil
 	case <-ctx.Done():
-		return ctx.Err()
+		return stack.Wrap(ctx.Err())
 	}
 }
 
@@ -244,8 +257,12 @@ func (r *sessionRecorder) write(write recordWrite) {
 		}
 	case write.described != nil:
 		d := write.described
-		if err := r.store.DescribeSession(ctx, d.customerID, d.id, d.title, d.description, nil); err != nil {
+		if err := r.store.DescribeSession(ctx, d.customerID, d.id, d.title, d.description, d.custom); err != nil {
 			r.logger.Error("could not record the session's title", "session", d.id, "error", err)
+		}
+	case write.sawVideo != "":
+		if err := r.store.SawVideo(ctx, write.sawVideo); err != nil {
+			r.logger.Error("could not record the session's video", "session", write.sawVideo, "error", err)
 		}
 	}
 }
@@ -275,6 +292,7 @@ func sessionRow(created *Session) store.AgentSession {
 	row := store.AgentSession{
 		ID:              created.id,
 		CustomerID:      spec.CustomerID,
+		StreamAppPK:     spec.StreamApp,
 		ConfigID:        spec.ConfigID,
 		AgentName:       spec.AgentName,
 		AgentID:         spec.AgentID,
@@ -288,6 +306,7 @@ func sessionRow(created *Session) store.AgentSession {
 		ModelOverwrites: spec.ModelOverwrites,
 		ForkedFrom:      spec.ForkedFrom,
 		State:           store.SessionRunning,
+		Modality:        created.Modality(),
 		CreatedAt:       created.created.UTC(),
 	}
 	// Whose the session is comes from the credential rather than from the spec's UserID,

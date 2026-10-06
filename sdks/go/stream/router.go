@@ -768,10 +768,10 @@ func ended(logger *slog.Logger, modality string, err error) {
 }
 
 // refusal is what the router said went wrong, whichever field it said it in.
-func refusal(status string, failures ...*acceleration.Error) error {
+func refusal(status string, failures ...*acceleration.ErrorResponse) error {
 	for _, failure := range failures {
 		if failure != nil {
-			return fmt.Errorf("stream: %s", failure.Error)
+			return fmt.Errorf("stream: %s", failure.Error.Message)
 		}
 	}
 	return fmt.Errorf("stream: the router answered %s", strings.TrimSpace(status))

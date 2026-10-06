@@ -44,31 +44,28 @@ export class Items {
    * turn or a thousand the same way.
    */
   async *unwind(options: { limit?: number } = {}): AsyncGenerator<Schemas["AgentResponseItem"]> {
-    const page = Math.min(options.limit ?? ITEM_PAGE, 1000);
-    let offset = 0;
+    const limit = Math.min(options.limit ?? ITEM_PAGE, 1000);
+    let cursor: string | undefined;
     while (true) {
-      const items = await this.list({ limit: page, offset });
-      for (const item of items) {
+      const page = await this.list({ limit, ...(cursor ? { cursor } : {}) });
+      for (const item of page.items) {
         yield item;
       }
-      // A short page is the last page. Asking again to see an empty one would double the
-      // requests for every conversation that happens to be a multiple of the page size,
-      // which is not worth avoiding one extra round trip in the rare exact-fit case.
-      if (items.length < page) {
+      if (!page.has_more || !page.next_cursor) {
         return;
       }
-      offset += items.length;
+      cursor = page.next_cursor;
     }
   }
 
   /** One page of items, for a caller doing its own paging. */
-  list(options: { limit?: number; offset?: number } = {}): Promise<readonly Schemas["AgentResponseItem"][]> {
+  list(options: { limit?: number; cursor?: string } = {}): Promise<Schemas["AgentResponseItemPage"]> {
     return this.client.get("/v1/agents/sessions/{id}/responses/items", {
       path: { id: this.sessionId },
       query: {
         ...(this.responseId ? { response_id: this.responseId } : {}),
         limit: options.limit,
-        offset: options.offset,
+        cursor: options.cursor,
       },
     });
   }
@@ -169,11 +166,11 @@ export class Responses {
     });
   }
 
-  /** The turns so far, oldest first. */
-  list(options: { limit?: number; offset?: number } = {}): Promise<readonly Schemas["AgentResponse"][]> {
+  /** The turns so far, oldest first, a page at a time. */
+  list(options: { limit?: number; cursor?: string } = {}): Promise<Schemas["AgentResponsePage"]> {
     return this.client.get("/v1/agents/sessions/{id}/responses", {
       path: { id: this.sessionId },
-      query: { limit: options.limit, offset: options.offset },
+      query: { limit: options.limit, cursor: options.cursor },
     });
   }
 }

@@ -13,13 +13,13 @@ final readonly class CallToken
     public function __construct(
         // The Stream app the call is in, which the browser SDK joins against.
         public string $apiKey,
-        public string $token,
-        public string $userId,
-        public string $userName,
         // The Stream call to join, which is not the id this call is held by here.
         public string $callId,
         public string $callType,
         public \DateTimeImmutable $expiresAt,
+        public string $token,
+        public string $userId,
+        public string $userName,
     ) {
     }
 
@@ -30,12 +30,12 @@ final readonly class CallToken
     {
         return new self(
             apiKey: Json::string($data, 'api_key'),
-            token: Json::string($data, 'token'),
-            userId: Json::string($data, 'user_id'),
-            userName: Json::string($data, 'user_name'),
             callId: Json::string($data, 'call_id'),
             callType: Json::string($data, 'call_type'),
             expiresAt: Json::date($data, 'expires_at'),
+            token: Json::string($data, 'token'),
+            userId: Json::string($data, 'user_id'),
+            userName: Json::string($data, 'user_name'),
         );
     }
 
@@ -48,12 +48,12 @@ final readonly class CallToken
     {
         $out = [];
         $out['api_key'] = $this->apiKey;
-        $out['token'] = $this->token;
-        $out['user_id'] = $this->userId;
-        $out['user_name'] = $this->userName;
         $out['call_id'] = $this->callId;
         $out['call_type'] = $this->callType;
         $out['expires_at'] = Json::dateValue($this->expiresAt);
+        $out['token'] = $this->token;
+        $out['user_id'] = $this->userId;
+        $out['user_name'] = $this->userName;
         return $out;
     }
 }

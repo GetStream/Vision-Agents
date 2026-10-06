@@ -118,8 +118,9 @@ already, for the day `Price` grows the fields.
 1. A field on `options.STS`, with `Merge`, `Validate` and, if it is optional behaviour, a
    `Term` and a line in `Terms()`. Pointers, so "say nothing" and "turn this off" stay
    different.
-2. The same field on `StsOptions` in
-   [`openapi.yaml`](../../../acceleration/api/openapi.yaml), then regenerate all five sides.
+2. The same field on `StsOptions`, on its Go struct in
+   `internal/api`. Then run
+   `go run ./cmd/openapi` and regenerate all five sides.
 3. A field on `sts.Capabilities` and a case in `Expresses`, so a config can only declare it
    for a model whose package reports it.
 4. Read it in each provider that can express it, refuse it where the vendor has no such

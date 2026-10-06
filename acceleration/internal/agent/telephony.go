@@ -123,7 +123,7 @@ func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, c
 
 func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requested harness.ToolRequested) {
 	defer func() { cancel(); a.mu.Lock(); delete(a.toolCancels, requested.Call.ID); a.mu.Unlock() }()
-	started := ToolStarted{ID: requested.Call.ID, TurnID: requested.TurnID, Tool: requested.Call.Name, StartedAt: time.Now().UTC()}
+	started := ToolStarted{ID: requested.Call.ID, TurnID: requested.TurnID, Tool: requested.Call.Name, Arguments: requested.Call.Arguments, StartedAt: time.Now().UTC()}
 	started.Product, started.SDK = toolScope(requested.Call)
 	if a.options.OnToolStarted != nil {
 		a.options.OnToolStarted(started)
@@ -277,6 +277,15 @@ func (a *Agent) availableTools() harness.Tools {
 		}
 	}
 	return available
+}
+
+// Tools names what the agent may do rather than say on this call.
+func (a *Agent) Tools() []string {
+	var names []string
+	for _, tool := range a.availableTools().Tools {
+		names = append(names, tool.Name)
+	}
+	return names
 }
 
 // transfer hands the caller to a human and leaves.

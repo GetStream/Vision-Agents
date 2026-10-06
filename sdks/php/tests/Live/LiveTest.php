@@ -11,7 +11,6 @@ use GetStream\VisionAgents\Exception\RouterException;
 use GetStream\VisionAgents\Folder;
 use GetStream\VisionAgents\Generated\ForkSessionRequest;
 use GetStream\VisionAgents\Generated\KnowledgeUrlState;
-use GetStream\VisionAgents\Router;
 use GetStream\VisionAgents\Session;
 use GetStream\VisionAgents\Worker\Dispatch;
 use PHPUnit\Framework\TestCase;
@@ -48,7 +47,7 @@ final class LiveTest extends TestCase
         }
     }
 
-    public function testResponsesRewindAndFork(): void
+    public function testResponsesAndFork(): void
     {
         $agent = new Agent(name: 'php-sdk-live', instructions: 'Answer in at most five words.', client: $this->client);
         $session = $this->open($agent->chat(title: 'php sdk live'));
@@ -61,10 +60,7 @@ final class LiveTest extends TestCase
         self::assertNotSame('', $first->id());
         self::assertNotSame($first->id(), $second->id());
         self::assertNotEmpty($second->items->all(), 'a finished response has items');
-        self::assertCount(2, $session->responses->list());
-
-        $session->responses->rewind($first);
-        self::assertSame([$first->id()], array_map(static fn ($row) => $row->id, $session->responses->list()));
+        self::assertCount(2, $session->responses->list()->items);
 
         $fork = $this->open($session->fork(new ForkSessionRequest(responseId: $first->id(), title: 'php sdk fork')));
         self::assertNotSame($session->id(), $fork->id());
@@ -73,7 +69,7 @@ final class LiveTest extends TestCase
     public function testAPersistedConversationIsForkedNotRewound(): void
     {
         $agent = new Agent(name: 'php-sdk-live', instructions: 'Answer in at most five words.', client: $this->client);
-        $session = $this->open($agent->chat(persist: true));
+        $session = $this->open($agent->chat());
         $response = $session->responses->create('Name a colour.');
         $this->settle($session);
 
@@ -91,7 +87,7 @@ final class LiveTest extends TestCase
         $agent = new Agent(name: 'php-sdk-live', instructions: 'Answer in at most five words.', client: $this->client);
         $session = $this->open($agent->chat());
         $watch = $session->watch();
-        $watch->respond('Name a fruit.');
+        $session->responses->create('Name a fruit.');
 
         $kinds = [];
         foreach ($watch as $event) {
@@ -128,7 +124,7 @@ final class LiveTest extends TestCase
 
     public function testSearch(): void
     {
-        $answer = (new Router(tags: ['sdk' => 'php'], client: $this->client))->search('What is the capital of France?');
+        $answer = $this->client->router(tags: ['sdk' => 'php'])->search('What is the capital of France?');
 
         self::assertNotSame('', $answer->provider);
         self::assertNotEmpty($answer->results);
@@ -171,7 +167,7 @@ final class LiveTest extends TestCase
     {
         $deadline = microtime(true) + 60;
         while (microtime(true) < $deadline) {
-            $running = array_filter($session->responses->list(), static fn ($row): bool => $row->status === 'running');
+            $running = array_filter($session->responses->list()->items, static fn ($row): bool => $row->status === 'running');
             if ($running === []) {
                 return;
             }

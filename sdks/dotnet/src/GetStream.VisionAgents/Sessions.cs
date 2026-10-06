@@ -1,89 +1,102 @@
-using System.Globalization;
-using System.Text.Json;
 using GetStream.VisionAgents.Models;
 
 namespace GetStream.VisionAgents;
 
-/// <summary>Which sessions to list. Every field narrows; none lists them all.</summary>
+/// <summary>Which sessions to query. Every field narrows; none lists them all.</summary>
 public sealed record SessionQuery
 {
     /// <summary>Sessions of the agent config of this name.</summary>
     public string? Agent { get; init; }
 
-    /// <summary>Sessions of this agent config.</summary>
-    public string? ConfigId { get; init; }
+    /// <summary>Sessions created with this agent id.</summary>
+    public string? AgentId { get; init; }
 
     /// <summary>Sessions belonging to this user. A server-side caller may name anybody.</summary>
     public string? UserId { get; init; }
 
-    /// <summary>Sessions filed under this project.</summary>
-    public string? Project { get; init; }
+    /// <summary>Sessions filed under this project. A search covers every project, so it refuses this.</summary>
+    public string? ProjectId { get; init; }
 
-    /// <summary>Sessions in this state.</summary>
+    /// <summary>How the user took part: <c>text</c>, <c>voice</c> or <c>video</c>.</summary>
+    public string? Modality { get; init; }
+
+    /// <summary>The sessions still running, <c>live</c>, or the ones over, <c>ended</c>.</summary>
     public string? State { get; init; }
 
-    /// <summary>Sessions whose custom data holds all of these.</summary>
-    public Dictionary<string, object?>? Custom { get; init; }
-
-    /// <summary>Sessions created after this.</summary>
-    public DateTimeOffset? CreatedAfter { get; init; }
-
-    /// <summary>Sessions created before this.</summary>
-    public DateTimeOffset? CreatedBefore { get; init; }
-
-    /// <summary>How many to return.</summary>
+    /// <summary>How many to return, up to 200. Null is the router's 25.</summary>
     public int? Limit { get; init; }
 
-    /// <summary>How many to skip.</summary>
-    public int? Offset { get; init; }
+    /// <summary>The <c>NextCursor</c> of the page before, with the same filters. Null is the first page.</summary>
+    public string? Cursor { get; init; }
 }
 
 /// <summary>
-/// The sessions already held: listed, searched and read back.
+/// The sessions already held: queried, searched, read back, changed and deleted.
 /// </summary>
 /// <remarks>
 /// What these return are records. Opening a conversation somebody talks in is an agent's
 /// job, since it is the agent that runs the tools.
 /// </remarks>
-public sealed class Sessions(VisionAgentsClient client)
+public sealed class Sessions(VisionAgentsClient client, string? agent = null)
 {
-    /// <summary>Sessions, newest first. A page shorter than the limit is the last.</summary>
-    public async Task<List<Session>> ListAsync(SessionQuery? query = null, CancellationToken cancellationToken = default)
-    {
-        var listed = await client.GetAsync<List<Models.Session>>("/v1/agents/sessions", Query(query ?? new SessionQuery()), cancellationToken)
-            .ConfigureAwait(false);
-        return listed.ConvertAll(session => Session.Read(client, session));
-    }
+    /// <summary>
+    /// A page of sessions, most recently updated first, the ones that ended included. Pass
+    /// the page's <c>NextCursor</c> as <see cref="SessionQuery.Cursor"/> for the next one.
+    /// </summary>
+    public Task<SessionPage> QueryAsync(SessionQuery? query = null, CancellationToken cancellationToken = default) =>
+        client.PostAsync<SessionPage>("/v1/agents/sessions/query", Body(null, query ?? new SessionQuery()), cancellationToken);
 
-    /// <summary>Sessions by what they were called, best match first. What was said is not searched.</summary>
-    public async Task<List<Session>> SearchAsync(string text, SessionQuery? query = null, CancellationToken cancellationToken = default)
-    {
-        var parameters = Query(query ?? new SessionQuery());
-        parameters["q"] = text;
-        var found = await client.GetAsync<List<Models.Session>>("/v1/agents/sessions/search", parameters, cancellationToken)
-            .ConfigureAwait(false);
-        return found.ConvertAll(session => Session.Read(client, session));
-    }
+    /// <summary>Sessions by what they were called, best match first. What was said is not searched. It pages the way <see cref="QueryAsync"/> does.</summary>
+    public Task<SessionPage> SearchAsync(string text, SessionQuery? query = null, CancellationToken cancellationToken = default) =>
+        client.PostAsync<SessionPage>("/v1/agents/sessions/query", Body(text, query ?? new SessionQuery()), cancellationToken);
 
     /// <summary>One session.</summary>
     public async Task<Session> GetAsync(string id, CancellationToken cancellationToken = default) =>
         Session.Read(client, await client.GetAsync<Models.Session>(
             $"/v1/agents/sessions/{VisionAgentsClient.Escape(id)}", cancellationToken: cancellationToken).ConfigureAwait(false));
 
+    /// <summary>
+    /// Changes one session, whether or not it is still being held, and returns it as it now is.
+    /// A field left null is left as it is.
+    /// </summary>
+    /// <remarks>
+    /// One that ended can still be renamed and relabelled; instructions, models and voice
+    /// need it running, and take over from its next turn. Only a backend may ask.
+    /// </remarks>
+    public Task<Models.Session> UpdateAsync(string id, UpdateSessionRequest update, CancellationToken cancellationToken = default) =>
+        client.PatchAsync<Models.Session>($"/v1/agents/sessions/{VisionAgentsClient.Escape(id)}", update, cancellationToken);
+
+    /// <summary>
+    /// Deletes a session, running or ended: it is stopped, and its turns and what it
+    /// remembered are deleted with it. The user's other memories are kept.
+    /// </summary>
+    public Task DeleteAsync(string id, CancellationToken cancellationToken = default) =>
+        client.DeleteAsync($"/v1/agents/sessions/{VisionAgentsClient.Escape(id)}", cancellationToken);
+
+    /// <summary>Deletes what one session remembered, running or ended, and leaves the rest of the user's memories alone. Only a backend may ask.</summary>
+    public Task DeleteMemoriesAsync(string id, CancellationToken cancellationToken = default) =>
+        client.DeleteAsync($"/v1/agents/sessions/{VisionAgentsClient.Escape(id)}/memories", cancellationToken);
+
     /// <summary>A session's turns, by its id, without reading the session first.</summary>
     public Responses Responses(string id) => new(client, id);
 
-    private static Dictionary<string, string?> Query(SessionQuery query) => new()
+    /// <summary>
+    /// The query the listing and the search share, so the two cannot drift apart in what they
+    /// honour. Text makes it a search.
+    /// </summary>
+    private Models.SessionQuery Body(string? text, SessionQuery query) => new()
     {
-        ["agent"] = VisionAgentsClient.Blank(query.Agent),
-        ["config_id"] = VisionAgentsClient.Blank(query.ConfigId),
-        ["user_id"] = VisionAgentsClient.Blank(query.UserId),
-        ["project"] = VisionAgentsClient.Blank(query.Project),
-        ["state"] = VisionAgentsClient.Blank(query.State),
-        ["custom"] = query.Custom is { Count: > 0 } ? JsonSerializer.Serialize(query.Custom, Json.Options) : null,
-        ["created_after"] = query.CreatedAfter?.ToString("O", CultureInfo.InvariantCulture),
-        ["created_before"] = query.CreatedBefore?.ToString("O", CultureInfo.InvariantCulture),
-        ["limit"] = VisionAgentsClient.Number(query.Limit),
-        ["offset"] = VisionAgentsClient.Number(query.Offset),
+        Filter = new SessionFilter
+        {
+            Agent = VisionAgentsClient.Blank(query.Agent) ?? VisionAgentsClient.Blank(agent),
+            AgentId = VisionAgentsClient.Blank(query.AgentId),
+            UserId = VisionAgentsClient.Blank(query.UserId),
+            ProjectId = VisionAgentsClient.Blank(query.ProjectId),
+            Modality = VisionAgentsClient.Blank(query.Modality),
+            State = VisionAgentsClient.Blank(query.State),
+            Text = text is { Length: > 0 } ? new TextMatch { Q = text } : null,
+        },
+        Limit = query.Limit is > 0 ? query.Limit : null,
+        Cursor = VisionAgentsClient.Blank(query.Cursor),
     };
 }

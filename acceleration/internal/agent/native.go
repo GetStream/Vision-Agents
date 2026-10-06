@@ -10,6 +10,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -41,9 +42,9 @@ func (a *Agent) Prompt(ctx context.Context, text string) error {
 	session := a.speech()
 	if session == nil {
 		if a.native() {
-			return errors.New("agent: not joined")
+			return stack.Wrap(errors.New("agent: not joined"))
 		}
-		return errors.New("agent: only a speech-to-speech agent takes a prompt; use Say")
+		return stack.Wrap(errors.New("agent: only a speech-to-speech agent takes a prompt; use Say"))
 	}
 	return session.Prompt(text)
 }
@@ -53,11 +54,11 @@ func (a *Agent) Prompt(ctx context.Context, text string) error {
 // its own business, and a typed turn is words.
 func (a *Agent) respondNative(text string, images []llm.ImagePart) error {
 	if len(images) > 0 {
-		return errors.New("agent: a speech-to-speech agent takes no images on a typed turn")
+		return stack.Wrap(errors.New("agent: a speech-to-speech agent takes no images on a typed turn"))
 	}
 	session := a.speech()
 	if session == nil {
-		return errors.New("agent: not joined")
+		return stack.Wrap(errors.New("agent: not joined"))
 	}
 	caller := stt.Participant{ID: "caller"}
 	// A typed turn is not transcribed, so it is written into the history here, where a
@@ -466,7 +467,7 @@ func (a *Agent) nativeTools(delegating bool) ([]llm.Tool, error) {
 	}
 	for _, name := range []string{delegateSkill, cancelSkill} {
 		if _, exists := tools.Lookup(name); exists {
-			return nil, fmt.Errorf("agent: %s is reserved for native delegation", name)
+			return nil, stack.Wrap(fmt.Errorf("agent: %s is reserved for native delegation", name))
 		}
 	}
 	names := make([]string, 0, len(a.options.Skills.Skills))

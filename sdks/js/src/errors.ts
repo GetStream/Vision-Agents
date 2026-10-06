@@ -22,6 +22,26 @@ export class SocketClosedError extends Error {
 }
 
 /**
+ * The router would not run a worker's hosted tools for an agent.
+ *
+ * Kept apart from RouterError because no request failed: the socket is fine, and asking
+ * again would only be told the same thing.
+ */
+export class HostingRefusedError extends Error {
+  /** The agent the tools were offered for. */
+  readonly agentId: string;
+  /** Why the router said no. */
+  readonly reason: string;
+
+  constructor(agentId: string, reason: string) {
+    super(`the router refused to host tools for agent ${agentId}: ${reason}`);
+    this.name = "HostingRefusedError";
+    this.agentId = agentId;
+    this.reason = reason;
+  }
+}
+
+/**
  * The SDK was configured in a way that cannot work.
  *
  * Kept apart from RouterError because nothing was sent: there is no status, and the fix is

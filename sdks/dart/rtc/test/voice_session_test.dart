@@ -55,6 +55,7 @@ class _Router {
     'created_at': '2026-09-24T09:54:56.038055-06:00',
     'state': 'live',
     'mode': 'cascade',
+    'modality': 'voice',
   };
 }
 

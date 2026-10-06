@@ -11,26 +11,26 @@ use GetStream\VisionAgents\Json;
 final readonly class SimulationRun
 {
     public function __construct(
-        public string $id,
-        public string $simulationId,
-        // A run passed only if every one of its conversations did. A conversation that never got as far as a ruling l...
-        public string $state,
         // How many conversations this run is having.
         public int $cases,
-        public int $passed,
         public int $failed,
+        public string $id,
+        public int $passed,
+        public string $simulationId,
         public \DateTimeImmutable $startedAt,
-        public ?string $mode = null,
-        public ?string $configId = null,
-        public ?string $scenario = null,
+        // A run passed only if every one of its conversations did. A conversation that never got as far as a ruling l...
+        public string $state,
         // What was asked of this run, copied when it started. Editing a simulation does not rewrite what an old run t...
         public ?string $assertion = null,
-        public ?string $judgeTarget = null,
-        public ?string $error = null,
-        public ?\DateTimeImmutable $finishedAt = null,
+        public ?string $configId = null,
         // The conversations this run had. Present when one run is asked for, and left out of a list so that reading t...
         /** @var list<SimulationCase>|null */
         public ?array $conversations = null,
+        public ?string $error = null,
+        public ?\DateTimeImmutable $finishedAt = null,
+        public ?string $judgeTarget = null,
+        public ?string $mode = null,
+        public ?string $scenario = null,
     ) {
     }
 
@@ -40,21 +40,21 @@ final readonly class SimulationRun
     public static function fromArray(array $data): self
     {
         return new self(
-            id: Json::string($data, 'id'),
-            simulationId: Json::string($data, 'simulation_id'),
-            state: Json::string($data, 'state'),
             cases: Json::int($data, 'cases'),
-            passed: Json::int($data, 'passed'),
             failed: Json::int($data, 'failed'),
+            id: Json::string($data, 'id'),
+            passed: Json::int($data, 'passed'),
+            simulationId: Json::string($data, 'simulation_id'),
             startedAt: Json::date($data, 'started_at'),
-            mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::string($data, 'mode') : null,
-            configId: array_key_exists('config_id', $data) && $data['config_id'] !== null ? Json::string($data, 'config_id') : null,
-            scenario: array_key_exists('scenario', $data) && $data['scenario'] !== null ? Json::string($data, 'scenario') : null,
+            state: Json::string($data, 'state'),
             assertion: array_key_exists('assertion', $data) && $data['assertion'] !== null ? Json::string($data, 'assertion') : null,
-            judgeTarget: array_key_exists('judge_target', $data) && $data['judge_target'] !== null ? Json::string($data, 'judge_target') : null,
+            configId: array_key_exists('config_id', $data) && $data['config_id'] !== null ? Json::string($data, 'config_id') : null,
+            conversations: array_key_exists('conversations', $data) && $data['conversations'] !== null ? array_map(SimulationCase::fromArray(...), Json::objects($data, 'conversations')) : null,
             error: array_key_exists('error', $data) && $data['error'] !== null ? Json::string($data, 'error') : null,
             finishedAt: array_key_exists('finished_at', $data) && $data['finished_at'] !== null ? Json::date($data, 'finished_at') : null,
-            conversations: array_key_exists('conversations', $data) && $data['conversations'] !== null ? array_map(SimulationCase::fromArray(...), Json::objects($data, 'conversations')) : null,
+            judgeTarget: array_key_exists('judge_target', $data) && $data['judge_target'] !== null ? Json::string($data, 'judge_target') : null,
+            mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::string($data, 'mode') : null,
+            scenario: array_key_exists('scenario', $data) && $data['scenario'] !== null ? Json::string($data, 'scenario') : null,
         );
     }
 
@@ -66,27 +66,21 @@ final readonly class SimulationRun
     public function toArray(): array
     {
         $out = [];
-        $out['id'] = $this->id;
-        $out['simulation_id'] = $this->simulationId;
-        $out['state'] = $this->state;
         $out['cases'] = $this->cases;
-        $out['passed'] = $this->passed;
         $out['failed'] = $this->failed;
+        $out['id'] = $this->id;
+        $out['passed'] = $this->passed;
+        $out['simulation_id'] = $this->simulationId;
         $out['started_at'] = Json::dateValue($this->startedAt);
-        if ($this->mode !== null) {
-            $out['mode'] = $this->mode;
+        $out['state'] = $this->state;
+        if ($this->assertion !== null) {
+            $out['assertion'] = $this->assertion;
         }
         if ($this->configId !== null) {
             $out['config_id'] = $this->configId;
         }
-        if ($this->scenario !== null) {
-            $out['scenario'] = $this->scenario;
-        }
-        if ($this->assertion !== null) {
-            $out['assertion'] = $this->assertion;
-        }
-        if ($this->judgeTarget !== null) {
-            $out['judge_target'] = $this->judgeTarget;
+        if ($this->conversations !== null) {
+            $out['conversations'] = array_map(static fn (SimulationCase $each): array => $each->toArray(), $this->conversations);
         }
         if ($this->error !== null) {
             $out['error'] = $this->error;
@@ -94,8 +88,14 @@ final readonly class SimulationRun
         if ($this->finishedAt !== null) {
             $out['finished_at'] = Json::dateValue($this->finishedAt);
         }
-        if ($this->conversations !== null) {
-            $out['conversations'] = array_map(static fn (SimulationCase $each): array => $each->toArray(), $this->conversations);
+        if ($this->judgeTarget !== null) {
+            $out['judge_target'] = $this->judgeTarget;
+        }
+        if ($this->mode !== null) {
+            $out['mode'] = $this->mode;
+        }
+        if ($this->scenario !== null) {
+            $out['scenario'] = $this->scenario;
         }
         return $out;
     }

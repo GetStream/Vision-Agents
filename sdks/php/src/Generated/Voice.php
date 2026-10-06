@@ -11,15 +11,15 @@ use GetStream\VisionAgents\Json;
 final readonly class Voice
 {
     public function __construct(
+        public \DateTimeImmutable $createdAt,
         public string $id,
         public string $name,
-        public \DateTimeImmutable $createdAt,
         public \DateTimeImmutable $updatedAt,
+        /** @var list<VoiceBinding>|null */
+        public ?array $bindings = null,
         public ?string $description = null,
         /** @var list<VoiceSample>|null */
         public ?array $samples = null,
-        /** @var list<VoiceBinding>|null */
-        public ?array $bindings = null,
     ) {
     }
 
@@ -29,13 +29,13 @@ final readonly class Voice
     public static function fromArray(array $data): self
     {
         return new self(
+            createdAt: Json::date($data, 'created_at'),
             id: Json::string($data, 'id'),
             name: Json::string($data, 'name'),
-            createdAt: Json::date($data, 'created_at'),
             updatedAt: Json::date($data, 'updated_at'),
+            bindings: array_key_exists('bindings', $data) && $data['bindings'] !== null ? array_map(VoiceBinding::fromArray(...), Json::objects($data, 'bindings')) : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
             samples: array_key_exists('samples', $data) && $data['samples'] !== null ? array_map(VoiceSample::fromArray(...), Json::objects($data, 'samples')) : null,
-            bindings: array_key_exists('bindings', $data) && $data['bindings'] !== null ? array_map(VoiceBinding::fromArray(...), Json::objects($data, 'bindings')) : null,
         );
     }
 
@@ -47,18 +47,18 @@ final readonly class Voice
     public function toArray(): array
     {
         $out = [];
+        $out['created_at'] = Json::dateValue($this->createdAt);
         $out['id'] = $this->id;
         $out['name'] = $this->name;
-        $out['created_at'] = Json::dateValue($this->createdAt);
         $out['updated_at'] = Json::dateValue($this->updatedAt);
+        if ($this->bindings !== null) {
+            $out['bindings'] = array_map(static fn (VoiceBinding $each): array => $each->toArray(), $this->bindings);
+        }
         if ($this->description !== null) {
             $out['description'] = $this->description;
         }
         if ($this->samples !== null) {
             $out['samples'] = array_map(static fn (VoiceSample $each): array => $each->toArray(), $this->samples);
-        }
-        if ($this->bindings !== null) {
-            $out['bindings'] = array_map(static fn (VoiceBinding $each): array => $each->toArray(), $this->bindings);
         }
         return $out;
     }

@@ -17,22 +17,23 @@ import 'dart:io';
 
 import 'package:yaml/yaml.dart';
 
-// What a device may reach: opening, finding, reading back, rewinding, forking and ending a
-// conversation, a guest to hold one as, and looking something up. Everything else about an
-// agent is its backend's to ask for and hand down.
+// What a device may reach: opening, finding, reading back, renaming, rewinding, forking,
+// stopping and deleting a conversation, a guest to hold one as, and looking something up.
+// Everything else about an agent is its backend's to ask for and hand down.
 const operations = [
-  'closeSession',
   'createGuestUser',
   'createResponse',
   'createSession',
+  'deleteSession',
   'forkSession',
   'getSession',
   'listResponseItems',
   'listResponses',
-  'listSessions',
+  'querySessions',
   'rewindSession',
   'search',
-  'searchSessions',
+  'stopSession',
+  'updateSession',
 ];
 
 // Client accessible, and hand-written because they are sockets.
@@ -258,11 +259,12 @@ ${helpers.trim()}
     final reads = <String>[];
     final writes = <String>[];
     for (final MapEntry(key: wire, value: property) in properties.entries) {
-      final key = wire as String;
+      // A query operator such as `$q` is a key too, and a `$` in a Dart string interpolates.
+      final key = (wire as String).replaceAll(r'$', r'\$');
       final kind = kindOf(property as YamlMap);
-      final dart = identifier(key);
+      final dart = identifier(wire);
       final at = '$name.$key';
-      if (required.contains(key)) {
+      if (required.contains(wire)) {
         fields.add('  final ${kind.type} $dart;');
         parameters.add('required this.$dart');
         reads.add("$dart: ${kind.decode("json['$key']", at)}");
@@ -392,7 +394,7 @@ ${fields.join('\n')}
 const reserved = {'default', 'in', 'is', 'new', 'null', 'switch', 'class', 'enum', 'var', 'final'};
 
 String identifier(String wire) {
-  final parts = wire.split('_');
+  final parts = wire.replaceAll(r'$', '').split('_');
   final camel =
       parts.first +
       parts

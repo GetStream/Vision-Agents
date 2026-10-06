@@ -7,7 +7,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...models.granularity import Granularity
 from ...models.modality import Modality
 from ...models.tag_stats_bucket import TagStatsBucket
@@ -54,7 +54,7 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | list[TagStatsBucket] | None:
+) -> ErrorResponse | list[TagStatsBucket] | None:
     if response.status_code == 200:
         response_200 = []
         _response_200 = response.json()
@@ -66,24 +66,29 @@ def _parse_response(
         return response_200
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
 
     if response.status_code == 404:
-        response_404 = Error.from_dict(response.json())
+        response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 500:
+        response_500 = ErrorResponse.from_dict(response.json())
+
+        return response_500
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -93,7 +98,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | list[TagStatsBucket]]:
+) -> Response[ErrorResponse | list[TagStatsBucket]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -110,7 +115,7 @@ def sync_detailed(
     granularity: Granularity | Unset = UNSET,
     from_: datetime.datetime,
     to: datetime.datetime,
-) -> Response[Error | list[TagStatsBucket]]:
+) -> Response[ErrorResponse | list[TagStatsBucket]]:
     """Aggregated usage broken down by the values of one cost label
 
      What drives the spend. Requests are labelled with whatever keys the customer chooses, so asking for
@@ -125,18 +130,17 @@ def sync_detailed(
             prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory
             store, one knowledge base and one vendor per number, so the provider paths do not serve
             them while the statistics paths do.
-             Example: tts.
-        key (str):
+        key (str): The cost label to group by.
         granularity (Granularity | Unset):
-        from_ (datetime.datetime):
-        to (datetime.datetime):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[TagStatsBucket]]
+        Response[ErrorResponse | list[TagStatsBucket]]
     """
 
     kwargs = _get_kwargs(
@@ -162,7 +166,7 @@ def sync(
     granularity: Granularity | Unset = UNSET,
     from_: datetime.datetime,
     to: datetime.datetime,
-) -> Error | list[TagStatsBucket] | None:
+) -> ErrorResponse | list[TagStatsBucket] | None:
     """Aggregated usage broken down by the values of one cost label
 
      What drives the spend. Requests are labelled with whatever keys the customer chooses, so asking for
@@ -177,18 +181,17 @@ def sync(
             prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory
             store, one knowledge base and one vendor per number, so the provider paths do not serve
             them while the statistics paths do.
-             Example: tts.
-        key (str):
+        key (str): The cost label to group by.
         granularity (Granularity | Unset):
-        from_ (datetime.datetime):
-        to (datetime.datetime):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[TagStatsBucket]
+        ErrorResponse | list[TagStatsBucket]
     """
 
     return sync_detailed(
@@ -209,7 +212,7 @@ async def asyncio_detailed(
     granularity: Granularity | Unset = UNSET,
     from_: datetime.datetime,
     to: datetime.datetime,
-) -> Response[Error | list[TagStatsBucket]]:
+) -> Response[ErrorResponse | list[TagStatsBucket]]:
     """Aggregated usage broken down by the values of one cost label
 
      What drives the spend. Requests are labelled with whatever keys the customer chooses, so asking for
@@ -224,18 +227,17 @@ async def asyncio_detailed(
             prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory
             store, one knowledge base and one vendor per number, so the provider paths do not serve
             them while the statistics paths do.
-             Example: tts.
-        key (str):
+        key (str): The cost label to group by.
         granularity (Granularity | Unset):
-        from_ (datetime.datetime):
-        to (datetime.datetime):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[TagStatsBucket]]
+        Response[ErrorResponse | list[TagStatsBucket]]
     """
 
     kwargs = _get_kwargs(
@@ -259,7 +261,7 @@ async def asyncio(
     granularity: Granularity | Unset = UNSET,
     from_: datetime.datetime,
     to: datetime.datetime,
-) -> Error | list[TagStatsBucket] | None:
+) -> ErrorResponse | list[TagStatsBucket] | None:
     """Aggregated usage broken down by the values of one cost label
 
      What drives the spend. Requests are labelled with whatever keys the customer chooses, so asking for
@@ -274,18 +276,17 @@ async def asyncio(
             prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory
             store, one knowledge base and one vendor per number, so the provider paths do not serve
             them while the statistics paths do.
-             Example: tts.
-        key (str):
+        key (str): The cost label to group by.
         granularity (Granularity | Unset):
-        from_ (datetime.datetime):
-        to (datetime.datetime):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[TagStatsBucket]
+        ErrorResponse | list[TagStatsBucket]
     """
 
     return (

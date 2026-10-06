@@ -2,11 +2,13 @@ package store
 
 import (
 	"encoding/json"
+	"slices"
 	"time"
 
 	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
 // Request is one recorded unit of work, stored so billing, cost and health can all be
@@ -242,21 +244,28 @@ type PhoneNumber struct {
 	Capabilities []string `bun:"capabilities,array"`
 	// MonthlyCostMicros is millionths of a dollar per month, charged whether or not the
 	// number is used.
-	MonthlyCostMicros int64             `bun:"monthly_cost_micros,notnull"`
-	CustomerID        string            `bun:"customer_id,notnull"`
-	Tags              map[string]string `bun:"tags,type:jsonb,nullzero"`
+	MonthlyCostMicros int64  `bun:"monthly_cost_micros,notnull"`
+	CustomerID        string `bun:"customer_id,notnull"`
+	// StreamAppPK is the Stream app this was made in, and the one it is finished in. Zero,
+	// stored as NULL, is the deployment's own app.
+	StreamAppPK int64             `bun:"stream_app_pk,nullzero"`
+	Tags        map[string]string `bun:"tags,type:jsonb,nullzero"`
 	// VendorID is the vendor's own identifier, needed to release or reconfigure it.
 	VendorID string `bun:"vendor_id,nullzero"`
 	// StreamTrunkID is the SIP trunk calls to this number arrive on, empty until it has
 	// been attached to one.
 	StreamTrunkID string `bun:"stream_trunk_id,nullzero"`
+	// StreamRouteID is the routing rule made beside the trunk, in the same app.
+	StreamRouteID string `bun:"stream_route_id,nullzero"`
 	// StreamCallID and StreamCallType are the Stream call the routing rule puts callers
 	// in. They are what an arriving call is recognised by, since a webhook names the call
 	// rather than the number.
-	StreamCallID   string     `bun:"stream_call_id,nullzero"`
-	StreamCallType string     `bun:"stream_call_type,nullzero"`
-	PurchasedAt    time.Time  `bun:"purchased_at,notnull"`
-	ReleasedAt     *time.Time `bun:"released_at"`
+	StreamCallID   string `bun:"stream_call_id,nullzero"`
+	StreamCallType string `bun:"stream_call_type,nullzero"`
+	// UseCaseID is the 10DLC use case the number sends as. Empty sends as the app's default.
+	UseCaseID   string     `bun:"dlc_use_case_id,nullzero"`
+	PurchasedAt time.Time  `bun:"purchased_at,notnull"`
+	ReleasedAt  *time.Time `bun:"released_at"`
 }
 
 // CallBridge is what a vendor is told to do when the person it called picks up.
@@ -293,12 +302,15 @@ type CallResource struct {
 
 	// TrunkID is the Stream SIP trunk this call leg was given, and the row's identity: a
 	// call may own several, its own plus one per transfer into it.
-	TrunkID    string    `bun:"trunk_id,pk"`
-	RouteID    string    `bun:"route_id,notnull"`
-	CallType   string    `bun:"call_type,notnull"`
-	CallID     string    `bun:"call_id,notnull"`
-	CustomerID string    `bun:"customer_id,notnull"`
-	CreatedAt  time.Time `bun:"created_at,notnull"`
+	TrunkID    string `bun:"trunk_id,pk"`
+	RouteID    string `bun:"route_id,notnull"`
+	CallType   string `bun:"call_type,notnull"`
+	CallID     string `bun:"call_id,notnull"`
+	CustomerID string `bun:"customer_id,notnull"`
+	// StreamAppPK is the Stream app this was made in, and the one it is finished in. Zero,
+	// stored as NULL, is the deployment's own app.
+	StreamAppPK int64     `bun:"stream_app_pk,nullzero"`
+	CreatedAt   time.Time `bun:"created_at,notnull"`
 }
 
 // AgentConfig is a named set of the decisions a session is created with.
@@ -329,30 +341,93 @@ type AgentConfig struct {
 	Search         string `bun:"search,notnull"`
 	Instructions   string `bun:"instructions,notnull"`
 	Greeting       string `bun:"greeting,notnull"`
+	// Speed is the voice's rate of delivery, 1 being its own. Zero leaves it there.
+	Speed float64 `bun:"speed,notnull"`
 	// Guardrail is a guardrail.md: frontmatter saying how to screen a turn, then the
 	// policy in prose. Empty, which most configs are, means every turn is answered.
 	Guardrail string `bun:"guardrail,notnull"`
 	// Skills names entries in the skill registry rather than carrying their instructions,
 	// so editing a skill changes every config that uses it.
 	Skills []string `bun:"skills,type:jsonb"`
-	// Plugins names hosted MCP servers this agent is allowed to reach, from the built-in
-	// catalog. A name here without a connected row is a plugin that was attached and then
-	// the login expired or was revoked.
-	Plugins []string `bun:"plugins,type:jsonb"`
+	// AgentPlugins names hosted MCP servers this agent is allowed to reach, from the built-in
+	// catalog, each with how it is reached. A name here without a connected row is a plugin
+	// that was attached and then the login expired or was revoked.
+	AgentPlugins []PluginEntry `bun:"agent_plugins,type:jsonb"`
+	// Connectors are the connectors this agent may call tools of, each under an alias.
+	Connectors []ConnectorBinding `bun:"connectors,type:jsonb"`
+	// UserPlugins names catalog plugins each end user connects with their own account, from
+	// the conversation, when the model first needs one.
+	UserPlugins []PluginEntry `bun:"user_plugins,type:jsonb"`
+	// PluginEvents are the MCP events the agent subscribes to on its plugins, each opening
+	// a conversation of its own when it arrives.
+	PluginEvents []PluginEvent `bun:"plugin_events,type:jsonb"`
+	// MCPServers are MCP servers outside the catalog that the agent's sessions open by
+	// their URL, with no login unless one sets scopes or user.
+	MCPServers []MCPServer `bun:"mcp_servers,type:jsonb"`
+	// Channels are the lines this agent answers on outside a Stream Chat channel: a
+	// WhatsApp number, a number to text, an iMessage line.
+	Channels AgentChannels `bun:"channels,type:jsonb,notnull"`
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
 	Keyterms []string `bun:"keyterms,type:jsonb"`
+	// VisibleTools names the tools whose steps end users see on a persistent conversation's
+	// replies, as names or path.Match patterns. Empty shows search and web_search.
+	VisibleTools []string `bun:"visible_tools,type:jsonb"`
 	// KnowledgeNamespace is what the agent may look things up in.
 	KnowledgeNamespace string `bun:"knowledge_namespace,notnull"`
 	// Sandbox is where the subagent may run code it writes, "daytona" being the one
 	// provider there is. Empty means it runs none.
-	Sandbox string            `bun:"sandbox,notnull"`
+	Sandbox string `bun:"sandbox,notnull"`
+	// SandboxOptions is how the sandbox is built and how long code may run in it.
+	SandboxOptions sandbox.Config `bun:"sandbox_options,type:jsonb,notnull"`
+	// Harness is which harness the agent's sessions run, "default" being the one there is.
+	Harness string            `bun:"harness,notnull"`
 	Tags    map[string]string `bun:"tags,type:jsonb"`
+	// DispatchIncomingCall and DispatchText leave that work to the customer's own dispatch
+	// worker. With DispatchText an end user's message is handed to a worker instead of the
+	// model, and the model only answers when the worker asks it to.
+	DispatchIncomingCall bool `bun:"dispatch_incoming_call,notnull"`
+	DispatchText         bool `bun:"dispatch_text,notnull"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
 	SyncHash  string     `bun:"sync_hash,notnull"`
 	CreatedAt time.Time  `bun:"created_at,notnull"`
 	UpdatedAt time.Time  `bun:"updated_at,notnull"`
 	DeletedAt *time.Time `bun:"deleted_at"`
+}
+
+// ConnectorBinding is one connector an agent config may call tools of, as it is stored in
+// agent_configs.connectors.
+//
+// The JSON is the prototype's (ConnectorBinding in internal/store/models.go on
+// codex/connector-support at cf62af0d), and ConnectorConnectionReferenced finds a fixed
+// binding by containment on {"connection": {"type": "fixed", "connection_id": ...}}, so a
+// change to these tags is a change to that query. core.Binding is the same thing for the
+// adapters, flattened and with a time.Duration; it has no JSON of its own, so it is not
+// what is stored.
+type ConnectorBinding struct {
+	// Name is the alias the connector's tools are offered under.
+	Name        string            `json:"name"`
+	ConnectorID string            `json:"connector_id"`
+	Connection  ConnectionBinding `json:"connection"`
+	Tools       []ToolGrant       `json:"tools"`
+	Required    bool              `json:"required"`
+	// TimeoutMs is how long one tool call may take. Zero leaves the session's default.
+	TimeoutMs int `json:"timeout_ms,omitempty"`
+}
+
+// ConnectionBinding selects the connection a binding's tools are called through: "fixed",
+// an app-owned connection named by ConnectionID, or "session", the verified end user's own,
+// picked when a session is created and so with no ConnectionID here.
+type ConnectionBinding struct {
+	Type         string `json:"type"`
+	ConnectionID string `json:"connection_id,omitempty"`
+}
+
+// ToolGrant is one exact tool a binding allows, pinned to the digest of the schema it was
+// granted against.
+type ToolGrant struct {
+	Name         string `json:"name"`
+	SchemaDigest string `json:"schema_digest"`
 }
 
 // RouterConfig is a named set of per-modality routing options, for a caller that routes
@@ -477,7 +552,8 @@ const (
 	PluginFailed = "failed"
 )
 
-// PluginConnection is one hosted MCP server authorized for one agent config.
+// PluginConnection is one hosted MCP server authorized for one agent config, by the app
+// or by one of its end users.
 type PluginConnection struct {
 	bun.BaseModel `bun:"table:agent_plugin_connections,alias:apc"`
 
@@ -485,7 +561,11 @@ type PluginConnection struct {
 	CustomerID string `bun:"customer_id,notnull"`
 	ConfigID   string `bun:"config_id,notnull"`
 	PluginID   string `bun:"plugin_id,notnull"`
-	// InstanceURL is the shop or org hostname for plugins that have no single global URL.
+	// UserID is the end user whose account this is. Empty is the app's own login, made once
+	// on the dashboard and used by every session of the config.
+	UserID string `bun:"user_id,notnull"`
+	// InstanceURL is the shop or org hostname for plugins that have no single global URL,
+	// or the URL of an MCP server named by URL, whose login is good only there.
 	InstanceURL  string     `bun:"instance_url,notnull"`
 	AccessToken  string     `bun:"access_token,notnull"`
 	RefreshToken string     `bun:"refresh_token,notnull"`
@@ -497,6 +577,234 @@ type PluginConnection struct {
 	CodeVerifier  string     `bun:"code_verifier,notnull"`
 	ClientID      string     `bun:"client_id,notnull"`
 	TokenEndpoint string     `bun:"token_endpoint,notnull"`
+	CreatedAt     time.Time  `bun:"created_at,notnull"`
+	UpdatedAt     time.Time  `bun:"updated_at,notnull"`
+	DeletedAt     *time.Time `bun:"deleted_at"`
+}
+
+// PluginClient is the OAuth client one agent config logs into one plugin with, for a
+// plugin that registers no client on the fly.
+type PluginClient struct {
+	bun.BaseModel `bun:"table:agent_plugin_clients,alias:apcl"`
+
+	CustomerID string `bun:"customer_id,pk"`
+	ConfigID   string `bun:"config_id,pk"`
+	PluginID   string `bun:"plugin_id,pk"`
+	ClientID   string `bun:"client_id,notnull"`
+	// SecretSealed is the client secret, sealed under SecretKEKVersion with the customer,
+	// the config and the plugin as additional data. Empty for a public client.
+	SecretSealed     []byte    `bun:"secret_sealed"`
+	SecretKEKVersion int       `bun:"kek_version,notnull"`
+	CreatedAt        time.Time `bun:"created_at,notnull"`
+	UpdatedAt        time.Time `bun:"updated_at,notnull"`
+}
+
+// MCPServer is an MCP server an agent reaches by its URL rather than from the catalog.
+type MCPServer struct {
+	// Name prefixes its tools, as a plugin's id does.
+	Name string `json:"name"`
+	URL  string `json:"url"`
+	// Tools offer only the server's tools matching these names or path.Match patterns.
+	// Empty offers every tool.
+	Tools []string `json:"tools,omitempty"`
+	// Scopes are what its login asks for at consent, in place of what the server
+	// advertises.
+	Scopes []string `json:"scopes,omitempty"`
+	// User has each end user log in with their own account, in the conversation, rather
+	// than the app once, on the dashboard.
+	User bool `json:"user,omitempty"`
+	// Branding is how the server described itself when the config was saved. Nil when it
+	// did not answer.
+	Branding *MCPBranding `json:"branding,omitempty"`
+	// NeedsLogin is whether the server said it requires an OAuth login when the config was
+	// saved. Nil when it could not be asked, which a session starting asks again.
+	NeedsLogin *bool `json:"needs_login,omitempty"`
+}
+
+// AppLogin reports whether the app logs into the server once, on the dashboard.
+func (s MCPServer) AppLogin() bool {
+	return !s.User && s.NeedsLogin != nil && *s.NeedsLogin
+}
+
+// MCPBranding is what an MCP server said about itself at initialize.
+type MCPBranding struct {
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	Version     string `json:"version,omitempty"`
+	IconURL     string `json:"icon_url,omitempty"`
+	WebsiteURL  string `json:"website_url,omitempty"`
+}
+
+// ChannelIdentity is who a number is to one agent, and where its conversation is kept.
+type ChannelIdentity struct {
+	bun.BaseModel `bun:"table:channel_identities,alias:ci"`
+
+	ID         string `bun:"id,pk"`
+	CustomerID string `bun:"customer_id,notnull"`
+	ConfigID   string `bun:"config_id,notnull"`
+	Kind       string `bun:"kind,notnull"`
+	// Address is the number that writes, in E.164, or a chat handle where there is no number.
+	Address string `bun:"address,notnull"`
+	UserID  string `bun:"user_id,notnull"`
+	// ConversationID carries on what was said last time. Empty until the first turn settles.
+	ConversationID string    `bun:"conversation_id,notnull"`
+	CreatedAt      time.Time `bun:"created_at,notnull"`
+	UpdatedAt      time.Time `bun:"updated_at,notnull"`
+}
+
+// ChannelLink is a code that ties the number texting it to an end user.
+type ChannelLink struct {
+	bun.BaseModel `bun:"table:channel_links,alias:cl"`
+
+	Code       string     `bun:"code,pk"`
+	CustomerID string     `bun:"customer_id,notnull"`
+	ConfigID   string     `bun:"config_id,notnull"`
+	UserID     string     `bun:"user_id,notnull"`
+	CreatedAt  time.Time  `bun:"created_at,notnull"`
+	ExpiresAt  time.Time  `bun:"expires_at,notnull"`
+	UsedAt     *time.Time `bun:"used_at"`
+}
+
+// How a sender on a channel becomes an end user.
+const (
+	// ChannelIdentityPhone makes the sender an end user of their own, phone:+1555..., so
+	// anybody who writes is answered. What they say is theirs and nobody else's.
+	ChannelIdentityPhone = "phone"
+	// ChannelIdentityLink answers only a number somebody has tied to an end user with a
+	// code, which is what an agent reading a person's own calendar or orders needs.
+	ChannelIdentityLink = "link"
+)
+
+// AgentChannels are the lines an agent answers on outside a Stream Chat channel.
+type AgentChannels struct {
+	WhatsApp *ChannelLine `json:"whatsapp,omitempty"`
+	SMS      *ChannelLine `json:"sms,omitempty"`
+	IMessage *ChannelLine `json:"imessage,omitempty"`
+	// Identity is how a sender becomes an end user: phone or link. Empty is phone.
+	Identity string `json:"identity,omitempty"`
+}
+
+// Lines are the channels named, by kind.
+func (c AgentChannels) Lines() map[string]string {
+	named := map[string]string{}
+	for kind, line := range map[string]*ChannelLine{
+		"whatsapp": c.WhatsApp, "sms": c.SMS, "imessage": c.IMessage,
+	} {
+		if line != nil && line.Number != "" {
+			named[kind] = line.Number
+		}
+	}
+	return named
+}
+
+// ChannelLine is one channel an agent is reachable on.
+type ChannelLine struct {
+	// Number is the line, which has to be one the app connected.
+	Number string `json:"number"`
+}
+
+// ChannelAccount is one app's line on a channel: the number people write to and the
+// credentials of the provider carrying it.
+//
+// It belongs to the app rather than to an agent, the way a plugin login does: the number is
+// connected once and any number of configs name it.
+type ChannelAccount struct {
+	bun.BaseModel `bun:"table:channel_accounts,alias:ca"`
+
+	ID         string `bun:"id,pk"`
+	CustomerID string `bun:"customer_id,notnull"`
+	// Kind is the channel it carries: whatsapp, sms or imessage.
+	Kind string `bun:"kind,notnull"`
+	E164 string `bun:"e164,notnull"`
+	// AccountID is the provider's own id for the line, such as WhatsApp's phone number id.
+	AccountID string `bun:"account_id,notnull"`
+	// Token is the webhook's path segment, which is what tells the provider delivering to
+	// it apart from anybody who guessed the route.
+	Token string `bun:"token,notnull"`
+	// SecretsSealed is the provider's credentials as JSON, sealed under SecretsKEKVersion
+	// with the customer and the account's id as additional data.
+	SecretsSealed     []byte     `bun:"secrets_sealed"`
+	SecretsKEKVersion int        `bun:"kek_version,notnull"`
+	CreatedAt         time.Time  `bun:"created_at,notnull"`
+	UpdatedAt         time.Time  `bun:"updated_at,notnull"`
+	DeletedAt         *time.Time `bun:"deleted_at"`
+}
+
+// PluginEntry is one catalog plugin an agent config names, and how it is reached. Only
+// Name is required; without the rest the plugin is the catalog's.
+type PluginEntry struct {
+	Name string `json:"name"`
+	// Readonly reaches the plugin's read-only endpoint.
+	Readonly bool `json:"readonly,omitempty"`
+	// Scopes are asked for at consent in place of the catalog's.
+	Scopes []string `json:"scopes,omitempty"`
+	// Toolsets limit the server to these groups of tools. Empty offers every tool.
+	Toolsets []string `json:"toolsets,omitempty"`
+	// Tools offer only the server's tools matching these names or path.Match patterns.
+	// Empty offers every tool.
+	Tools []string `json:"tools,omitempty"`
+}
+
+// PluginNames are the ids entries name.
+func PluginNames(entries []PluginEntry) []string {
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name)
+	}
+	return names
+}
+
+// NamesPlugin reports whether entries name the plugin id.
+func NamesPlugin(entries []PluginEntry, id string) bool {
+	return slices.ContainsFunc(entries, func(entry PluginEntry) bool { return entry.Name == id })
+}
+
+// PluginEvent is one MCP event an agent config subscribes to on a plugin it names.
+type PluginEvent struct {
+	Plugin string `json:"plugin"`
+	Event  string `json:"event"`
+	// Arguments are the event's filters, as its inputSchema describes them.
+	Arguments map[string]any `json:"arguments,omitempty"`
+	// Instructions say what the agent does with the event when it arrives.
+	Instructions string `json:"instructions,omitempty"`
+}
+
+// How far a plugin event subscription has got.
+const (
+	// PluginEventPending means the server has not yet accepted it.
+	PluginEventPending = "pending"
+	// PluginEventActive means the server accepted it and delivers to its callback.
+	PluginEventActive = "active"
+	// PluginEventFailed means the server refused it, and Error says why.
+	PluginEventFailed = "failed"
+)
+
+// PluginEventSubscription is one declared event subscribed to with one login: the app's
+// own, or one end user's.
+type PluginEventSubscription struct {
+	bun.BaseModel `bun:"table:agent_plugin_event_subscriptions,alias:apes"`
+
+	ID         string `bun:"id,pk"`
+	CustomerID string `bun:"customer_id,notnull"`
+	ConfigID   string `bun:"config_id,notnull"`
+	PluginID   string `bun:"plugin_id,notnull"`
+	// UserID is whose login subscribed. Empty is the app's own.
+	UserID    string         `bun:"user_id,notnull"`
+	Event     string         `bun:"event,notnull"`
+	Arguments map[string]any `bun:"arguments,type:jsonb,notnull"`
+	// Key is the event and its arguments as canonical JSON, hashed, so the same filters
+	// in another key order are the same subscription.
+	Key string `bun:"key,notnull"`
+	// Token is the callback's path segment and Secret what deliveries to it are signed with.
+	Token  string `bun:"token,notnull"`
+	Secret string `bun:"secret,notnull"`
+	// RemoteID is the id the server gave the subscription.
+	RemoteID string `bun:"remote_id,notnull"`
+	// RefreshBefore is when the server stops delivering unless subscribed to again. Nil
+	// is a subscription that does not expire.
+	RefreshBefore *time.Time `bun:"refresh_before"`
+	Status        string     `bun:"status,notnull"`
+	Error         string     `bun:"error,notnull"`
 	CreatedAt     time.Time  `bun:"created_at,notnull"`
 	UpdatedAt     time.Time  `bun:"updated_at,notnull"`
 	DeletedAt     *time.Time `bun:"deleted_at"`
@@ -540,9 +848,11 @@ type KnowledgeURL struct {
 	Passages int `bun:"passages,notnull"`
 	// LastIndexedAt is when it was last read successfully. Nil means never.
 	LastIndexedAt *time.Time `bun:"last_indexed_at"`
-	CreatedAt     time.Time  `bun:"created_at,notnull"`
-	UpdatedAt     time.Time  `bun:"updated_at,notnull"`
-	DeletedAt     *time.Time `bun:"deleted_at"`
+	// RefreshHours is how often the page is read again on its own. Zero is never.
+	RefreshHours int        `bun:"refresh_hours,notnull"`
+	CreatedAt    time.Time  `bun:"created_at,notnull"`
+	UpdatedAt    time.Time  `bun:"updated_at,notnull"`
+	DeletedAt    *time.Time `bun:"deleted_at"`
 }
 
 // KnowledgeDocument is a document a knowledge base was filled with, posted or synced
@@ -648,6 +958,9 @@ type Call struct {
 	// ID is the session id, which is the handle the caller already holds the call by.
 	ID         string `bun:"id,pk"`
 	CustomerID string `bun:"customer_id,notnull"`
+	// StreamAppPK is the Stream app this was made in, and the one it is finished in. Zero,
+	// stored as NULL, is the deployment's own app.
+	StreamAppPK int64 `bun:"stream_app_pk,nullzero"`
 	// CallID is the Stream call, and AgentID is the transcript channel.
 	CallID  string `bun:"call_id,notnull"`
 	AgentID string `bun:"agent_id,notnull"`
@@ -895,8 +1208,19 @@ type SimulationLine struct {
 	// Intended is what the agent meant to say, where that differs from what the caller
 	// heard. Only an audio simulation has both, and the difference is the whole point of
 	// running one.
-	Intended string    `json:"intended,omitempty"`
-	At       time.Time `json:"at"`
+	Intended string `json:"intended,omitempty"`
+	// Tools are what the agent did on this turn rather than said, which is what a question
+	// about whether something was actually done is settled by.
+	Tools []SimulationTool `json:"tools,omitempty"`
+	At    time.Time        `json:"at"`
+}
+
+// SimulationTool is one tool the agent ran during a simulated conversation.
+type SimulationTool struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+	Result    string `json:"result"`
+	Error     string `json:"error,omitempty"`
 }
 
 // SimulationRunFilter narrows which runs are listed. Every field is optional, and an empty
@@ -1067,6 +1391,14 @@ const (
 	SessionClosed = "closed"
 )
 
+// How the user took part in a session. It only moves up: a session that has seen video
+// stays video.
+const (
+	ModalityText  = "text"
+	ModalityVoice = "voice"
+	ModalityVideo = "video"
+)
+
 // ModelOverwrites is what a caller asked to change about the models for one session.
 //
 // It is one object rather than a dozen top-level fields because it is one idea: everything
@@ -1076,12 +1408,11 @@ const (
 // resolves; Thinking, Temperature and MaxOutputTokens are folded into the LLM options the
 // same way the router's own overrides are.
 type ModelOverwrites struct {
-	LLM      string `json:"llm,omitempty"`
-	STT      string `json:"stt,omitempty"`
-	TTS      string `json:"tts,omitempty"`
-	STS      string `json:"sts,omitempty"`
-	Subagent string `json:"subagent,omitempty"`
-	Search   string `json:"search,omitempty"`
+	LLM    string `json:"llm,omitempty"`
+	STT    string `json:"stt,omitempty"`
+	TTS    string `json:"tts,omitempty"`
+	STS    string `json:"sts,omitempty"`
+	Search string `json:"search,omitempty"`
 	// Thinking is how hard to reason: off, low, medium or high. It becomes the reasoning
 	// effort on the LLM options, which is what the providers that support one are sent.
 	Thinking        string   `json:"thinking,omitempty"`
@@ -1113,6 +1444,9 @@ type AgentSession struct {
 	// ID is the session id the caller already holds the session by.
 	ID         string `bun:"id,pk"`
 	CustomerID string `bun:"customer_id,notnull"`
+	// StreamAppPK is the Stream app this was made in, and the one it is finished in. Zero,
+	// stored as NULL, is the deployment's own app.
+	StreamAppPK int64 `bun:"stream_app_pk,nullzero"`
 	// ConfigID names the stored config, and AgentName the name it was found by. The name
 	// is kept as well because it is what a caller filters on, and because renaming a
 	// config must not rewrite what older sessions were opened against.
@@ -1135,13 +1469,37 @@ type AgentSession struct {
 	CallID          string          `bun:"call_id,nullzero"`
 	CallType        string          `bun:"call_type,nullzero"`
 	// ForkedFrom is the session this one continued from, empty for one opened fresh.
-	ForkedFrom string    `bun:"forked_from,nullzero"`
-	State      string    `bun:"state,notnull"`
-	CreatedAt  time.Time `bun:"created_at,notnull"`
-	UpdatedAt  time.Time `bun:"updated_at,notnull"`
+	ForkedFrom string `bun:"forked_from,nullzero"`
+	State      string `bun:"state,notnull"`
+	// Modality is ModalityText, ModalityVoice or ModalityVideo.
+	Modality  string    `bun:"modality,notnull"`
+	CreatedAt time.Time `bun:"created_at,notnull"`
+	UpdatedAt time.Time `bun:"updated_at,notnull"`
 	// ClosedAt is nil while the session is still running.
 	ClosedAt       *time.Time `bun:"closed_at"`
 	LastResponseAt *time.Time `bun:"last_response_at"`
+	// Rank is how well a search matched, zero outside a search.
+	Rank float32 `bun:"rank,scanonly"`
+}
+
+// SessionPosition is the last session of a page, by every key the list is sorted on.
+type SessionPosition struct {
+	UpdatedAt time.Time `json:"u"`
+	ID        string    `json:"id"`
+	Rank      float32   `json:"r,omitempty"`
+}
+
+// ResponsePosition is the last turn of a page.
+type ResponsePosition struct {
+	CreatedAt time.Time `json:"t"`
+	ID        string    `json:"id"`
+}
+
+// ItemPosition is the last item of a page.
+type ItemPosition struct {
+	At         time.Time `json:"t"`
+	ResponseID string    `json:"r"`
+	Ordinal    int       `json:"o"`
 }
 
 // SessionFilter narrows a session list to the ones worth reading.
@@ -1153,17 +1511,21 @@ type SessionFilter struct {
 	UserID    string
 	ConfigID  string
 	AgentName string
+	AgentID   string
 	Project   string
-	// State is running or closed. Empty is both.
+	Modality  string
+	// State is SessionRunning or SessionClosed.
 	State string
 	// Custom matches sessions whose custom object contains every one of these pairs, which
 	// is what makes custom worth writing: a caller that labelled a session can find it
 	// again by the label.
 	Custom map[string]string
-	Before time.Time
+	// After and Before bound when the session started, After inclusive and Before not.
 	After  time.Time
+	Before time.Time
 	Limit  int
-	Offset int
+	// Cursor starts the page after this session. Nil is the first page.
+	Cursor *SessionPosition
 }
 
 // What became of one response.
@@ -1244,25 +1606,230 @@ type AgentResponseItem struct {
 	At      time.Time      `bun:"at,notnull"`
 }
 
-// GuestUser is somebody who talked to an agent before they had an account.
-//
-// The row is not what makes them work -- a guest is a real Stream user with role guest, and
-// chat and video need nothing here -- it is what makes claiming them possible. Claiming
-// moves what a guest said onto a real account, so it has to be an operation only a backend
-// may ask for, and that needs a record of which ids were ever guests and which have already
-// been claimed.
-type GuestUser struct {
-	bun.BaseModel `bun:"table:guest_users,alias:gu"`
+// The kinds of end user a row records. They are the verified kinds of auth.Kind: an
+// anonymous caller goes by a name nobody checked, so recording it would be recording the
+// claim rather than the person.
+const (
+	UserKindGuest         = "guest"
+	UserKindAuthenticated = "authenticated"
+)
 
+// User is an end user an app has been seen acting for.
+//
+// The row is not what makes them work -- a user is a real Stream user, and chat and video
+// need nothing here -- it is what lets an app ask who its users are, and what makes
+// claiming a guest possible. Claiming moves what a guest said onto a real account, so it
+// has to be an operation only a backend may ask for, and that needs a record of which ids
+// were ever guests and which have already been claimed.
+type User struct {
+	bun.BaseModel `bun:"table:users,alias:u"`
+
+	CustomerID string `bun:"customer_id,pk"`
 	// ID is the Stream user id, which the caller holds and sends back to claim.
-	ID         string         `bun:"id,pk"`
-	CustomerID string         `bun:"customer_id,notnull"`
-	Name       string         `bun:"name,notnull"`
-	Custom     map[string]any `bun:"custom,type:jsonb,nullzero"`
-	CreatedAt  time.Time      `bun:"created_at,notnull"`
+	ID string `bun:"id,pk"`
+	// Kind is what the credential proved them to be, UserKindGuest or
+	// UserKindAuthenticated. Only a guest may be claimed.
+	Kind      string         `bun:"kind,notnull"`
+	Name      string         `bun:"name,notnull"`
+	Custom    map[string]any `bun:"custom,type:jsonb,nullzero"`
+	CreatedAt time.Time      `bun:"created_at,notnull"`
 	// ClaimedBy is the real user this guest turned out to be, empty while they are still a
 	// guest. A guest is claimed once: a second claim naming somebody else would move one
 	// person's conversations onto another's account.
 	ClaimedBy string     `bun:"claimed_by,nullzero"`
 	ClaimedAt *time.Time `bun:"claimed_at"`
+}
+
+// BusinessProfile is who an app is, written once and reused by every channel it registers
+// for. Which fields a channel needs is the dlc package's to say, so none is required here.
+type BusinessProfile struct {
+	bun.BaseModel `bun:"table:business_profiles,alias:bp"`
+
+	CustomerID            string        `bun:"customer_id,pk"`
+	LegalBusinessName     string        `bun:"legal_business_name,notnull"`
+	BrandName             string        `bun:"brand_name,notnull"`
+	LegalEntityType       string        `bun:"legal_entity_type,notnull"`
+	OrganizationType      string        `bun:"organization_type,notnull"`
+	RegistrationCountry   string        `bun:"business_registration_country,notnull"`
+	TaxID                 string        `bun:"tax_id,notnull"`
+	TaxIDCountry          string        `bun:"tax_id_issuing_country,notnull"`
+	Address               PostalAddress `bun:"registered_address,type:jsonb,notnull"`
+	WebsiteURL            string        `bun:"website_url,notnull"`
+	Industry              string        `bun:"industry,notnull"`
+	ContactFirstName      string        `bun:"authorized_contact_first_name,notnull"`
+	ContactLastName       string        `bun:"authorized_contact_last_name,notnull"`
+	ContactTitle          string        `bun:"authorized_contact_title,notnull"`
+	ContactEmail          string        `bun:"authorized_contact_email,notnull"`
+	ContactPhone          string        `bun:"authorized_contact_phone,notnull"`
+	PrivacyPolicyURL      string        `bun:"privacy_policy_url,notnull"`
+	TermsURL              string        `bun:"terms_and_conditions_url,notnull"`
+	StockSymbol           string        `bun:"stock_symbol,notnull"`
+	StockExchange         string        `bun:"stock_exchange,notnull"`
+	VerificationDocuments []string      `bun:"business_verification_documents,array"`
+	// VendorBrandID is the brand the vendor registered the app as, and BrandStatus the
+	// vendor's own word for where it stands. Empty until a use case was sent.
+	VendorBrandID string    `bun:"vendor_brand_id,notnull"`
+	BrandStatus   string    `bun:"brand_status,notnull"`
+	CreatedAt     time.Time `bun:"created_at,notnull"`
+	UpdatedAt     time.Time `bun:"updated_at,notnull"`
+}
+
+// PostalAddress is where a business is registered.
+type PostalAddress struct {
+	Street     string `json:"street,omitempty"`
+	City       string `json:"city,omitempty"`
+	State      string `json:"state,omitempty" doc:"State or region."`
+	PostalCode string `json:"postal_code,omitempty"`
+	Country    string `json:"country,omitempty" doc:"ISO 3166-1 alpha-2."`
+}
+
+// UseCase is one 10DLC campaign an app sends text and calls as.
+type UseCase struct {
+	bun.BaseModel `bun:"table:dlc_use_cases,alias:uc"`
+
+	ID         string `bun:"id,pk"`
+	CustomerID string `bun:"customer_id,notnull"`
+	Name       string `bun:"name,notnull"`
+	// IsDefault is the use case every number assigned to no other one sends as.
+	IsDefault bool   `bun:"is_default,notnull"`
+	Status    string `bun:"status,notnull"`
+	// UseCaseType is the campaign registry's use case, such as CUSTOMER_CARE.
+	UseCaseType string `bun:"use_case_type,notnull"`
+	Description string `bun:"description,notnull"`
+	// MessageFlow is how a recipient opts in, as the registry asks for it.
+	MessageFlow    string   `bun:"message_flow,notnull"`
+	MessageSamples []string `bun:"message_samples,array"`
+	HelpMessage    string   `bun:"help_message,notnull"`
+	OptOutMessage  string   `bun:"opt_out_message,notnull"`
+	OptInMessage   string   `bun:"opt_in_message,notnull"`
+	EmbeddedLinks  bool     `bun:"embedded_links,notnull"`
+	EmbeddedPhone  bool     `bun:"embedded_phone,notnull"`
+	AgeGated       bool     `bun:"age_gated,notnull"`
+	DirectLending  bool     `bun:"direct_lending,notnull"`
+	// Channels holds what RCS, WhatsApp, iMessage and voice ask for. It is reviewed with
+	// the rest and not sent to any vendor yet.
+	Channels UseCaseChannels `bun:"channels,type:jsonb,notnull"`
+	// Vendor is who the campaign was registered with, VendorCampaignID its id there and
+	// VendorStatus the vendor's own word for where it stands.
+	Vendor           string     `bun:"vendor,notnull"`
+	VendorCampaignID string     `bun:"vendor_campaign_id,notnull"`
+	VendorStatus     string     `bun:"vendor_status,notnull"`
+	CreatedAt        time.Time  `bun:"created_at,notnull"`
+	UpdatedAt        time.Time  `bun:"updated_at,notnull"`
+	SubmittedAt      *time.Time `bun:"submitted_at"`
+	ApprovedAt       *time.Time `bun:"approved_at"`
+}
+
+// UseCaseChannels are the fields the channels besides 10DLC ask for. Each is absent for a
+// channel the use case is not for.
+type UseCaseChannels struct {
+	RCS      *RCSProfile      `json:"rcs,omitempty"`
+	WhatsApp *WhatsAppProfile `json:"whatsapp,omitempty"`
+	IMessage *IMessageProfile `json:"imessage,omitempty"`
+	Voice    *VoiceProfile    `json:"voice,omitempty"`
+}
+
+// RCSProfile is the agent and launch review an RCS agent needs.
+type RCSProfile struct {
+	DisplayName              string   `json:"display_name,omitempty" maxLength:"40"`
+	Description              string   `json:"description,omitempty" maxLength:"100"`
+	UseCase                  string   `json:"use_case,omitempty" doc:"otp, transactional, promotional or multi_use."`
+	LogoURL                  string   `json:"logo_url,omitempty" doc:"224 by 224 PNG or JPEG, at most 50 KB, on public HTTPS."`
+	HeroURL                  string   `json:"hero_url,omitempty" doc:"1440 by 448 PNG or JPEG, at most 200 KB, on public HTTPS."`
+	BrandColor               string   `json:"brand_color,omitempty" doc:"Hex, such as #1A73E8, with at least 4.5:1 contrast against white."`
+	SupportPhone             string   `json:"support_phone,omitempty"`
+	SupportEmail             string   `json:"support_email,omitempty"`
+	SupportLabel             string   `json:"support_label,omitempty"`
+	CompanyOverview          string   `json:"company_overview,omitempty"`
+	AgentOverview            string   `json:"agent_overview,omitempty"`
+	InteractionTypes         string   `json:"interaction_types,omitempty"`
+	MessageExamples          []string `json:"message_examples,omitempty"`
+	OptInMethods             string   `json:"opt_in_methods,omitempty"`
+	CallToActionText         string   `json:"call_to_action_text,omitempty"`
+	CallToActionURL          string   `json:"call_to_action_url,omitempty"`
+	DoubleOptIn              bool     `json:"double_opt_in,omitempty"`
+	OptInConfirmationMessage string   `json:"opt_in_confirmation_message,omitempty"`
+	TestVideoURL             string   `json:"test_video_url,omitempty" doc:"Shows consent, example interactions, HELP and STOP."`
+}
+
+// WhatsAppProfile is what Meta's Embedded Signup asks for.
+type WhatsAppProfile struct {
+	BusinessPortfolio  string `json:"business_portfolio,omitempty" doc:"The Meta business portfolio, existing or to create."`
+	BusinessAccount    string `json:"business_account,omitempty" doc:"The WhatsApp Business account, existing or to create."`
+	PhoneNumber        string `json:"phone_number,omitempty"`
+	DisplayName        string `json:"display_name,omitempty"`
+	VerificationMethod string `json:"verification_method,omitempty" doc:"sms or voice."`
+}
+
+// IMessageProfile is the contact card and consent an iMessage line through Linq carries.
+type IMessageProfile struct {
+	ContactCardName  string   `json:"contact_card_name,omitempty"`
+	ContactCardImage string   `json:"contact_card_image_url,omitempty" doc:"Square, at least 200 by 200."`
+	ConsentMethod    string   `json:"consent_method,omitempty"`
+	FallbackChannels []string `json:"fallback_channels,omitempty" doc:"imessage, rcs or sms, in the order to try them."`
+}
+
+// VoiceProfile is what outbound AI calling is for and how its consent was collected.
+type VoiceProfile struct {
+	CallerIDNumber          string   `json:"caller_id_number,omitempty" doc:"A number bought here, or a verified external one."`
+	CallingPurpose          string   `json:"calling_purpose,omitempty" doc:"Support, reminders, sales and so on."`
+	DestinationCountries    []string `json:"destination_countries,omitempty"`
+	ExpectedCallVolume      string   `json:"expected_call_volume,omitempty"`
+	ConsentCollectionMethod string   `json:"consent_collection_method,omitempty"`
+	ConsentDisclosureText   string   `json:"consent_disclosure_text,omitempty"`
+	ConsentEvidenceLocation string   `json:"consent_evidence_location,omitempty"`
+	OptOutHandling          string   `json:"opt_out_handling,omitempty"`
+	CallRecording           bool     `json:"call_recording_enabled,omitempty"`
+	RecordingDisclosure     string   `json:"recording_disclosure,omitempty" doc:"How a recorded call is disclosed and consented to."`
+}
+
+// ReviewLog is one move a use case made, and who made it.
+type ReviewLog struct {
+	bun.BaseModel `bun:"table:dlc_review_logs,alias:rl"`
+
+	ID         string `bun:"id,pk"`
+	UseCaseID  string `bun:"use_case_id,notnull"`
+	CustomerID string `bun:"customer_id,notnull"`
+	// Actor is app, staff or vendor, and ActorName who exactly, where known.
+	Actor      string `bun:"actor,notnull"`
+	ActorName  string `bun:"actor_name,notnull"`
+	FromStatus string `bun:"from_status,notnull"`
+	ToStatus   string `bun:"to_status,notnull"`
+	Notes      string `bun:"notes,notnull"`
+	// VendorPayload is what the vendor answered, kept as it came.
+	VendorPayload json.RawMessage `bun:"vendor_payload,type:jsonb,nullzero"`
+	CreatedAt     time.Time       `bun:"created_at,notnull"`
+	SubmittedAt   *time.Time      `bun:"submitted_at"`
+	ApprovedAt    *time.Time      `bun:"approved_at"`
+}
+
+// OptOut is somebody who asked not to be reached on a channel, or on any.
+type OptOut struct {
+	bun.BaseModel `bun:"table:opt_outs,alias:oo"`
+
+	ID         string     `bun:"id,pk"`
+	CustomerID string     `bun:"customer_id,notnull"`
+	Recipient  string     `bun:"recipient,notnull"`
+	Channel    string     `bun:"channel,notnull"`
+	Source     string     `bun:"source,notnull"`
+	CreatedAt  time.Time  `bun:"created_at,notnull"`
+	RevokedAt  *time.Time `bun:"revoked_at"`
+}
+
+// OptOutAll is an opt-out from every channel at once.
+const OptOutAll = "all"
+
+// SandboxRecipient is a number an app may reach before any use case of its is approved.
+type SandboxRecipient struct {
+	bun.BaseModel `bun:"table:sandbox_recipients,alias:sr"`
+
+	CustomerID string    `bun:"customer_id,pk"`
+	Recipient  string    `bun:"recipient,pk"`
+	CreatedAt  time.Time `bun:"created_at,notnull"`
+}
+
+// CreatedPosition is the last row of a page ordered by when rows were made.
+type CreatedPosition struct {
+	At time.Time `json:"t"`
+	ID string    `json:"id"`
 }

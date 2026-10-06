@@ -278,6 +278,23 @@ impl Client {
         )
         .await
     }
+    /// Change some of an agent config
+    ///
+    /// `PATCH /v1/agents/configs/{id}` (`patchAgentConfig`).
+    pub async fn patch_agent_config(
+        &self,
+        id: &str,
+        body: &types::AgentConfigPatch,
+    ) -> Result<types::AgentConfig> {
+        self.send(
+            Method::PATCH,
+            &format!("/v1/agents/configs/{id}", id = segment(id)),
+            None::<&()>,
+            Some(body),
+            "patchAgentConfig",
+        )
+        .await
+    }
     /// Delete an agent config
     ///
     /// `DELETE /v1/agents/configs/{id}` (`deleteAgentConfig`).
@@ -636,19 +653,6 @@ impl Client {
         )
         .await
     }
-    /// The sessions the calling customer is running
-    ///
-    /// `GET /v1/agents/sessions` (`listSessions`).
-    pub async fn list_sessions(&self, query: &ListSessionsQuery) -> Result<Vec<types::Session>> {
-        self.send(
-            Method::GET,
-            "/v1/agents/sessions",
-            Some(query),
-            None::<&()>,
-            "listSessions",
-        )
-        .await
-    }
     /// Join a call as a voice agent
     ///
     /// `POST /v1/agents/sessions` (`createSession`).
@@ -665,19 +669,19 @@ impl Client {
         )
         .await
     }
-    /// Find a conversation by what it was called
+    /// List or search the caller's sessions
     ///
-    /// `GET /v1/agents/sessions/search` (`searchSessions`).
-    pub async fn search_sessions(
+    /// `POST /v1/agents/sessions/query` (`querySessions`).
+    pub async fn query_sessions(
         &self,
-        query: &SearchSessionsQuery,
-    ) -> Result<Vec<types::Session>> {
+        body: Option<&types::SessionQuery>,
+    ) -> Result<types::SessionPage> {
         self.send(
-            Method::GET,
-            "/v1/agents/sessions/search",
-            Some(query),
+            Method::POST,
+            "/v1/agents/sessions/query",
             None::<&()>,
-            "searchSessions",
+            body,
+            "querySessions",
         )
         .await
     }
@@ -694,16 +698,33 @@ impl Client {
         )
         .await
     }
-    /// Leave the call and end the session
+    /// Change a session
     ///
-    /// `DELETE /v1/agents/sessions/{id}` (`closeSession`).
-    pub async fn close_session(&self, id: &str) -> Result<()> {
+    /// `PATCH /v1/agents/sessions/{id}` (`updateSession`).
+    pub async fn update_session(
+        &self,
+        id: &str,
+        body: &types::UpdateSessionRequest,
+    ) -> Result<types::Session> {
+        self.send(
+            Method::PATCH,
+            &format!("/v1/agents/sessions/{id}", id = segment(id)),
+            None::<&()>,
+            Some(body),
+            "updateSession",
+        )
+        .await
+    }
+    /// Delete a session
+    ///
+    /// `DELETE /v1/agents/sessions/{id}` (`deleteSession`).
+    pub async fn delete_session(&self, id: &str) -> Result<()> {
         self.send(
             Method::DELETE,
             &format!("/v1/agents/sessions/{id}", id = segment(id)),
             None::<&()>,
             None::<&()>,
-            "closeSession",
+            "deleteSession",
         )
         .await
     }
@@ -796,6 +817,19 @@ impl Client {
         )
         .await
     }
+    /// Delete what one session remembered
+    ///
+    /// `DELETE /v1/agents/sessions/{id}/memories` (`deleteSessionMemories`).
+    pub async fn delete_session_memories(&self, id: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/agents/sessions/{id}/memories", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "deleteSessionMemories",
+        )
+        .await
+    }
     /// Answer a piece of text through the model, as though it had been said
     ///
     /// `POST /v1/agents/sessions/{id}/respond` (`respondSession`).
@@ -820,7 +854,7 @@ impl Client {
         &self,
         id: &str,
         query: &ListResponsesQuery,
-    ) -> Result<Vec<types::AgentResponse>> {
+    ) -> Result<types::AgentResponsePage> {
         self.send(
             Method::GET,
             &format!("/v1/agents/sessions/{id}/responses", id = segment(id)),
@@ -854,7 +888,7 @@ impl Client {
         &self,
         id: &str,
         query: &ListResponseItemsQuery,
-    ) -> Result<Vec<types::AgentResponseItem>> {
+    ) -> Result<types::AgentResponseItemPage> {
         self.send(
             Method::GET,
             &format!("/v1/agents/sessions/{id}/responses/items", id = segment(id)),
@@ -904,6 +938,19 @@ impl Client {
             None::<&()>,
             Some(body),
             "setSessionSettings",
+        )
+        .await
+    }
+    /// Stop a running session
+    ///
+    /// `POST /v1/agents/sessions/{id}/stop` (`stopSession`).
+    pub async fn stop_session(&self, id: &str) -> Result<()> {
+        self.send(
+            Method::POST,
+            &format!("/v1/agents/sessions/{id}/stop", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "stopSession",
         )
         .await
     }
@@ -1099,7 +1146,7 @@ impl Client {
         )
         .await
     }
-    /// Store an agent directory's instructions, skills, knowledge and settings
+    /// Store an agent directory's instructions, skills, knowledge, simulations and settings
     ///
     /// `POST /v1/agents/sync` (`syncAgent`).
     pub async fn sync_agent(
@@ -1112,6 +1159,22 @@ impl Client {
             None::<&()>,
             Some(body),
             "syncAgent",
+        )
+        .await
+    }
+    /// Delete everything remembered about one user
+    ///
+    /// `DELETE /v1/agents/users/{user_id}/memories` (`truncateMemories`).
+    pub async fn truncate_memories(&self, user_id: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!(
+                "/v1/agents/users/{user_id}/memories",
+                user_id = segment(user_id)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "truncateMemories",
         )
         .await
     }
@@ -1278,6 +1341,19 @@ impl Client {
             None::<&()>,
             Some(body),
             "addVoiceSample",
+        )
+        .await
+    }
+    /// Ask a classifier typed questions about a piece of text
+    ///
+    /// `POST /v1/classify` (`classify`).
+    pub async fn classify(&self, body: &types::ClassifyRequest) -> Result<types::ClassifyResult> {
+        self.send(
+            Method::POST,
+            "/v1/classify",
+            None::<&()>,
+            Some(body),
+            "classify",
         )
         .await
     }
@@ -1469,7 +1545,7 @@ impl Client {
         )
         .await
     }
-    /// The calling app's budget, data policy and prompt injection setting
+    /// The calling app's policy
     ///
     /// `GET /v1/policies/app` (`getAppPolicy`).
     pub async fn get_app_policy(&self) -> Result<types::Policy> {
@@ -1920,75 +1996,15 @@ pub struct PluginOAuthCallbackQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
-/// The query string `listSessions` takes. A field left `None` is left out.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct ListSessionsQuery {
-    /// The agent name the session was opened against.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub config_id: Option<String>,
-    /// Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub user_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub project: Option<String>,
-    /// Omitted is both.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub state: Option<String>,
-    /// Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub custom: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_after: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_before: Option<String>,
-    /// Up to 200. Omitted is 25.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub offset: Option<i64>,
-}
-/// The query string `searchSessions` takes. A field left `None` is left out.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct SearchSessionsQuery {
-    /// What to search for. Quoted phrases and bare words both work, and punctuation is taken rather than refused: this comes from a search box, so an apostrophe must not become a syntax error.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub q: Option<String>,
-    /// The agent name the session was opened against.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub config_id: Option<String>,
-    /// Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub user_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub project: Option<String>,
-    /// Omitted is both.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub state: Option<String>,
-    /// Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub custom: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_after: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_before: Option<String>,
-    /// Up to 200. Omitted is 25.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub offset: Option<i64>,
-}
 /// The query string `listResponses` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct ListResponsesQuery {
     /// Up to 200. Omitted is 25.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub offset: Option<i64>,
+    pub cursor: Option<String>,
 }
 /// The query string `listResponseItems` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -1999,8 +2015,9 @@ pub struct ListResponseItemsQuery {
     /// Up to 1000. Omitted is 200.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub offset: Option<i64>,
+    pub cursor: Option<String>,
 }
 /// The query string `listSimulationRuns` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

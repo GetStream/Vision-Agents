@@ -4,13 +4,18 @@
 package chattest
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
 )
@@ -19,26 +24,234 @@ type store struct {
 	mu       sync.Mutex
 	channels map[string]map[string]any
 	messages map[string]map[string]any
+	users    map[string]map[string]any
+	trunks   map[string]map[string]any
+	rules    map[string]map[string]any
 	order    []string
+	now      func() time.Time
+	app      App
+	appReads int
+	// keyed are apps answered for one api key, standing in for several apps at one URL.
+	keyed map[string]App
+	// asked is every request served, with the key it was made with.
+	asked []Request
 }
 
-// Client serves Chat from memory for the life of the test.
-func Client(t *testing.T) *getstream.Stream {
+// Request is one request the server was sent, and the api key it was made with.
+type Request struct {
+	Method, Path, APIKey string
+}
+
+// Writes reports whether a request changes anything in Stream, rather than reading it: a
+// GET, a channel query and a user query read; everything else writes.
+func (r Request) Writes() bool {
+	return r.Method != http.MethodGet && !strings.HasSuffix(r.Path, "/chat/channels")
+}
+
+// App is what an app says of itself when asked: its id, and the channel and call types it
+// holds.
+type App struct {
+	ID int64
+	// ChannelTypes are the channel types it holds, each with its grants by role.
+	ChannelTypes map[string]map[string][]string
+	// CallTypes are the call types it holds.
+	CallTypes []string
+	// Suspended and DisableAuthChecks are what the app says of its standing.
+	Suspended, DisableAuthChecks bool
+	// Refuses answers 401 to being asked, as Stream does for a key it does not accept.
+	Refuses bool
+}
+
+// safeGrants are the agent channel type as an app set up for the router holds it: members
+// read and write, and nobody but the app's backend makes, changes or joins a channel.
+var safeGrants = map[string][]string{
+	"channel_member": {"read-channel", "read-channel-members", "create-message"},
+	"admin":          {"create-channel", "update-channel", "delete-channel"},
+}
+
+// Server is Chat in memory, for a test that needs to steer or look at what is stored.
+type Server struct {
+	// Client talks to it.
+	Client *getstream.Stream
+	// URL is where it is served, for a client of one's own to be pointed at.
+	URL string
+	db  *store
+}
+
+// NewServer serves Chat from memory for the life of the test.
+func NewServer(t *testing.T) *Server {
 	t.Helper()
-	db := &store{channels: map[string]map[string]any{}, messages: map[string]map[string]any{}}
+	db := &store{
+		channels: map[string]map[string]any{}, messages: map[string]map[string]any{},
+		users: map[string]map[string]any{}, trunks: map[string]map[string]any{},
+		rules: map[string]map[string]any{}, now: time.Now,
+		app: App{ID: 1, ChannelTypes: map[string]map[string][]string{"agent": safeGrants}, CallTypes: []string{"agent"}},
+	}
 	server := httptest.NewServer(http.HandlerFunc(db.serve))
 	t.Cleanup(server.Close)
 	client, err := getstream.NewClient("test", "secret", getstream.WithBaseUrl(server.URL))
 	if err != nil {
 		t.Fatalf("chattest: %v", err)
 	}
-	return client
+	return &Server{Client: client, URL: server.URL, db: db}
+}
+
+// Client serves Chat from memory for the life of the test.
+func Client(t *testing.T) *getstream.Stream {
+	t.Helper()
+	return NewServer(t).Client
+}
+
+// At dates every message stored from now on, which Chat does by its own clock. A test
+// places lines either side of something with it.
+func (s *Server) At(at time.Time) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.db.now = func() time.Time { return at }
+}
+
+// Channel returns what an agent channel was created with, and whether it exists at all.
+func (s *Server) Channel(id string) (map[string]any, bool) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	data, ok := s.db.channels[id]
+	return data, ok
+}
+
+// SetApp says what the app is from now on. Every server starts as app 1 holding the agent
+// channel type, with safe grants, and the agent call type.
+func (s *Server) SetApp(app App) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.db.app = app
+}
+
+// SetAppFor says what the app is when asked with one api key, so one server can stand in
+// for the deployment's app and a customer's at once. Every other key gets SetApp's.
+func (s *Server) SetAppFor(apiKey string, app App) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	if s.db.keyed == nil {
+		s.db.keyed = map[string]App{}
+	}
+	s.db.keyed[apiKey] = app
+}
+
+// Requests are the requests made with an api key, oldest first.
+func (s *Server) Requests(apiKey string) []Request {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	var made []Request
+	for _, request := range s.db.asked {
+		if request.APIKey == apiKey {
+			made = append(made, request)
+		}
+	}
+	return made
+}
+
+// AppReads is how many times the app was asked what it is.
+func (s *Server) AppReads() int {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	return s.db.appReads
+}
+
+// User returns a user as Chat holds them, and whether Chat has them at all.
+func (s *Server) User(id string) (map[string]any, bool) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	user, ok := s.db.users[id]
+	return user, ok
+}
+
+// PutUser stores a user the app made itself, the way a real person is already there before
+// the router writes anything near them.
+func (s *Server) PutUser(user map[string]any) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.db.users[user["id"].(string)] = user
+}
+
+// Members returns the user ids a channel holds as members.
+func (s *Server) Members(id string) []string {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	var ids []string
+	members, _ := s.db.channels[id]["members"].([]any)
+	for _, member := range members {
+		if named, ok := member.(map[string]any); ok {
+			if userID, ok := named["user_id"].(string); ok {
+				ids = append(ids, userID)
+			}
+		}
+	}
+	return ids
+}
+
+// Trunks are the ids of the SIP trunks the app holds now.
+func (s *Server) Trunks() []string {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	return slices.Sorted(maps.Keys(s.db.trunks))
+}
+
+// Rules are the ids of the SIP routing rules the app holds now.
+func (s *Server) Rules() []string {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	return slices.Sorted(maps.Keys(s.db.rules))
+}
+
+// unique is an id nothing else has.
+func unique() string {
+	raw := make([]byte, 8)
+	_, _ = rand.Read(raw)
+	return hex.EncodeToString(raw)
+}
+
+// Messages are the texts of a channel's messages, in the order they were written.
+func (s *Server) Messages(id string) []string {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	var texts []string
+	for _, message := range s.db.messagesIn(id) {
+		text, _ := message["text"].(string)
+		texts = append(texts, text)
+	}
+	return texts
+}
+
+// refuse answers the way Chat does when it will not do what was asked.
+func refuse(w http.ResponseWriter, message string) {
+	w.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(w).Encode(map[string]any{"code": 4, "message": message, "StatusCode": http.StatusBadRequest})
+}
+
+// appFor is the app a request's api key is answered as.
+func (db *store) appFor(r *http.Request) App {
+	if app, ok := db.keyed[r.URL.Query().Get("api_key")]; ok {
+		return app
+	}
+	return db.app
+}
+
+// messagesIn returns a channel's messages in the order they were written.
+func (db *store) messagesIn(id string) []map[string]any {
+	messages := []map[string]any{}
+	for _, mid := range db.order {
+		if db.messages[mid]["cid"] == "agent:"+id {
+			messages = append(messages, db.messages[mid])
+		}
+	}
+	return messages
 }
 
 func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
+	db.asked = append(db.asked, Request{Method: r.Method, Path: r.URL.Path, APIKey: r.URL.Query().Get("api_key")})
 	var body map[string]any
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&body)
@@ -46,22 +259,128 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(r.URL.Path, "/")
 	result := map[string]any{}
 	switch {
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/api/v2/app"):
+		db.appReads++
+		app := db.appFor(r)
+		if app.Refuses {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 5, "message": "api key not valid", "StatusCode": http.StatusUnauthorized})
+			return
+		}
+		channels, calls := map[string]any{}, map[string]any{}
+		for name := range app.ChannelTypes {
+			channels[name] = map[string]any{"name": name}
+		}
+		for _, name := range app.CallTypes {
+			calls[name] = map[string]any{"name": name}
+		}
+		result["app"] = map[string]any{
+			"id": app.ID, "channel_configs": channels, "call_types": calls,
+			"suspended": app.Suspended, "disable_auth_checks": app.DisableAuthChecks,
+		}
+	case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/channeltypes/"):
+		name := parts[len(parts)-1]
+		grants, ok := db.appFor(r).ChannelTypes[name]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 16, "message": "channel type " + name + " does not exist", "StatusCode": http.StatusNotFound})
+			return
+		}
+		result["name"], result["grants"] = name, grants
+	case strings.HasSuffix(r.URL.Path, "/sip/inbound_trunks") && r.Method == http.MethodPost:
+		// Stream's ids are unique across every app, which is what lets a test tell one app's
+		// trunk from another's.
+		id := "trunk-" + unique()
+		db.trunks[id] = body
+		result["sip_trunk"] = map[string]any{"id": id, "uri": "sip:" + id + "@sip.example.test", "username": id, "password": "secret"}
+	case strings.HasSuffix(r.URL.Path, "/sip/inbound_routing_rules") && r.Method == http.MethodPost:
+		id := "rule-" + unique()
+		db.rules[id] = body
+		result["id"] = id
+	case strings.Contains(r.URL.Path, "/sip/inbound_trunks/") && r.Method == http.MethodDelete:
+		delete(db.trunks, parts[len(parts)-1])
+	case strings.Contains(r.URL.Path, "/sip/inbound_routing_rules/") && r.Method == http.MethodDelete:
+		delete(db.rules, parts[len(parts)-1])
+	case strings.HasSuffix(r.URL.Path, "/users") && r.Method == http.MethodGet:
+		var payload struct {
+			FilterConditions map[string]any `json:"filter_conditions"`
+		}
+		_ = json.Unmarshal([]byte(r.URL.Query().Get("payload")), &payload)
+		users := []map[string]any{}
+		if id, ok := payload.FilterConditions["id"].(map[string]any); ok {
+			if in, ok := id["$in"].([]any); ok {
+				for _, wanted := range in {
+					if user, exists := db.users[fmt.Sprint(wanted)]; exists {
+						users = append(users, user)
+					}
+				}
+			}
+		}
+		result["users"] = users
+	case strings.HasSuffix(r.URL.Path, "/users") && r.Method == http.MethodPost:
+		// An upsert replaces the user whole, which is what Chat does.
+		written, _ := body["users"].(map[string]any)
+		for id, user := range written {
+			if fields, ok := user.(map[string]any); ok {
+				db.users[id] = fields
+			}
+		}
+		result["users"] = written
+	case r.Method == http.MethodPatch && len(parts) >= 2 && parts[len(parts)-2] == "agent":
+		// A partial update sets the fields it names on the channel.
+		id := parts[len(parts)-1]
+		data, exists := db.channels[id]
+		if !exists {
+			refuse(w, "channel "+id+" does not exist")
+			return
+		}
+		set, _ := body["set"].(map[string]any)
+		maps.Copy(data, set)
+		result["channel"] = data
+	case r.Method == http.MethodPost && len(parts) >= 2 && parts[len(parts)-2] == "agent":
+		// An update adds the members it names to the channel, which is how a reader comes
+		// to be able to watch it.
+		id := parts[len(parts)-1]
+		data, exists := db.channels[id]
+		if !exists {
+			refuse(w, "channel "+id+" does not exist")
+			return
+		}
+		added, _ := body["add_members"].([]any)
+		members, _ := data["members"].([]any)
+		data["members"] = append(members, added...)
+		result["channel"] = data
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/chat/channels"):
+		// A query finds channels and never creates one.
+		channels := []map[string]any{}
+		filter, _ := body["filter_conditions"].(map[string]any)
+		if cid, ok := filter["cid"].(string); ok {
+			id := strings.TrimPrefix(cid, "agent:")
+			if data, exists := db.channels[id]; exists && strings.HasPrefix(cid, "agent:") {
+				channels = append(channels, map[string]any{
+					"channel": data, "members": data["members"], "messages": db.messagesIn(id),
+				})
+			}
+		}
+		result["channels"] = channels
 	case strings.HasSuffix(r.URL.Path, "/query"):
 		id := parts[len(parts)-2]
+		_, exists := db.channels[id]
+		data, carries := body["data"].(map[string]any)
+		// The agent channel type refuses a server-side create without a creator, so a
+		// query for a channel that is not there creates nothing unless it names one.
+		if !exists && (!carries || (data["created_by_id"] == nil && data["created_by"] == nil)) {
+			refuse(w, "either data.created_by or data.created_by_id must be provided when using server side auth")
+			return
+		}
 		// A query carrying data creates the channel; one without it must not overwrite
 		// the ownership already recorded on it.
-		if data, ok := body["data"].(map[string]any); ok {
+		if carries {
 			db.channels[id] = data
 		}
 		result["channel"] = db.channels[id]
 		result["members"] = db.channels[id]["members"]
-		messages := []map[string]any{}
-		for _, id := range db.order {
-			if db.messages[id]["cid"] == "agent:"+parts[len(parts)-2] {
-				messages = append(messages, db.messages[id])
-			}
-		}
-		result["messages"] = messages
+		result["messages"] = db.messagesIn(id)
 	case strings.HasSuffix(r.URL.Path, "/message"):
 		message := body["message"].(map[string]any)
 		id, _ := message["id"].(string)
@@ -72,6 +391,7 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		if _, exists := db.messages[id]; !exists {
 			db.order = append(db.order, id)
 			message["cid"] = "agent:" + parts[len(parts)-2]
+			message["created_at"] = db.now().UnixNano()
 			// Chat answers with the author it resolved the id to, which is how a reader
 			// learns who spoke: a stored message carries a user, not a user id. A user
 			// nobody named comes back named after their own id.
@@ -82,6 +402,20 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			db.messages[id] = message
 		}
 		result["message"] = db.messages[id]
+	case strings.Contains(r.URL.Path, "/messages/") && r.Method == http.MethodDelete:
+		id := parts[len(parts)-1]
+		result["message"] = db.messages[id]
+		if r.URL.Query().Get("hard") == "true" {
+			delete(db.messages, id)
+			for i, ordered := range db.order {
+				if ordered == id {
+					db.order = append(db.order[:i], db.order[i+1:]...)
+					break
+				}
+			}
+		} else if stored := db.messages[id]; stored != nil {
+			stored["type"] = "deleted"
+		}
 	case strings.Contains(r.URL.Path, "/messages/"):
 		id := parts[len(parts)-1]
 		// An ephemeral patch is what a reply streaming into the channel looks like, and

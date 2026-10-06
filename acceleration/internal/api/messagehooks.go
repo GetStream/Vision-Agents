@@ -3,16 +3,19 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"io"
+	"errors"
 	"net/http"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 // askTimeout bounds answering one written message. It is generous compared with a spoken
@@ -57,44 +60,40 @@ type messageEvent struct {
 // from Stream is a 200: Stream retries a non-2xx, and a message nobody can answer is not
 // answerable on the second delivery either.
 func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
-	if s.streamSecret == "" {
+	if !s.hooksConfigured() {
 		// Refusing is the only safe answer: without the secret there is no way to tell
 		// Stream from anyone who found the URL, and this path starts agents.
-		http.Error(w, "message events are not configured", http.StatusNotFound)
+		writeError(w, notFound("message events are not configured"))
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "could not read that message event", http.StatusBadRequest)
+	payload, ok := readHook(w, r, "message event")
+	if !ok {
+		s.logger.Warn("rejected a message event before reading its signature")
 		return
 	}
-	// Deliveries may be compressed, and the signature is over what is inside.
-	payload, err := getstream.GunzipPayload(body)
-	if err != nil {
-		s.logger.Warn("rejected a message event", "error", err)
-		http.Error(w, "that is not a message event from Stream", http.StatusUnauthorized)
-		return
-	}
-	if !getstream.VerifySignature(payload, r.Header.Get(signatureHeader), s.streamSecret) {
-		s.logger.Warn("rejected a message event with a bad signature", "bytes", len(payload))
-		http.Error(w, "that is not a message event from Stream", http.StatusUnauthorized)
+	origin, ok := s.verifyHook(w, r, payload, "message event")
+	if !ok {
 		return
 	}
 
 	eventType := getstream.GetEventType(payload)
 	if eventType == "" {
-		http.Error(w, "could not read that message event", http.StatusBadRequest)
+		writeError(w, invalidRequest("could not read that message event"))
 		return
 	}
 
 	if eventType == getstream.EventTypeMessageNew {
 		var event messageEvent
 		if err := json.Unmarshal(payload, &event); err != nil {
-			http.Error(w, "could not read that message event", http.StatusBadRequest)
+			writeError(w, invalidRequest("could not read that message event"))
 			return
 		}
-		s.routeArrivingMessage(r, event)
+		// Every message in the app arrives here; only one written to an agent is worth
+		// recording as delivered.
+		if addressed(event) && s.acting(r.Context(), origin, eventType, payload) {
+			s.routeArrivingMessage(r, origin, payload, event)
+		}
 	} else {
 		s.logger.Debug("ignoring a message event", "type", eventType)
 	}
@@ -126,14 +125,31 @@ func addressed(event messageEvent) bool {
 
 // routeArrivingMessage answers a message from the session running on its channel, or hands
 // it to a worker to start one.
-func (s *Server) routeArrivingMessage(r *http.Request, event messageEvent) {
-	if !addressed(event) {
-		return
-	}
-
+//
+// The body is carried in rather than read again because the session may be running on
+// another node, which has to be handed the delivery exactly as Stream signed it.
+func (s *Server) routeArrivingMessage(r *http.Request, origin hookOrigin, body []byte, event messageEvent) {
 	if s.sessions != nil {
-		if found, running := s.sessions.ByAgent(event.ChannelID); running {
+		// A session running on a channel of the same name in another app is somebody
+		// else's conversation.
+		if found, running := s.sessions.ByAgentWhere(event.ChannelID, origin.owns); running {
 			if found.Spec().PersistConversation {
+				return
+			}
+			if found.Spec().DispatchText {
+				_, err := s.dispatchText(r.Context(), found, dispatch.Message{
+					ChannelType: event.ChannelType,
+					ChannelID:   event.ChannelID,
+					Custom:      customOf(event.ChannelCustom),
+					Text:        event.Message.Text,
+					MessageID:   event.Message.ID,
+					UserID:      event.Message.User.ID,
+					UserName:    event.Message.User.Name,
+				}, "")
+				if err != nil {
+					s.logger.Error("nobody could answer an arriving message",
+						"channel", event.ChannelID, "session", found.ID(), "error", err)
+				}
 				return
 			}
 			// On its own goroutine because a model call takes seconds and Stream is
@@ -144,14 +160,23 @@ func (s *Server) routeArrivingMessage(r *http.Request, event messageEvent) {
 		}
 	}
 
+	if s.forwardedMessage(r, body, event) {
+		return
+	}
+
 	if s.store == nil || s.dispatch == nil {
 		return
 	}
 
 	// Nothing is running, so this has to be given to a worker, and that needs to know
 	// whose channel it is and which agent answers in it.
-	customerID, configID, found := s.ownerOf(r.Context(), event)
+	customerID, configID, found := s.ownerOf(r.Context(), origin, event)
 	if !found {
+		return
+	}
+	if !s.mayWrite(r.Context(), origin, customerID) {
+		s.logger.Info("not starting work in the deployment's app for a customer no longer writing there",
+			"channel", event.ChannelID, "customer", customerID)
 		return
 	}
 
@@ -176,9 +201,10 @@ func (s *Server) routeArrivingMessage(r *http.Request, event messageEvent) {
 			"channel", event.ChannelID, "customer", customerID, "error", err)
 		return
 	}
+	s.pinHook(origin, customerID, chatlog.ChannelType+":"+event.ChannelID)
 	s.logger.Info("handed an arriving message to a worker",
 		"channel", event.ChannelID, "customer", customerID,
-		"config", configID, "worker", worker.ID)
+		"config", configID, "worker", worker.ID, "stream_app", origin.app)
 }
 
 // ConfigField is the custom field on an agent channel naming the agent config that answers
@@ -202,8 +228,12 @@ const ConfigField = "agent_config_id"
 // The row the last conversation left is asked first, because a channel that has held one is
 // the ordinary case and its row is what actually ran. A channel with no row falls back to
 // what the channel itself declares.
-func (s *Server) ownerOf(ctx context.Context, event messageEvent) (customerID, configID string, found bool) {
-	if previous, err := s.store.CallByAgent(ctx, event.ChannelID); err == nil {
+//
+// Both are looked for only within the app the hook came from: the channel's last call has to
+// have been in that app, and a config the channel names has to be the app's own customer's.
+func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEvent) (customerID, configID string, found bool) {
+	if previous, err := s.store.CallByAgentInApp(ctx, origin.scope(), event.ChannelID); err == nil &&
+		(origin.deployment || previous.CustomerID == origin.customer) {
 		return previous.CustomerID, previous.ConfigID, true
 	}
 
@@ -214,13 +244,76 @@ func (s *Server) ownerOf(ctx context.Context, event messageEvent) (customerID, c
 		return "", "", false
 	}
 
-	config, err := s.store.AgentConfigOwner(ctx, declared)
+	var config store.AgentConfig
+	var err error
+	if owner, scoped := s.configOwnerOf(origin); scoped {
+		config, err = s.store.AgentConfig(ctx, owner, declared)
+	} else {
+		config, err = s.store.AgentConfigOwner(ctx, declared)
+	}
 	if err != nil {
-		s.logger.Error("an arriving message's channel names a config nobody holds",
-			"channel", event.ChannelID, "config", declared, "error", err)
+		s.logger.Error("an arriving message's channel names a config nobody in its app holds",
+			"channel", event.ChannelID, "config", declared, "stream_app", origin.app, "error", err)
 		return "", "", false
 	}
 	return config.CustomerID, config.ID, true
+}
+
+// configOwnerOf is the only customer whose configs a channel in the hook's app may name: the
+// registered app's own customer, or in app mode the deployment's own customer for a hook
+// from the deployment's app, so a channel there never starts a fallback tenant's agent. In
+// deployment mode every customer shares the app, and a channel may name any config.
+func (s *Server) configOwnerOf(origin hookOrigin) (string, bool) {
+	switch {
+	case !origin.deployment:
+		return origin.customer, true
+	case s.stream != nil && s.stream.PerApp():
+		return streamapp.CustomerOf(origin.app), true
+	}
+	return "", false
+}
+
+// leftToDispatch reports whether text this kind of caller sent a session goes to the
+// customer's dispatch worker rather than the model. Only an end user's does: the server is
+// how the worker answers, so what it sends always reaches the model.
+func leftToDispatch(found *session.Session, kind auth.Kind) bool {
+	return found.Spec().DispatchText && kind != auth.KindServer
+}
+
+// dispatchText hands text an end user wrote to a session to one of the customer's dispatch
+// workers, instead of the model. A durable command is accepted first, so the message is
+// recorded and shown as being answered, and withdrawn again if no worker can take it.
+func (s *Server) dispatchText(ctx context.Context, found *session.Session, message dispatch.Message, clientID string) (conversation.CommandReceipt, error) {
+	if s.dispatch == nil {
+		return conversation.CommandReceipt{}, errors.New("this agent leaves text to a dispatch worker, and this deployment has none")
+	}
+	var receipt conversation.CommandReceipt
+	if message.CommandID != "" {
+		accepted, err := found.AwaitCommand(ctx, message.CommandID, message.Text, clientID)
+		if err != nil || accepted.Duplicate {
+			return accepted, err
+		}
+		receipt = accepted
+	}
+
+	spec := found.Spec()
+	message.AgentID = spec.AgentID
+	message.ConfigID = spec.ConfigID
+	message.SessionID = found.ID()
+	message.At = time.Now().UTC()
+	worker, err := s.dispatch.AssignMessage(spec.CustomerID, message)
+	if err != nil {
+		if message.CommandID != "" {
+			if _, stopped := found.InterruptCommand(message.CommandID); stopped != nil {
+				s.logger.Error("could not withdraw a command no worker took",
+					"session", found.ID(), "command", message.CommandID, "error", stopped)
+			}
+		}
+		return conversation.CommandReceipt{}, err
+	}
+	s.logger.Info("handed a message to a worker",
+		"session", found.ID(), "customer", spec.CustomerID, "worker", worker.ID)
+	return receipt, nil
 }
 
 // answerMessage answers from a session that is already running.

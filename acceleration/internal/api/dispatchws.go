@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -29,25 +30,21 @@ const defaultCapacity = 4
 func (s *Server) dispatchCalls(w http.ResponseWriter, r *http.Request) {
 	customerID, ok := CustomerFrom(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "the "+CustomerHeader+" header is required")
+		writeError(w, errMissingCustomer)
 		return
 	}
 	if s.refuseClientSide(w, r) {
 		return
 	}
 	if s.dispatch == nil {
-		writeError(w, http.StatusNotFound, "this deployment does not dispatch calls")
+		writeError(w, notFound("this deployment does not dispatch calls"))
 		return
 	}
 
-	capacity := defaultCapacity
-	if asked := r.URL.Query().Get("capacity"); asked != "" {
-		parsed, err := strconv.Atoi(asked)
-		if err != nil || parsed < 1 {
-			writeError(w, http.StatusBadRequest, "capacity has to be a positive number of calls")
-			return
-		}
-		capacity = parsed
+	registration, failure := registrationOf(r)
+	if failure != "" {
+		writeError(w, invalidRequest(failure))
+		return
 	}
 
 	// Registering before the upgrade would put a worker in the rotation that cannot be
@@ -59,11 +56,12 @@ func (s *Server) dispatchCalls(w http.ResponseWriter, r *http.Request) {
 	}
 	defer connection.Close()
 
-	worker, release := s.dispatch.Register(customerID, capacity)
+	worker, release := s.dispatch.Register(customerID, registration)
 	defer release()
 
 	s.logger.Info("a dispatch worker is waiting for calls",
-		"customer", customerID, "worker", worker.ID, "capacity", capacity)
+		"customer", customerID, "worker", worker.ID, "capacity", registration.Capacity,
+		"carried", registration.Active, "handles", registration.Handles)
 
 	// A worker that goes away is noticed by the reader, and the writer is asleep on a
 	// channel until a call arrives. Without being told, it would sit there until the next
@@ -81,6 +79,49 @@ func (s *Server) dispatchCalls(w http.ResponseWriter, r *http.Request) {
 	s.writeCalls(connection, worker, gone, pongs, replies)
 
 	s.logger.Info("a dispatch worker stopped waiting", "worker", worker.ID)
+}
+
+// registrationOf reads what a worker says about itself off its query string, returning why
+// it cannot be registered if anything in there is not something a worker can be.
+//
+// Saying `active` at all, even as zero, is what says the worker reports each piece of work
+// finished. A worker that says nothing is one built against an older router, which can only
+// be held to its queue.
+func registrationOf(r *http.Request) (dispatch.Registration, string) {
+	asked := r.URL.Query()
+	registration := dispatch.Registration{Capacity: defaultCapacity}
+
+	if capacity := asked.Get("capacity"); capacity != "" {
+		parsed, err := strconv.Atoi(capacity)
+		if err != nil || parsed < 1 {
+			return registration, "capacity has to be a positive number of calls"
+		}
+		registration.Capacity = parsed
+	}
+	if asked.Has("active") {
+		parsed, err := strconv.Atoi(asked.Get("active"))
+		if err != nil || parsed < 0 {
+			return registration, "active has to be the amount of work this worker is already holding"
+		}
+		registration.Active = parsed
+		registration.Tracking = true
+	}
+	if asked.Has("handles") {
+		// Present but naming nothing is a worker that takes no work at all, which a process
+		// hosting tools and answering neither calls nor messages is. Absent is a worker that
+		// takes everything, which is what one built against a router that never asked means.
+		registration.Handles = []dispatch.Kind{}
+		for kind := range strings.SplitSeq(asked.Get("handles"), ",") {
+			switch dispatch.Kind(kind) {
+			case "":
+			case dispatch.Calls, dispatch.Messages:
+				registration.Handles = append(registration.Handles, dispatch.Kind(kind))
+			default:
+				return registration, "handles takes " + string(dispatch.Calls) + ", " + string(dispatch.Messages) + ", or both"
+			}
+		}
+	}
+	return registration, ""
 }
 
 // writeCalls pushes calls and messages to the worker until it goes away, is released, or
@@ -190,6 +231,8 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 			LatencyMs     float64 `json:"latency_ms"`
 			// CallID names the call accepted or rejected answers for.
 			CallID string `json:"call_id"`
+			// WorkID names the piece of work done reports finished.
+			WorkID string `json:"work_id"`
 			// Reason is why a call was rejected, in words for a log.
 			Reason string `json:"reason"`
 			// At echoes back a ping, so the worker can measure the round trip itself.
@@ -244,6 +287,15 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 				s.logger.Debug("a hosted tool answered a call nobody is waiting on",
 					"worker", worker.ID, "id", report.ID)
 			}
+
+		case "done":
+			// What the worker is holding is what it has been handed and not yet reported,
+			// so this is where its room for the next piece of work comes back.
+			if report.Error != "" {
+				s.logger.Error("a worker could not do the work it was handed",
+					"worker", worker.ID, "work", report.WorkID, "error", report.Error)
+			}
+			worker.Done(report.WorkID)
 
 		case "accepted":
 			s.logger.Debug("a worker took a call", "worker", worker.ID, "call", report.CallID)
@@ -322,6 +374,7 @@ func callFrame(call dispatch.Call) frame {
 	}
 	return frame{
 		"type":          "call",
+		"work_id":       call.WorkID,
 		"call_id":       call.CallID,
 		"call_type":     call.CallType,
 		"called_number": call.CalledNumber,
@@ -340,10 +393,13 @@ func messageFrame(message dispatch.Message) frame {
 	}
 	return frame{
 		"type":         "message",
+		"work_id":      message.WorkID,
 		"channel_type": message.ChannelType,
 		"channel_id":   message.ChannelID,
 		"agent_id":     message.AgentID,
 		"config_id":    message.ConfigID,
+		"session_id":   message.SessionID,
+		"command_id":   message.CommandID,
 		"custom":       custom,
 		"text":         message.Text,
 		"message_id":   message.MessageID,

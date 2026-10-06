@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace GetStream\VisionAgents\Folder;
 
 use GetStream\VisionAgents\Exception\ConfigurationException;
+use GetStream\VisionAgents\Generated\AgentDispatch;
+use GetStream\VisionAgents\Generated\DispatchSetting;
 use GetStream\VisionAgents\Generated\SessionVideo;
 
 /**
@@ -15,11 +17,12 @@ use GetStream\VisionAgents\Generated\SessionVideo;
  */
 final readonly class Declaration
 {
-    private const array STRINGS = ['name', 'description', 'mode', 'stt', 'tts', 'voice', 'llm', 'subagent', 'search', 'greeting', 'sandbox'];
+    private const array STRINGS = ['name', 'description', 'mode', 'stt', 'tts', 'voice', 'llm', 'harness', 'subagent', 'search', 'greeting', 'sandbox'];
     private const array LISTS = ['plugins', 'keyterms'];
 
     /**
      * @param ?string $sts null when the declaration says nothing, empty when it turns it off
+     * @param float $speed the voice's rate of delivery, 1 being its own; 0 leaves it there
      * @param list<string> $plugins
      * @param list<string> $keyterms
      * @param array<string, string> $tags
@@ -32,7 +35,9 @@ final readonly class Declaration
         public string $tts = '',
         public ?string $sts = null,
         public string $voice = '',
+        public float $speed = 0.0,
         public string $llm = '',
+        public string $harness = '',
         public string $subagent = '',
         public string $search = '',
         public string $greeting = '',
@@ -41,6 +46,7 @@ final readonly class Declaration
         public array $keyterms = [],
         public array $tags = [],
         public ?SessionVideo $video = null,
+        public ?AgentDispatch $dispatch = null,
     ) {
     }
 
@@ -64,12 +70,19 @@ final readonly class Declaration
                 $values[$key] = self::scalar($key, $value);
             } elseif ($key === 'sts') {
                 $values['sts'] = $value === null ? null : self::scalar($key, $value);
+            } elseif ($key === 'speed') {
+                if ($value !== null && !is_int($value) && !is_float($value)) {
+                    throw new ConfigurationException('speed is a number, 1 being the voice\'s own rate');
+                }
+                $values['speed'] = (float) $value;
             } elseif (in_array($key, self::LISTS, true)) {
                 $values[$key] = self::strings($key, $value);
             } elseif ($key === 'tags') {
                 $values['tags'] = self::tags($value);
             } elseif ($key === 'video') {
                 $values['video'] = self::video($value);
+            } elseif ($key === 'dispatch') {
+                $values['dispatch'] = self::dispatch($value);
             } else {
                 throw new ConfigurationException("\"{$key}\" is not something agent.yaml declares");
             }
@@ -83,7 +96,9 @@ final readonly class Declaration
             tts: self::pick($values, 'tts'),
             sts: array_key_exists('sts', $values) && is_string($values['sts']) ? $values['sts'] : null,
             voice: self::pick($values, 'voice'),
+            speed: is_float($values['speed'] ?? null) ? $values['speed'] : 0.0,
             llm: self::pick($values, 'llm'),
+            harness: self::pick($values, 'harness'),
             subagent: self::pick($values, 'subagent'),
             search: self::pick($values, 'search'),
             greeting: self::pick($values, 'greeting'),
@@ -92,6 +107,7 @@ final readonly class Declaration
             keyterms: self::pickList($values, 'keyterms'),
             tags: self::pickTags($values),
             video: ($values['video'] ?? null) instanceof SessionVideo ? $values['video'] : null,
+            dispatch: ($values['dispatch'] ?? null) instanceof AgentDispatch ? $values['dispatch'] : null,
         );
     }
 
@@ -165,7 +181,29 @@ final readonly class Declaration
         if ($frames < 1 || $frames > 8) {
             throw new ConfigurationException('video.max_frames must be an integer from 1 to 8');
         }
-        return new SessionVideo($source === '' ? null : $source, $frames);
+        return new SessionVideo(maxFrames: $frames, source: $source === '' ? null : $source);
+    }
+
+    /**
+     * Each setting is `enabled` or `disabled`, passed through for the router to judge.
+     */
+    private static function dispatch(mixed $value): ?AgentDispatch
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (!is_array($value) || (array_is_list($value) && $value !== [])) {
+            throw new ConfigurationException('dispatch is a mapping');
+        }
+        $settings = ['incoming_call' => null, 'text' => null];
+        foreach ($value as $key => $each) {
+            if (!array_key_exists($key, $settings)) {
+                throw new ConfigurationException("\"dispatch.{$key}\" is not something agent.yaml declares");
+            }
+            $setting = self::scalar("dispatch.{$key}", $each);
+            $settings[$key] = $setting === '' ? null : (DispatchSetting::tryFrom($setting) ?? $setting);
+        }
+        return new AgentDispatch(incomingCall: $settings['incoming_call'], text: $settings['text']);
     }
 
     /**
