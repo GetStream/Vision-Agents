@@ -4,7 +4,7 @@ Oct 1, 2026 · @Kanat Kiialbaev
 
 Exported from Claude Docs on 2026-10-05 (https://claude.ai/code/artifact/e4d97114-1334-4181-beab-c5721909c201). The Claude Doc is the source of truth; this copy is a snapshot.
 
-33 subtasks in 7 phases, each one PR, in the order they can land, plus 21 subtasks (T37 to T57) added on October 5 from the channel decisions. Status on October 5: 14 merged on accelerate (T1 to T10, T15, T16, T20, T32). They implement [Accelerate connectors: architecture design](architecture.md) on top of the code that exists today. Connector-layer subtasks are Linear sub-issues of [AI-816](https://linear.app/stream/issue/AI-816/basic-connectorsmcp-support); the channel bridge and the omni-channel conversation have their own parent issues, AI-866 and AI-867. Each subtask's Linear number follows its title.
+33 subtasks in 7 phases, each one PR, in the order they can land, plus 21 subtasks (T37 to T57) added on October 5 from the channel decisions. Status on October 6: 17 merged on accelerate (T1 to T11, T15 to T17, T20, T32, T37). They implement [Accelerate connectors: architecture design](architecture.md) on top of the code that exists today. Connector-layer subtasks are Linear sub-issues of [AI-816](https://linear.app/stream/issue/AI-816/basic-connectorsmcp-support); the channel bridge and the omni-channel conversation have their own parent issues, AI-866 and AI-867. Each subtask's Linear number follows its title.
 
 ## Ground rules
 
@@ -139,6 +139,8 @@ Three PRs. The OAuth scheme is the branch's `internal/mcp/oauth.go` (961 lines) 
 
 ### T11. Static schemes and the scheme contract suite · [AI-840](https://linear.app/stream/issue/AI-840)
 
+**Status: merged** in [#745](https://github.com/GetStream/Vision-Agents/pull/745) (`4f379ba6`), October 6. Open: the `api_key` header name comes from the caller (`Supplied["header"]`), so a built-in manifest with a fixed header needs a manifest field. T18 settles the `Supplied` key names.
+
 - **Description.** `schemes/apikey`, `schemes/bearer`, `schemes/none`, each a few dozen lines: `Begin` returns Done, `Complete` seals the supplied value, `Retrieve` returns it with no expiry, `Wrap` sets the configured header (with the forbidden-header list from `api/connectors.go:1050-1057`). Plus `core/contracttest.SchemeContract`, a table-driven suite any scheme runs: round trip, concurrent Retrieve commits once, no secret in URL, log or error text, `Classify` covers the six outcomes, `Revoke` is honest.
 - **Scope.** Three scheme packages, the contract package, and its application to all four schemes.
 - **Out of scope.** `basic`, `mtls`, `aws_sigv4`, `github_app` (phase 6 and later).
@@ -200,6 +202,8 @@ Five PRs. Each registers its operations with `huma.Register` beside Go request a
 
 ### T17. OAuth consent flow: authorizations, launch page, handoff, callback · [AI-844](https://linear.app/stream/issue/AI-844)
 
+**Status: merged** in [#747](https://github.com/GetStream/Vision-Agents/pull/747) (`7390f97d`), October 6. `core.CredentialState` gained `AccountID`, `Metadata` and `Scopes`. Running it on staging needs [AI-896](https://linear.app/stream/issue/AI-896): the staging gateway answers 401 on every no-auth route, and staging has no KEK and connectors off.
+
 - **Description.** `POST /v1/agents/connections/{id}/authorizations` creates a sealed `Attempt{Kind: consent | reconnect}` with a 10-minute lifetime and returns the router-hosted launch URL and a handoff token; the launch page, the origin-checked handoff that sets the HttpOnly callback cookie, `GET /v1/agents/connectors/oauth/callback` (state consumed once, cookie must match, `iss` check, exchange through `Scheme.Complete`, account-switch rejection), and `/.well-known/oauth-client-metadata`. All copied from the branch's handlers (`api/connectors.go:294-488,760-878`), with the `BeforeComplete` hook point called from the callback.
 - **Scope.** Handlers, the launch HTML, cookie helpers, OpenAPI and Go SDK regen, tests against T5 for success, denial, replay, wrong browser, account switch.
 - **Out of scope.** `step_up` and `admin_consent` kinds (T27); OAuth client records (T19).
@@ -228,7 +232,7 @@ Four PRs. After T21 an agent on staging can call a Slack or Linear tool; after T
 
 ### T20. Agent config connector bindings · [AI-842](https://linear.app/stream/issue/AI-842)
 
-**Status: merged** in [#735](https://github.com/GetStream/Vision-Agents/pull/735) (`5db5d199`), October 5. Open: T16's unforced delete should become one `UPDATE … WHERE NOT EXISTS` now that bindings are written.
+**Status: merged** in [#735](https://github.com/GetStream/Vision-Agents/pull/735) (`5db5d199`), October 5. The unforced connection delete became one `UPDATE … AND NOT EXISTS` in [#746](https://github.com/GetStream/Vision-Agents/pull/746) (`8b75d33a`), October 6. Still open in [AI-889](https://linear.app/stream/issue/AI-889): a config save racing the delete, and a bind that commits while the delete waits on the row lock.
 
 - **Description.** The `connectors[]` field on `AgentConfigRequest`, `AgentConfig` and `SyncAgentRequest`: `name` (alias), `connector_id`, `connection {type: fixed | session, connection_id}`, `tools[{name, schema_digest}]`, `required`, `timeout_ms`. Validation from the branch's `connectorBindingsComplaint` (`api/connectors.go:1147-1192`): alias pattern, no `__`, unique aliases, fixed needs a connection id, session must not carry one, digest is 64 hex chars, timeout 1 to 30,000 ms. Omission on update leaves bindings unchanged; `[]` clears them; a sync replaces them.
 - **Scope.** `internal/api/configs.go`, `config_patch.go`, `sync.go`, store read and write of the column from T7, OpenAPI and Go SDK regen, tests.
@@ -282,7 +286,7 @@ Ten PRs that can run in any order once their dependencies are in. The first two 
 
 ### T26. Events endpoint, verifier registry and the first verifier · [AI-848](https://linear.app/stream/issue/AI-848)
 
-- **Description.** `POST /v1/agents/connectors/events/{connector_id}` with no API auth: the one inbound handler for any provider event. The `Verifier` registry; `signals/hmacheader` (header name, algorithm, encoding and secret source from the manifest). A verifier returns grant signals and an optional message (T37). Grant signals (`Revoked`, `Uninstalled`, `Rotated`) go to `Resolver.Invalidate` by account id; a message goes to the channel bridge hook, which logs and drops it until T57 lands. T38 adds a second route to the same handler, `POST /v1/connectors/events/{provider_app_id}`, for connectors with a provider app for each customer. First mapping: Slack `tokens_revoked`.
+- **Description.** `POST /v1/agents/connectors/events/{connector_id}` with no API auth: the one inbound handler for any provider event. The `Verifier` registry; `signals/hmacheader` (header name, algorithm, encoding and secret source from the manifest). A verifier returns a VerifiedEvent (T37): grant signals, messages, and a URL-verification challenge that the endpoint answers with 200. Grant signals (`Revoked`, `Uninstalled`, `Rotated`) go to `Resolver.Invalidate` by account id; a message goes to the channel bridge hook, which logs and drops it until T57 lands. T38 adds a second route to the same handler, `POST /v1/connectors/events/{provider_app_id}`, for connectors with a provider app for each customer. First mapping: Slack `tokens_revoked`.
 - **Scope.** Handler, registry, one verifier, Slack manifest `signals` block, tests with a signed and an unsigned payload.
 - **Out of scope.** `jwt_set` (Google RISC), `twilio_signature`; the route for each provider app (T38); the channel bridge (T57).
 - **Dependencies.** T12, T16, T37.
@@ -364,6 +368,8 @@ Eleven PRs in the connector layer, layer 1 of the [channels doc](channels.md): t
 Waves follow the same rule as the chart above: one more than the deepest dependency, with T26 now after T37. T37 depends on T3 only, so it can start now.
 
 ### T37. Verifier result carries a message · [AI-868](https://linear.app/stream/issue/AI-868)
+
+**Status: merged** in [#744](https://github.com/GetStream/Vision-Agents/pull/744) (`65449473`), October 6. `Verify` returns `VerifiedEvent{Signals, Messages, Challenge}`. Each `InboundMessage` carries a `ProviderMessageID`, by which the channel bridge drops retried deliveries (T57).
 
 - **Required, do first.** Description. Change `core.Verifier.Verify` to return grant signals and messages: a result with `[]Signal` and an optional inbound message (provider unit id, thread key, author, text, raw body). Today `Verify` returns `[]core.Signal` only (`[core/signal.go:5-27](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/core/signal.go#L5-L27)`). No implementation exists yet, so the change costs least now.
 - Scope. `core/signal.go`, doc comments, `core/AGENTS.md`, a contract test.
@@ -457,7 +463,7 @@ Six PRs in the Router above the connector layer: the channel bridge and the firs
 
 ### T57. Channel bridge core · [AI-878](https://linear.app/stream/issue/AI-878)
 
-- **Required.** Description. The inbound half maps a verified message (T26, T37) to a provider unit, an external thread and an author, and writes it to the thread channel as the person, without `source`. Router's message hook then wakes or starts the session. The outbound half takes a reply (`source: agent`) in a linked thread channel, which the message hook hands over, resolves the credential (T12) and sends it through the reply endpoint and body template of the manifest `channel` block (T34). Store `channel_threads`: external thread ↔ thread channel cid, with `stream_app_pk`. Retried deliveries and the bot's own messages are dropped. An external author maps to a Stream Chat user.
+- **Required.** Description. The inbound half maps a verified message (T26, T37) to a provider unit, an external thread and an author, and writes it to the thread channel as the person, without `source`. Router's message hook then wakes or starts the session. The outbound half takes a reply (`source: agent`) in a linked thread channel, which the message hook hands over, resolves the credential (T12) and sends it through the reply endpoint and body template of the manifest `channel` block (T34). Store `channel_threads`: external thread ↔ thread channel cid, with `stream_app_pk`. Retried deliveries (same ProviderMessageID, T37) and the bot's own messages are dropped. An external author maps to a Stream Chat user.
 - Scope. The bridge package, the store table, the message-hook hand-off, a fake-provider channel personality, tests.
 - Out of scope. Any real provider (T35, T36, T51 to T53); episode cards (T41).
 - Dependencies. T26, T34, T12.

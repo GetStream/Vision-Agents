@@ -9,7 +9,7 @@ Exported from Claude Docs on 2026-10-05 (https://claude.ai/code/artifact/b2e8866
 These decisions close the open channel questions of this doc. They are the target design. They are not in the code. They are a proposal from the connectors work: Thierry has not confirmed them yet (channels doc, «To decide with Thierry»). Details and diagrams: [Connectors: inbound channels, tools and the omni-channel conversation](channels.md). Comparison with Vercel: [Vercel Connect и наши connectors](https://claude.ai/code/artifact/b1467e6d-f4f7-4f5e-bb77-3f862c19e608).
 
 1. **Channel transport.** The channel bridge runs in the Router. It writes the inbound message to a Stream Chat channel. Router's existing message hook wakes `session.Session` (`[internal/api/messagehooks.go:61](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/api/messagehooks.go#L61)`). Rejected: a bridge that calls the session directly (no shared history), and a bridge in a separate service (a second token store, a second contact map and its own Stream Chat webhook).
-2. **The connector layer serves both sides.** Tools use the `sources` block of `core.Manifest`. Inbound channels use a new `channel` block: scheme, verifier parameters, event routing, thread key, reply endpoint and outbound policy, for example the WhatsApp 24-hour window. An inbound channel is still never a kind of tool (one-way door 9). One events endpoint for each provider app, `/v1/connectors/events/{provider_app_id}` (proposal), is a second route into the same handler as the per-connector endpoint, which stays for connectors with no provider app for each customer. `core.Verifier` checks the request and returns either token signals or a message. Reason: Slack sends `tokens_revoked` and `app_uninstalled` as Events API events to the app's Request URL ([tokens\_revoked](https://docs.slack.dev/reference/events/tokens_revoked), [app\_uninstalled](https://docs.slack.dev/reference/events/app_uninstalled)).
+2. **The connector layer serves both sides.** Tools use the `sources` block of `core.Manifest`. Inbound channels use a new `channel` block: scheme, verifier parameters, event routing, thread key, reply endpoint and outbound policy, for example the WhatsApp 24-hour window. An inbound channel is still never a kind of tool (one-way door 9). One events endpoint for each provider app, `/v1/connectors/events/{provider_app_id}` (proposal), is a second route into the same handler as the per-connector endpoint, which stays for connectors with no provider app for each customer. `core.Verifier` checks the request and returns a VerifiedEvent: token signals, messages, or a URL-verification challenge (T37, merged in #744). Reason: Slack sends `tokens_revoked` and `app_uninstalled` as Events API events to the app's Request URL ([tokens\_revoked](https://docs.slack.dev/reference/events/tokens_revoked), [app\_uninstalled](https://docs.slack.dev/reference/events/app_uninstalled)).
 3. **Episodes.** Each external thread has a thread channel with the messages word for word. The omni-channel, the person's agent channel, keeps one episode card for each call or text thread. An episode closes at call end or after an idle period. On close, the summary goes into the card and the facts go to memory. The agent reads its own thread word for word and other channels through the cards.
 4. **One provider unit for each customer.** Slack: one Slack app for each `app_pk`, created by the Router with `apps.manifest.create`, or the customer's own app (`client.registration: customer`). WhatsApp: the customer's WABA and number under one Stream Tech Provider app. Telegram: the customer's bot. SMS and iMessage: the customer's account or number. The shared Stream app serves only Stream's own agents. Each Slack app has its own events URL, stays in the customer's workspace without public distribution, has token rotation on, and can restrict its tokens to the Router IP ranges (at most 10 in the manifest).
 5. **Direct calls.** The proxy is the default. The Router adds the token and forwards the request unchanged. It implements no provider method; the customer uses the provider's official SDK with its base URL set to the proxy. Token export is opt-in and only for the customer's own unit: a bot token for a connection in the agent's `core.Binding` (`fixed`), a user token only in that user's own session (`session`), and never when tokens are restricted to the Router IP ranges. Static keys (`api_key`, bot tokens) do not rotate, so the proxy stays their default. Raw event forwarding signs each request with a key of that customer.
@@ -193,16 +193,37 @@ type ResolvedBinding struct {
 	Transport  func(context.Context) (http.RoundTripper, error)
 }
 
-// Verifier checks one inbound provider event and names the grants it is about.
+// Verifier checks one inbound provider event: the grants it is about, the messages it
+// carries, or a URL-verification challenge. An error means "not from the provider".
 type Verifier interface {
 	Name() string
-	Verify(r *http.Request, body []byte, m ResolvedManifest) ([]Signal, error)
+	Verify(r *http.Request, body []byte, m ResolvedManifest) (VerifiedEvent, error)
 }
 
 type Signal struct {
 	ConnectorID string
 	AccountID   string
 	Kind        SignalKind // Revoked, Uninstalled, Rotated
+}
+
+// VerifiedEvent is what one verified request says (T37, #744). A body the verifier
+// cannot map is an empty event, not an error.
+type VerifiedEvent struct {
+	Signals   []Signal
+	Messages  []InboundMessage // a slice: one delivery may batch many (Meta: up to 1000)
+	Challenge string           // answered 200 text/plain (Slack url_verification)
+}
+
+// InboundMessage is one message for the channel bridge, named by the provider's ids
+// and by a thread key the verifier builds.
+type InboundMessage struct {
+	ConnectorID       string
+	ProviderUnitID    string // workspace, team or phone number
+	ThreadKey         string // built by the verifier, never parsed
+	AuthorID          string
+	Text              string
+	ProviderMessageID string // the bridge drops a retried delivery by it (T57)
+	Raw               []byte // the body as sent: JSON or form-urlencoded
 }
 
 // Hook is the escape hatch. Registered by name, referenced from a manifest, called at
