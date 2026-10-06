@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"os"
@@ -60,7 +61,11 @@ func (s *AgentSuite) TestLiveEOTNativeScoreGatesPipeline() {
 	}
 	t.Logf("EOT_LIVE direct request=%s score=%.8f samples=%d latency_ms=%.3f", sanitizedLiveRequestID(requestID), score.Probability, score.Samples, float64(directLatency)/float64(time.Millisecond))
 
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 	s.eot = client
+	s.eotMode = EOTModePrimary
 	s.join(false)
 	s.flow.mu.Lock()
 	s.flow.delay = 100 * time.Millisecond
@@ -88,6 +93,7 @@ func (s *AgentSuite) TestLiveEOTNativeScoreGatesPipeline() {
 	if math.Abs(firstPipeline.probability-score.Probability) > 1e-6 {
 		t.Fatal("first pipeline score did not match the direct native score")
 	}
+	s.Empty(s.flow.requests(), "primary EOT must not invoke semantic flow before using the native score")
 	if score.Probability < 0.5 {
 		s.eventually(func() bool {
 			s.agent.converse.mu.Lock()
@@ -99,6 +105,7 @@ func (s *AgentSuite) TestLiveEOTNativeScoreGatesPipeline() {
 		if !hasLiveDecision(s.reported(), ActWait) {
 			t.Fatal("pipeline did not report its native-score Wait decision at 0.5")
 		}
+		s.Empty(s.flow.requests(), "a successful native Wait decision must bypass semantic flow")
 		if score.Probability == 0 {
 			t.Log("EOT_LIVE pipeline reached only the Wait branch at the exact zero-score boundary")
 			return
@@ -121,6 +128,7 @@ func (s *AgentSuite) TestLiveEOTNativeScoreGatesPipeline() {
 		if !hasLiveDecision(s.reported(), ActAnswer) {
 			t.Fatal("pipeline did not report its native-score answer decision")
 		}
+		s.Empty(s.flow.requests(), "a successful native Respond decision must bypass semantic flow")
 		t.Logf("EOT_LIVE pipeline wait_request=%s wait_score=%.8f respond_request=%s respond_score=%.8f samples=%d threshold=%.8f",
 			sanitizedLiveRequestID(firstPipeline.requestID), firstPipeline.probability,
 			sanitizedLiveRequestID(secondPipeline.requestID), secondPipeline.probability, len(samples), score.Probability/2)
@@ -133,6 +141,7 @@ func (s *AgentSuite) TestLiveEOTNativeScoreGatesPipeline() {
 	if !hasLiveDecision(s.reported(), ActAnswer) {
 		t.Fatal("pipeline did not report its native-score answer decision at 0.5")
 	}
+	s.Empty(s.flow.requests(), "a successful native Respond decision must bypass semantic flow")
 	if score.Probability == 1 {
 		t.Log("EOT_LIVE pipeline reached only the Respond branch at the exact one-score boundary")
 		return
@@ -173,6 +182,7 @@ func (s *AgentSuite) TestLiveEOTNativeScoreGatesPipeline() {
 	if countOf[Responded](s.reported()) != 1 || !hasLiveDecision(s.reported(), ActWait) {
 		t.Fatal("second pipeline turn did not report a native-score Wait decision")
 	}
+	s.Empty(s.flow.requests(), "a successful native Wait decision must bypass semantic flow")
 	t.Logf("EOT_LIVE pipeline respond_request=%s respond_score=%.8f wait_request=%s wait_score=%.8f samples=%d threshold=%.8f",
 		sanitizedLiveRequestID(firstPipeline.requestID), firstPipeline.probability,
 		sanitizedLiveRequestID(secondPipeline.requestID), secondPipeline.probability, len(samples), waitThreshold)
