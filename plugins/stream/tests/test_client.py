@@ -80,7 +80,17 @@ class Router:
     async def _no_content(self, request: web.Request) -> web.Response:
         await self._record(request)
         if request.match_info.get("id") == "missing":
-            return web.json_response(status=404, data={"error": "no such thing"})
+            return web.json_response(
+                status=404,
+                data={
+                    "error": {
+                        "message": "no such thing",
+                        "type": "not_found",
+                        "code": "not_found",
+                        "doc_url": "https://getstream.io/agents/docs/api/errors/#not_found",
+                    }
+                },
+            )
         return web.Response(status=204)
 
     async def _fork(self, request: web.Request) -> web.Response:
@@ -181,7 +191,12 @@ class Router:
             return web.json_response(
                 status=400,
                 data={
-                    "error": "a persistent conversation keeps its transcript in Chat"
+                    "error": {
+                        "message": "a persistent conversation keeps its transcript in Chat",
+                        "type": "invalid_request",
+                        "code": "invalid_request",
+                        "doc_url": "https://getstream.io/agents/docs/api/errors/#invalid_request",
+                    }
                 },
             )
         return web.Response(status=204)

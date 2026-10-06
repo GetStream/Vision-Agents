@@ -5,7 +5,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...models.rollup_request import RollupRequest
 from ...models.rollup_result import RollupResult
 from ...types import Response
@@ -32,29 +32,29 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | RollupResult | None:
+) -> ErrorResponse | RollupResult | None:
     if response.status_code == 200:
         response_200 = RollupResult.from_dict(response.json())
 
         return response_200
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
 
     if response.status_code == 500:
-        response_500 = Error.from_dict(response.json())
+        response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
 
@@ -66,7 +66,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | RollupResult]:
+) -> Response[ErrorResponse | RollupResult]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -79,7 +79,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: RollupRequest,
-) -> Response[Error | RollupResult]:
+) -> Response[ErrorResponse | RollupResult]:
     """Aggregate request rows into a rollup table
 
      Covers every modality and customer in the window. Idempotent: re-running it over the same window
@@ -93,7 +93,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | RollupResult]
+        Response[ErrorResponse | RollupResult]
     """
 
     kwargs = _get_kwargs(
@@ -111,7 +111,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: RollupRequest,
-) -> Error | RollupResult | None:
+) -> ErrorResponse | RollupResult | None:
     """Aggregate request rows into a rollup table
 
      Covers every modality and customer in the window. Idempotent: re-running it over the same window
@@ -125,7 +125,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | RollupResult
+        ErrorResponse | RollupResult
     """
 
     return sync_detailed(
@@ -138,7 +138,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: RollupRequest,
-) -> Response[Error | RollupResult]:
+) -> Response[ErrorResponse | RollupResult]:
     """Aggregate request rows into a rollup table
 
      Covers every modality and customer in the window. Idempotent: re-running it over the same window
@@ -152,7 +152,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | RollupResult]
+        Response[ErrorResponse | RollupResult]
     """
 
     kwargs = _get_kwargs(
@@ -168,7 +168,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: RollupRequest,
-) -> Error | RollupResult | None:
+) -> ErrorResponse | RollupResult | None:
     """Aggregate request rows into a rollup table
 
      Covers every modality and customer in the window. Idempotent: re-running it over the same window
@@ -182,7 +182,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | RollupResult
+        ErrorResponse | RollupResult
     """
 
     return (

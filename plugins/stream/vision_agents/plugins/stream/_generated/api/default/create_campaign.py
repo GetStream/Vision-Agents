@@ -7,7 +7,7 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.campaign import Campaign
 from ...models.campaign_request import CampaignRequest
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...types import Response
 
 
@@ -32,29 +32,29 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Campaign | Error | None:
+) -> Campaign | ErrorResponse | None:
     if response.status_code == 201:
         response_201 = Campaign.from_dict(response.json())
 
         return response_201
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
 
     if response.status_code == 500:
-        response_500 = Error.from_dict(response.json())
+        response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
 
@@ -66,7 +66,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Campaign | Error]:
+) -> Response[Campaign | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -79,7 +79,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CampaignRequest,
-) -> Response[Campaign | Error]:
+) -> Response[Campaign | ErrorResponse]:
     """Define a list of people to ring
 
      A campaign is created stopped. Add the people to ring, then start it: concurrency is how many of
@@ -94,7 +94,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Campaign | Error]
+        Response[Campaign | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -112,7 +112,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: CampaignRequest,
-) -> Campaign | Error | None:
+) -> Campaign | ErrorResponse | None:
     """Define a list of people to ring
 
      A campaign is created stopped. Add the people to ring, then start it: concurrency is how many of
@@ -127,7 +127,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Campaign | Error
+        Campaign | ErrorResponse
     """
 
     return sync_detailed(
@@ -140,7 +140,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CampaignRequest,
-) -> Response[Campaign | Error]:
+) -> Response[Campaign | ErrorResponse]:
     """Define a list of people to ring
 
      A campaign is created stopped. Add the people to ring, then start it: concurrency is how many of
@@ -155,7 +155,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Campaign | Error]
+        Response[Campaign | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -171,7 +171,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: CampaignRequest,
-) -> Campaign | Error | None:
+) -> Campaign | ErrorResponse | None:
     """Define a list of people to ring
 
      A campaign is created stopped. Add the people to ring, then start it: concurrency is how many of
@@ -186,7 +186,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Campaign | Error
+        Campaign | ErrorResponse
     """
 
     return (

@@ -28,7 +28,7 @@ from ._generated.api.default import create_session, list_agent_configs, stop_ses
 from ._generated.models import (
     CreateSessionRequest,
     CreateSessionRequestTags,
-    Error,
+    ErrorResponse,
     Session,
     SessionMemory,
     SessionMemoryFilter,
@@ -183,8 +183,8 @@ class Accelerated(OmniLLM):
         created = await create_session.asyncio(
             client=self.backend.client(), body=request
         )
-        if isinstance(created, Error):
-            raise RemotePipelineError(created.error)
+        if isinstance(created, ErrorResponse):
+            raise RemotePipelineError(created.error.message)
         if created is None:
             raise RemotePipelineError("the router did not answer with a session")
 
@@ -298,8 +298,8 @@ class Accelerated(OmniLLM):
         lookup happens here rather than making the caller carry an id around.
         """
         listed = await list_agent_configs.asyncio(client=self.backend.client())
-        if isinstance(listed, Error):
-            raise RemotePipelineError(listed.error)
+        if isinstance(listed, ErrorResponse):
+            raise RemotePipelineError(listed.error.message)
         if listed is None:
             raise RemotePipelineError(
                 "the router did not answer with any agent configs"

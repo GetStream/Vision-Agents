@@ -24,7 +24,7 @@ from ._generated.models import (
     ChannelIdentity,
     ChannelLineRequest,
     DispatchSetting,
-    Error,
+    ErrorResponse,
     Harness,
     KnowledgeDocument,
     KnowledgeUrlDeclaration,
@@ -457,10 +457,10 @@ def _simulation(simulation: Simulation) -> SimulationDeclaration:
     return declared
 
 
-def _answer(answer: Union[T, Error, None]) -> T:
+def _answer(answer: Union[T, ErrorResponse, None]) -> T:
     """Return what the router sent, raising what it said went wrong instead."""
-    if isinstance(answer, Error):
-        raise RuntimeError(answer.error)
+    if isinstance(answer, ErrorResponse):
+        raise RuntimeError(answer.error.message)
     if answer is None:
         raise RuntimeError("the router did not answer")
     return answer

@@ -280,7 +280,7 @@ describe("sessions", () => {
   it("says why the router would not delete a session's memories", async () => {
     router.serve("DELETE", "/v1/agents/sessions/someone-elses/memories", {
       status: 404,
-      body: { error: "unknown session" },
+      body: { error: { message: "unknown session", type: "not_found", code: "not_found" } },
     });
 
     await assert.rejects(
@@ -420,7 +420,7 @@ describe("simulations", () => {
   it("says why the router would not run a simulation", async () => {
     router.serve("POST", "/v1/agents/simulations/gone/run", {
       status: 404,
-      body: { error: "unknown simulation" },
+      body: { error: { message: "unknown simulation", type: "not_found", code: "not_found" } },
     });
 
     await assert.rejects(
@@ -554,7 +554,7 @@ describe("responses", () => {
   it("says why the router would not rewind", async () => {
     router.serve("POST", "/v1/agents/sessions/session-1/rewind", {
       status: 400,
-      body: { error: "session: a stored text conversation cannot be rewound; fork it at the response" },
+      body: { error: { message: "session: a stored text conversation cannot be rewound; fork it at the response", type: "invalid_request", code: "invalid_request" } },
     });
 
     await assert.rejects(

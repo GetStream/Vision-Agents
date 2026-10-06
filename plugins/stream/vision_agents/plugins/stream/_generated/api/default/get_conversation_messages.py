@@ -6,7 +6,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...models.get_conversation_messages_response_200 import (
     GetConversationMessagesResponse200,
 )
@@ -41,29 +41,29 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | GetConversationMessagesResponse200 | None:
+) -> ErrorResponse | GetConversationMessagesResponse200 | None:
     if response.status_code == 200:
         response_200 = GetConversationMessagesResponse200.from_dict(response.json())
 
         return response_200
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
 
     if response.status_code == 500:
-        response_500 = Error.from_dict(response.json())
+        response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
 
@@ -75,7 +75,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | GetConversationMessagesResponse200]:
+) -> Response[ErrorResponse | GetConversationMessagesResponse200]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -90,7 +90,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     agent_id: str,
     before: str | Unset = UNSET,
-) -> Response[Error | GetConversationMessagesResponse200]:
+) -> Response[ErrorResponse | GetConversationMessagesResponse200]:
     """Read a persistent text conversation
 
     Args:
@@ -103,7 +103,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | GetConversationMessagesResponse200]
+        Response[ErrorResponse | GetConversationMessagesResponse200]
     """
 
     kwargs = _get_kwargs(
@@ -125,7 +125,7 @@ def sync(
     client: AuthenticatedClient | Client,
     agent_id: str,
     before: str | Unset = UNSET,
-) -> Error | GetConversationMessagesResponse200 | None:
+) -> ErrorResponse | GetConversationMessagesResponse200 | None:
     """Read a persistent text conversation
 
     Args:
@@ -138,7 +138,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | GetConversationMessagesResponse200
+        ErrorResponse | GetConversationMessagesResponse200
     """
 
     return sync_detailed(
@@ -155,7 +155,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     agent_id: str,
     before: str | Unset = UNSET,
-) -> Response[Error | GetConversationMessagesResponse200]:
+) -> Response[ErrorResponse | GetConversationMessagesResponse200]:
     """Read a persistent text conversation
 
     Args:
@@ -168,7 +168,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | GetConversationMessagesResponse200]
+        Response[ErrorResponse | GetConversationMessagesResponse200]
     """
 
     kwargs = _get_kwargs(
@@ -188,7 +188,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     agent_id: str,
     before: str | Unset = UNSET,
-) -> Error | GetConversationMessagesResponse200 | None:
+) -> ErrorResponse | GetConversationMessagesResponse200 | None:
     """Read a persistent text conversation
 
     Args:
@@ -201,7 +201,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | GetConversationMessagesResponse200
+        ErrorResponse | GetConversationMessagesResponse200
     """
 
     return (

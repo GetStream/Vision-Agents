@@ -7,7 +7,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.agent_log import AgentLog
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...types import Response
 
 
@@ -27,29 +27,34 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> AgentLog | Error | None:
+) -> AgentLog | ErrorResponse | None:
     if response.status_code == 200:
         response_200 = AgentLog.from_dict(response.json())
 
         return response_200
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
 
     if response.status_code == 404:
-        response_404 = Error.from_dict(response.json())
+        response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
 
+    if response.status_code == 500:
+        response_500 = ErrorResponse.from_dict(response.json())
+
+        return response_500
+
     if response.status_code == 503:
-        response_503 = Error.from_dict(response.json())
+        response_503 = ErrorResponse.from_dict(response.json())
 
         return response_503
 
@@ -61,7 +66,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[AgentLog | Error]:
+) -> Response[AgentLog | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -74,7 +79,7 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[AgentLog | Error]:
+) -> Response[AgentLog | ErrorResponse]:
     """Redacted structured log details scoped to the customer
 
     Args:
@@ -85,7 +90,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[AgentLog | Error]
+        Response[AgentLog | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -103,7 +108,7 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> AgentLog | Error | None:
+) -> AgentLog | ErrorResponse | None:
     """Redacted structured log details scoped to the customer
 
     Args:
@@ -114,7 +119,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        AgentLog | Error
+        AgentLog | ErrorResponse
     """
 
     return sync_detailed(
@@ -127,7 +132,7 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[AgentLog | Error]:
+) -> Response[AgentLog | ErrorResponse]:
     """Redacted structured log details scoped to the customer
 
     Args:
@@ -138,7 +143,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[AgentLog | Error]
+        Response[AgentLog | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -154,7 +159,7 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> AgentLog | Error | None:
+) -> AgentLog | ErrorResponse | None:
     """Redacted structured log details scoped to the customer
 
     Args:
@@ -165,7 +170,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        AgentLog | Error
+        AgentLog | ErrorResponse
     """
 
     return (

@@ -3962,9 +3962,27 @@ export type components = {
         readonly Equals: string | {
             readonly $eq: string;
         };
-        readonly Error: {
-            readonly error: string;
+        readonly ErrorDetail: {
+            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know. */
+            readonly code: string;
+            /**
+             * Format: uri
+             * @description Where the code is explained.
+             */
+            readonly doc_url: string;
+            /** @description What went wrong, for a person to read. Its wording may change; branch on code. */
+            readonly message: string;
+            readonly type: components["schemas"]["ErrorType"];
         };
+        /** @description The body of every failure. A failure that is not the caller's own is a 500 of type internal saying only "something went wrong": quote the response's X-Request-Id to find out more. */
+        readonly ErrorResponse: {
+            readonly error: components["schemas"]["ErrorDetail"];
+        };
+        /**
+         * @description The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503.
+         * @enum {string}
+         */
+        readonly ErrorType: "invalid_request" | "authentication" | "permission" | "not_found" | "method_not_allowed" | "not_acceptable" | "conflict" | "gone" | "payload_too_large" | "unsupported_media_type" | "rate_limited" | "internal" | "unavailable";
         /** @description Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model. */
         readonly ForkSessionRequest: {
             readonly agent?: string;
@@ -6378,7 +6396,7 @@ export type components = {
                 readonly [name: string]: unknown;
             };
             content: {
-                readonly "application/json": components["schemas"]["Error"];
+                readonly "application/json": components["schemas"]["ErrorResponse"];
             };
         };
         /** @description The caller is known and this operation is server-side only. It needs Stream-Auth-Type: server and a token carrying server: true, which means it cannot be reached from an end user's device. */
@@ -6387,7 +6405,16 @@ export type components = {
                 readonly [name: string]: unknown;
             };
             content: {
-                readonly "application/json": components["schemas"]["Error"];
+                readonly "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /** @description Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more. */
+        readonly InternalError: {
+            headers: {
+                readonly [name: string]: unknown;
+            };
+            content: {
+                readonly "application/json": components["schemas"]["ErrorResponse"];
             };
         };
         /** @description No such modality, provider or shortcut */
@@ -6396,7 +6423,7 @@ export type components = {
                 readonly [name: string]: unknown;
             };
             content: {
-                readonly "application/json": components["schemas"]["Error"];
+                readonly "application/json": components["schemas"]["ErrorResponse"];
             };
         };
         /** @description The customer header is missing */
@@ -6405,7 +6432,7 @@ export type components = {
                 readonly [name: string]: unknown;
             };
             content: {
-                readonly "application/json": components["schemas"]["Error"];
+                readonly "application/json": components["schemas"]["ErrorResponse"];
             };
         };
     };
@@ -6434,6 +6461,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["HealthStatus"];
                 };
             };
+            readonly 500: components["responses"]["InternalError"];
             /** @description A dependency is unavailable */
             readonly 503: {
                 headers: {
@@ -6470,15 +6498,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listRoutes: {
@@ -6506,15 +6526,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly resolveTarget: {
@@ -6547,15 +6559,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getStats: {
@@ -6591,15 +6595,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getTagStats: {
@@ -6635,15 +6631,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly streamModality: {
@@ -6668,6 +6656,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listCalls: {
@@ -6703,15 +6692,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getCall: {
@@ -6739,15 +6720,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getCallEvents: {
@@ -6778,15 +6751,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getCallTimeline: {
@@ -6814,15 +6779,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createCallToken: {
@@ -6854,15 +6811,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getCallTranscript: {
@@ -6890,15 +6839,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listCampaigns: {
@@ -6922,15 +6863,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createCampaign: {
@@ -6958,15 +6891,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getCampaign: {
@@ -6994,15 +6919,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listCampaignContacts: {
@@ -7030,15 +6947,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly addCampaignContacts: {
@@ -7070,15 +6979,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly pauseCampaign: {
@@ -7106,15 +7007,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly startCampaign: {
@@ -7142,15 +7035,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listChannelAccounts: {
@@ -7174,15 +7059,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly connectChannel: {
@@ -7210,15 +7087,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly disconnectChannel: {
@@ -7244,15 +7113,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly verifyChannelHook: {
@@ -7293,6 +7154,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly receiveChannelMessage: {
@@ -7341,6 +7203,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly linkChannelNumber: {
@@ -7369,15 +7232,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createChatToken: {
@@ -7405,15 +7260,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listAgentConfigs: {
@@ -7440,15 +7287,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createAgentConfig: {
@@ -7476,15 +7315,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getAgentConfig: {
@@ -7512,15 +7343,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly updateAgentConfig: {
@@ -7552,15 +7375,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly deleteAgentConfig: {
@@ -7586,15 +7401,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly patchAgentConfig: {
@@ -7626,15 +7433,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listConfigPlugins: {
@@ -7662,15 +7461,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly disconnectPlugin: {
@@ -7698,15 +7489,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly authorizePlugin: {
@@ -7740,15 +7523,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listConnections: {
@@ -7781,15 +7556,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createConnection: {
@@ -7817,15 +7584,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getConnection: {
@@ -7853,15 +7612,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly deleteConnection: {
@@ -7896,18 +7647,10 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listConnectors: {
@@ -7938,15 +7681,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createConnector: {
@@ -7974,15 +7709,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getConnector: {
@@ -8010,15 +7737,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getConversationCommand: {
@@ -8048,15 +7767,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getConversationMessages: {
@@ -8087,15 +7798,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createGuestUser: {
@@ -8128,18 +7831,10 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly claimGuestUser: {
@@ -8174,18 +7869,10 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly ingestKnowledge: {
@@ -8213,15 +7900,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listKnowledgeDocuments: {
@@ -8248,15 +7927,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getKnowledgeDocument: {
@@ -8284,15 +7955,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly deleteKnowledgeDocument: {
@@ -8318,15 +7981,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listKnowledgeDocumentPassages: {
@@ -8354,15 +8009,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listKnowledgeUrls: {
@@ -8389,15 +8036,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly addKnowledgeUrl: {
@@ -8425,15 +8064,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getKnowledgeUrl: {
@@ -8461,15 +8092,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly deleteKnowledgeUrl: {
@@ -8495,15 +8118,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly indexKnowledgeUrl: {
@@ -8531,15 +8146,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listKnowledgeUrlPassages: {
@@ -8567,15 +8174,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listAgentLogs: {
@@ -8611,13 +8210,14 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
             /** @description Log storage is unavailable. */
             readonly 503: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -8645,13 +8245,14 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
             /** @description Log storage is unavailable. */
             readonly 503: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -8690,13 +8291,14 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
             /** @description Log storage is unavailable. */
             readonly 503: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -8725,15 +8327,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getPluginLogo: {
@@ -8758,6 +8352,7 @@ export interface operations {
                 };
             };
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly pluginOAuthCallback: {
@@ -8780,6 +8375,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly receivePluginEvent: {
@@ -8828,6 +8424,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createSession: {
@@ -8861,18 +8458,10 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getSession: {
@@ -8900,15 +8489,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly deleteSession: {
@@ -8933,15 +8514,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly updateSession: {
@@ -8973,15 +8546,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getSessionCommand: {
@@ -9010,15 +8575,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly interruptSessionCommand: {
@@ -9047,22 +8604,14 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
             /** @description The stop was accepted but its durable outcome is unknown. The command is not reported stopped; retry the same command id. */
             readonly 503: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -9095,6 +8644,7 @@ export interface operations {
             };
             readonly 401: components["responses"]["Unauthorized"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly forkSession: {
@@ -9126,15 +8676,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly setSessionInstructions: {
@@ -9164,15 +8706,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly interruptSession: {
@@ -9198,15 +8732,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly deleteSessionMemories: {
@@ -9232,15 +8758,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly respondSession: {
@@ -9285,18 +8803,10 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listResponses: {
@@ -9329,15 +8839,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createResponse: {
@@ -9375,18 +8877,10 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listResponseItems: {
@@ -9421,15 +8915,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly rewindSession: {
@@ -9459,15 +8945,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly saySession: {
@@ -9497,15 +8975,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly setSessionSettings: {
@@ -9537,15 +9007,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly stopSession: {
@@ -9570,15 +9032,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly querySessions: {
@@ -9605,15 +9059,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listSimulationRuns: {
@@ -9641,15 +9087,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getSimulationRun: {
@@ -9677,15 +9115,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly cancelSimulationRun: {
@@ -9713,15 +9143,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listSimulations: {
@@ -9745,15 +9167,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createSimulation: {
@@ -9781,15 +9195,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getSimulation: {
@@ -9817,15 +9223,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly updateSimulation: {
@@ -9857,15 +9255,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly deleteSimulation: {
@@ -9891,15 +9281,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly runSimulation: {
@@ -9927,15 +9309,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listSkills: {
@@ -9962,15 +9336,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createSkill: {
@@ -9998,15 +9364,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getSkill: {
@@ -10034,15 +9392,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly updateSkill: {
@@ -10074,15 +9424,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly deleteSkill: {
@@ -10108,15 +9450,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly syncAgent: {
@@ -10144,15 +9478,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly truncateMemories: {
@@ -10177,15 +9503,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listVoices: {
@@ -10209,15 +9527,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createVoice: {
@@ -10245,15 +9555,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getVoice: {
@@ -10281,15 +9583,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly updateVoice: {
@@ -10321,15 +9615,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly deleteVoice: {
@@ -10355,15 +9641,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly prepareVoice: {
@@ -10395,15 +9673,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly previewVoice: {
@@ -10435,15 +9705,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly addVoiceSample: {
@@ -10475,15 +9737,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listLibraryVoices: {
@@ -10510,15 +9764,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly previewLibraryVoice: {
@@ -10547,15 +9793,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listVoiceProviders: {
@@ -10579,15 +9817,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly classify: {
@@ -10621,25 +9851,17 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
             /** @description The classifier is overloaded or could not be reached. Ask again after a wait. */
             readonly 503: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -10675,16 +9897,17 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            readonly 500: components["responses"]["InternalError"];
             /** @description This deployment has no database to read changes from. */
             readonly 503: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -10710,13 +9933,14 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
             /** @description This deployment has no database to export from. */
             readonly 503: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -10746,13 +9970,14 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
             /** @description This deployment has no database to import into. */
             readonly 503: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -10784,6 +10009,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly generateImage: {
@@ -10812,15 +10038,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listUseCasesForReview: {
@@ -10857,18 +10075,10 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getUseCaseForReview: {
@@ -10900,18 +10110,10 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly reviewUseCase: {
@@ -10947,18 +10149,10 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getBusinessProfile: {
@@ -10983,15 +10177,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly saveBusinessProfile: {
@@ -11019,15 +10205,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly placePhoneCall: {
@@ -11056,15 +10234,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly pressPhoneDigits: {
@@ -11093,15 +10263,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly transferPhoneCall: {
@@ -11130,15 +10292,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly receiveDLCReport: {
@@ -11178,6 +10332,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listPhoneNumbers: {
@@ -11204,15 +10359,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly buyPhoneNumber: {
@@ -11241,15 +10388,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly releasePhoneNumber: {
@@ -11275,15 +10414,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly attachPhoneNumber: {
@@ -11314,15 +10445,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly searchPhoneNumbers: {
@@ -11365,15 +10488,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listOptOuts: {
@@ -11402,15 +10517,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createOptOut: {
@@ -11438,15 +10545,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly revokeOptOut: {
@@ -11471,15 +10570,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getPhoneSandbox: {
@@ -11503,15 +10594,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly setSandboxRecipients: {
@@ -11539,15 +10622,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listUseCases: {
@@ -11576,15 +10651,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createUseCase: {
@@ -11612,15 +10679,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getUseCase: {
@@ -11647,15 +10706,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly updateUseCase: {
@@ -11692,18 +10743,10 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly deleteUseCase: {
@@ -11734,18 +10777,10 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listUseCaseReviews: {
@@ -11777,15 +10812,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly submitUseCase: {
@@ -11818,18 +10845,10 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listPhoneVendors: {
@@ -11852,15 +10871,7 @@ export interface operations {
             };
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getAppPolicy: {
@@ -11884,15 +10895,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly updateAppPolicy: {
@@ -11920,15 +10923,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getOrganizationPolicy: {
@@ -11952,15 +10947,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly updateOrganizationPolicy: {
@@ -11988,15 +10975,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listRouterConfigs: {
@@ -12020,15 +10999,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createRouterConfig: {
@@ -12056,15 +11027,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getRouterConfig: {
@@ -12092,15 +11055,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly updateRouterConfig: {
@@ -12132,15 +11087,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly deleteRouterConfig: {
@@ -12166,15 +11113,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly search: {
@@ -12202,15 +11141,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getActivity: {
@@ -12240,15 +11171,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly runRollup: {
@@ -12276,15 +11199,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getSpend: {
@@ -12320,15 +11235,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getTagKeys: {
@@ -12359,15 +11266,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly transcribeRecording: {
@@ -12396,15 +11295,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getTranscription: {
@@ -12432,15 +11323,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly recordSpeech: {
@@ -12469,15 +11352,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getSpeech: {
@@ -12505,15 +11380,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getTurnStats: {
@@ -12545,15 +11412,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            /** @description Internal Server Error */
-            readonly 500: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Error"];
-                };
-            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
 }
