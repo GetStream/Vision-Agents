@@ -154,7 +154,13 @@ func (r *Resolver) Resolve(ctx context.Context, ref core.ConnectionRef, req core
 // credential, for a provider that refused the credential on a call (why is invalid_grant) or
 // asked for more access than it grants (scope_required). Any other outcome ends no grant and
 // is refused. A connection that is not connected keeps its status.
-func (r *Resolver) Invalidate(ctx context.Context, ref core.ConnectionRef, why core.Outcome) error {
+//
+// rejected is the credential the provider refused, as Resolve returned it. RFC 6750 section
+// 3.1 answers invalid_token for a token «expired, revoked, malformed, or invalid for other
+// reasons», so a refusal is not always a revoked grant. When rejected had expired, or the
+// stored credentials are no longer at rejected.Revision because another router renewed them,
+// only the cache entry is dropped and the next Resolve gets a credential the provider takes.
+func (r *Resolver) Invalidate(ctx context.Context, ref core.ConnectionRef, rejected core.AccessCredential, why core.Outcome) error {
 	var lastError string
 	switch why.Kind {
 	case core.OutcomeInvalidGrant:
@@ -166,8 +172,11 @@ func (r *Resolver) Invalidate(ctx context.Context, ref core.ConnectionRef, why c
 			why.Kind, core.OutcomeInvalidGrant, core.OutcomeScopeRequired))
 	}
 	r.drop(ref)
+	if !rejected.ExpiresAt.IsZero() && !r.now().Before(rejected.ExpiresAt) {
+		return nil
+	}
 	return stack.Wrap(r.credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
-		if state.Status != store.ConnectionConnected {
+		if state.Status != store.ConnectionConnected || state.Revision != rejected.Revision {
 			return false, nil
 		}
 		state.Status, state.LastError = store.ConnectionNeedsReauthorization, lastError
@@ -252,7 +261,8 @@ func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connect
 		return core.AccessCredential{}, failure
 	}
 	// The credential store leaves state at the revision it committed (core.CredentialStore),
-	// so the cache never numbers revisions itself.
+	// so the cache and Invalidate never number revisions themselves.
+	credential.Revision = committed.Revision
 	if cache {
 		r.put(ref, entry{revision: committed.Revision, credential: credential, fetched: r.now(),
 			renewed: committed.Revision != before.Revision})

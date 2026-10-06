@@ -25,9 +25,13 @@ Resolve(ref, req)
               a credential beside the error -> handed out for this call, never cached
     CAS       the credential store's final commit at the revision it loaded
     cache     only after a nil Retrieve, keyed by ref, at the revision the store left in state
+    return    the credential, its Revision set to that revision
 
-Invalidate(ref, why)    why is invalid_grant or scope_required, else refused
-  drop the cache entry; under the lock, connected -> needs_reauthorization
+Invalidate(ref, rejected, why)    why is invalid_grant or scope_required, else refused
+  drop the cache entry
+  rejected had expired                     -> nothing more
+  under the lock, connected and the stored revision still rejected.Revision
+                                           -> needs_reauthorization; otherwise nothing more
 ```
 
 ## Cache
@@ -46,7 +50,7 @@ Invalidate(ref, why)    why is invalid_grant or scope_required, else refused
 - **One refresh across routers.** Check: `go test -tags integration -run TestResolverSuite/TestRoutersResolving ./internal/connectors/resolver`.
 - **A deleted connection does not resolve, even from the cache.** Check: `go test -tags integration -run 'TestResolverSuite/(TestADeleted|TestAnotherCustomers)' ./internal/connectors/resolver`.
 - **The cache is keyed by revision.** Check: `go test -tags integration -run TestResolverSuite/TestAReconnect ./internal/connectors/resolver`.
-- **`Invalidate` writes the status, not only the cache.** Check: `go test -tags integration -run TestResolverSuite/TestInvalidate ./internal/connectors/resolver`.
+- **`Invalidate` writes the status, not only the cache, and only for the grant behind the refused credential.** RFC 6750 §3.1 answers `invalid_token` for a token «expired, revoked, malformed, or invalid for other reasons». A refused credential that had expired, or whose revision the stored credentials have moved past (another router renewed them), leaves the status alone. Example: router B resolves at revision 4; router A renews to 5; the provider refuses B's old token; B's `Invalidate` drops its cache entry and the connection stays `connected`. Check: `go test -tags integration -run TestResolverSuite/TestInvalidate ./internal/connectors/resolver`.
 - **The revision is the credential store's.** The resolver reads the committed one from `state` after `Update` (`core.CredentialStore`); it never numbers revisions itself.
 - **Outcomes map to statuses as in the flow.** Check: `go test -tags integration -run 'TestResolverSuite/(TestARejected|TestAProvider|TestAPending)' ./internal/connectors/resolver`.
 - **Never parse a scheme's error text.** The outcome is read with `errors.As` on `*core.OutcomeError` (`core/AGENTS.md`). Check: `grep -n 'Error()' internal/connectors/resolver/resolver.go` prints nothing.

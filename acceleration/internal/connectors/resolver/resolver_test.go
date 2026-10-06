@@ -200,10 +200,10 @@ func (s *ResolverSuite) TestAReconnectIsHandedOutInsideTheCacheWindow() {
 func (s *ResolverSuite) TestInvalidateOnAnotherRouterStopsTheCachedCredentialHere() {
 	ref := s.f.connected()
 	here := s.f.router(s.f.srv.Client())
-	_, err := here.Resolve(s.f.ctx, ref, core.CredentialRequest{})
+	rejected, err := here.Resolve(s.f.ctx, ref, core.CredentialRequest{})
 	s.Require().NoError(err)
 
-	s.Require().NoError(s.f.router(s.f.srv.Client()).Invalidate(s.f.ctx, ref, core.Outcome{Kind: core.OutcomeInvalidGrant}))
+	s.Require().NoError(s.f.router(s.f.srv.Client()).Invalidate(s.f.ctx, ref, rejected, core.Outcome{Kind: core.OutcomeInvalidGrant}))
 	_, err = here.Resolve(s.f.ctx, ref, core.CredentialRequest{})
 	s.ErrorIs(err, resolver.ErrNotConnected)
 }
@@ -211,10 +211,11 @@ func (s *ResolverSuite) TestInvalidateOnAnotherRouterStopsTheCachedCredentialHer
 func (s *ResolverSuite) TestInvalidateMovesTheConnectionToNeedsReauthorization() {
 	ref := s.f.connected()
 	r := s.f.router(s.f.srv.Client())
-	_, err := r.Resolve(s.f.ctx, ref, core.CredentialRequest{})
+	rejected, err := r.Resolve(s.f.ctx, ref, core.CredentialRequest{})
 	s.Require().NoError(err)
+	s.Equal(s.f.stored(ref).Revision, rejected.Revision, "the revision the credential came from")
 
-	s.Require().NoError(r.Invalidate(s.f.ctx, ref, core.Outcome{Kind: core.OutcomeInvalidGrant}))
+	s.Require().NoError(r.Invalidate(s.f.ctx, ref, rejected, core.Outcome{Kind: core.OutcomeInvalidGrant}))
 	stored := s.f.stored(ref)
 	s.Equal(store.ConnectionNeedsReauthorization, stored.Status)
 	s.Equal(rejectedGrant, stored.LastError)
@@ -222,13 +223,52 @@ func (s *ResolverSuite) TestInvalidateMovesTheConnectionToNeedsReauthorization()
 	s.ErrorIs(err, resolver.ErrNotConnected)
 }
 
+func (s *ResolverSuite) TestInvalidateOfACredentialAnotherRouterRenewedSinceKeepsTheConnection() {
+	ref := s.f.connected()
+	here := s.f.router(s.f.srv.Client())
+	rejected, err := here.Resolve(s.f.ctx, ref, core.CredentialRequest{})
+	s.Require().NoError(err)
+	// Another router, a pool of its own, renews for a call that runs past rejected's expiry.
+	there := s.f.router(s.f.srv.Client())
+	renewed, err := there.Resolve(s.f.ctx, ref, core.CredentialRequest{Deadline: rejected.ExpiresAt.Add(time.Minute)})
+	s.Require().NoError(err)
+	s.Require().Equal(1, s.f.srv.Refreshes())
+	s.Require().Equal(rejected.Revision+1, renewed.Revision)
+
+	s.Require().NoError(here.Invalidate(s.f.ctx, ref, rejected, core.Outcome{Kind: core.OutcomeInvalidGrant}))
+	stored := s.f.stored(ref)
+	s.Equal(store.ConnectionConnected, stored.Status, "the provider refused an old token, not the grant")
+	s.Empty(stored.LastError)
+	credential, err := here.Resolve(s.f.ctx, ref, core.CredentialRequest{})
+	s.Require().NoError(err)
+	s.True(s.f.token(credential) == s.f.token(renewed), "the cache entry is gone, so the renewed token comes back")
+}
+
+func (s *ResolverSuite) TestInvalidateOfACredentialThatHadExpiredKeepsTheConnection() {
+	ref := s.f.connected()
+	r := s.f.router(s.f.srv.Client())
+	rejected, err := r.Resolve(s.f.ctx, ref, core.CredentialRequest{})
+	s.Require().NoError(err)
+	s.f.due()
+
+	s.Require().NoError(r.Invalidate(s.f.ctx, ref, rejected, core.Outcome{Kind: core.OutcomeInvalidGrant}))
+	s.Equal(store.ConnectionConnected, s.f.stored(ref).Status, "an expired token says nothing about the grant")
+	credential, err := r.Resolve(s.f.ctx, ref, core.CredentialRequest{})
+	s.Require().NoError(err)
+	s.True(s.f.works(credential))
+	s.Equal(1, s.f.srv.Refreshes())
+}
+
 func (s *ResolverSuite) TestInvalidateRefusesAnOutcomeThatEndsNoGrant() {
 	ref := s.f.connected()
 	r := s.f.router(s.f.srv.Client())
 
-	s.Error(r.Invalidate(s.f.ctx, ref, core.Outcome{Kind: core.OutcomeRateLimited}))
+	rejected, err := r.Resolve(s.f.ctx, ref, core.CredentialRequest{})
+	s.Require().NoError(err)
+
+	s.Error(r.Invalidate(s.f.ctx, ref, rejected, core.Outcome{Kind: core.OutcomeRateLimited}))
 	s.Equal(store.ConnectionConnected, s.f.stored(ref).Status)
-	_, err := r.Resolve(s.f.ctx, ref, core.CredentialRequest{})
+	_, err = r.Resolve(s.f.ctx, ref, core.CredentialRequest{})
 	s.NoError(err)
 }
 

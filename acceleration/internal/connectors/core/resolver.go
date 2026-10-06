@@ -17,8 +17,11 @@ type ConnectionRef struct {
 type Resolver interface {
 	Resolve(ctx context.Context, ref ConnectionRef, req CredentialRequest) (AccessCredential, error)
 	// Invalidate marks the connection as needing a reconnect and drops anything cached, so
-	// a revoked grant stops being used before it next fails.
-	Invalidate(ctx context.Context, ref ConnectionRef, why Outcome) error
+	// a revoked grant stops being used before it next fails. rejected is the credential the
+	// provider refused, as Resolve returned it. A refusal of a credential that had expired,
+	// or whose Revision the stored credentials have moved past (another router renewed
+	// them), says nothing about the grant: then only the cache is dropped.
+	Invalidate(ctx context.Context, ref ConnectionRef, rejected AccessCredential, why Outcome) error
 }
 
 // CredentialRequest is what one call asks of a credential.

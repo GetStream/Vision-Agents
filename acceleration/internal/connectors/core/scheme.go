@@ -138,7 +138,10 @@ func (s StoredCredentials) LogValue() slog.Value {
 type AccessCredential struct {
 	Scheme    string
 	ExpiresAt time.Time
-	secret    json.RawMessage
+	// Revision is the CredentialState.Revision of the StoredCredentials it came from. The
+	// resolver sets it, and Resolver.Invalidate reads it back; a scheme leaves it zero.
+	Revision int
+	secret   json.RawMessage
 }
 
 // NewAccessCredential is how a scheme in its own package builds an AccessCredential at all, since the
