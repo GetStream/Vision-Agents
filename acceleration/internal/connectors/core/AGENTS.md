@@ -51,12 +51,13 @@ One word, one meaning, in code, docs and API alike. A name follows the Go auth l
 | inbound message | One message a person sent on an external thread | `VerifiedEvent.Messages`, `InboundMessage` | the channel bridge |
 | provider unit | The customer's own unit at the provider that received a message: a workspace, a team, a bot, a business phone number | `InboundMessage.ProviderUnitID` | the bridge maps it to a connection |
 | thread key | The id of one external thread within one provider unit, built by the verifier, never parsed | `InboundMessage.ThreadKey` | the bridge maps it to a thread channel |
+| provider message id | The provider's id for one message: WhatsApp `messages[].id`, Slack `event.ts`, Twilio `MessageSid` | `InboundMessage.ProviderMessageID` | the bridge finds the message's entry in `Raw` by it and drops retried deliveries by it |
 | challenge | The value a handshake request asks the endpoint to send back | `VerifiedEvent.Challenge` | the endpoint answers 200 `text/plain` with it |
 
-- **An error means nothing happens.** A request that fails verification returns an error and the endpoint acts on no part of it. A verified request the verifier has no mapping for returns a zero `VerifiedEvent`, not an error.
+- **An error means nothing happens.** A request that fails verification returns an error and the endpoint acts on no part of it. A verified request the verifier has no mapping for returns a zero `VerifiedEvent`, not an error, and so does a verified body the verifier cannot parse.
 - **Slices, not single values.** One revocation event can name several tokens, and one delivery can batch several messages, so `Signals` and `Messages` are slices. A handshake sets only `Challenge`.
-- **The raw body is bytes.** `body` is read once, before anything parses it, because a signature covers those exact bytes. `InboundMessage.Raw` is that body unchanged, shared by every message of a batch, and `[]byte`, not `json.RawMessage`, because some providers post a form.
-- **Ids stay the provider's.** A `Signal` names an account and an `InboundMessage` names a provider unit, a thread key and an author, all as the provider sends them. Mapping them to a connection, a thread channel or a Stream Chat user is the reader's job, not the verifier's.
+- **The raw body is bytes.** `body` is read once, before anything parses it, because a signature covers those exact bytes. `InboundMessage.Raw` is that body unchanged, shared by every message of a batch, and `[]byte`, not `json.RawMessage`, because some providers post a form. `ProviderMessageID` tells the messages of a batch apart.
+- **Ids stay the provider's.** A `Signal` names an account and an `InboundMessage` names a provider unit, a thread key, an author and a message, all as the provider sends them. Mapping them to a connection, a thread channel or a Stream Chat user is the reader's job, not the verifier's.
 
 ## Tests
 

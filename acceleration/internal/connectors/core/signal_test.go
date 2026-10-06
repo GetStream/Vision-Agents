@@ -36,6 +36,7 @@ type fakeEvent struct {
 	Unit      string   `json:"unit"`
 	Revoked   []string `json:"revoked"`
 	Messages  []struct {
+		ID     string `json:"id"`
 		Thread string `json:"thread"`
 		From   string `json:"from"`
 		Text   string `json:"text"`
@@ -51,7 +52,9 @@ func (fakeVerifier) Verify(r *http.Request, body []byte, m ResolvedManifest) (Ve
 	}
 	var event fakeEvent
 	if err := json.Unmarshal(body, &event); err != nil {
-		return VerifiedEvent{}, err
+		// The signature already proved the provider sent body, so a body the fake cannot
+		// read is a verified request with no mapping: a zero VerifiedEvent, not an error.
+		return VerifiedEvent{}, nil
 	}
 	if event.Type == "handshake" {
 		return VerifiedEvent{Challenge: event.Challenge}, nil
@@ -62,12 +65,13 @@ func (fakeVerifier) Verify(r *http.Request, body []byte, m ResolvedManifest) (Ve
 	}
 	for _, message := range event.Messages {
 		verified.Messages = append(verified.Messages, InboundMessage{
-			ConnectorID:    m.ConnectorID,
-			ProviderUnitID: event.Unit,
-			ThreadKey:      message.Thread,
-			AuthorID:       message.From,
-			Text:           message.Text,
-			Raw:            body,
+			ConnectorID:       m.ConnectorID,
+			ProviderUnitID:    event.Unit,
+			ThreadKey:         message.Thread,
+			AuthorID:          message.From,
+			Text:              message.Text,
+			ProviderMessageID: message.ID,
+			Raw:               body,
 		})
 	}
 	return verified, nil
@@ -79,8 +83,10 @@ func fakeSign(body []byte) []byte {
 	return mac.Sum(nil)
 }
 
-// VerifierSuite proves the shape of what a Verifier returns, through a fake provider: one
-// request gives the resolver its signals and the channel bridge its messages.
+// VerifierSuite is a worked example of the Verifier contract, not a test of a production
+// verifier: core holds only the types, so these tests run the fake above. They show one
+// request giving the resolver its signals and the channel bridge its messages. A real
+// verifier (T26's hmacheader, T35's Slack) brings its own suite with the same cases.
 type VerifierSuite struct {
 	suite.Suite
 	verifier Verifier
@@ -97,7 +103,7 @@ func (s *VerifierSuite) SetupTest() {
 }
 
 func (s *VerifierSuite) TestOneEventCarriesASignalAndAMessage() {
-	body := []byte(`{"type":"event","unit":"W1","revoked":["A1"],"messages":[{"thread":"C1:100.1","from":"P1","text":"hello"}]}`)
+	body := []byte(`{"type":"event","unit":"W1","revoked":["A1"],"messages":[{"id":"m1","thread":"C1:100.1","from":"P1","text":"hello"}]}`)
 
 	verified, err := s.verifier.Verify(s.signed(body), body, s.manifest)
 
@@ -105,25 +111,28 @@ func (s *VerifierSuite) TestOneEventCarriesASignalAndAMessage() {
 	s.Equal(VerifiedEvent{
 		Signals: []Signal{{ConnectorID: "fake", AccountID: "A1", Kind: SignalRevoked}},
 		Messages: []InboundMessage{{
-			ConnectorID:    "fake",
-			ProviderUnitID: "W1",
-			ThreadKey:      "C1:100.1",
-			AuthorID:       "P1",
-			Text:           "hello",
-			Raw:            body,
+			ConnectorID:       "fake",
+			ProviderUnitID:    "W1",
+			ThreadKey:         "C1:100.1",
+			AuthorID:          "P1",
+			Text:              "hello",
+			ProviderMessageID: "m1",
+			Raw:               body,
 		}},
 	}, verified)
 }
 
-func (s *VerifierSuite) TestABatchedDeliveryGivesEveryMessageTheSameRawBody() {
-	body := []byte(`{"type":"event","unit":"W1","messages":[{"thread":"t1","from":"P1","text":"one"},{"thread":"t2","from":"P2","text":"two"}]}`)
+// Two files from one sender on one thread differ only in their provider message ids, which
+// is how the bridge finds each one's entry in the shared Raw.
+func (s *VerifierSuite) TestABatchedDeliveryTellsItsMessagesApartByProviderMessageID() {
+	body := []byte(`{"type":"event","unit":"W1","messages":[{"id":"m1","thread":"t1","from":"P1","text":""},{"id":"m2","thread":"t1","from":"P1","text":""}]}`)
 
 	verified, err := s.verifier.Verify(s.signed(body), body, s.manifest)
 
 	s.Require().NoError(err)
 	s.Empty(verified.Signals)
 	s.Require().Len(verified.Messages, 2)
-	s.Equal([]string{"t1", "t2"}, []string{verified.Messages[0].ThreadKey, verified.Messages[1].ThreadKey})
+	s.Equal([]string{"m1", "m2"}, []string{verified.Messages[0].ProviderMessageID, verified.Messages[1].ProviderMessageID})
 	s.Equal(body, verified.Messages[0].Raw)
 	s.Equal(body, verified.Messages[1].Raw)
 }
@@ -135,6 +144,15 @@ func (s *VerifierSuite) TestAHandshakeAnswersWithItsChallengeOnly() {
 
 	s.Require().NoError(err)
 	s.Equal(VerifiedEvent{Challenge: "c-123"}, verified)
+}
+
+func (s *VerifierSuite) TestAVerifiedBodyItCannotReadIsAZeroEventNotAnError() {
+	body := []byte(`{"type":"event","unit":1}`)
+
+	verified, err := s.verifier.Verify(s.signed(body), body, s.manifest)
+
+	s.Require().NoError(err)
+	s.Zero(verified)
 }
 
 func (s *VerifierSuite) TestABadSignatureYieldsNothingToActOn() {
