@@ -4,7 +4,7 @@ Oct 1, 2026 · @Kanat Kiialbaev
 
 Exported from Claude Docs on 2026-10-05 (https://claude.ai/code/artifact/e4d97114-1334-4181-beab-c5721909c201). The Claude Doc is the source of truth; this copy is a snapshot.
 
-33 subtasks in 7 phases, each one PR, in the order they can land, plus 21 subtasks (T37 to T57) added on October 5 from the channel decisions, plus 4 subtasks (T58 to T61) added on October 6 to move plugins onto connectors. Status on October 6: 17 merged on accelerate (T1 to T11, T15 to T17, T20, T32, T37). They implement [Accelerate connectors: architecture design](architecture.md) on top of the code that exists today. Connector-layer subtasks are Linear sub-issues of [AI-816](https://linear.app/stream/issue/AI-816/basic-connectorsmcp-support); the channel bridge and the omni-channel conversation have their own parent issues, AI-866 and AI-867. Each subtask's Linear number follows its title.
+33 subtasks in 7 phases, each one PR, in the order they can land, plus 21 subtasks (T37 to T57) added on October 5 from the channel decisions, plus 4 subtasks (T58 to T61) added on October 6 to move plugins onto connectors. Status on October 6: 25 merged on accelerate (T1 to T13, T15 to T17, T19, T20, T24, T26, T32, T34, T37, T39, T40). They implement [Accelerate connectors: architecture design](architecture.md) on top of the code that exists today. Connector-layer subtasks are Linear sub-issues of [AI-816](https://linear.app/stream/issue/AI-816/basic-connectorsmcp-support); the channel bridge and the omni-channel conversation have their own parent issues, AI-866 and AI-867. Each subtask's Linear number follows its title.
 
 ## Ground rules
 
@@ -153,6 +153,8 @@ Three PRs. After them a connection with a grant can be turned into an authorized
 
 ### T12. Credential resolver · [AI-843](https://linear.app/stream/issue/AI-843)
 
+**Status: merged** in [#756](https://github.com/GetStream/Vision-Agents/pull/756) (`592280a4`), October 6. `Scheme.Retrieve` takes `RetrieveOptions{ValidUntil, Checkpoint}`; `Invalidate` names the refused credential; fast path p50 1.84 ms, p95 14.38 ms (pool sizing: AI-907).
+
 - **Description.** `core.Resolver` implementation: `Resolve(ref, need)` loads the connection, checks status, opens `StoredCredentials through the credential store`, calls `Scheme.Retrieve` on a detached context with its own deadline under the backend lock with the checkpoint before any refresh, persists rotated material at the next revision, maps `Outcome` to status and `last_error` (`needs_reauthorization`, `connected`, temporary), and caches the fast path by (connection, revision) with an explicit maximum age. `Invalidate(ref, why)` moves the connection to `needs_reauthorization` and drops the cache entry. This replaces the branch's `connectors.ResolveCredentials` (`runtime.go:26-153`), whose refresh ran on the tool call's context.
 - **Scope.** `internal/connectors/core/resolver.go`, integration tests: refresh race, lost response, interruption during refresh does not change status, disconnect blocks a new resolve within the cache window.
 - **Out of scope.** Request wrapping (T13); rate limiting (T28).
@@ -160,6 +162,8 @@ Three PRs. After them a connection with a grant can be turned into an authorized
 - **Acceptance.** Cancelling the caller's context during a refresh leaves the connection `connected` or rotated, never `needs_reauthorization`; p50 and p95 of the fast path are printed by a benchmark test (no target asserted yet, per the design's spike 4).
 
 ### T13. Transport composition and the wrapping order · [AI-845](https://linear.app/stream/issue/AI-845)
+
+**Status: merged** in [#761](https://github.com/GetStream/Vision-Agents/pull/761) (`98ce7c21`), October 6. `core.Transports`; a source gets `ResolvedBinding.HTTP *http.Client`. On a 401 it renews past the refused credential (`RetrieveOptions.Refused`) and retries once. Open: a bare 401 under `oauth2_code` classifies as OK (AI-901); T21 builds `Transports` and calls `Close`.
 
 - **Description.** `core.ResolvedBinding.Transport`: builds the outbound client with `egress.NewClient(timeout, scheme.Wrap)`. `Scheme.Wrap` (and `tls_scheme` when set) is the outer layer and sees the final request; the egress transport sits under it, checks the URL and dials only a checked public IP. Egress is last on purpose: it must judge the request that actually leaves, after the scheme has finished with it. One transport per connection, cached, closed on disconnect. A `RoundTrip` test proves a signing scheme sees the final headers and body and that a private destination is refused before anything leaves the router.
 - **Egress (from [AI-829](https://linear.app/stream/issue/AI-829), PR #707).** Build every connector client with `egress.NewClient(timeout, scheme.Wrap)` and nothing else; never replace the returned client's `Transport`. It owns the redirect policy (same origin only, no method change), the URL check before and after `wrap`, and the dial-time public-IP check, so the order is fixed by construction. Close a connection's client with `CloseIdleConnections`, which reaches the inner transport through the wrapper. The dial-time check runs after `wrap`, so a scheme that retrieves or refreshes a token per request does so before a name that resolves to a private address is refused; the token never leaves the process. If Retrieve itself must not run, call `egress.ValidatePublicHTTPSURL` on the endpoint first.
@@ -219,6 +223,8 @@ Five PRs. Each registers its operations with `huma.Register` beside Go request a
 - **Acceptance.** Credential material is write-only: no response ever carries it; a stale `expected_revision` returns 409; validate on a `needs_reauthorization` connection returns that status without opening MCP.
 
 ### T19. OAuth client records per app and connector · [AI-846](https://linear.app/stream/issue/AI-846)
+
+**Status: merged** in [#758](https://github.com/GetStream/Vision-Agents/pull/758) (`492eb643`), October 6. Migration `20261006184100`; the operator's client comes from `<client.env>_MCP_CLIENT_ID`/`_SECRET`.
 
 - **Description.** Table `connector_oauth_clients` (`customer_id`, `connector_id`, `client_id`, sealed secret, auth method, `registration: operator | customer`) with `PUT` and `DELETE /v1/agents/connectors/{id}/oauth-client`. T17's authorize reads the client from this record (customer BYO) or from the operator environment (`<ID>_MCP_CLIENT_ID`), instead of per-request `oauth_client_id` and `oauth_client_secret` sealed into each grant.
 - **Scope.** Migration, store, handlers, the change in T17's lookup, OpenAPI and Go SDK regen.
@@ -290,10 +296,12 @@ Four PRs. After T21 an agent on staging can call a Slack or Linear tool; after T
 
 - **Description.** `router plugins migrate`, a Go command, not SQL: sealing needs the keyring, and the AAD binds connection id and revision (T8). It writes each `agent_plugin_connections` row as an `oauth2_code` connection (owner `app` when `user_id` is empty, else `user`) with its tokens sealed; each `agent_plugin_clients` row as a `connector_oauth_clients` record, the most recently updated one when two configs of one app differ; each `agent_plugins` entry as a `fixed` binding and each `user_plugins` entry as a `session` binding. It is idempotent and reports every row it cannot map. Event subscriptions are not moved; T60 re-creates them.
 - **Scope.** The command, a dry-run flag that prints the plan, integration tests on a copy of plugin rows.
-- **Dependencies.** T58, T20, T19, T40, T8.
+- **Dependencies.** T58, T21, T22 (tools run through connectors), T20, T19, T40, T8.
 - **Acceptance.** A dry run on staging lists every row and its target; a real run then leaves every migrated agent's tools working through connectors with no new login; a second run changes nothing. Staging row counts are `unverified` now (0 on October 1); count them first (architecture doc, «Plugins move onto connectors»).
 
 ### T24. Scheme oauth2\_client\_credentials · [AI-847](https://linear.app/stream/issue/AI-847)
+
+**Status: merged** in [#764](https://github.com/GetStream/Vision-Agents/pull/764) (`41e5ad6b`), October 6. Salesforce revision 3 with `refresh.access_ttl: 15m`; the token host is `unverified` (AI-903); no API path for the client id and secret until T18.
 
 - **Description.** One package: `Begin` is non-interactive, `StoredCredentials hold client id and sealed secret, Retrieve` posts `grant_type=client_credentials` to the manifest's token endpoint and caches until expiry, `Classify` and `Wrap` reuse the OAuth helpers. Add the Salesforce manifest's `oauth2_client_credentials` entry and a fake-provider personality.
 - **Scope.** `schemes/oauth2cc`, its `SchemeContract` run, the Salesforce manifest line.
@@ -310,6 +318,8 @@ Four PRs. After T21 an agent on staging can call a Slack or Linear tool; after T
 - **Acceptance.** No change in `core/`; a private base URL is refused; a form-encoded body reaches the fake server with the credential applied last.
 
 ### T26. Events endpoint, verifier registry and the first verifier · [AI-848](https://linear.app/stream/issue/AI-848)
+
+**Status: merged** in [#765](https://github.com/GetStream/Vision-Agents/pull/765) (`6b0ff835`), October 6. Signals go to the new `Resolver.Revoke`; the manifest's `channel.signals[]` (Slack revision 4); secret from `SLACK_MCP_SIGNING_SECRET`. Lookup by identity has no index yet (AI-904).
 
 - **Description.** `POST /v1/agents/connectors/events/{connector_id}` with no API auth: the one inbound handler for any provider event. The `Verifier` registry; `signals/hmacheader` (header name, algorithm, encoding and secret source from the manifest). A verifier returns a VerifiedEvent (T37): grant signals, messages, and a URL-verification challenge that the endpoint answers with 200. Grant signals (`Revoked`, `Uninstalled`, `Rotated`) go to `Resolver.Invalidate` by account id; a message goes to the channel bridge hook, which logs and drops it until T57 lands. T38 adds a second route to the same handler, `POST /v1/connectors/events/{provider_app_id}`, for connectors with a provider app for each customer. First mapping: Slack `tokens_revoked`.
 - **Scope.** Handler, registry, one verifier, Slack manifest `signals` block, tests with a signed and an unsigned payload.
@@ -376,19 +386,19 @@ Four PRs. After T21 an agent on staging can call a Slack or Linear tool; after T
 
 Eleven PRs in the connector layer, layer 1 of the [channels doc](channels.md): the manifest `channel` block, the verifier result, the events endpoint for each provider app, provider app records, the proxy, token export, raw event forwarding and audit. They stay sub-issues of [AI-816](https://linear.app/stream/issue/AI-816/basic-connectorsmcp-support). The layers above them, the channel bridge and the omni-channel conversation, have their own parent issues in the next two sections. **Required** marks what the first channel cannot ship without; **Proposal** marks the rest. The design behind them is «Decisions, 2026-10-05» in the architecture doc, a proposal until Thierry confirms it.
 
-| Wave | Connector layer (AI-816) | Channel bridge ([AI-866](https://linear.app/stream/issue/AI-866)) | Omni-channel conversation ([AI-867](https://linear.app/stream/issue/AI-867)) |
-| --- | --- | --- | --- |
-| 1 |  |  | T49 |
-| 2 | T37 |  |  |
-| 3 | T34 |  |  |
-| 5 | T39 |  | T43 |
-| 8 | T40 |  |  |
-| 9 | T38, T54 | T57 |  |
-| 10 | T46 |  | T41 |
-| 11 |  | T35, T36, T51, T52, T53 | T48, T55, T56 |
-| 12 | T47 |  | T42 |
-| 13 | T44, T45 |  |  |
-| 14 | T50 |  |  |
+| Wave | Connector layer (AI-816) | Plugins onto connectors (AI-816) | Channel bridge ([AI-866](https://linear.app/stream/issue/AI-866)) | Omni-channel conversation ([AI-867](https://linear.app/stream/issue/AI-867)) |
+| --- | --- | --- | --- | --- |
+| 1 |  | T58 |  | T49 |
+| 2 | T37 (merged #744) |  |  |  |
+| 3 | T34 (merged #755) |  |  |  |
+| 5 | T39 (merged #762) |  |  | T43 |
+| 8 | T40 (merged #763) |  |  |  |
+| 9 | T38, T54 |  | T57 |  |
+| 10 | T46 |  |  | T41 |
+| 11 |  | T59, T60, T61 | T35, T36, T51, T52, T53 | T48, T55, T56 |
+| 12 | T47 | T23 |  | T42 |
+| 13 | T44, T45 |  |  |  |
+| 14 | T50 |  |  |  |
 
 Waves follow the same rule as the chart above: one more than the deepest dependency, with T26 now after T37. T37 depends on T3 only, so it can start now.
 
@@ -404,6 +414,8 @@ Waves follow the same rule as the chart above: one more than the deepest depende
 - Acceptance. `core` compiles; `TestCoreNamesNoProvider` still passes; a fake verifier in a test returns one signal and one message.
 
 ### T34. Manifest channel block · [AI-860](https://linear.app/stream/issue/AI-860)
+
+**Status: merged** in [#755](https://github.com/GetStream/Vision-Agents/pull/755) (`d73e5d6e`), October 6. Paths are an RFC 9535 JSONPath subset; core also reads (`ChannelRule.Read`) and renders replies (`ResolvedManifest.Reply`). Linq uses a new verifier kind, `standard_webhooks`.
 
 - **Required.** Description. `core.Manifest` gets a `channel` block beside `sources`. It holds the verifier kind and parameters (header, algorithm, signed bytes: the body, or the timestamp and the body; or a shared-secret header), the routing key path (for example `phone_number_id`), the thread key path, the author and text paths, the reply endpoint and body template, and the outbound policy (the WhatsApp 24-hour window and its template path). A connector has `sources`, `channel` or both: Linear has only `sources`, Telegram and Linq only `channel`, Slack and WhatsApp both. Parsing, validation and template checks follow T4. The bridge that uses the block is T57.
 - Scope. `core/manifest.go`, validation, fixtures in `core/testdata/manifests` for the Slack bot, Linq, Telegram and WhatsApp shapes, `core/AGENTS.md`.
@@ -423,6 +435,8 @@ Waves follow the same rule as the chart above: one more than the deepest depende
 
 ### T39. Routing index for shared webhooks · [AI-870](https://linear.app/stream/issue/AI-870)
 
+**Status: merged** in [#762](https://github.com/GetStream/Vision-Agents/pull/762) (`279233de`), October 6. The routing key is a new column `provider_unit_id`, not `account_id`; only a `connected` connection holds one.
+
 - **Required for WhatsApp.** Description. When the provider fixes one app for all customers (Meta Tech Provider), the Router finds the customer by a routing key from the event. Add an index on `(connector_id, account_id)` and a lookup by the `channel` block's routing key path, for example `phone_number_id`. Today the only index is `connector_connections_owner_idx` (`[migrations/20261002193000_connector_connections.sql:68-70](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/migrations/20261002193000_connector_connections.sql#L68-L70)`).
 - Scope. Migration, store query, tests.
 - Dependencies. T7 (merged), T34.
@@ -430,6 +444,8 @@ Waves follow the same rule as the chart above: one more than the deepest depende
 - Acceptance. A lookup by routing key returns one connection; a second connection with the same key for another customer is refused at write time.
 
 ### T40. Provider app record for each customer · [AI-871](https://linear.app/stream/issue/AI-871)
+
+**Status: merged** in [#763](https://github.com/GetStream/Vision-Agents/pull/763) (`a7bece6e`), October 6. The provider app's secrets stay on the `connector_oauth_clients` record, not on an app-owned connection (a deviation from architecture decision 7); a `stream_app_pk` pin. Open: writers for `managed`/`operator` (T54), BYO fields in the PUT (AI-906), bulk re-seal (AI-905).
 
 - **Required for Slack.** Description. One record for each (`app_pk`, connector): provider app id, `client_id`, owner `stream` or `customer`, and who created it. It extends T19's `connector_oauth_clients` with the provider app id and a new client registration method, `managed`: an app the Router created for this customer (T54). The secrets, `client_secret` and `signing_secret`, live in a `store.ConnectorConnection` with owner `app` and are read through `core.Resolver`, sealed with the same `auth.Sealer` and keyring as every connector secret (architecture doc, decision 7). The shared Stream app (registration `operator`) serves only Stream's own agents, so Athena's first Slack channel runs on a Stream-owned record before T54 exists.
 - Scope. Migration or T19 extension, store, the `managed` registration method, tests.
