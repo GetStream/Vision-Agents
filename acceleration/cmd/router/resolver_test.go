@@ -27,7 +27,7 @@ func (s *ConnectorResolverSuite) SetupTest() {
 }
 
 func (s *ConnectorResolverSuite) TestWithConnectorsOffThereIsNoResolver() {
-	sealer, err := newConnectorSealer(s.settings)
+	sealer, err := newSecretSealer(s.settings)
 	s.Require().NoError(err)
 	registry, err := newConnectorRegistry(s.settings)
 	s.Require().NoError(err)
