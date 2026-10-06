@@ -216,9 +216,10 @@ func logLevel(settings config.Config) slog.Level {
 }
 
 // newSecretSealer builds the keyring the secrets the router holds for its customers are
-// sealed under, connector credentials and Stream app keys, and nil when nothing that holds
-// one is on. It does not depend on auth.mode: a proxy deployment holds them as much as an
-// api_key one does.
+// sealed under: connector credentials, Stream app keys and channel credentials. Connectors
+// and app mode refuse to start without one; channels use it when it is set and are off
+// otherwise, so it is nil only when nothing requires it and no key is set. It does not
+// depend on auth.mode: a proxy deployment holds them as much as an api_key one does.
 //
 // The keyring is every ROUTER_AUTH_KEK_V1, _V2 and so on that is set, with
 // ROUTER_AUTH_KEK_VERSION naming the one that seals new rows. That variable picks the
@@ -234,7 +235,10 @@ func newSecretSealer(settings config.Config) (*auth.Sealer, error) {
 		holders = append(holders, "stream.tenancy="+config.TenancyApp)
 	}
 	if len(holders) == 0 {
-		return nil, nil
+		if !keyringSet(settings) {
+			return nil, nil
+		}
+		return loadKeyring(settings, "channels need")
 	}
 	// The setting that needs the keyring is what each refusal names, so whoever reads it
 	// knows which change brought it on.
@@ -242,6 +246,28 @@ func newSecretSealer(settings config.Config) (*auth.Sealer, error) {
 	if len(holders) == 1 {
 		needs = holders[0] + " needs"
 	}
+	return loadKeyring(settings, needs)
+}
+
+// keyringSet reports whether any key of the keyring is set: auth.kek, or a
+// ROUTER_AUTH_KEK_V<n>.
+func keyringSet(settings config.Config) bool {
+	if settings.Auth.KEK != "" {
+		return true
+	}
+	for _, variable := range os.Environ() {
+		name, key, _ := strings.Cut(variable, "=")
+		if strings.HasPrefix(name, authKEKEnvVar+"_V") && key != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// loadKeyring reads every ROUTER_AUTH_KEK_V<n> and auth.kek into a keyring, with
+// ROUTER_AUTH_KEK_VERSION naming the writer. needs says which setting requires it, for
+// each refusal to name.
+func loadKeyring(settings config.Config, needs string) (*auth.Sealer, error) {
 	current := auth.KEKVersion
 	if configured := os.Getenv(authKEKVersionEnvVar); configured != "" {
 		version, err := strconv.Atoi(configured)
@@ -360,9 +386,9 @@ func newAuthenticator(settings config.Config, configs *appconfig.Store, logger *
 		return nil, fmt.Errorf("auth.mode=%s needs postgres.dsn, because that is where the keys are",
 			auth.APIKey)
 	}
-	sealer, err := auth.NewSealer(settings.Auth.KEK)
+	sealer, err := loadKeyring(settings, "auth.mode="+string(auth.APIKey)+" needs")
 	if err != nil {
-		return nil, fmt.Errorf("auth.mode=%s needs auth.kek: %w", auth.APIKey, err)
+		return nil, err
 	}
 
 	return auth.New(mode, configs.Lookup(sealer))
@@ -970,15 +996,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if base != nil {
 		options.Knowledge = base
 	}
-	// A channel's provider credentials are sealed under the same key as the stored key
-	// secrets. Without one the channel paths refuse to hold them, which is better than
-	// keeping a WhatsApp token in the clear, and nothing is delivered because nothing can
-	// be connected. A message that arrives opens a conversation from a row, so answering
-	// one needs a database and sessions as well.
-	if settings.Auth.KEK != "" {
-		if options.Secrets, err = auth.NewSealer(settings.Auth.KEK); err != nil {
-			return err
-		}
+	// A channel's provider credentials are sealed under the same keyring as the other
+	// secrets the router holds. Without one the channel paths refuse to hold them, which is
+	// better than keeping a WhatsApp token in the clear, and nothing is delivered because
+	// nothing can be connected. A message that arrives opens a conversation from a row, so
+	// answering one needs a database and sessions as well.
+	if secrets != nil {
+		options.Secrets = secrets
 		if pgStore != nil && sessions != nil {
 			inbound, err := channels.New(channels.Options{
 				Store:    pgStore,
@@ -994,8 +1018,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 			defer inbound.Close()
 		}
 	} else {
-		logger.Warn("no auth.kek set, so no channel can be connected: "+
-			"there is nowhere safe to keep a provider's credentials",
+		logger.Warn("no key encryption keyring set (ROUTER_AUTH_KEK_V1), so no channel can be "+
+			"connected: there is nowhere safe to keep a provider's credentials",
 			"endpoint", "POST /v1/agents/channels")
 	}
 
