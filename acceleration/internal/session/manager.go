@@ -118,8 +118,15 @@ type ManagerOptions struct {
 	// PluginAuth signs an end user into the plugins an agent names per user, sending the
 	// provider back to this deployment's public URL. Nil sends it to localhost.
 	PluginAuth *plugins.Auth
-	Logger     *slog.Logger
+	// DetachedGrace is how long a persistent text session outlives its last watcher.
+	// Zero is defaultDetachedGrace.
+	DetachedGrace time.Duration
+	Logger        *slog.Logger
 }
+
+// defaultDetachedGrace is long enough to finish a plugin login in another tab, or to leave
+// the page a conversation is on and come back to it.
+const defaultDetachedGrace = 5 * time.Minute
 
 // Manager owns the sessions this process is running.
 type Manager struct {
@@ -160,6 +167,9 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
+	}
+	if options.DetachedGrace == 0 {
+		options.DetachedGrace = defaultDetachedGrace
 	}
 
 	manager := &Manager{
@@ -274,6 +284,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		service, err := m.Conversations()
 		if err != nil {
 			return nil, stack.Wrap(err)
+		}
+		if spec.ConversationID != "" {
+			m.takeOver(spec.CustomerID, spec.ConversationID)
 		}
 		var truncated bool
 		conv, previous, truncated, err = service.OpenInApp(ctx, spec.StreamApp, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
@@ -393,12 +406,13 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		spec:      spec,
 		// Postgres keeps microseconds. The live session sorts by the same instant as its
 		// row, or a cursor taken from one would hand the other back on the next page.
-		created:  time.Now().UTC().Truncate(time.Microsecond),
-		logger:   m.logger,
-		watchers: map[uint64]*watcher{},
-		state:    Live,
-		modality: store.ModalityVoice,
-		skills:   skills,
+		created:       time.Now().UTC().Truncate(time.Microsecond),
+		logger:        m.logger,
+		watchers:      map[uint64]*watcher{},
+		detachedGrace: m.options.DetachedGrace,
+		state:         Live,
+		modality:      store.ModalityVoice,
+		skills:        skills,
 	}
 	if spec.Text {
 		created.modality = store.ModalityText
@@ -663,6 +677,28 @@ func (m *Manager) supersede(spec Spec) {
 			m.logger.Warn("the session left behind did not end cleanly",
 				"session", found.id, "error", err)
 		}
+	}
+}
+
+// takeOver ends the session holding the persistent conversation cid when nobody is
+// watching it, so reopening the conversation does not wait out that session's grace: the
+// client reopening it is most likely the one that stopped watching, after a crash.
+func (m *Manager) takeOver(customer, cid string) {
+	m.mu.Lock()
+	var left []*Session
+	for id, found := range m.sessions {
+		if found.spec.CustomerID == customer && found.unwatchedFor(cid) {
+			left = append(left, found)
+			delete(m.sessions, id)
+		}
+	}
+	m.mu.Unlock()
+
+	for _, found := range left {
+		m.release(found.id)
+		m.logger.Info("reopening a conversation nobody was watching",
+			"session", found.id, "conversation", cid)
+		found.abandon()
 	}
 }
 

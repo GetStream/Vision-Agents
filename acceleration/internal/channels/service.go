@@ -281,9 +281,14 @@ func (s *Service) answer(account store.ChannelAccount, line Account, provider Pr
 			"agent", config.Name, "error", err)
 		return
 	}
+	// The session ends with the message it answered, which is what saves the conversation:
+	// the next message reopens it by its id rather than starting over.
+	defer func() {
+		if _, err := s.sessions.Close(created.ID(), session.OwnerOf(created.Spec())); err != nil {
+			s.logger.Debug("could not close a channel conversation", "session", created.ID(), "error", err)
+		}
+	}()
 	events, detach := created.Watch()
-	// Detaching the last watcher ends a persistent conversation, which is what saves it: the
-	// next message reopens it by its id rather than starting over.
 	defer detach()
 
 	// The conversation a session opened is the one the next message carries on, so it is

@@ -190,6 +190,80 @@ func (s *SessionSuite) TestAFinishedLoginCarriesOnWithWhatItWasAskedFor() {
 	s.Equal(plugins.AuthorizationConnected, saved[1].Authorizations[0].Status)
 }
 
+func (s *SessionSuite) TestALoginFinishedAfterTheWatcherLeftStillCarriesOn() {
+	s.persists()
+	running := s.commands()
+	_, detach := running.Watch()
+	running.persisted.AcceptLogins([]string{"slack"})
+	_, _, err := running.RespondCommand(s.ctx, "command-a", "Tell Nash a joke on Slack", "")
+	s.Require().NoError(err)
+	s.Equal("Tell Nash a joke on Slack", s.asked())
+	slack, ok := plugins.Lookup("slack")
+	s.Require().True(ok)
+	running.persisted.Observe(agent.ToolStarted{ID: "list", Tool: "slack__list_tools", StartedAt: time.Now().UTC()})
+	running.persisted.Observe(agent.ToolRan{ID: "list", Tool: "slack__list_tools",
+		Result: plugins.AuthorizationResult(slack, "https://slack.com/oauth/v2_user/authorize?state=s1", "")})
+	s.gated.answers(1)
+	s.eventually(func() bool {
+		receipt, err := running.Command("command-a")
+		return err == nil && receipt.State == "completed"
+	}, "the reply asking for the login should finish")
+
+	// The page is left while the login is made in another tab.
+	detach()
+	s.manager.LoginFinished("s1")
+	s.Equal("Slack is connected now. Carry on with what I asked for before you needed it.", s.asked())
+	s.gated.answers(1)
+	s.eventually(func() bool {
+		saved := s.stored(running)
+		return len(saved) == 3 && saved[2].State == "completed"
+	}, "the conversation should carry on with nobody watching")
+	s.Equal(Live, running.State())
+}
+
+func (s *SessionSuite) TestAWatcherComingBackKeepsTheConversationOpen() {
+	s.grace = 50 * time.Millisecond
+	s.persists()
+	running := s.commands()
+	_, detach := running.Watch()
+	detach()
+	_, detachAgain := running.Watch()
+	defer detachAgain()
+
+	s.Never(func() bool { return running.State() == Ended },
+		150*time.Millisecond, 5*time.Millisecond, "a conversation somebody watches again must not end")
+}
+
+func (s *SessionSuite) TestAConversationNobodyWatchesEndsOnceItsGraceIsOver() {
+	s.grace = 20 * time.Millisecond
+	s.persists()
+	running := s.commands()
+	_, detach := running.Watch()
+	detach()
+
+	s.eventually(func() bool { return running.State() == Ended }, "nobody came back, so the session should end")
+}
+
+func (s *SessionSuite) TestReopeningAConversationNobodyWatchesDoesNotWaitForItsGrace() {
+	s.persists()
+	running := s.commands()
+	_, detach := running.Watch()
+	detach()
+
+	reopened, err := s.manager.Create(s.ctx, Spec{
+		CustomerID:          "acme",
+		Text:                true,
+		PersistConversation: true,
+		ConversationID:      running.Spec().ConversationID,
+		LLMTarget:           "en-low-latency",
+		Caller:              routing.Caller{UserID: "employee-1"},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = reopened.Close() })
+	s.Equal(Ended, running.State(), "the session nobody watched should hand the conversation over")
+	s.Equal(running.Spec().ConversationID, reopened.Spec().ConversationID)
+}
+
 func (s *SessionSuite) TestStoppingACommandLeavesALaterOneAnsweringItsOwnQuestion() {
 	s.persists()
 	running := s.commands()
@@ -396,9 +470,9 @@ func (s *SessionSuite) TestSharedConversationHandsOffAfterWatcherDetachAndReject
 	_, err = s.manager.Create(s.ctx, spec)
 	s.ErrorContains(err, "already open")
 	detachAlice()
-	s.eventually(func() bool { return alice.State() == Ended }, "detaching the tool host should release Alice's session")
 	bob, err := s.manager.Create(s.ctx, spec)
 	s.Require().NoError(err)
+	s.Equal(Ended, alice.State(), "Bob reopening the channel should end the session Alice stopped watching")
 	_, detachBob := bob.Watch()
 	defer detachBob()
 	s.Equal("bob", bob.Spec().Caller.UserID)
@@ -433,7 +507,6 @@ func (s *SessionSuite) TestSharedConversationHandsOffAfterWatcherDetachAndReject
 	_, _, err = alice.RespondCommand(s.ctx, "stale-session-command", "An old session must not act as Bob", "")
 	s.ErrorIs(err, persistent.ErrCommandNotFound)
 	detachBob()
-	s.eventually(func() bool { return bob.State() == Ended }, "Bob's detached session should close")
 	_, err = s.manager.Create(s.ctx, spec)
 	s.Require().Error(err, "a removed member cannot reopen the shared channel")
 }

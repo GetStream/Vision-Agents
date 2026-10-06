@@ -314,6 +314,9 @@ type SessionSuite struct {
 	gated *gatedLLM
 	// conversations persists text commands, for a test that submits one.
 	conversations *persistent.Service
+	// grace is how long a persistent text session outlives its last watcher. Zero is the
+	// manager's default, which no test waits out.
+	grace time.Duration
 	// apps is the Stream apps sessions act in, when a test names them; edgeApps is the
 	// identity each edge was built with.
 	apps     *streamapp.Clients
@@ -413,6 +416,7 @@ func (s *SessionSuite) manages() {
 		Transcript:    storing,
 		Conversations: s.conversations,
 		Stream:        s.apps,
+		DetachedGrace: s.grace,
 		Logger:        logger,
 		Edge: func(_ context.Context, _ Spec, stream streamapp.Bound, _ *slog.Logger) (agent.Edge, error) {
 			s.edgeApps = append(s.edgeApps, stream.Identity)
