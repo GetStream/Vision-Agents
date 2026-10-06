@@ -1,6 +1,6 @@
 # internal/connectors/schemes/oauth2code
 
-The `oauth2_code` scheme: the OAuth 2.0 authorization code grant with PKCE S256 (RFC 6749 §4.1, RFC 7636), one implementation for every provider a manifest describes. `Begin` and `Complete` (part 1, AI-834) acquire the grant; `Retrieve`, `Wrap`, `Classify` and `Revoke` (part 2, AI-836) renew it, apply it, read what a provider answered and end it. The lock, the checkpoint and the status a connection moves to are the resolver's (T12), not this package's.
+The `oauth2_code` scheme: the OAuth 2.0 authorization code grant with PKCE S256 (RFC 6749 §4.1, RFC 7636), one implementation for every provider a manifest describes. `Begin` and `Complete` (part 1, AI-834) acquire the grant; `Retrieve`, `Wrap`, `Classify` and `Revoke` (part 2, AI-836) renew it, apply it, read what a provider answered and end it. The lock, what the checkpoint commits and the status a connection moves to are the resolver's (`internal/connectors/resolver`); this package only says when, by calling `core.Checkpoint` before a refresh.
 
 ## Flow
 
@@ -35,7 +35,8 @@ Retrieve(stored, m)
   due        expiry known and within refresh.margin (default 1 min, the prototype's); otherwise -> the token, stored as is
   none       no refresh token: still valid -> the token; expired -> InvalidGrant
   refresh    endpoints.refresh or the token endpoint, checkEndpoint; client secret looked up again by payload ref;
-             grant_type, refresh_token, scope (granted scopes, only with scopes.send_on_refresh), resource
+             grant_type, refresh_token, scope (granted scopes, only with scopes.send_on_refresh), resource;
+             core.Checkpoint(ctx) right before the first request leaves (an error sends nothing)
   classify   Classify on the answer; a 2xx without a readable token is Uncertain; an error member Classify does
              not name, or any other refusal, is Transient
   grace      Uncertain and refresh.grace > 0 and the window the first attempt opened still running -> the same

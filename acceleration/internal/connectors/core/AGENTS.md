@@ -85,6 +85,19 @@ Fixtures: `testdata/manifests/slack_bot.yaml`, `linq.yaml`, `telegram.yaml`, `wh
 - **The raw body is bytes.** `body` is read once, before anything parses it, because a signature covers those exact bytes. `InboundMessage.Raw` is that body unchanged, shared by every message of a batch, and `[]byte`, not `json.RawMessage`, because some providers post a form. `ProviderMessageID` tells the messages of a batch apart.
 - **Ids stay the provider's.** A `Signal` names an account and an `InboundMessage` names a provider unit, an author and a message, all as the provider sends them. Mapping them and the thread key to a connection, a thread channel or a Stream Chat user is the reader's job, not the verifier's.
 
+## Resolver
+
+`Resolver` (`resolver.go`) is the one door to an access credential: every tool source, the proxy and the channel bridge ask it, and none opens a `CredentialStore` or calls a token endpoint. The router's implementation is `internal/connectors/resolver`, whose `AGENTS.md` has the flow and the cache rules.
+
+| Term | What it is | In code |
+| --- | --- | --- |
+| checkpoint | A commit of the credential state, under the lock, before a request that cannot be taken back. The resolver decides what it commits (`needs_reauthorization`); the scheme decides when | `CredentialStore.Update`'s `checkpoint`, handed to `Scheme.Retrieve` through `WithCheckpoint`, called with `Checkpoint(ctx)` |
+| detached refresh | `Retrieve` on a context of its own, with its own deadline, so a caller that gives up does not leave a refresh half done | `CredentialRequest.Deadline` is the call's budget, not the refresh's |
+| invalidate | A caller saying the provider refused the credential (`invalid_grant`) or wants more access (`scope_required`) | `Resolver.Invalidate` |
+
+- **A scheme calls `Checkpoint(ctx)` right before a request it cannot take back**, such as spending a rotating refresh token, and sends nothing if it fails. Only the scheme knows whether its `Retrieve` renews: the connection's expiry is unknown until its first `Retrieve` (`internal/api/authorizations.go` stores it zero after a consent), and the margin is the scheme's. The checkpoint travels on the context because `Scheme.Retrieve` has no parameter for it, as `httptrace.WithClientTrace` hands callbacks to a transport. Without one on the context `Checkpoint` does nothing, so a test can call `Retrieve` directly. Check: `go test -run 'TestOAuth2CodeSuite/(TestARefreshCheckpoints|TestARefreshWhoseCheckpoint|TestAccessCredentialThatIsNotDueNever)' ./internal/connectors/schemes/oauth2code`.
+- **Statuses are the store's** (`store.ConnectionConnected`, `ConnectionNeedsReauthorization`, `ConnectionDisconnected`, `ConnectionPending`); `CredentialState.Status` holds one of them.
+
 ## Tests
 
 From `acceleration/`: `go test ./internal/connectors/...`. `testdata/manifests/` holds the 12 stress-test manifests and the 4 channel ones, and `testdata/recorded/` their synthetic token responses, callbacks and inbound events; never put a real token there. Testify suites, no mocks (`.claude/skills/go-testing/SKILL.md`). The guard tests parse this package's source with `go/parser`, so a provider name fails before anything uses it.

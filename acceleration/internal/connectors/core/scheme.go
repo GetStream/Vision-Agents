@@ -28,7 +28,7 @@ type Scheme interface {
 	// the StoredCredentials; the resolver persists what comes back under the lock. A
 	// failed renewal returns an *OutcomeError and no StoredCredentials, and, while the old
 	// access credential has not expired yet, that credential beside the error, so the call
-	// can still go out.
+	// can still go out. A renewal that cannot be taken back calls Checkpoint(ctx) first.
 	Retrieve(ctx context.Context, stored StoredCredentials, m ResolvedManifest) (AccessCredential, StoredCredentials, error)
 	// Wrap applies the credential to every outbound request: a header, a signature or a TLS
 	// client certificate. base is the egress transport (egress.NewClient passes it), so

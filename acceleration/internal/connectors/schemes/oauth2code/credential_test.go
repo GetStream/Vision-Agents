@@ -89,6 +89,52 @@ func (s *OAuth2CodeSuite) TestARefreshSendsTheGrantedScopesWhenThePolicySays() {
 	s.Equal("files:read files:write", scope)
 }
 
+func (s *OAuth2CodeSuite) TestARefreshCheckpointsOnceBeforeTheTokenLeaves() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.preregistered(srv)
+	scheme, stored := s.connected(srv, resolved, nil)
+	var refreshesAtCheckpoint []int
+	ctx := core.WithCheckpoint(s.ctx, func() error {
+		refreshesAtCheckpoint = append(refreshesAtCheckpoint, srv.Refreshes())
+		return nil
+	})
+
+	s.now = s.now.Add(fakeprovider.AccessTTL)
+	_, _, err := scheme.Retrieve(ctx, stored, resolved)
+	s.Require().NoError(err)
+	s.Equal([]int{0}, refreshesAtCheckpoint, "one checkpoint, before the refresh reached the provider")
+	s.Equal(1, srv.Refreshes())
+}
+
+func (s *OAuth2CodeSuite) TestARefreshWhoseCheckpointFailsSendsNothing() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.preregistered(srv)
+	scheme, stored := s.connected(srv, resolved, nil)
+	failed := errors.New("the checkpoint did not commit")
+	ctx := core.WithCheckpoint(s.ctx, func() error { return failed })
+
+	s.now = s.now.Add(fakeprovider.AccessTTL)
+	_, returned, err := scheme.Retrieve(ctx, stored, resolved)
+	s.ErrorIs(err, failed)
+	s.Equal(0, srv.Refreshes(), "the refresh token never left")
+	s.Equal(core.StoredCredentials{}, returned)
+}
+
+func (s *OAuth2CodeSuite) TestAccessCredentialThatIsNotDueNeverCheckpoints() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.preregistered(srv)
+	scheme, stored := s.connected(srv, resolved, nil)
+	checkpoints := 0
+	ctx := core.WithCheckpoint(s.ctx, func() error {
+		checkpoints++
+		return nil
+	})
+
+	_, _, err := scheme.Retrieve(ctx, stored, resolved)
+	s.Require().NoError(err)
+	s.Zero(checkpoints, "nothing that cannot be taken back was sent")
+}
+
 func (s *OAuth2CodeSuite) TestALostRefreshIsUncertainAndLeavesTheStoredCredentialsAlone() {
 	srv := fakeprovider.New(s.T())
 	resolved := s.preregistered(srv)

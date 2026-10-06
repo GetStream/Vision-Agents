@@ -180,6 +180,12 @@ func (s *Scheme) refresh(ctx context.Context, m core.ResolvedManifest, current s
 		// RFC 8707 section 2.2: the resource of the access token asked for, on a refresh too.
 		form.Set("resource", current.Resource)
 	}
+	// The resolver's checkpoint commits that the outcome is not known yet before the refresh
+	// token leaves, so an answer that never arrives is never followed by the same token. The
+	// grace retry below needs none of its own: the first attempt already committed it.
+	if err := core.Checkpoint(ctx); err != nil {
+		return storedPayload{}, err
+	}
 	start := s.cfg.Now()
 	token, err := s.redeem(ctx, endpoint, form, c)
 	var failed *core.OutcomeError
