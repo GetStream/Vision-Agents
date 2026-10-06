@@ -514,7 +514,7 @@ Waves follow the same rule as the chart above: one more than the deepest depende
 
 ### T54. Slack app for each customer with apps.manifest.create · [AI-872](https://linear.app/stream/issue/AI-872)
 
-- **Proposal.** Description. The Router creates the customer's Slack app with [`apps.manifest.create`](https://docs.slack.dev/reference/methods/apps.manifest.create) from a manifest template: scopes, events, `request_url` = the T38 URL, `token_rotation_enabled: true`, optional `allowed_ip_address_ranges` (at most 10). It needs an app configuration token that a workspace admin gives once; `tooling.tokens.rotate` keeps it alive. The app stays in the customer's workspace without public distribution, so Slack's non-Marketplace rate limit does not apply. The built-in `slack.yaml` gets a new revision with `managed` in `client.registration`; today, at revision 3, it lists `[operator]` only.
+- **Decided by Kanat on October 6 (integration modes A, B and C).** Description. The Router creates the customer's Slack app with [`apps.manifest.create`](https://docs.slack.dev/reference/methods/apps.manifest.create) from a manifest template: scopes, events, `request_url` = the T38 URL, `token_rotation_enabled: true`, optional `allowed_ip_address_ranges` (at most 10). It needs an app configuration token that a workspace admin gives once; `tooling.tokens.rotate` keeps it alive. The app stays in the customer's workspace without public distribution, so Slack's non-Marketplace rate limit does not apply. The built-in `slack.yaml` gets a new revision with `managed` in `client.registration`; today, at revision 3, it lists `[operator]` only.
 - Scope. The Slack create and delete calls, config-token storage and rotation, `slack.yaml` revision 2, tests against a fake Slack.
 - Out of scope. The Stream-owned app for Stream's own agents (T40).
 - Dependencies. T40.
@@ -523,7 +523,7 @@ Waves follow the same rule as the chart above: one more than the deepest depende
 
 ### T44. Proxy for direct calls · [AI-873](https://linear.app/stream/issue/AI-873)
 
-- **Proposal, the default direct-call path.** Description. `ANY /v1/agents/connections/{id}/proxy/{path}`, server-side only, beside T16's connection endpoints. Base URL and allowed hosts come from the manifest. The Router resolves the credential (T12), wraps it (T13), forwards the request unchanged and returns the response unchanged. On a 401 it calls `Invalidate` and retries once. A rate limit for each customer; the provider's `429` and `Retry-After` pass through. A user connection works only in that user's session (`Binding.Selection: session`). The customer uses the provider's official SDK with its base URL set to the proxy (`base_url` in `slack_sdk`, `slackApiUrl` in `@slack/web-api`). The Router implements no provider method.
+- **Decided by Kanat on October 6 (integration modes A, B and C), the default direct-call path.** Description. `ANY /v1/agents/connections/{id}/proxy/{path}`, server-side only, beside T16's connection endpoints. Base URL and allowed hosts come from the manifest. The Router resolves the credential (T12), wraps it (T13), forwards the request unchanged and returns the response unchanged. On a 401 it calls `Invalidate` and retries once. A rate limit for each customer; the provider's `429` and `Retry-After` pass through. A user connection works only in that user's session (`Binding.Selection: session`). The customer uses the provider's official SDK with its base URL set to the proxy (`base_url` in `slack_sdk`, `slackApiUrl` in `@slack/web-api`). The Router implements no provider method.
 - Scope. Handler, rate limiter, OpenAPI and Go SDK regen, tests with the fake provider.
 - Out of scope. Token export (T45).
 - Dependencies. T12, T13, T16, T47.
@@ -532,14 +532,14 @@ Waves follow the same rule as the chart above: one more than the deepest depende
 
 ### T45. Token export · [AI-874](https://linear.app/stream/issue/AI-874)
 
-- **Proposal, opt-in.** Description. An optional `Export` on `core.Scheme`, for bearer schemes only: `core.AccessCredential` keeps its secret private today (`[core/scheme.go:115-130](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/core/scheme.go#L115-L130)`). `POST /v1/agents/connections/{id}/token`, server-side only. Only the customer's own provider unit exports; export is off by default for each connector and refused when the app restricts tokens to the Router IP ranges. A bot token for `Binding.Selection: fixed`; a user token only in that user's own session. One audit row for each export.
+- **Decided by Kanat on October 6 (integration modes A, B and C), opt-in.** Description. An optional `Export` on `core.Scheme`, for bearer schemes only: `core.AccessCredential` keeps its secret private today (`[core/scheme.go:115-130](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/connectors/core/scheme.go#L115-L130)`). `POST /v1/agents/connections/{id}/token`, server-side only. Only the customer's own provider unit exports; export is off by default for each connector and refused when the app restricts tokens to the Router IP ranges. A bot token for `Binding.Selection: fixed`; a user token only in that user's own session. One audit row for each export.
 - Scope. Scheme extension, `oauth2code` and `apikey` export, handler, OpenAPI and Go SDK regen.
 - Dependencies. T12, T40, T47.
 - Acceptance. A Stream-owned app refuses export; each export writes one audit row; no response ever contains a refresh token.
 
 ### T46. Raw event forwarding · [AI-875](https://linear.app/stream/issue/AI-875)
 
-- **Proposal.** Description. Event destinations for each connector. The bridge forwards the events it does not handle (buttons, reactions, modals), or every event in integration mode C. Each forward is signed with a key of that customer or destination, not with the deployment secret. The raw provider body and headers stay as they are, so Slack Bolt can verify with the app's signing secret when the customer owns the app.
+- **Decided by Kanat on October 6 (integration modes A, B and C).** Description. Event destinations for each connector. The bridge forwards the events it does not handle (buttons, reactions, modals), or every event in integration mode C. Each forward is signed with a key of that customer or destination, not with the deployment secret. The raw provider body and headers stay as they are, so Slack Bolt can verify with the app's signing secret when the customer owns the app.
 - Scope. Destination records, signer, retries on 5xx, tests.
 - Dependencies. T57, T40.
 - Acceptance. A forward signed for customer A does not verify with customer B's key; a 503 is retried.
@@ -670,7 +670,7 @@ Seven PRs that give the agent one history across channels. Parent issue: [AI-867
 
 ### T49. Session API: history from the caller · [AI-888](https://linear.app/stream/issue/AI-888)
 
-- **Proposal, integration mode C.** Description. A field to pass the caller's own history when a thread outlives a session. Neither `CreateSessionRequest` nor `CreateResponseRequest` has one today (`[api/generated.go:2027,2040](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/api/generated.go#L2027)`). Until then mode C uses a text session with `incognito: true`.
+- **Decided by Kanat on October 6 (integration modes A, B and C), mode C.** Description. A field to pass the caller's own history when a thread outlives a session. Neither `CreateSessionRequest` nor `CreateResponseRequest` has one today (`[api/generated.go:2027,2040](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/api/generated.go#L2027)`). Until then mode C uses a text session with `incognito: true`.
 - Dependencies. None.
 
 ## Sources

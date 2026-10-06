@@ -388,7 +388,7 @@ Slack shows why both sides use the same layer. The Slack inbound channel needs a
 
 ## Integration modes: full platform, customizations, pass-through
 
-The platform has three layers. Each layer has a public API. A customer uses all three layers or only some of them. Our own upper layers call the lower layers through the same API. In every mode, the customer has its own Slack app. This is the target design. It is not in the code.
+The platform has three layers. Each layer has a public API. A customer uses all three layers or only some of them. Our own upper layers call the lower layers through the same API. In every mode, the customer has its own Slack app. Decided by Kanat on October 6: we build all three modes, and each customer chooses how deep to integrate. It is not in the code yet.
 
 **Three layers.**
 
