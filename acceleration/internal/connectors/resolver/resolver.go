@@ -36,19 +36,20 @@ const maxAge = 30 * time.Second
 
 // What LastError says after each outcome. core.CredentialState.LastError is shown to whoever
 // has to reconnect, so each says what to do. The wording follows the prototype's
-// (ResolveCredentials in internal/connectors/runtime.go:97-123 at cf62af0d), without the word
+// (ResolveCredentials in internal/connectors/runtime.go:98-115 at cf62af0d), without the word
 // OAuth, since any scheme can end up here.
 const (
 	// lostRefresh is what the checkpoint commits before a refresh, and what stays when its
 	// answer is lost: the provider may have rotated the refresh token, and only a reconnect is
-	// sure to work (runtime.go:106).
+	// sure to work (runtime.go:98).
 	lostRefresh = "A credential refresh did not finish durably; reconnect the account"
-	// rejectedGrant is the provider refusing the grant (runtime.go:113).
+	// rejectedGrant is the provider refusing the grant (runtime.go:106).
 	rejectedGrant = "The provider rejected the grant; reconnect the account"
-	// missingScope is the provider asking for access the grant does not have.
+	// missingScope is the provider asking for access the grant does not have. New wording:
+	// the prototype had no such outcome; a reconnect with the wider scopes is what helps.
 	missingScope = "The provider asks for access the grant does not have; reconnect the account to grant it"
 	// temporarilyUnavailable is a refresh that failed in a way a later call may not; the
-	// connection stays connected (runtime.go:122).
+	// connection stays connected (runtime.go:115).
 	temporarilyUnavailable = "The provider could not renew the credential just now; the next call tries again"
 )
 
