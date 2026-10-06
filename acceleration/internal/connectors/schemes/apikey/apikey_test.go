@@ -66,6 +66,7 @@ func (s *APIKeySuite) TestAHeaderTheRouterOwnsOrAProxyReadsIsRefused() {
 	for _, header := range []string{
 		"Authorization", "authorization", "Cookie", "Host", "Content-Length", "Connection",
 		"Transfer-Encoding", "Proxy-Authorization", "Proxy-Authenticate", "proxy-connection",
+		"Keep-Alive", "te", "Trailer", "upgrade", "Expect",
 	} {
 		_, _, err := s.scheme.Complete(context.Background(), core.CompleteInput{Supplied: map[string]string{apikey.SuppliedKey: key, apikey.SuppliedHeader: header}})
 		s.ErrorContains(err, "the header is one the router sets itself", header)

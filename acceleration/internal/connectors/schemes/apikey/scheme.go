@@ -195,9 +195,23 @@ func (p payload) check() error {
 //     how the request is read.
 //   - Proxy-Authorization, Proxy-Authenticate and every other Proxy- field (RFC 9110 sections
 //     11.7.1, 11.7.2) are for a proxy, not the provider.
+//
+// and, past the prototype's list, the fields that control the connection or the framing,
+// which net/http (go1.27) drops, refuses, or fails the request on with the key in the error:
+//
+//   - Keep-Alive, TE and Upgrade are connection-specific (RFC 9110 section 7.6.1), and an
+//     HTTP/2 message «MUST NOT» carry them (RFC 9113 section 8.2.2; TE only as "trailers").
+//     Egress negotiates HTTP/2 (internal/egress/public.go:124 clones DefaultTransport,
+//     ForceAttemptHTTP2), where Upgrade fails the request with the key in the error, TE
+//     gets a 400 and Keep-Alive is dropped.
+//   - Trailer lists the trailer fields to come (RFC 9110 section 6.6.2); net/http drops it
+//     from the header section on HTTP/1.1 and HTTP/2.
+//   - Expect asks the server for a behaviour (RFC 9110 section 10.1.1); any value but
+//     100-continue may be answered 417, as it is on HTTP/1.1.
 func forbidden(name string) bool {
 	switch name {
-	case "Authorization", "Cookie", "Host", "Content-Length", "Connection", "Proxy-Authorization", "Proxy-Authenticate", "Transfer-Encoding":
+	case "Authorization", "Cookie", "Host", "Content-Length", "Connection", "Proxy-Authorization", "Proxy-Authenticate", "Transfer-Encoding",
+		"Keep-Alive", "Te", "Trailer", "Upgrade", "Expect":
 		return true
 	}
 	return strings.HasPrefix(name, "Proxy-")
