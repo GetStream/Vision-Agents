@@ -31,13 +31,15 @@ func (s *ConnectorRegistrySuite) TestWithConnectorsOffNoSchemeIsRegistered() {
 	s.Empty(registry.Schemes, "no connection or custom connector can name one")
 }
 
-func (s *ConnectorRegistrySuite) TestWithConnectorsOnOAuth2CodeIsRegistered() {
+func (s *ConnectorRegistrySuite) TestWithConnectorsOnTheFourSchemesAreRegisteredByName() {
 	s.settings.Connectors.Enabled = true
 
 	registry, err := newConnectorRegistry(s.settings)
 
 	s.Require().NoError(err)
-	s.Require().Contains(registry.Schemes, "oauth2_code")
-	s.Equal("oauth2_code", registry.Schemes["oauth2_code"].Name())
-	s.Len(registry.Schemes, 1)
+	for _, name := range []string{"oauth2_code", "api_key", "bearer", "none"} {
+		s.Require().Contains(registry.Schemes, name)
+		s.Equal(name, registry.Schemes[name].Name())
+	}
+	s.Len(registry.Schemes, 4)
 }
