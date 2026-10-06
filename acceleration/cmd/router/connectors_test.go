@@ -43,3 +43,23 @@ func (s *ConnectorRegistrySuite) TestWithConnectorsOnTheFourSchemesAreRegistered
 	}
 	s.Len(registry.Schemes, 4)
 }
+
+func (s *ConnectorRegistrySuite) TestAnHTTPSPublicURLIsTheClientMetadataDocumentsHost() {
+	s.settings.Connectors.Enabled = true
+	s.settings.PublicURL = "https://router.example"
+
+	registry, err := newConnectorRegistry(s.settings)
+
+	s.Require().NoError(err, "oauth2code takes the client_id URL the API serves the document at")
+	s.Contains(registry.Schemes, "oauth2_code")
+}
+
+func (s *ConnectorRegistrySuite) TestAPlainHTTPPublicURLStartsWithCIMDOff() {
+	s.settings.Connectors.Enabled = true
+	s.settings.PublicURL = "http://localhost:8080"
+
+	registry, err := newConnectorRegistry(s.settings)
+
+	s.Require().NoError(err, "an http client_id URL is not CIMD's (section 3), so none is passed")
+	s.Contains(registry.Schemes, "oauth2_code")
+}
