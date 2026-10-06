@@ -47,7 +47,13 @@ type Authorization struct {
 	Text         string `json:"text,omitempty"`
 	ThumbURL     string `json:"thumb_url,omitempty"`
 	TitleLink    string `json:"title_link,omitempty"`
+	// Status is AuthorizationConnected once the user has finished this login.
+	Status string `json:"status,omitempty"`
 }
+
+// AuthorizationConnected is the Status of an authorization the user has finished, which a
+// client shows as connected rather than as a button to press again.
+const AuthorizationConnected = "connected"
 
 // UserTools are the tools an agent is offered for the plugins its end users connect.
 func UserTools(offered []Plugin) []harness.Tool {
@@ -109,6 +115,25 @@ func AuthorizationResult(plugin Plugin, authorizeURL, logoURL string) string {
 	return string(raw)
 }
 
+// Unavailable is the status a user plugin's tool answers when the agent cannot log anybody
+// into it, because the provider needs an OAuth client and the agent was given none.
+const Unavailable = "unavailable"
+
+// UnavailableResult is what a user plugin's tool answers when nobody can connect it here.
+// It says nothing about how to set the plugin up: that is for whoever runs the agent, not
+// for the person in the conversation.
+func UnavailableResult(plugin Plugin) string {
+	raw, _ := json.Marshal(struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	}{
+		Status: Unavailable,
+		Message: fmt.Sprintf("%s is not available to this agent yet, so the user cannot connect it. "+
+			"Tell them it is not available here; do not offer to set it up.", plugin.Name),
+	})
+	return string(raw)
+}
+
 // RequestedAuthorization reads the authorization a tool result asks for, never model prose.
 // Only a result that is exactly what AuthorizationResult writes, from one of the plugin's
 // own tools, with an https authorize URL, asks for one. logins are the servers the session
@@ -129,6 +154,8 @@ func RequestedAuthorization(tool, result string, logins []string) (Authorization
 		return Authorization{}, false
 	}
 	found := payload.Attachment
+	// Only the router's own callback says a login is finished, never a tool's result.
+	found.Status = ""
 	if !ValidAuthorization(found) {
 		return Authorization{}, false
 	}
@@ -148,7 +175,8 @@ func RequestedAuthorization(tool, result string, logins []string) (Authorization
 // A server named by URL is in no catalog, so its card says only its name.
 func ValidAuthorization(found Authorization) bool {
 	if found.Type != AuthorizationType || found.Title == "" || !utf8.ValidString(found.Title) ||
-		utf8.RuneCountInString(found.Title) > 200 || len(found.AuthorizeURL) > maxAuthorizeURL {
+		utf8.RuneCountInString(found.Title) > 200 || len(found.AuthorizeURL) > maxAuthorizeURL ||
+		found.Status != "" && found.Status != AuthorizationConnected {
 		return false
 	}
 	plugin, ok := Lookup(found.PluginID)

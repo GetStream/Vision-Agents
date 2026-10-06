@@ -404,6 +404,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 			HTTP:         options.PluginHTTP,
 			PublicURL:    options.PublicURL,
 			DashboardURL: options.DashboardURL,
+			Clients:      session.PluginClients(options.Store, options.Secrets),
 		},
 		pluginEvents: options.PluginEvents,
 		channels:     options.Channels,

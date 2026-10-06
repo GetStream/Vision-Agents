@@ -177,12 +177,12 @@ internal enum Operations {
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/POST/responses/409/content`.
                 internal enum Body: Sendable, Hashable {
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/POST/responses/409/content/application\/json`.
-                    case json(Components.Schemas._Error)
+                    case json(Components.Schemas.ErrorResponse)
                     /// The associated value of the enum case if `self` is `.json`.
                     ///
                     /// - Throws: An error if `self` is not `.json`.
                     /// - SeeAlso: `.json`.
-                    internal var json: Components.Schemas._Error {
+                    internal var json: Components.Schemas.ErrorResponse {
                         get throws {
                             switch self {
                             case let .json(body):
@@ -224,45 +224,17 @@ internal enum Operations {
                     }
                 }
             }
-            internal struct InternalServerError: Sendable, Hashable {
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/POST/responses/500/content`.
-                internal enum Body: Sendable, Hashable {
-                    /// - Remark: Generated from `#/paths/v1/agents/sessions/POST/responses/500/content/application\/json`.
-                    case json(Components.Schemas._Error)
-                    /// The associated value of the enum case if `self` is `.json`.
-                    ///
-                    /// - Throws: An error if `self` is not `.json`.
-                    /// - SeeAlso: `.json`.
-                    internal var json: Components.Schemas._Error {
-                        get throws {
-                            switch self {
-                            case let .json(body):
-                                return body
-                            }
-                        }
-                    }
-                }
-                /// Received HTTP response body
-                internal var body: Operations.CreateSession.Output.InternalServerError.Body
-                /// Creates a new `InternalServerError`.
-                ///
-                /// - Parameters:
-                ///   - body: Received HTTP response body
-                internal init(body: Operations.CreateSession.Output.InternalServerError.Body) {
-                    self.body = body
-                }
-            }
-            /// Internal Server Error
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
             ///
             /// - Remark: Generated from `#/paths//v1/agents/sessions/post(createSession)/responses/500`.
             ///
             /// HTTP response code: `500 internalServerError`.
-            case internalServerError(Operations.CreateSession.Output.InternalServerError)
+            case internalServerError(Components.Responses.InternalError)
             /// The associated value of the enum case if `self` is `.internalServerError`.
             ///
             /// - Throws: An error if `self` is not `.internalServerError`.
             /// - SeeAlso: `.internalServerError`.
-            internal var internalServerError: Operations.CreateSession.Output.InternalServerError {
+            internal var internalServerError: Components.Responses.InternalError {
                 get throws {
                     switch self {
                     case let .internalServerError(response):
@@ -499,45 +471,17 @@ internal enum Operations {
                     }
                 }
             }
-            internal struct InternalServerError: Sendable, Hashable {
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/responses/500/content`.
-                internal enum Body: Sendable, Hashable {
-                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/GET/responses/500/content/application\/json`.
-                    case json(Components.Schemas._Error)
-                    /// The associated value of the enum case if `self` is `.json`.
-                    ///
-                    /// - Throws: An error if `self` is not `.json`.
-                    /// - SeeAlso: `.json`.
-                    internal var json: Components.Schemas._Error {
-                        get throws {
-                            switch self {
-                            case let .json(body):
-                                return body
-                            }
-                        }
-                    }
-                }
-                /// Received HTTP response body
-                internal var body: Operations.GetSession.Output.InternalServerError.Body
-                /// Creates a new `InternalServerError`.
-                ///
-                /// - Parameters:
-                ///   - body: Received HTTP response body
-                internal init(body: Operations.GetSession.Output.InternalServerError.Body) {
-                    self.body = body
-                }
-            }
-            /// Internal Server Error
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
             ///
             /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)/responses/500`.
             ///
             /// HTTP response code: `500 internalServerError`.
-            case internalServerError(Operations.GetSession.Output.InternalServerError)
+            case internalServerError(Components.Responses.InternalError)
             /// The associated value of the enum case if `self` is `.internalServerError`.
             ///
             /// - Throws: An error if `self` is not `.internalServerError`.
             /// - SeeAlso: `.internalServerError`.
-            internal var internalServerError: Operations.GetSession.Output.InternalServerError {
+            internal var internalServerError: Components.Responses.InternalError {
                 get throws {
                     switch self {
                     case let .internalServerError(response):
@@ -789,45 +733,17 @@ internal enum Operations {
                     }
                 }
             }
-            internal struct InternalServerError: Sendable, Hashable {
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/responses/500/content`.
-                internal enum Body: Sendable, Hashable {
-                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/PATCH/responses/500/content/application\/json`.
-                    case json(Components.Schemas._Error)
-                    /// The associated value of the enum case if `self` is `.json`.
-                    ///
-                    /// - Throws: An error if `self` is not `.json`.
-                    /// - SeeAlso: `.json`.
-                    internal var json: Components.Schemas._Error {
-                        get throws {
-                            switch self {
-                            case let .json(body):
-                                return body
-                            }
-                        }
-                    }
-                }
-                /// Received HTTP response body
-                internal var body: Operations.UpdateSession.Output.InternalServerError.Body
-                /// Creates a new `InternalServerError`.
-                ///
-                /// - Parameters:
-                ///   - body: Received HTTP response body
-                internal init(body: Operations.UpdateSession.Output.InternalServerError.Body) {
-                    self.body = body
-                }
-            }
-            /// Internal Server Error
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
             ///
             /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/patch(updateSession)/responses/500`.
             ///
             /// HTTP response code: `500 internalServerError`.
-            case internalServerError(Operations.UpdateSession.Output.InternalServerError)
+            case internalServerError(Components.Responses.InternalError)
             /// The associated value of the enum case if `self` is `.internalServerError`.
             ///
             /// - Throws: An error if `self` is not `.internalServerError`.
             /// - SeeAlso: `.internalServerError`.
-            internal var internalServerError: Operations.UpdateSession.Output.InternalServerError {
+            internal var internalServerError: Components.Responses.InternalError {
                 get throws {
                     switch self {
                     case let .internalServerError(response):
@@ -1027,45 +943,17 @@ internal enum Operations {
                     }
                 }
             }
-            internal struct InternalServerError: Sendable, Hashable {
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/DELETE/responses/500/content`.
-                internal enum Body: Sendable, Hashable {
-                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/DELETE/responses/500/content/application\/json`.
-                    case json(Components.Schemas._Error)
-                    /// The associated value of the enum case if `self` is `.json`.
-                    ///
-                    /// - Throws: An error if `self` is not `.json`.
-                    /// - SeeAlso: `.json`.
-                    internal var json: Components.Schemas._Error {
-                        get throws {
-                            switch self {
-                            case let .json(body):
-                                return body
-                            }
-                        }
-                    }
-                }
-                /// Received HTTP response body
-                internal var body: Operations.DeleteSession.Output.InternalServerError.Body
-                /// Creates a new `InternalServerError`.
-                ///
-                /// - Parameters:
-                ///   - body: Received HTTP response body
-                internal init(body: Operations.DeleteSession.Output.InternalServerError.Body) {
-                    self.body = body
-                }
-            }
-            /// Internal Server Error
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
             ///
             /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(deleteSession)/responses/500`.
             ///
             /// HTTP response code: `500 internalServerError`.
-            case internalServerError(Operations.DeleteSession.Output.InternalServerError)
+            case internalServerError(Components.Responses.InternalError)
             /// The associated value of the enum case if `self` is `.internalServerError`.
             ///
             /// - Throws: An error if `self` is not `.internalServerError`.
             /// - SeeAlso: `.internalServerError`.
-            internal var internalServerError: Operations.DeleteSession.Output.InternalServerError {
+            internal var internalServerError: Components.Responses.InternalError {
                 get throws {
                     switch self {
                     case let .internalServerError(response):
@@ -1312,45 +1200,17 @@ internal enum Operations {
                     }
                 }
             }
-            internal struct InternalServerError: Sendable, Hashable {
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/fork/POST/responses/500/content`.
-                internal enum Body: Sendable, Hashable {
-                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/fork/POST/responses/500/content/application\/json`.
-                    case json(Components.Schemas._Error)
-                    /// The associated value of the enum case if `self` is `.json`.
-                    ///
-                    /// - Throws: An error if `self` is not `.json`.
-                    /// - SeeAlso: `.json`.
-                    internal var json: Components.Schemas._Error {
-                        get throws {
-                            switch self {
-                            case let .json(body):
-                                return body
-                            }
-                        }
-                    }
-                }
-                /// Received HTTP response body
-                internal var body: Operations.ForkSession.Output.InternalServerError.Body
-                /// Creates a new `InternalServerError`.
-                ///
-                /// - Parameters:
-                ///   - body: Received HTTP response body
-                internal init(body: Operations.ForkSession.Output.InternalServerError.Body) {
-                    self.body = body
-                }
-            }
-            /// Internal Server Error
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
             ///
             /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/fork/post(forkSession)/responses/500`.
             ///
             /// HTTP response code: `500 internalServerError`.
-            case internalServerError(Operations.ForkSession.Output.InternalServerError)
+            case internalServerError(Components.Responses.InternalError)
             /// The associated value of the enum case if `self` is `.internalServerError`.
             ///
             /// - Throws: An error if `self` is not `.internalServerError`.
             /// - SeeAlso: `.internalServerError`.
-            internal var internalServerError: Operations.ForkSession.Output.InternalServerError {
+            internal var internalServerError: Components.Responses.InternalError {
                 get throws {
                     switch self {
                     case let .internalServerError(response):
@@ -1614,45 +1474,17 @@ internal enum Operations {
                     }
                 }
             }
-            internal struct InternalServerError: Sendable, Hashable {
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/GET/responses/500/content`.
-                internal enum Body: Sendable, Hashable {
-                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/GET/responses/500/content/application\/json`.
-                    case json(Components.Schemas._Error)
-                    /// The associated value of the enum case if `self` is `.json`.
-                    ///
-                    /// - Throws: An error if `self` is not `.json`.
-                    /// - SeeAlso: `.json`.
-                    internal var json: Components.Schemas._Error {
-                        get throws {
-                            switch self {
-                            case let .json(body):
-                                return body
-                            }
-                        }
-                    }
-                }
-                /// Received HTTP response body
-                internal var body: Operations.ListResponses.Output.InternalServerError.Body
-                /// Creates a new `InternalServerError`.
-                ///
-                /// - Parameters:
-                ///   - body: Received HTTP response body
-                internal init(body: Operations.ListResponses.Output.InternalServerError.Body) {
-                    self.body = body
-                }
-            }
-            /// Internal Server Error
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
             ///
             /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/get(listResponses)/responses/500`.
             ///
             /// HTTP response code: `500 internalServerError`.
-            case internalServerError(Operations.ListResponses.Output.InternalServerError)
+            case internalServerError(Components.Responses.InternalError)
             /// The associated value of the enum case if `self` is `.internalServerError`.
             ///
             /// - Throws: An error if `self` is not `.internalServerError`.
             /// - SeeAlso: `.internalServerError`.
-            internal var internalServerError: Operations.ListResponses.Output.InternalServerError {
+            internal var internalServerError: Components.Responses.InternalError {
                 get throws {
                     switch self {
                     case let .internalServerError(response):
@@ -1903,12 +1735,12 @@ internal enum Operations {
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/409/content`.
                 internal enum Body: Sendable, Hashable {
                     /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/409/content/application\/json`.
-                    case json(Components.Schemas._Error)
+                    case json(Components.Schemas.ErrorResponse)
                     /// The associated value of the enum case if `self` is `.json`.
                     ///
                     /// - Throws: An error if `self` is not `.json`.
                     /// - SeeAlso: `.json`.
-                    internal var json: Components.Schemas._Error {
+                    internal var json: Components.Schemas.ErrorResponse {
                         get throws {
                             switch self {
                             case let .json(body):
@@ -1950,45 +1782,17 @@ internal enum Operations {
                     }
                 }
             }
-            internal struct InternalServerError: Sendable, Hashable {
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/500/content`.
-                internal enum Body: Sendable, Hashable {
-                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/POST/responses/500/content/application\/json`.
-                    case json(Components.Schemas._Error)
-                    /// The associated value of the enum case if `self` is `.json`.
-                    ///
-                    /// - Throws: An error if `self` is not `.json`.
-                    /// - SeeAlso: `.json`.
-                    internal var json: Components.Schemas._Error {
-                        get throws {
-                            switch self {
-                            case let .json(body):
-                                return body
-                            }
-                        }
-                    }
-                }
-                /// Received HTTP response body
-                internal var body: Operations.CreateResponse.Output.InternalServerError.Body
-                /// Creates a new `InternalServerError`.
-                ///
-                /// - Parameters:
-                ///   - body: Received HTTP response body
-                internal init(body: Operations.CreateResponse.Output.InternalServerError.Body) {
-                    self.body = body
-                }
-            }
-            /// Internal Server Error
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
             ///
             /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/post(createResponse)/responses/500`.
             ///
             /// HTTP response code: `500 internalServerError`.
-            case internalServerError(Operations.CreateResponse.Output.InternalServerError)
+            case internalServerError(Components.Responses.InternalError)
             /// The associated value of the enum case if `self` is `.internalServerError`.
             ///
             /// - Throws: An error if `self` is not `.internalServerError`.
             /// - SeeAlso: `.internalServerError`.
-            internal var internalServerError: Operations.CreateResponse.Output.InternalServerError {
+            internal var internalServerError: Components.Responses.InternalError {
                 get throws {
                     switch self {
                     case let .internalServerError(response):
@@ -2261,45 +2065,17 @@ internal enum Operations {
                     }
                 }
             }
-            internal struct InternalServerError: Sendable, Hashable {
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/responses/500/content`.
-                internal enum Body: Sendable, Hashable {
-                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/responses/items/GET/responses/500/content/application\/json`.
-                    case json(Components.Schemas._Error)
-                    /// The associated value of the enum case if `self` is `.json`.
-                    ///
-                    /// - Throws: An error if `self` is not `.json`.
-                    /// - SeeAlso: `.json`.
-                    internal var json: Components.Schemas._Error {
-                        get throws {
-                            switch self {
-                            case let .json(body):
-                                return body
-                            }
-                        }
-                    }
-                }
-                /// Received HTTP response body
-                internal var body: Operations.ListResponseItems.Output.InternalServerError.Body
-                /// Creates a new `InternalServerError`.
-                ///
-                /// - Parameters:
-                ///   - body: Received HTTP response body
-                internal init(body: Operations.ListResponseItems.Output.InternalServerError.Body) {
-                    self.body = body
-                }
-            }
-            /// Internal Server Error
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
             ///
             /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/responses/items/get(listResponseItems)/responses/500`.
             ///
             /// HTTP response code: `500 internalServerError`.
-            case internalServerError(Operations.ListResponseItems.Output.InternalServerError)
+            case internalServerError(Components.Responses.InternalError)
             /// The associated value of the enum case if `self` is `.internalServerError`.
             ///
             /// - Throws: An error if `self` is not `.internalServerError`.
             /// - SeeAlso: `.internalServerError`.
-            internal var internalServerError: Operations.ListResponseItems.Output.InternalServerError {
+            internal var internalServerError: Components.Responses.InternalError {
                 get throws {
                     switch self {
                     case let .internalServerError(response):
@@ -2530,45 +2306,17 @@ internal enum Operations {
                     }
                 }
             }
-            internal struct InternalServerError: Sendable, Hashable {
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/rewind/POST/responses/500/content`.
-                internal enum Body: Sendable, Hashable {
-                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/rewind/POST/responses/500/content/application\/json`.
-                    case json(Components.Schemas._Error)
-                    /// The associated value of the enum case if `self` is `.json`.
-                    ///
-                    /// - Throws: An error if `self` is not `.json`.
-                    /// - SeeAlso: `.json`.
-                    internal var json: Components.Schemas._Error {
-                        get throws {
-                            switch self {
-                            case let .json(body):
-                                return body
-                            }
-                        }
-                    }
-                }
-                /// Received HTTP response body
-                internal var body: Operations.RewindSession.Output.InternalServerError.Body
-                /// Creates a new `InternalServerError`.
-                ///
-                /// - Parameters:
-                ///   - body: Received HTTP response body
-                internal init(body: Operations.RewindSession.Output.InternalServerError.Body) {
-                    self.body = body
-                }
-            }
-            /// Internal Server Error
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
             ///
             /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/rewind/post(rewindSession)/responses/500`.
             ///
             /// HTTP response code: `500 internalServerError`.
-            case internalServerError(Operations.RewindSession.Output.InternalServerError)
+            case internalServerError(Components.Responses.InternalError)
             /// The associated value of the enum case if `self` is `.internalServerError`.
             ///
             /// - Throws: An error if `self` is not `.internalServerError`.
             /// - SeeAlso: `.internalServerError`.
-            internal var internalServerError: Operations.RewindSession.Output.InternalServerError {
+            internal var internalServerError: Components.Responses.InternalError {
                 get throws {
                     switch self {
                     case let .internalServerError(response):
@@ -2768,45 +2516,17 @@ internal enum Operations {
                     }
                 }
             }
-            internal struct InternalServerError: Sendable, Hashable {
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/stop/POST/responses/500/content`.
-                internal enum Body: Sendable, Hashable {
-                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/stop/POST/responses/500/content/application\/json`.
-                    case json(Components.Schemas._Error)
-                    /// The associated value of the enum case if `self` is `.json`.
-                    ///
-                    /// - Throws: An error if `self` is not `.json`.
-                    /// - SeeAlso: `.json`.
-                    internal var json: Components.Schemas._Error {
-                        get throws {
-                            switch self {
-                            case let .json(body):
-                                return body
-                            }
-                        }
-                    }
-                }
-                /// Received HTTP response body
-                internal var body: Operations.StopSession.Output.InternalServerError.Body
-                /// Creates a new `InternalServerError`.
-                ///
-                /// - Parameters:
-                ///   - body: Received HTTP response body
-                internal init(body: Operations.StopSession.Output.InternalServerError.Body) {
-                    self.body = body
-                }
-            }
-            /// Internal Server Error
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
             ///
             /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/stop/post(stopSession)/responses/500`.
             ///
             /// HTTP response code: `500 internalServerError`.
-            case internalServerError(Operations.StopSession.Output.InternalServerError)
+            case internalServerError(Components.Responses.InternalError)
             /// The associated value of the enum case if `self` is `.internalServerError`.
             ///
             /// - Throws: An error if `self` is not `.internalServerError`.
             /// - SeeAlso: `.internalServerError`.
-            internal var internalServerError: Operations.StopSession.Output.InternalServerError {
+            internal var internalServerError: Components.Responses.InternalError {
                 get throws {
                     switch self {
                     case let .internalServerError(response):
@@ -2996,45 +2716,17 @@ internal enum Operations {
                     }
                 }
             }
-            internal struct InternalServerError: Sendable, Hashable {
-                /// - Remark: Generated from `#/paths/v1/agents/sessions/query/POST/responses/500/content`.
-                internal enum Body: Sendable, Hashable {
-                    /// - Remark: Generated from `#/paths/v1/agents/sessions/query/POST/responses/500/content/application\/json`.
-                    case json(Components.Schemas._Error)
-                    /// The associated value of the enum case if `self` is `.json`.
-                    ///
-                    /// - Throws: An error if `self` is not `.json`.
-                    /// - SeeAlso: `.json`.
-                    internal var json: Components.Schemas._Error {
-                        get throws {
-                            switch self {
-                            case let .json(body):
-                                return body
-                            }
-                        }
-                    }
-                }
-                /// Received HTTP response body
-                internal var body: Operations.QuerySessions.Output.InternalServerError.Body
-                /// Creates a new `InternalServerError`.
-                ///
-                /// - Parameters:
-                ///   - body: Received HTTP response body
-                internal init(body: Operations.QuerySessions.Output.InternalServerError.Body) {
-                    self.body = body
-                }
-            }
-            /// Internal Server Error
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
             ///
             /// - Remark: Generated from `#/paths//v1/agents/sessions/query/post(querySessions)/responses/500`.
             ///
             /// HTTP response code: `500 internalServerError`.
-            case internalServerError(Operations.QuerySessions.Output.InternalServerError)
+            case internalServerError(Components.Responses.InternalError)
             /// The associated value of the enum case if `self` is `.internalServerError`.
             ///
             /// - Throws: An error if `self` is not `.internalServerError`.
             /// - SeeAlso: `.internalServerError`.
-            internal var internalServerError: Operations.QuerySessions.Output.InternalServerError {
+            internal var internalServerError: Components.Responses.InternalError {
                 get throws {
                     switch self {
                     case let .internalServerError(response):
@@ -3239,45 +2931,17 @@ internal enum Operations {
                     }
                 }
             }
-            internal struct InternalServerError: Sendable, Hashable {
-                /// - Remark: Generated from `#/paths/v1/search/POST/responses/500/content`.
-                internal enum Body: Sendable, Hashable {
-                    /// - Remark: Generated from `#/paths/v1/search/POST/responses/500/content/application\/json`.
-                    case json(Components.Schemas._Error)
-                    /// The associated value of the enum case if `self` is `.json`.
-                    ///
-                    /// - Throws: An error if `self` is not `.json`.
-                    /// - SeeAlso: `.json`.
-                    internal var json: Components.Schemas._Error {
-                        get throws {
-                            switch self {
-                            case let .json(body):
-                                return body
-                            }
-                        }
-                    }
-                }
-                /// Received HTTP response body
-                internal var body: Operations.Search.Output.InternalServerError.Body
-                /// Creates a new `InternalServerError`.
-                ///
-                /// - Parameters:
-                ///   - body: Received HTTP response body
-                internal init(body: Operations.Search.Output.InternalServerError.Body) {
-                    self.body = body
-                }
-            }
-            /// Internal Server Error
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
             ///
             /// - Remark: Generated from `#/paths//v1/search/post(search)/responses/500`.
             ///
             /// HTTP response code: `500 internalServerError`.
-            case internalServerError(Operations.Search.Output.InternalServerError)
+            case internalServerError(Components.Responses.InternalError)
             /// The associated value of the enum case if `self` is `.internalServerError`.
             ///
             /// - Throws: An error if `self` is not `.internalServerError`.
             /// - SeeAlso: `.internalServerError`.
-            internal var internalServerError: Operations.Search.Output.InternalServerError {
+            internal var internalServerError: Components.Responses.InternalError {
                 get throws {
                     switch self {
                     case let .internalServerError(response):

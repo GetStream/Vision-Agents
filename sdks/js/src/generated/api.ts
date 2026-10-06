@@ -621,6 +621,31 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/configs/{id}/plugins/{plugin_id}/client": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set the OAuth client an agent logs a plugin in with
+         * @description The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly put: operations["setPluginClient"];
+        readonly post?: never;
+        /**
+         * Drop the OAuth client an agent logs a plugin in with
+         * @description Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deletePluginClient"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/connections": {
         readonly parameters: {
             readonly query?: never;
@@ -1322,7 +1347,7 @@ export type paths = {
          * Watch the conversation and answer the model's tool calls
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a `type` and the fields of that event.
          *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
-         *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
+         *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
          *     A respond command carrying command_id emits command_accepted with a nested command receipt (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text returns the existing IDs without invoking the model again; reuse with different text emits an error. Commands with IDs currently accept text only. After restart an interrupted command is reported, not rerun.
          *     An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `command_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
          *     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent. Together they are why the call went the way it did, and they are also written down, so a finished call replays them from `/v1/agents/calls/{id}/events`.
@@ -4818,6 +4843,8 @@ export type components = {
         /** @description One hosted MCP server from the built-in catalog. */
         readonly Plugin: {
             readonly category: string;
+            /** @description True when the provider registers no client on the fly, so a config needs one of the app's own, set with setPluginClient, before anybody can connect the plugin. */
+            readonly client_required?: boolean;
             readonly description: string;
             readonly id: string;
             readonly instance_hint?: string;
@@ -4827,8 +4854,17 @@ export type components = {
             readonly name: string;
             /** @description True when the plugin has a read-only endpoint an agent may pick on its entry. */
             readonly readonly?: boolean;
+            /** @description The redirect URI that client has to list, which is this deployment's. Only with client_required. */
+            readonly redirect_uri?: string;
             /** @description The OAuth scopes an agent may ask for on its entry, as the server advertises them. Absent when the server says nothing, and any scope is then passed through. */
             readonly scopes_supported?: readonly string[];
+            /** @description What to do there, in order, before pasting the client into setPluginClient. Absent when the catalog has no instructions for the plugin. */
+            readonly setup_steps?: readonly components["schemas"]["PluginSetupStep"][];
+            /**
+             * Format: uri
+             * @description Where the app creates that client with the provider. Only with client_required.
+             */
+            readonly setup_url?: string;
             /** @description The groups of tools an agent may limit the plugin to on its entry. Absent when it cannot be limited. */
             readonly toolsets?: readonly string[];
         };
@@ -4836,9 +4872,20 @@ export type components = {
             /** @description The URL the browser should open to finish the login. */
             readonly authorize_url: string;
         };
-        /** @description A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish. */
+        /** @description The OAuth client a config logs a plugin in with. Its secret is sealed and never returned. */
+        readonly PluginClient: {
+            /** @description The client id the provider issued. */
+            readonly client_id: string;
+            /** @description Whether a client secret is stored. It is never returned. */
+            readonly has_secret: boolean;
+        };
+        /** @description A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish, unless it has user, when each end user connects it in the conversation. */
         readonly PluginConnection: {
             readonly category?: string;
+            /** @description The OAuth client the config set for the plugin. Absent when it set none. */
+            readonly client?: components["schemas"]["PluginClient"];
+            /** @description True when nobody can connect the plugin until the config has a client of the app's own, set with setPluginClient. */
+            readonly client_required?: boolean;
             readonly description?: string;
             readonly instance_hint?: string;
             readonly instance_required?: boolean;
@@ -4847,8 +4894,13 @@ export type components = {
             readonly logo_url: string;
             readonly name: string;
             readonly plugin_id: string;
-            /** @enum {string} */
+            /**
+             * @description The app's login. Always not_connected for a plugin with user, which the app does not log into.
+             * @enum {string}
+             */
             readonly status: "pending" | "connected" | "failed" | "not_connected";
+            /** @description True when the config names the plugin under user_plugins only: each end user connects their own account in the conversation. */
+            readonly user?: boolean;
         };
         /** @description One catalog plugin an agent names: its id, such as sentry, or an object naming it with how it is reached. */
         readonly PluginEntry: string | components["schemas"]["PluginWithOptions"];
@@ -4864,6 +4916,13 @@ export type components = {
             readonly instructions?: string;
             /** @description A catalog plugin the config names under agent_plugins or user_plugins. */
             readonly plugin: string;
+        };
+        /** @description One thing to do with a plugin's provider before its OAuth client can be set. */
+        readonly PluginSetupStep: {
+            /** @description How to do it with the provider. */
+            readonly description: string;
+            /** @description What the step does, in a few words. */
+            readonly title: string;
         };
         /** @description One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take. */
         readonly PluginWithOptions: {
@@ -5455,6 +5514,15 @@ export type components = {
             readonly max_frames?: number;
             /** @description Track or processor source. Omitted requires one unambiguous available source. */
             readonly source?: string;
+        };
+        /** @description The OAuth client an app registered with a plugin's provider, with the redirect URI <public url>/v1/agents/plugins/callback. */
+        readonly SetPluginClientRequest: {
+            /** @description The client id the provider issued. */
+            readonly client_id: string;
+            /** @description The client secret the provider issued. Left out for a public client. */
+            readonly client_secret?: string;
+            /** @description Also name the plugin under the config's user_plugins, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it under agent_plugins. */
+            readonly user?: boolean;
         };
         readonly SetSandboxRecipientsRequest: {
             /** @description Numbers in E.164, at most max_recipients of them. */
@@ -7886,6 +7954,68 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["PluginAuthorization"];
                 };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly setPluginClient: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+                /** @description A built-in catalog id such as google_calendar. */
+                readonly plugin_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SetPluginClientRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The client as stored, without its secret */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PluginClient"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deletePluginClient: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+                /** @description A built-in catalog id such as google_calendar. */
+                readonly plugin_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The client is gone */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];

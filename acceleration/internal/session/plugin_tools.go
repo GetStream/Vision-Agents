@@ -24,8 +24,13 @@ import (
 // URL that need no login or the app's, and returns their tools. A server that will not start
 // is skipped so a broken Slack login does not refuse the call. A server named by URL that
 // needs the app's login and has none is returned in unconnected. A nil transport reaches
-// only public hosts.
-func attachPlugins(ctx context.Context, spec Spec, db *store.Store, transport *http.Client, logger *slog.Logger) (runtime *plugins.Runtime, tools []harness.Tool, unconnected []string) {
+// only public hosts. A plugin the config names only under user_plugins is each end user's,
+// so an app's login to it is not used.
+func attachPlugins(ctx context.Context, spec Spec, db *store.Store, pluginAuth *plugins.Auth, logger *slog.Logger) (runtime *plugins.Runtime, tools []harness.Tool, unconnected []string) {
+	var transport *http.Client
+	if pluginAuth != nil {
+		transport = pluginAuth.HTTP
+	}
 	var wanted []plugins.Connection
 	logins := map[string]store.PluginConnection{}
 	if db != nil && spec.ConfigID != "" {
@@ -36,6 +41,9 @@ func attachPlugins(ctx context.Context, spec Spec, db *store.Store, transport *h
 		for _, conn := range conns {
 			if _, listed := plugins.Lookup(conn.PluginID); !listed {
 				logins[conn.PluginID] = conn
+				continue
+			}
+			if store.NamesPlugin(spec.UserPlugins, conn.PluginID) && !store.NamesPlugin(spec.AgentPlugins, conn.PluginID) {
 				continue
 			}
 			plugin, err := ConfiguredPlugin(EntryFor(conn.PluginID, spec.AgentPlugins, spec.UserPlugins))
@@ -51,7 +59,7 @@ func attachPlugins(ctx context.Context, spec Spec, db *store.Store, transport *h
 			wanted = append(wanted, plugins.Connection{
 				PluginID:    conn.PluginID,
 				Endpoint:    endpoint,
-				AccessToken: FreshToken(ctx, db, &conn, logger),
+				AccessToken: FreshToken(ctx, db, pluginAuth, &conn, logger),
 				Tools:       plugin.Tools,
 			})
 		}
@@ -76,7 +84,7 @@ func attachPlugins(ctx context.Context, spec Spec, db *store.Store, transport *h
 				unconnected = append(unconnected, server.Name)
 				continue
 			}
-			connection.AccessToken = FreshToken(ctx, db, &conn, logger)
+			connection.AccessToken = FreshToken(ctx, db, pluginAuth, &conn, logger)
 		}
 		wanted = append(wanted, connection)
 	}
@@ -191,12 +199,12 @@ func serverInstructions(servers []store.MCPServer, mcp *plugins.Runtime) string 
 
 // FreshToken is a login's access token, renewed first when it is about to expire. A
 // renewal that fails keeps the old one, which the server is then the judge of.
-func FreshToken(ctx context.Context, db *store.Store, conn *store.PluginConnection, logger *slog.Logger) string {
+func FreshToken(ctx context.Context, db *store.Store, renewer *plugins.Auth, conn *store.PluginConnection, logger *slog.Logger) string {
 	if conn.ExpiresAt == nil || time.Until(*conn.ExpiresAt) >= time.Minute || conn.RefreshToken == "" {
 		return conn.AccessToken
 	}
-	renewer := &plugins.Auth{}
-	refreshed, err := renewer.Refresh(ctx, conn.PluginID, conn.TokenEndpoint, conn.ClientID, conn.RefreshToken)
+	owner := plugins.Owner{CustomerID: conn.CustomerID, ConfigID: conn.ConfigID}
+	refreshed, err := renewer.Refresh(ctx, owner, conn.PluginID, conn.TokenEndpoint, conn.ClientID, conn.RefreshToken)
 	if err != nil {
 		logger.Warn("could not refresh a plugin token", "plugin", conn.PluginID, "error", err)
 		return conn.AccessToken
@@ -355,7 +363,7 @@ func (r *userPluginRunner) connect(ctx context.Context, plugin plugins.Plugin) (
 	runtime, tools, failures := plugins.Open(ctx, []plugins.Connection{{
 		PluginID:    plugin.ID,
 		Endpoint:    endpoint,
-		AccessToken: FreshToken(ctx, r.db, &conn, r.logger),
+		AccessToken: FreshToken(ctx, r.db, r.auth, &conn, r.logger),
 		Tools:       plugin.Tools,
 	}}, r.auth.HTTP)
 	if runtime == nil {
@@ -370,8 +378,15 @@ func (r *userPluginRunner) connect(ctx context.Context, plugin plugins.Plugin) (
 }
 
 // authorize starts the caller's login and returns the tool result asking them to finish it.
+// A plugin the agent was given no client for cannot be logged into, which the model is told
+// to pass on as the plugin being unavailable here rather than as a fault to fix.
 func (r *userPluginRunner) authorize(ctx context.Context, plugin plugins.Plugin) (string, error) {
-	pending, err := r.auth.StartAuthorize(ctx, plugin, "")
+	owner := plugins.Owner{CustomerID: r.customerID, ConfigID: r.configID}
+	pending, err := r.auth.StartAuthorize(ctx, owner, plugin, "")
+	if errors.Is(err, plugins.ErrClientRequired) {
+		r.logger.Warn("an end user asked for a plugin this agent has no client for", "plugin", plugin.ID, "config", r.configID)
+		return plugins.UnavailableResult(plugin), nil
+	}
 	if err != nil {
 		return "", err
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -88,6 +89,66 @@ func (s *UserPluginsSuite) TestAUserWhoNeverConnectedIsAskedTo() {
 	result := s.run("google_calendar__list_tools", "")
 
 	s.asksToConnect(result)
+}
+
+func (s *UserPluginsSuite) TestAUsersLoginIsMadeWithTheAgentsOwnClient() {
+	secrets, err := auth.NewSealer("a passphrase")
+	s.Require().NoError(err)
+	owner := plugins.Owner{CustomerID: s.runner.customerID, ConfigID: s.runner.configID}
+	sealed, err := SealPluginClientSecret(secrets, owner, "google_calendar", "acme-secret")
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.SavePluginClient(context.Background(), &store.PluginClient{
+		CustomerID: owner.CustomerID, ConfigID: owner.ConfigID, PluginID: "google_calendar",
+		ClientID: "acme-client", SecretSealed: sealed, SecretKEKVersion: secrets.CurrentVersion(),
+	}))
+	s.runner.auth.Clients = PluginClients(s.store, secrets)
+
+	result := s.run("google_calendar__list_tools", "")
+
+	s.asksToConnect(result)
+	pending, err := s.store.UserPluginConnection(context.Background(), owner.CustomerID, owner.ConfigID, "alice", "google_calendar")
+	s.Require().NoError(err)
+	s.Equal("acme-client", pending.ClientID, "the agent's client, not one registered on the fly")
+	client, found, err := s.runner.auth.Clients(context.Background(), owner, "google_calendar")
+	s.Require().NoError(err)
+	s.True(found)
+	s.Equal(plugins.Client{ID: "acme-client", Secret: "acme-secret"}, client)
+}
+
+func (s *UserPluginsSuite) TestAUserIsToldAPluginTheAgentHasNoClientForIsNotAvailable() {
+	// A provider such as Google registers no client on the fly.
+	google := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"authorization_endpoint": "https://accounts.example/auth",
+			"token_endpoint":         "https://accounts.example/token",
+		})
+	}))
+	defer google.Close()
+	s.runner.auth.HTTP = google.Client()
+	s.calendar.URL = google.URL + "/mcp"
+	s.runner.named["google_calendar"] = s.calendar
+
+	result := s.run("google_calendar__list_tools", "")
+
+	s.JSONEq(plugins.UnavailableResult(s.calendar), result)
+	_, ok := plugins.RequestedAuthorization("google_calendar__list_tools", result,
+		Logins(Spec{UserPlugins: []store.PluginEntry{{Name: "google_calendar"}}}))
+	s.False(ok, "there is nothing for the user to press")
+}
+
+func (s *UserPluginsSuite) TestTheAppsLoginToAPluginEachUserConnectsIsNotHandedToEverySession() {
+	s.login("", s.calendar, "", "good-token")
+	spec := Spec{
+		CustomerID:  s.runner.customerID,
+		ConfigID:    s.runner.configID,
+		UserPlugins: []store.PluginEntry{{Name: "google_calendar"}},
+	}
+
+	runtime, tools, unconnected := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client()}, slog.New(slog.DiscardHandler))
+
+	s.Nil(runtime)
+	s.Empty(tools)
+	s.Empty(unconnected)
 }
 
 func (s *UserPluginsSuite) TestAConnectedUserReachesTheirAccount() {
@@ -216,7 +277,7 @@ func (s *UserPluginsSuite) TestAServerTheAppHasNotLoggedIntoFailsWithHowToConnec
 	notes := s.server(store.MCPServer{})
 	spec := Spec{CustomerID: s.runner.customerID, ConfigID: s.runner.configID, MCPServers: []store.MCPServer{{Name: notes.ID, URL: notes.URL}}}
 
-	runtime, tools, unconnected := attachPlugins(context.Background(), spec, s.store, s.provider.Client(), slog.New(slog.DiscardHandler))
+	runtime, tools, unconnected := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client()}, slog.New(slog.DiscardHandler))
 	_, err := (&pluginRunner{mcp: runtime, unconnected: unconnected}).Run(context.Background(),
 		llm.ToolCall{ID: uuid.NewString(), Name: "notes__list_tools", Arguments: `{}`})
 
@@ -262,7 +323,7 @@ func (s *UserPluginsSuite) server(server store.MCPServer) plugins.Plugin {
 // attach opens the config's MCP servers as a session starting would.
 func (s *UserPluginsSuite) attach(server store.MCPServer) (*plugins.Runtime, []harness.Tool, []string) {
 	spec := Spec{CustomerID: s.runner.customerID, ConfigID: s.runner.configID, MCPServers: []store.MCPServer{server}}
-	return attachPlugins(context.Background(), spec, s.store, s.provider.Client(), slog.New(slog.DiscardHandler))
+	return attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client()}, slog.New(slog.DiscardHandler))
 }
 
 // login stores a login to plugin made at endpoint, the app's for an empty user.

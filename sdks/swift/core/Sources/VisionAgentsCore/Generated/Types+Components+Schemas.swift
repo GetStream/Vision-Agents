@@ -665,20 +665,81 @@ extension Components {
                 }
             }
         }
-        /// - Remark: Generated from `#/components/schemas/Error`.
-        internal struct _Error: Codable, Hashable, Sendable {
-            /// - Remark: Generated from `#/components/schemas/Error/error`.
-            internal var error: Swift.String
-            /// Creates a new `_Error`.
+        /// - Remark: Generated from `#/components/schemas/ErrorDetail`.
+        internal struct ErrorDetail: Codable, Hashable, Sendable {
+            /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+            ///
+            /// - Remark: Generated from `#/components/schemas/ErrorDetail/code`.
+            internal var code: Swift.String
+            /// Where the code is explained.
+            ///
+            /// - Remark: Generated from `#/components/schemas/ErrorDetail/doc_url`.
+            internal var docUrl: Swift.String
+            /// What went wrong, for a person to read. Its wording may change; branch on code.
+            ///
+            /// - Remark: Generated from `#/components/schemas/ErrorDetail/message`.
+            internal var message: Swift.String
+            /// - Remark: Generated from `#/components/schemas/ErrorDetail/type`.
+            internal var _type: Components.Schemas.ErrorType
+            /// Creates a new `ErrorDetail`.
+            ///
+            /// - Parameters:
+            ///   - code: What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+            ///   - docUrl: Where the code is explained.
+            ///   - message: What went wrong, for a person to read. Its wording may change; branch on code.
+            ///   - _type:
+            internal init(
+                code: Swift.String,
+                docUrl: Swift.String,
+                message: Swift.String,
+                _type: Components.Schemas.ErrorType
+            ) {
+                self.code = code
+                self.docUrl = docUrl
+                self.message = message
+                self._type = _type
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case code
+                case docUrl = "doc_url"
+                case message
+                case _type = "type"
+            }
+        }
+        /// The body of every failure. A failure that is not the caller's own is a 500 of type internal saying only "something went wrong": quote the response's X-Request-Id to find out more.
+        ///
+        /// - Remark: Generated from `#/components/schemas/ErrorResponse`.
+        internal struct ErrorResponse: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/ErrorResponse/error`.
+            internal var error: Components.Schemas.ErrorDetail
+            /// Creates a new `ErrorResponse`.
             ///
             /// - Parameters:
             ///   - error:
-            internal init(error: Swift.String) {
+            internal init(error: Components.Schemas.ErrorDetail) {
                 self.error = error
             }
             internal enum CodingKeys: String, CodingKey {
                 case error
             }
+        }
+        /// The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503.
+        ///
+        /// - Remark: Generated from `#/components/schemas/ErrorType`.
+        internal enum ErrorType: String, Codable, Hashable, Sendable, CaseIterable {
+            case invalidRequest = "invalid_request"
+            case authentication = "authentication"
+            case permission = "permission"
+            case notFound = "not_found"
+            case methodNotAllowed = "method_not_allowed"
+            case notAcceptable = "not_acceptable"
+            case conflict = "conflict"
+            case gone = "gone"
+            case payloadTooLarge = "payload_too_large"
+            case unsupportedMediaType = "unsupported_media_type"
+            case rateLimited = "rate_limited"
+            case _internal = "internal"
+            case unavailable = "unavailable"
         }
         /// Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
         ///

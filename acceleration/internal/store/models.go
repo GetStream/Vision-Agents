@@ -582,6 +582,23 @@ type PluginConnection struct {
 	DeletedAt     *time.Time `bun:"deleted_at"`
 }
 
+// PluginClient is the OAuth client one agent config logs into one plugin with, for a
+// plugin that registers no client on the fly.
+type PluginClient struct {
+	bun.BaseModel `bun:"table:agent_plugin_clients,alias:apcl"`
+
+	CustomerID string `bun:"customer_id,pk"`
+	ConfigID   string `bun:"config_id,pk"`
+	PluginID   string `bun:"plugin_id,pk"`
+	ClientID   string `bun:"client_id,notnull"`
+	// SecretSealed is the client secret, sealed under SecretKEKVersion with the customer,
+	// the config and the plugin as additional data. Empty for a public client.
+	SecretSealed     []byte    `bun:"secret_sealed"`
+	SecretKEKVersion int       `bun:"kek_version,notnull"`
+	CreatedAt        time.Time `bun:"created_at,notnull"`
+	UpdatedAt        time.Time `bun:"updated_at,notnull"`
+}
+
 // MCPServer is an MCP server an agent reaches by its URL rather than from the catalog.
 type MCPServer struct {
 	// Name prefixes its tools, as a plugin's id does.

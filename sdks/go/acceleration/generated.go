@@ -4214,7 +4214,10 @@ type PlacedCall struct {
 
 // Plugin One hosted MCP server from the built-in catalog.
 type Plugin struct {
-	Category         string  `json:"category"`
+	Category string `json:"category"`
+
+	// ClientRequired True when the provider registers no client on the fly, so a config needs one of the app's own, set with setPluginClient, before anybody can connect the plugin.
+	ClientRequired   *bool   `json:"client_required,omitempty"`
 	Description      string  `json:"description"`
 	Id               string  `json:"id"`
 	InstanceHint     *string `json:"instance_hint,omitempty"`
@@ -4227,8 +4230,17 @@ type Plugin struct {
 	// Readonly True when the plugin has a read-only endpoint an agent may pick on its entry.
 	Readonly *bool `json:"readonly,omitempty"`
 
+	// RedirectUri The redirect URI that client has to list, which is this deployment's. Only with client_required.
+	RedirectUri *string `json:"redirect_uri,omitempty"`
+
 	// ScopesSupported The OAuth scopes an agent may ask for on its entry, as the server advertises them. Absent when the server says nothing, and any scope is then passed through.
 	ScopesSupported *[]string `json:"scopes_supported,omitempty"`
+
+	// SetupSteps What to do there, in order, before pasting the client into setPluginClient. Absent when the catalog has no instructions for the plugin.
+	SetupSteps *[]PluginSetupStep `json:"setup_steps,omitempty"`
+
+	// SetupUrl Where the app creates that client with the provider. Only with client_required.
+	SetupUrl *string `json:"setup_url,omitempty"`
 
 	// Toolsets The groups of tools an agent may limit the plugin to on its entry. Absent when it cannot be limited.
 	Toolsets *[]string `json:"toolsets,omitempty"`
@@ -4240,22 +4252,42 @@ type PluginAuthorization struct {
 	AuthorizeUrl string `json:"authorize_url"`
 }
 
-// PluginConnection A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish.
+// PluginClient The OAuth client a config logs a plugin in with. Its secret is sealed and never returned.
+type PluginClient struct {
+	// ClientId The client id the provider issued.
+	ClientId string `json:"client_id"`
+
+	// HasSecret Whether a client secret is stored. It is never returned.
+	HasSecret bool `json:"has_secret"`
+}
+
+// PluginConnection A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish, unless it has user, when each end user connects it in the conversation.
 type PluginConnection struct {
-	Category         *string `json:"category,omitempty"`
+	Category *string `json:"category,omitempty"`
+
+	// Client The OAuth client a config logs a plugin in with. Its secret is sealed and never returned.
+	Client *PluginClient `json:"client,omitempty"`
+
+	// ClientRequired True when nobody can connect the plugin until the config has a client of the app's own, set with setPluginClient.
+	ClientRequired   *bool   `json:"client_required,omitempty"`
 	Description      *string `json:"description,omitempty"`
 	InstanceHint     *string `json:"instance_hint,omitempty"`
 	InstanceRequired *bool   `json:"instance_required,omitempty"`
 	InstanceUrl      *string `json:"instance_url,omitempty"`
 
 	// LogoUrl Where this deployment serves the plugin's logo, as an SVG needing no credential. Empty for an MCP server named by URL.
-	LogoUrl  *string                `json:"logo_url,omitempty"`
-	Name     string                 `json:"name"`
-	PluginId string                 `json:"plugin_id"`
-	Status   PluginConnectionStatus `json:"status"`
+	LogoUrl  *string `json:"logo_url,omitempty"`
+	Name     string  `json:"name"`
+	PluginId string  `json:"plugin_id"`
+
+	// Status The app's login. Always not_connected for a plugin with user, which the app does not log into.
+	Status PluginConnectionStatus `json:"status"`
+
+	// User True when the config names the plugin under user_plugins only: each end user connects their own account in the conversation.
+	User *bool `json:"user,omitempty"`
 }
 
-// PluginConnectionStatus defines model for PluginConnection.Status.
+// PluginConnectionStatus The app's login. Always not_connected for a plugin with user, which the app does not log into.
 type PluginConnectionStatus string
 
 // PluginEntry One catalog plugin an agent names: its id, such as sentry, or an object naming it with how it is reached.
@@ -4279,6 +4311,15 @@ type PluginEvent struct {
 
 	// Plugin A catalog plugin the config names under agent_plugins or user_plugins.
 	Plugin string `json:"plugin"`
+}
+
+// PluginSetupStep One thing to do with a plugin's provider before its OAuth client can be set.
+type PluginSetupStep struct {
+	// Description How to do it with the provider.
+	Description string `json:"description"`
+
+	// Title What the step does, in a few words.
+	Title string `json:"title"`
 }
 
 // PluginWithOptions One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
@@ -4979,6 +5020,18 @@ type SessionVideo struct {
 
 	// Source Track or processor source. Omitted requires one unambiguous available source.
 	Source *string `json:"source,omitempty"`
+}
+
+// SetPluginClientRequest The OAuth client an app registered with a plugin's provider, with the redirect URI <public url>/v1/agents/plugins/callback.
+type SetPluginClientRequest struct {
+	// ClientId The client id the provider issued.
+	ClientId string `json:"client_id"`
+
+	// ClientSecret The client secret the provider issued. Left out for a public client.
+	ClientSecret *string `json:"client_secret,omitempty"`
+
+	// User Also name the plugin under the config's user_plugins, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it under agent_plugins.
+	User *bool `json:"user,omitempty"`
 }
 
 // SetSandboxRecipientsRequest defines model for SetSandboxRecipientsRequest.
@@ -6760,6 +6813,9 @@ type UpdateAgentConfigJSONRequestBody = AgentConfigRequest
 // AuthorizePluginJSONRequestBody defines body for AuthorizePlugin for application/json ContentType.
 type AuthorizePluginJSONRequestBody = AuthorizePluginRequest
 
+// SetPluginClientJSONRequestBody defines body for SetPluginClient for application/json ContentType.
+type SetPluginClientJSONRequestBody = SetPluginClientRequest
+
 // CreateConnectionJSONRequestBody defines body for CreateConnection for application/json ContentType.
 type CreateConnectionJSONRequestBody = ConnectionRequest
 
@@ -7579,6 +7635,33 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
 	AuthorizePlugin(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeletePluginClient Drop the OAuth client an agent logs a plugin in with
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `DeletePluginClient` operationId).
+	DeletePluginClient(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetPluginClientWithBody Set the OAuth client an agent logs a plugin in with
+	//
+	// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+	SetPluginClientWithBody(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetPluginClient Set the OAuth client an agent logs a plugin in with
+	//
+	// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+	SetPluginClient(ctx context.Context, id string, pluginId string, body SetPluginClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListConnections List connections
 	//
@@ -10016,6 +10099,63 @@ func (c *Client) AuthorizePluginWithBody(ctx context.Context, id string, pluginI
 // Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
 func (c *Client) AuthorizePlugin(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizePluginRequest(c.Server, id, pluginId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeletePluginClient Drop the OAuth client an agent logs a plugin in with
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `DeletePluginClient` operationId).
+func (c *Client) DeletePluginClient(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeletePluginClientRequest(c.Server, id, pluginId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetPluginClientWithBody Set the OAuth client an agent logs a plugin in with
+//
+// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+func (c *Client) SetPluginClientWithBody(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetPluginClientRequestWithBody(c.Server, id, pluginId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetPluginClient Set the OAuth client an agent logs a plugin in with
+//
+// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+func (c *Client) SetPluginClient(ctx context.Context, id string, pluginId string, body SetPluginClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetPluginClientRequest(c.Server, id, pluginId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -14904,6 +15044,101 @@ func NewAuthorizePluginRequestWithBody(server string, id string, pluginId string
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeletePluginClientRequest constructs an http.Request for the DeletePluginClient method
+func NewDeletePluginClientRequest(server string, id string, pluginId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "plugin_id", pluginId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/configs/%s/plugins/%s/client", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSetPluginClientRequest calls the generic SetPluginClient builder with application/json body
+func NewSetPluginClientRequest(server string, id string, pluginId string, body SetPluginClientJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetPluginClientRequestWithBody(server, id, pluginId, "application/json", bodyReader)
+}
+
+// NewSetPluginClientRequestWithBody constructs an http.Request for the SetPluginClient method, with any body, and a specified content type
+func NewSetPluginClientRequestWithBody(server string, id string, pluginId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "plugin_id", pluginId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/configs/%s/plugins/%s/client", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -21905,6 +22140,35 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
 	AuthorizePluginWithResponse(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error)
 
+	// DeletePluginClientWithResponse Drop the OAuth client an agent logs a plugin in with
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `DeletePluginClient` operationId).
+	DeletePluginClientWithResponse(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*DeletePluginClientResponse, error)
+
+	// SetPluginClientWithBodyWithResponse Set the OAuth client an agent logs a plugin in with
+	//
+	// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+	SetPluginClientWithBodyWithResponse(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetPluginClientResponse, error)
+
+	// SetPluginClientWithResponse Set the OAuth client an agent logs a plugin in with
+	//
+	// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+	SetPluginClientWithResponse(ctx context.Context, id string, pluginId string, body SetPluginClientJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPluginClientResponse, error)
+
 	// ListConnectionsWithResponse List connections
 	//
 	// One owner's connections, newest first: the app's own, or those of the user the backend acts for.
@@ -25938,6 +26202,151 @@ func (r AuthorizePluginResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AuthorizePluginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeletePluginClientResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeletePluginClientResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeletePluginClientResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeletePluginClientResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeletePluginClientResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeletePluginClientResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeletePluginClientResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeletePluginClientResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeletePluginClientResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeletePluginClientResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetPluginClientResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PluginClient
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetPluginClientResponse) GetJSON200() *PluginClient {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SetPluginClientResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SetPluginClientResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SetPluginClientResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SetPluginClientResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SetPluginClientResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r SetPluginClientResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetPluginClientResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetPluginClientResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetPluginClientResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -36593,6 +37002,53 @@ func (c *ClientWithResponses) AuthorizePluginWithResponse(ctx context.Context, i
 	return ParseAuthorizePluginResponse(rsp)
 }
 
+// DeletePluginClientWithResponse Drop the OAuth client an agent logs a plugin in with
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `DeletePluginClient` operationId).
+func (c *ClientWithResponses) DeletePluginClientWithResponse(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*DeletePluginClientResponse, error) {
+	rsp, err := c.DeletePluginClient(ctx, id, pluginId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeletePluginClientResponse(rsp)
+}
+
+// SetPluginClientWithBodyWithResponse Set the OAuth client an agent logs a plugin in with
+//
+// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+func (c *ClientWithResponses) SetPluginClientWithBodyWithResponse(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetPluginClientResponse, error) {
+	rsp, err := c.SetPluginClientWithBody(ctx, id, pluginId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetPluginClientResponse(rsp)
+}
+
+// SetPluginClientWithResponse Set the OAuth client an agent logs a plugin in with
+//
+// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+func (c *ClientWithResponses) SetPluginClientWithResponse(ctx context.Context, id string, pluginId string, body SetPluginClientJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPluginClientResponse, error) {
+	rsp, err := c.SetPluginClient(ctx, id, pluginId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetPluginClientResponse(rsp)
+}
+
 // ListConnectionsWithResponse List connections
 //
 // One owner's connections, newest first: the app's own, or those of the user the backend acts for.
@@ -41285,6 +41741,124 @@ func ParseAuthorizePluginResponse(rsp *http.Response) (*AuthorizePluginResponse,
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest PluginAuthorization
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeletePluginClientResponse parses an HTTP response from a DeletePluginClientWithResponse call
+func ParseDeletePluginClientResponse(rsp *http.Response) (*DeletePluginClientResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeletePluginClientResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetPluginClientResponse parses an HTTP response from a SetPluginClientWithResponse call
+func ParseSetPluginClientResponse(rsp *http.Response) (*SetPluginClientResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetPluginClientResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PluginClient
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

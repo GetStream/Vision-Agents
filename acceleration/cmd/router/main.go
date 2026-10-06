@@ -794,9 +794,15 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer directory.Close()
 	}
 
+	pluginAuth := &plugins.Auth{
+		PublicURL:    settings.PublicURL,
+		DashboardURL: settings.DashboardURL,
+		Clients:      session.PluginClients(pgStore, secrets),
+	}
+
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
-	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, streamClients, logger)
+	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, streamClients, pluginAuth, logger)
 	if err != nil {
 		return err
 	}
@@ -837,7 +843,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		events, err = pluginevents.New(pluginevents.Options{
 			Store:    pgStore,
 			Sessions: sessions,
-			Auth:     &plugins.Auth{PublicURL: settings.PublicURL, DashboardURL: settings.DashboardURL},
+			Auth:     pluginAuth,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -1160,6 +1166,7 @@ func buildSessions(
 	finding *searchrouter.Router,
 	judging *lcmrouter.Router,
 	stream *streamapp.Clients,
+	pluginAuth *plugins.Auth,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.LLM == nil {
@@ -1202,7 +1209,7 @@ func buildSessions(
 		Transcript:         transcriptFor(),
 		Configs:            configs,
 		Directory:          directory,
-		PluginAuth:         &plugins.Auth{PublicURL: settings.PublicURL, DashboardURL: settings.DashboardURL},
+		PluginAuth:         pluginAuth,
 	})
 }
 

@@ -98,6 +98,9 @@ from .connector_client_alg import ConnectorClientAlg
 from .connector_client_auth_method import ConnectorClientAuthMethod
 from .connector_client_registration_method import ConnectorClientRegistrationMethod
 from .connector_input import ConnectorInput
+from .connector_o_auth_client import ConnectorOAuthClient
+from .connector_o_auth_client_auth_method import ConnectorOAuthClientAuthMethod
+from .connector_o_auth_client_request import ConnectorOAuthClientRequest
 from .connector_page import ConnectorPage
 from .connector_tool_grant import ConnectorToolGrant
 from .contact import Contact
@@ -200,10 +203,12 @@ from .place_call_request_tags import PlaceCallRequestTags
 from .placed_call import PlacedCall
 from .plugin import Plugin
 from .plugin_authorization import PluginAuthorization
+from .plugin_client import PluginClient
 from .plugin_connection import PluginConnection
 from .plugin_connection_status import PluginConnectionStatus
 from .plugin_event import PluginEvent
 from .plugin_event_arguments import PluginEventArguments
+from .plugin_setup_step import PluginSetupStep
 from .plugin_with_options import PluginWithOptions
 from .policy import Policy
 from .policy_tags import PolicyTags
@@ -265,6 +270,7 @@ from .session_tool_approval import SessionToolApproval
 from .session_tool_executor import SessionToolExecutor
 from .session_tool_parameters import SessionToolParameters
 from .session_video import SessionVideo
+from .set_plugin_client_request import SetPluginClientRequest
 from .set_sandbox_recipients_request import SetSandboxRecipientsRequest
 from .simulation import Simulation
 from .simulation_case import SimulationCase
@@ -456,6 +462,9 @@ __all__ = (
     "ConnectorClientAuthMethod",
     "ConnectorClientRegistrationMethod",
     "ConnectorInput",
+    "ConnectorOAuthClient",
+    "ConnectorOAuthClientAuthMethod",
+    "ConnectorOAuthClientRequest",
     "ConnectorPage",
     "ConnectorToolGrant",
     "Contact",
@@ -556,10 +565,12 @@ __all__ = (
     "PlacedCall",
     "Plugin",
     "PluginAuthorization",
+    "PluginClient",
     "PluginConnection",
     "PluginConnectionStatus",
     "PluginEvent",
     "PluginEventArguments",
+    "PluginSetupStep",
     "PluginWithOptions",
     "Policy",
     "PolicyTags",
@@ -621,6 +632,7 @@ __all__ = (
     "SessionToolExecutor",
     "SessionToolParameters",
     "SessionVideo",
+    "SetPluginClientRequest",
     "SetSandboxRecipientsRequest",
     "Simulation",
     "SimulationCase",

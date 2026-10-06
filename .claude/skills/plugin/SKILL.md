@@ -239,8 +239,10 @@ plugin_events:
    `/.well-known/openid-configuration` — GitHub and Salesforce publish only the latter, which
    is why `discoverServer` tries both. If it advertises a `registration_endpoint`, the router
    registers itself (DCR) and nothing needs configuring. If not, the deployment needs a client
-   of its own. Of the twelve entries today, five do DCR (Calendly, Cal.com, Sentry, Linear and
-   Shopify) and seven need a client id.
+   of its own. Of the fourteen entries today, five do DCR (Calendly, Cal.com, Sentry, Linear and
+   Shopify) and nine need a client id. A server can advertise registration and still refuse
+   us: Gong registers only the redirect URIs it has approved, so it is `client_required`,
+   and the router never tries DCR for an entry that is.
 2. **Add an entry to `plugins.yaml`**, with the source and date in a comment above it, as the
    Sentry and Google Calendar entries have:
 
@@ -261,6 +263,10 @@ plugin_events:
    - **No DCR:** the router reads `<ID>_MCP_CLIENT_ID` and `<ID>_MCP_CLIENT_SECRET` (the id
      upper-cased), sending the secret as `client_secret_post`. Say so in the comment, and the
      redirect URI to register: the router's `public_url` + `/v1/agents/plugins/callback`.
+     Set `client_required: true`, `setup_url`, and `setup_steps` (each a `title` and a
+     `description`) for the dashboard's Set up page, which shows them beside the redirect
+     URI and the client id and secret form. Every entry with `client_required` must have
+     them; `catalog_test.go` checks it, and that the steps name the scopes the login asks for.
    - **A refresh token:** some providers only return one when asked. Google needs
      `access_type: offline` and `prompt: consent`; without them the login lasts an hour.
    - **Scopes:** ask for the least the tools need. Google Calendar, Drive and Docs ask
@@ -283,7 +289,7 @@ plugin_events:
    vendors' artwork, so a deployment that has licensed the real thing replaces a file and
    changes nothing else. `loadCatalog` reads every one at startup, so a misnamed file is a
    router that will not start rather than a card nobody can see the plugin on.
-4. **Update `catalog_test.go`.** `TestTheTwelvePluginsAreListed` pins the ids in order; add a
+4. **Update `catalog_test.go`.** `TestTheFourteenPluginsAreListed` pins the ids in order; add a
    test for anything the entry relies on (scopes, authorize params, the endpoint).
 5. **No API or client changes.** `plugin_id` is a plain string checked against the catalog,
    and the dashboard lists `GET /v1/agents/plugins`, so the spec does not change.

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -423,11 +422,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		tools = append(tools, builtin.Tools...)
 	}
 
-	var pluginHTTP *http.Client
-	if m.options.PluginAuth != nil {
-		pluginHTTP = m.options.PluginAuth.HTTP
-	}
-	mcp, pluginTools, unconnected := attachPlugins(ctx, spec, m.options.Store, pluginHTTP, m.logger)
+	mcp, pluginTools, unconnected := attachPlugins(ctx, spec, m.options.Store, m.options.PluginAuth, m.logger)
 	tools = append(tools, pluginTools...)
 	tools = append(tools, unconnectedTools(unconnected)...)
 	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp)

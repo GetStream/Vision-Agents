@@ -19,11 +19,11 @@ func TestBuildSessionsSupportsAnLLMOnlyDeployment(t *testing.T) {
 	}, Registry: llmrouter.DefaultRegistry(), Logger: logger})
 	require.NoError(t, err)
 	t.Cleanup(model.Close)
-	manager, err := buildSessions(config.Defaults(), &api.Streams{LLM: model}, nil, nil, nil, nil, nil, nil, nil, nil, nil, logger)
+	manager, err := buildSessions(config.Defaults(), &api.Streams{LLM: model}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, logger)
 	require.NoError(t, err)
 	require.NotNil(t, manager)
 	t.Cleanup(func() { require.NoError(t, manager.Shutdown()) })
-	missing, err := buildSessions(config.Defaults(), &api.Streams{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, logger)
+	missing, err := buildSessions(config.Defaults(), &api.Streams{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, logger)
 	require.NoError(t, err)
 	require.Nil(t, missing)
 }

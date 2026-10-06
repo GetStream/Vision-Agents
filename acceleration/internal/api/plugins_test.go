@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -83,6 +84,28 @@ func (s *PluginsSuite) TestAPluginOnAHostOfItsOwnSaysSoInTheCatalog() {
 	s.NotEmpty(*shopify[0].InstanceHint)
 }
 
+func (s *PluginsSuite) TestAPluginThatNeedsTheAppsOwnClientSaysWhereItRedirects() {
+	calendar := s.catalog("google calendar")
+
+	s.Require().Len(calendar, 1)
+	s.Require().NotNil(calendar[0].ClientRequired)
+	s.True(*calendar[0].ClientRequired)
+	s.Require().NotNil(calendar[0].RedirectUri)
+	s.True(strings.HasSuffix(*calendar[0].RedirectUri, plugins.CallbackPath), *calendar[0].RedirectUri)
+	s.Nil(s.catalog("linear")[0].RedirectUri, "Linear registers a client on the fly")
+}
+
+func (s *PluginsSuite) TestSlackListsHowToCreateItsClient() {
+	slack := s.catalog("slack")
+
+	s.Require().Len(slack, 1)
+	s.Require().NotNil(slack[0].SetupUrl)
+	s.Equal("https://api.slack.com/apps", *slack[0].SetupUrl)
+	s.Require().NotNil(slack[0].SetupSteps)
+	s.Equal("Create a Slack app", (*slack[0].SetupSteps)[0].Title)
+	s.Nil(s.catalog("linear")[0].SetupSteps, "Linear needs no setup")
+}
+
 func (s *PluginsSuite) TestAnAgentHoldsNoLoginsUntilOneIsMade() {
 	agent := s.data.createAgentConfig()
 
@@ -106,10 +129,132 @@ func (s *PluginsSuite) TestAPluginTheAgentNamesThatNobodyConnectedIsLeftToRemind
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
 		"/v1/agents/configs/"+agent.Id+"/plugins", nil, &connections))
 
-	s.Require().Len(connections, 1, "each user connects their own calendar, so the app has nothing to finish for it")
+	s.Require().Len(connections, 2)
 	s.Equal("sentry", connections[0].PluginId)
 	s.Equal(PluginConnectionStatusNotConnected, connections[0].Status)
+	s.Nil(connections[0].User)
+	s.Equal("google_calendar", connections[1].PluginId)
+	s.Require().NotNil(connections[1].User)
+	s.True(*connections[1].User, "each user connects their own calendar, so the app has nothing to finish for it")
+	s.Require().NotNil(connections[1].ClientRequired)
+	s.True(*connections[1].ClientRequired, "Google registers no client on the fly")
+	s.Nil(connections[1].Client)
 	s.Equal([]PluginEntry{{Name: "google_calendar"}}, *agent.UserPlugins)
+}
+
+func (s *PluginsSuite) TestAnAgentsClientSecretIsSealedAndNeverReturned() {
+	agent := s.data.createAgentConfig()
+
+	var set PluginClient
+	status := s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+agent.Id+"/plugins/google_calendar/client",
+		SetPluginClientRequest{ClientId: "acme.apps.googleusercontent.com", ClientSecret: pointerTo("acme-secret"), User: pointerTo(true)}, &set)
+
+	s.Require().Equal(http.StatusOK, status)
+	s.Equal(PluginClient{ClientId: "acme.apps.googleusercontent.com", HasSecret: true}, set)
+	stored, err := s.store.PluginClient(s.T().Context(), s.customerID(), agent.Id, "google_calendar")
+	s.Require().NoError(err)
+	s.NotContains(string(stored.SecretSealed), "acme-secret")
+	var connections []PluginConnection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/configs/"+agent.Id+"/plugins", nil, &connections))
+	s.Require().Len(connections, 1, "user names the plugin for each end user to connect")
+	s.True(*connections[0].User)
+	s.Equal(&set, connections[0].Client)
+}
+
+func (s *PluginsSuite) TestAnEndUsersLoginIsFinishedWithTheAgentsClient() {
+	agent := s.data.createAgentConfig()
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut,
+		"/v1/agents/configs/"+agent.Id+"/plugins/google_calendar/client",
+		SetPluginClientRequest{ClientId: "acme-client", ClientSecret: pointerTo("acme-secret"), User: pointerTo(true)}, nil))
+	tokens := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.Equal("acme-client", r.FormValue("client_id"))
+		s.Equal("acme-secret", r.FormValue("client_secret"), "Google authenticates the client at the token endpoint")
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "alices-token", "expires_in": 3600})
+	}))
+	defer tokens.Close()
+	state := s.utils.uuid()
+	s.Require().NoError(s.store.UpsertPluginConnection(s.T().Context(), &store.PluginConnection{
+		CustomerID: s.customerID(), ConfigID: agent.Id, PluginID: "google_calendar", UserID: "alice",
+		OAuthState: state, CodeVerifier: "verifier", ClientID: "acme-client", TokenEndpoint: tokens.URL,
+	}))
+
+	status, _ := s.unauthenticatedClient.call(http.MethodGet,
+		plugins.CallbackPath+"?state="+state+"&code=the-code", nil)
+
+	s.Equal(http.StatusOK, status)
+	alices, err := s.store.UserPluginConnection(s.T().Context(), s.customerID(), agent.Id, "alice", "google_calendar")
+	s.Require().NoError(err)
+	s.Equal("alices-token", alices.AccessToken)
+}
+
+func (s *PluginsSuite) TestAPluginEachEndUserConnectsIsNotConnectedByTheApp() {
+	var agent AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
+		AgentConfigRequest{
+			Name:        "assistant-" + s.utils.uuid(),
+			UserPlugins: pointerTo([]PluginEntry{{Name: "linear"}}),
+		}, &agent))
+
+	status, failure := s.serverClient.failure(http.MethodPost,
+		"/v1/agents/configs/"+agent.Id+"/plugins/linear/authorize", nil)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "connected by each end user")
+}
+
+func (s *PluginsSuite) TestRemovingAPluginEachEndUserConnectsDropsItsClient() {
+	agent := s.data.createAgentConfig()
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut,
+		"/v1/agents/configs/"+agent.Id+"/plugins/google_calendar/client",
+		SetPluginClientRequest{ClientId: "acme-client", User: pointerTo(true)}, nil))
+
+	status, _ := s.serverClient.call(http.MethodDelete, "/v1/agents/configs/"+agent.Id+"/plugins/google_calendar", nil)
+
+	s.Equal(http.StatusNoContent, status)
+	_, err := s.store.PluginClient(s.T().Context(), s.customerID(), agent.Id, "google_calendar")
+	s.ErrorIs(err, store.ErrUnknownPluginClient)
+	var stored AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+agent.Id, nil, &stored))
+	s.Nil(stored.UserPlugins)
+}
+
+func (s *PluginsSuite) TestASyncNamingAPluginNobodyCanConnectYetIsStoredWithAWarning() {
+	name := "assistant-" + s.utils.uuid()
+	sync := map[string]any{"name": name, "hash": "v1", "mode": "text", "user_plugins": []string{"linear", "google_calendar"}}
+
+	var synced SyncAgentResult
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sync", sync, &synced))
+
+	s.Require().Len(synced.Warnings, 1, "linear registers a client on the fly")
+	s.Contains(synced.Warnings[0], "Google Calendar needs an OAuth client")
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut,
+		"/v1/agents/configs/"+synced.Config.Id+"/plugins/google_calendar/client",
+		SetPluginClientRequest{ClientId: "acme-client"}, nil))
+	sync["hash"] = "v2"
+	var resynced SyncAgentResult
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sync", sync, &resynced))
+	s.False(resynced.Unchanged)
+	s.Empty(resynced.Warnings)
+}
+
+func (s *PluginsSuite) TestAClientIsOnlyForAPluginWithAnOAuthLogin() {
+	agent := s.data.createAgentConfig()
+
+	status, failure := s.serverClient.failure(http.MethodPut,
+		"/v1/agents/configs/"+agent.Id+"/plugins/carrier-pigeon/client", SetPluginClientRequest{ClientId: "x"})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, unknownPlugin)
+}
+
+func (s *PluginsSuite) TestAnEndUsersDeviceMayNotSetAClient() {
+	agent := s.data.createAgentConfig()
+
+	status, _ := s.client.call(http.MethodPut, "/v1/agents/configs/"+agent.Id+"/plugins/google_calendar/client",
+		SetPluginClientRequest{ClientId: "x"})
+
+	s.Equal(http.StatusForbidden, status)
 }
 
 func (s *PluginsSuite) TestAnEndUsersLoginIsTheirsAloneAndSendsThemBackToTheConversation() {

@@ -203,6 +203,11 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if !ok {
 		return nil, invalidRequest(message)
 	}
+	unclientable, err := s.pluginClientWarnings(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+	warnings = append(warnings, unclientable...)
 	if message, ok := pluginAliasComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
