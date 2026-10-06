@@ -125,6 +125,18 @@ func (s *OAuthClientsSuite) TestAMethodNeedingAKeyIsRefused() {
 	s.Equal(http.StatusBadRequest, status)
 }
 
+func (s *OAuthClientsSuite) TestAConnectorWhoseMethodNeedsAKeyRefusesAClientThatLeavesTheMethodOut() {
+	id := s.customConnector("  registration: [customer]\n  auth_method: private_key_jwt\n  alg: PS256")
+
+	status, failure := s.serverClient.failure(http.MethodPut, oauthClientPath(id), confidentialClient("secret"))
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("the connector's client.auth_method private_key_jwt needs a key or a certificate this client cannot hold: "+
+		"set auth_method to none, client_secret_basic or client_secret_post", failure)
+	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), id)
+	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
+}
+
 func (s *OAuthClientsSuite) TestAClientIDOutsidePrintableASCIIIsRefused() {
 	status, _ := s.serverClient.failure(http.MethodPut, oauthClientPath("github"),
 		ConnectorOAuthClientRequest{ClientID: "tab\there", ClientSecret: "secret"})
@@ -138,7 +150,7 @@ func (s *OAuthClientsSuite) TestAnUnknownConnectorIsNotFound() {
 }
 
 func (s *OAuthClientsSuite) TestAnotherAppCannotSetAClientForTheAppsCustomConnector() {
-	id := s.customConnector()
+	id := s.customConnector("  registration: [customer]")
 
 	s.assertHiddenFromOtherApps(func(as *testClient) int {
 		return as.do(http.MethodPut, oauthClientPath(id), confidentialClient("secret"), nil)
@@ -260,9 +272,9 @@ WHERE source.customer_id = ? AND source.connector_id = ?
 	s.Require().NoError(err)
 }
 
-// customConnector stores a custom connector of the test's app that takes the app's own
-// client. Stored directly, since the API resolves a custom connector's endpoint.
-func (s *OAuthClientsSuite) customConnector() string {
+// customConnector stores a custom connector of the test's app with client, the lines of its
+// client block. Stored directly, since the API resolves a custom connector's endpoint.
+func (s *OAuthClientsSuite) customConnector(client string) string {
 	id := "custom_byo" + strings.ReplaceAll(s.utils.uuid(), "-", "")
 	manifest, err := core.ParseManifest([]byte(`
 id: ` + id + `
@@ -272,7 +284,7 @@ endpoints:
   mcp: https://mcp.example/mcp
 schemes: [oauth2_code]
 client:
-  registration: [customer]
+` + client + `
 sources:
   - kind: mcp
     endpoint: mcp
