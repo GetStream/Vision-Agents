@@ -34,8 +34,8 @@ var ErrTokenTypeNotRevocable = errors.New("oauth2code: the provider does not rev
 var errNoAccessToken = errors.New("oauth2code: the credential has no access token")
 
 // Retrieve returns the access token in stored, renewed first when it is inside the
-// margin of its expiry or expires at or before opts.ValidUntil (RFC 6749 section 6). The StoredCredentials that come back are stored
-// itself when nothing was renewed, and new ones when a refresh succeeded; a failed refresh
+// margin of its expiry or expires at or before opts.ValidUntil (RFC 6749 section 6). The
+// StoredCredentials that come back are stored itself when nothing was renewed, and new ones when a refresh succeeded; a failed refresh
 // returns no StoredCredentials, stored is never written to, and the error is a *core.OutcomeError the resolver acts on. When the
 // refresh failed inside the margin, before the access token expired, that still valid token
 // comes back with the error, so a provider's bad minute is not a failed call: the resolver
