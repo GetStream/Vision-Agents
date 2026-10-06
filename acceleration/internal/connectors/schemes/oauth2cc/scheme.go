@@ -179,6 +179,9 @@ func (s *Scheme) Complete(ctx context.Context, in core.CompleteInput) (core.Stor
 // *core.OutcomeError and no StoredCredentials, with the old token beside it while that has
 // not expired.
 //
+// A token the provider refused (opts.Refused) is replaced at once, and never handed back
+// when the new request fails.
+//
 // opts.Checkpoint is never called: a client credentials request spends nothing. No refresh
 // token goes out (section 4.4.3: none is issued), the client's secret stays valid whatever
 // the answer, and a second request only mints another access token. So a lost answer is
@@ -196,12 +199,14 @@ func (s *Scheme) Retrieve(ctx context.Context, stored core.StoredCredentials, m 
 	if opts.ValidUntil.After(due) {
 		due = opts.ValidUntil
 	}
-	if !current.ExpiresAt.IsZero() && due.Before(current.ExpiresAt) {
+	// One the provider refused is replaced whatever its expiry says (opts.Refused): minting
+	// another costs nothing, so a refusal never needs a reconnect.
+	if !opts.Refused && !current.ExpiresAt.IsZero() && due.Before(current.ExpiresAt) {
 		return credential(current), stored, nil
 	}
 	next, _, err := s.mint(ctx, m, current)
 	if err != nil {
-		if s.now().Before(current.ExpiresAt) {
+		if !opts.Refused && s.now().Before(current.ExpiresAt) {
 			return credential(current), core.StoredCredentials{}, err
 		}
 		return core.AccessCredential{}, core.StoredCredentials{}, err

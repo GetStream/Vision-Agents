@@ -170,6 +170,20 @@ func (s *OAuth2CCSuite) TestATokenThatExpiresBeforeValidUntilIsReplacedOutsideTh
 	s.True(credential.ExpiresAt.After(before.ExpiresAt), "the new token outlives the call")
 }
 
+func (s *OAuth2CCSuite) TestATokenTheProviderRefusedIsReplacedWhateverItsExpiry() {
+	srv := fakeprovider.New(s.T(), fakeprovider.ClientCredentials)
+	scheme := s.scheme(srv.Client())
+	stored := s.complete(srv, scheme, manifest(srv))
+	_, _, err := scheme.Retrieve(s.ctx, stored, manifest(srv), core.RetrieveOptions{})
+	s.Require().NoError(err)
+	s.Equal(1, srv.ClientCredentialsGrants(), "the token from Complete is still valid")
+
+	_, renewed, err := scheme.Retrieve(s.ctx, stored, manifest(srv), core.RetrieveOptions{Refused: true})
+	s.Require().NoError(err)
+	s.Equal(2, srv.ClientCredentialsGrants())
+	s.NotEqual(stored, renewed)
+}
+
 func (s *OAuth2CCSuite) TestATokenThatOutlivesValidUntilIsNotReplaced() {
 	srv := fakeprovider.New(s.T(), fakeprovider.ClientCredentials)
 	scheme := s.scheme(srv.Client())
