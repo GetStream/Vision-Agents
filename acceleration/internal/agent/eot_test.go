@@ -9,9 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/oauth2"
 )
 
 func TestEOTClientPostsTheOwnedPCMWindow(t *testing.T) {
@@ -57,6 +60,85 @@ func TestEOTClientUsesTheIdentityTokenFile(t *testing.T) {
 	_, err = client.Score(context.Background(), "candidate-2", make([]byte, eotMinSamples*2))
 	require.NoError(t, err)
 }
+
+func TestEOTClientTokenSourceIsCachedAndIndependentOfCallerCancellation(t *testing.T) {
+	var sourceCalls atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	source := oauth2.TokenSource(oauth2TokenSourceFunc(func() (*oauth2.Token, error) {
+		if sourceCalls.Add(1) == 1 {
+			close(started)
+			<-release
+		}
+		return &oauth2.Token{AccessToken: "cached.identity.token", TokenType: "Bearer"}, nil
+	}))
+	var requests atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "Bearer cached.identity.token", r.Header.Get("Authorization"))
+		pcm, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		requests.Add(1)
+		writeEOTResponse(t, w, r.Header.Get("X-Request-ID"), len(pcm)/2, 0.5)
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewEOTClientWithTokenSource(server.URL, source)
+	require.NoError(t, err)
+	client.client.Transport = server.Client().Transport
+	pcm := make([]byte, eotMinSamples*2)
+
+	firstContext, cancelFirst := context.WithCancel(context.Background())
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := client.Score(firstContext, "cancelled-candidate", pcm)
+		firstDone <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("token source did not start")
+	}
+	cancelFirst()
+	select {
+	case err := <-firstDone:
+		require.Error(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("caller cancellation did not release the EOT request")
+	}
+
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := client.Score(context.Background(), "live-candidate", pcm)
+		secondDone <- err
+	}()
+	close(release)
+	select {
+	case err := <-secondDone:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("a later caller did not reuse the completed token refresh")
+	}
+
+	_, err = client.Score(context.Background(), "warm-candidate", pcm)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, sourceCalls.Load(), "warm requests must reuse the cached source token")
+	require.EqualValues(t, 2, requests.Load(), "only uncancelled requests reach the service")
+}
+
+func TestEOTClientTokenSourceRequiresHTTPS(t *testing.T) {
+	require.Error(t, func() error {
+		_, err := NewEOTClientWithTokenSource("http://127.0.0.1:8080", oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "secret"}))
+		return err
+	}())
+	require.Error(t, func() error {
+		_, err := NewEOTClientWithTokenSource("https://example.com", nil)
+		return err
+	}())
+}
+
+type oauth2TokenSourceFunc func() (*oauth2.Token, error)
+
+func (source oauth2TokenSourceFunc) Token() (*oauth2.Token, error) { return source() }
 
 func TestEOTClientRejectsUnsafeAndMalformedResponses(t *testing.T) {
 	require.Error(t, func() error {

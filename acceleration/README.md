@@ -109,9 +109,9 @@ the other commands that read them there.
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `500000`. `0` turns it off |
 | `ROUTER_TRUSTED_PROXIES` | CIDR ranges your own proxies sit in, comma separated, e.g. `10.0.0.0/8`. Decides how much of `X-Forwarded-For` is believed. Unset means none of it is, and the connection's address is used |
 | `ROUTER_DATA_MOVE_RETENTION` | How long recorded changes are kept while a customer moves between deployments, defaults to `168h`. See [Moving a customer](#moving-a-customer) |
-| `ROUTER_EOT_URL` | Optional `POST /v1/eot` acoustic endpointing service URL. Unset keeps the existing transcript-only cadence |
-| `ROUTER_EOT_ID_TOKEN_FILE` | Optional path to a Google Cloud Run identity-token file for local development. Production uses the runtime's ID-token credentials |
-| `ROUTER_EOT_MODE` | `gate` (default) asks the semantic controller alongside EOT; `primary` lets EOT resolve eligible quiet-floor turns and uses the semantic controller for unavailable scores or ineligible/active-floor candidates |
+| `ROUTER_EOT_URL` | Production `cmd/router` leaves acoustic endpointing disabled unless configured. The local `cmd/agent` demo defaults to the acoustic service; set an alternate `POST /v1/eot` URL to override it, or set it empty to disable scoring |
+| `ROUTER_EOT_ID_TOKEN_FILE` | Optional identity-token file override. The local demo's default service uses the existing gcloud login when this is unset; production uses runtime ID-token credentials |
+| `ROUTER_EOT_MODE` | Production defaults to `gate`; the local `cmd/agent` demo defaults to `primary`, where EOT resolves eligible quiet-floor turns and the semantic controller handles unavailable scores or ineligible/active-floor candidates. Set `gate` to ask the semantic controller alongside EOT |
 | `ROUTER_EOT_THRESHOLD` | Raw p(EOT) threshold; `primary` waits below it and releases the turn at or above it. Defaults to `0.5`, an initial operational setting rather than a calibrated optimum |
 | `ROUTER_LOG_LEVEL`      | `debug`, `info` (default), `warn` or `error`               |
 | `HARNESS_SKILLS`        | Path to a skill set; defaults to the built-in one          |
@@ -602,7 +602,18 @@ go run ./cmd/chat -target en-high-accuracy
 # Join a Stream call and talk to it. A browser opens on a link that joins the same call,
 # which -demo=false turns off when the caller is joining from somewhere else.
 go run ./cmd/agent -call my-call
+```
 
+`cmd/agent` loads the nearest `.env` before reading environment-backed flag defaults; values
+already in the process environment take precedence, and command-line flags take precedence
+over both. For the default acoustic end-of-turn service, use an existing local gcloud login
+that already has access to invoke the service. The demo fetches an identity token at startup
+and refreshes it in memory; it does not launch a login flow, grant IAM access, or write the
+token to a file. This local demo default does not change production router settings. Set
+`ROUTER_EOT_MODE=gate` to keep the semantic controller in the decision path, or
+`ROUTER_EOT_URL=` to disable acoustic scoring.
+
+```bash
 # Sprint 6 stack: Gemma speaks, Sol handles the hard parts
 go run ./cmd/agent -call my-call \
   -stt parakeet/parakeet-tdt-0.6b-v3 \

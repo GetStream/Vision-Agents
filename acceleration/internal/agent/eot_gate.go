@@ -89,6 +89,22 @@ func (a *Agent) eotAudioSnapshot(participantID string) []byte {
 	return ring.snapshot()
 }
 
+func (a *Agent) hasEOTAudio(participantID string) bool {
+	a.mu.Lock()
+	ring := a.audioHistory[participantID]
+	a.mu.Unlock()
+	if ring == nil {
+		return false
+	}
+	ring.mu.Lock()
+	defer ring.mu.Unlock()
+	count := ring.next
+	if ring.full {
+		count = len(ring.sample)
+	}
+	return count >= eotMinSamples
+}
+
 func (a *Agent) detachEOTAudioLocked() []*pcm16leRing {
 	rings := make([]*pcm16leRing, 0, len(a.audioHistory))
 	for id, ring := range a.audioHistory {

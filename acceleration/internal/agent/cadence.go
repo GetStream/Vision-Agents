@@ -39,6 +39,10 @@ type candidate struct {
 	Unfinished bool
 }
 
+type cadenceTimer interface {
+	Stop() bool
+}
+
 // cadence decides when an evolving transcript has stayed unchanged long enough to act on.
 type cadence struct {
 	gap    time.Duration
@@ -47,9 +51,11 @@ type cadence struct {
 	logger *slog.Logger
 	ready  chan candidate
 	done   chan struct{}
+	after  func(time.Duration, func()) cadenceTimer
 
-	mu       sync.Mutex
-	speakers map[string]*cadenceSpeaker
+	mu         sync.Mutex
+	speakers   map[string]*cadenceSpeaker
+	timerEpoch int64
 	// grace is extra settling time owed to the next turn, whoever says it. It lasts until
 	// a turn has been put rather than until the next revision, so every revision of that
 	// turn is given it and not only the first.
@@ -67,7 +73,8 @@ type cadenceSpeaker struct {
 	latencyMs   float64
 	candidateID string
 	generation  int64
-	timer       *time.Timer
+	timerEpoch  int64
+	timer       cadenceTimer
 	revisedAt   time.Time
 	// utterance is the run of speech the words being gathered came from.
 	utterance int64
@@ -78,6 +85,7 @@ type cadenceSpeaker struct {
 	// they were answered, for transcribers that cannot say which run they are on.
 	committedUtterance int64
 	committedAt        time.Time
+	emittedGeneration  int64
 }
 
 func newCadence(gap, retry, settle time.Duration, logger *slog.Logger) *cadence {
@@ -94,12 +102,15 @@ func newCadence(gap, retry, settle time.Duration, logger *slog.Logger) *cadence 
 		logger = slog.Default()
 	}
 	return &cadence{
-		gap:      gap,
-		retry:    retry,
-		settle:   settle,
-		logger:   logger,
-		ready:    make(chan candidate, eventBuffer),
-		done:     make(chan struct{}),
+		gap:    gap,
+		retry:  retry,
+		settle: settle,
+		logger: logger,
+		ready:  make(chan candidate, eventBuffer),
+		done:   make(chan struct{}),
+		after: func(delay time.Duration, fn func()) cadenceTimer {
+			return time.AfterFunc(delay, fn)
+		},
 		speakers: map[string]*cadenceSpeaker{},
 	}
 }
@@ -264,6 +275,53 @@ func (c *cadence) candidateSnapshot(ready candidate) (candidate, bool) {
 	return ready, true
 }
 
+func (c *cadence) currentCandidate(participantID string) (candidate, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	current, ok := c.speakers[participantID]
+	if !ok || strings.TrimSpace(current.text) == "" {
+		return candidate{}, false
+	}
+	return candidate{
+		Participant:  current.participant,
+		Speaker:      current.speaker,
+		Text:         strings.TrimSpace(current.text),
+		Language:     current.language,
+		Confidence:   current.confidence,
+		STTLatencyMs: current.latencyMs,
+		RevisedAt:    current.revisedAt,
+	}, true
+}
+
+// ExpediteFinal emits the current transcript immediately when the agent has independently
+// checked that a finalized candidate is eligible for primary EOT scoring. The generation
+// checks preserve the ordinary cadence retry after a low score and reject stale revisions.
+func (c *cadence) ExpediteFinal(transcript stt.Transcript) bool {
+	if !transcript.Final() || transcript.Participant.ID == "" {
+		return false
+	}
+
+	c.mu.Lock()
+	current, ok := c.speakers[transcript.Participant.ID]
+	if !ok || current.text == "" || current.candidateID != "" || current.timer == nil ||
+		current.emittedGeneration == current.generation || c.grace > 0 ||
+		incompleteIdentifier(current.text) || !sameWords(current.text, transcript.Text) {
+		c.mu.Unlock()
+		return false
+	}
+
+	current.timer.Stop()
+	current.timer = nil
+	generation := current.generation
+	timerEpoch := c.nextTimerEpochLocked()
+	current.timerEpoch = timerEpoch
+	participantID := current.participant.ID
+	c.mu.Unlock()
+
+	c.emit(participantID, generation, timerEpoch)
+	return true
+}
+
 func (c *cadence) Forget(participant stt.Participant) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -295,25 +353,34 @@ func (c *cadence) scheduleLocked(current *cadenceSpeaker, delay time.Duration) {
 		current.timer.Stop()
 	}
 	generation := current.generation
+	timerEpoch := c.nextTimerEpochLocked()
+	current.timerEpoch = timerEpoch
 	participantID := current.participant.ID
-	current.timer = time.AfterFunc(delay, func() {
-		c.emit(participantID, generation)
+	current.timer = c.after(delay, func() {
+		c.emit(participantID, generation, timerEpoch)
 	})
 }
 
-func (c *cadence) emit(participantID string, generation int64) {
+func (c *cadence) nextTimerEpochLocked() int64 {
+	c.timerEpoch++
+	return c.timerEpoch
+}
+
+func (c *cadence) emit(participantID string, generation, timerEpoch int64) {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return
 	}
 	current, ok := c.speakers[participantID]
-	if !ok || current.generation != generation || current.text == "" || current.candidateID != "" {
+	if !ok || current.generation != generation || current.timerEpoch != timerEpoch ||
+		current.text == "" || current.candidateID != "" {
 		c.mu.Unlock()
 		return
 	}
 	waited := time.Since(current.revisedAt)
 	current.candidateID = replyPrefix + turnStamp()
+	current.emittedGeneration = generation
 	current.timer = nil
 	c.grace = 0
 	ready := candidate{

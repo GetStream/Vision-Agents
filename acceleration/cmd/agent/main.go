@@ -55,58 +55,79 @@ const (
 )
 
 func main() {
-	options := options{}
-	flag.StringVar(&options.callID, "call", "", "Stream call id to join (required)")
-	flag.StringVar(&options.callType, "call-type", "agent", "Stream call type")
-	flag.StringVar(&options.userID, "user", "vision-agent", "user id to join as")
-	flag.StringVar(&options.customerID, "customer", "demo", "customer the usage is billed to")
-	flag.StringVar(&options.agentID, "agent", "", "agent id transcripts and stats are keyed by, defaults to the call id")
-	flag.StringVar(&options.appID, "app", "", "application memories are scoped to")
-	flag.Var(&options.tags, "tag", "cost label as key=value, repeat for several")
-	flag.StringVar(&options.llmTarget, "llm", "llm-fast", "llm provider/model or shortcut")
-	flag.StringVar(&options.sttTarget, "stt", "en-low-latency", "stt provider/model or shortcut")
-	flag.StringVar(&options.ttsTarget, "tts", "en-low-latency", "tts provider/model or shortcut")
-	flag.StringVar(&options.voice, "voice", "", "provider-specific voice id")
-	flag.StringVar(&options.language, "language", "", "language hint, e.g. es")
-	flag.StringVar(&options.instructions, "instructions",
-		"You are a helpful voice assistant. Keep your answers to one or two sentences.",
-		"the system prompt")
-	flag.StringVar(&options.greeting, "greeting", "Hi, I'm listening.",
-		"said on joining, without going through the model")
-	flag.StringVar(&options.subagentTarget, "subagent", "",
-		"provider/model or shortcut for the model that does the thinking, empty to answer everything on the voice model")
-	flag.StringVar(&options.skillsFile, "skills", os.Getenv(skillsEnvVar),
-		"skills the voice model may hand over, empty for the built-in set")
-	flag.StringVar(&options.toolsFile, "tools", os.Getenv(toolsEnvVar),
-		"tools the voice model may run, empty for the built-in set")
-	flag.StringVar(&options.number, "number", "",
-		"one of your numbers, which is what a transferred human sees, and what turns transferring on")
-	flag.StringVar(&options.vendor, "vendor", "telnyx", "vendor carrying an outbound leg")
-	flag.StringVar(&options.vendorCallID, "vendor-call", "",
-		"the vendor call id of an outbound leg, which is what lets the agent press digits at a menu")
-	flag.BoolVar(&options.navigating, "navigating", false,
-		"the agent placed this call, so let recordings finish and answer their menus")
-	flag.IntVar(&options.tasks, "tasks", 0, "how much delegated work may run at once")
-	flag.BoolVar(&options.backchannel, "backchannel", true,
-		"murmur while the caller is still talking, the way a person on the phone does")
-	flag.Float64Var(&options.minConfidence, "min-confidence", 0,
-		"how sure the transcriber must be for the agent to answer rather than check what was meant")
-	flag.BoolVar(&options.demo, "demo", true,
-		"open a browser on a link that joins the call, so there is somebody for the agent to talk to")
-	verbose := flag.Bool("verbose", false, "log lifecycle events")
-	flag.Parse()
+	parsed, verbose, err := parseOptions(os.Args[1:])
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(2)
+	}
 
 	level := slog.LevelWarn
-	if *verbose {
+	if verbose {
 		level = slog.LevelDebug
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(logger)
 
-	if err := run(options, logger); err != nil {
+	if err := run(parsed, logger); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// parseOptions loads the checkout's .env before evaluating any environment-backed flag
+// defaults, then parses the command line with an isolated FlagSet for testability.
+func parseOptions(args []string) (options, bool, error) {
+	if err := loadDemoDotEnv(); err != nil {
+		return options{}, false, err
+	}
+
+	parsed := options{}
+	flags := flag.NewFlagSet("agent", flag.ContinueOnError)
+	flags.StringVar(&parsed.callID, "call", "", "Stream call id to join (required)")
+	flags.StringVar(&parsed.callType, "call-type", "agent", "Stream call type")
+	flags.StringVar(&parsed.userID, "user", "vision-agent", "user id to join as")
+	flags.StringVar(&parsed.customerID, "customer", "demo", "customer the usage is billed to")
+	flags.StringVar(&parsed.agentID, "agent", "", "agent id transcripts and stats are keyed by, defaults to the call id")
+	flags.StringVar(&parsed.appID, "app", "", "application memories are scoped to")
+	flags.Var(&parsed.tags, "tag", "cost label as key=value, repeat for several")
+	flags.StringVar(&parsed.llmTarget, "llm", "llm-fast", "llm provider/model or shortcut")
+	flags.StringVar(&parsed.sttTarget, "stt", "en-low-latency", "stt provider/model or shortcut")
+	flags.StringVar(&parsed.ttsTarget, "tts", "en-low-latency", "tts provider/model or shortcut")
+	flags.StringVar(&parsed.voice, "voice", "", "provider-specific voice id")
+	flags.StringVar(&parsed.language, "language", "", "language hint, e.g. es")
+	flags.StringVar(&parsed.instructions, "instructions",
+		"You are a helpful voice assistant. Keep your answers to one or two sentences.",
+		"the system prompt")
+	flags.StringVar(&parsed.greeting, "greeting", "Hi, I'm listening.",
+		"said on joining, without going through the model")
+	flags.StringVar(&parsed.subagentTarget, "subagent", "",
+		"provider/model or shortcut for the model that does the thinking, empty to answer everything on the voice model")
+	flags.StringVar(&parsed.skillsFile, "skills", os.Getenv(skillsEnvVar),
+		"skills the voice model may hand over, empty for the built-in set")
+	flags.StringVar(&parsed.toolsFile, "tools", os.Getenv(toolsEnvVar),
+		"tools the voice model may run, empty for the built-in set")
+	flags.StringVar(&parsed.number, "number", "",
+		"one of your numbers, which is what a transferred human sees, and what turns transferring on")
+	flags.StringVar(&parsed.vendor, "vendor", "telnyx", "vendor carrying an outbound leg")
+	flags.StringVar(&parsed.vendorCallID, "vendor-call", "",
+		"the vendor call id of an outbound leg, which is what lets the agent press digits at a menu")
+	flags.BoolVar(&parsed.navigating, "navigating", false,
+		"the agent placed this call, so let recordings finish and answer their menus")
+	flags.IntVar(&parsed.tasks, "tasks", 0, "how much delegated work may run at once")
+	flags.BoolVar(&parsed.backchannel, "backchannel", true,
+		"murmur while the caller is still talking, the way a person on the phone does")
+	flags.Float64Var(&parsed.minConfidence, "min-confidence", 0,
+		"how sure the transcriber must be for the agent to answer rather than check what was meant")
+	flags.BoolVar(&parsed.demo, "demo", true,
+		"open a browser on a link that joins the call, so there is somebody for the agent to talk to")
+	verbose := flags.Bool("verbose", false, "log lifecycle events")
+	if err := flags.Parse(args); err != nil {
+		return options{}, false, err
+	}
+	return parsed, *verbose, nil
 }
 
 type options struct {
@@ -180,6 +201,19 @@ func run(options options, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	eotSettings, err := demoEOTSettingsFrom(os.LookupEnv)
+	if err != nil {
+		return err
+	}
+	eotClient, closeEOT, err := newDemoEOTClient(ctx, eotSettings)
+	if err != nil {
+		return err
+	}
+	defer closeEOT()
+	if err := preflightDemoEOT(ctx, eotClient); err != nil {
+		return err
+	}
+
 	routers, cleanup, err := buildRouters(ctx, logger)
 	if err != nil {
 		return err
@@ -248,6 +282,9 @@ func run(options options, logger *slog.Logger) error {
 		Store:          routers.store,
 		Live:           routers.live,
 		Logger:         logger,
+		EOT:            eotClient,
+		EOTMode:        eotSettings.mode,
+		EOTThreshold:   eotSettings.threshold,
 	})
 	if err != nil {
 		return err

@@ -378,3 +378,100 @@ func (s *CadenceSuite) TestParticipantsKeepIndependentCadences() {
 	second := s.ready()
 	s.ElementsMatch([]string{"alice", "bob"}, []string{first.Participant.ID, second.Participant.ID})
 }
+
+type capturedCadenceTimer struct {
+	delay    time.Duration
+	callback func()
+	stopped  bool
+}
+
+func (timer *capturedCadenceTimer) Stop() bool {
+	wasActive := !timer.stopped
+	timer.stopped = true
+	return wasActive
+}
+
+func (timer *capturedCadenceTimer) fire() { timer.callback() }
+
+func (s *CadenceSuite) captureTimers() *[]*capturedCadenceTimer {
+	var timers []*capturedCadenceTimer
+	s.cadence.after = func(delay time.Duration, callback func()) cadenceTimer {
+		timer := &capturedCadenceTimer{delay: delay, callback: callback}
+		timers = append(timers, timer)
+		return timer
+	}
+	return &timers
+}
+
+func (s *CadenceSuite) useDefaultCadence() {
+	s.cadence.Close()
+	s.cadence = newCadence(defaultCadenceGap, defaultCadenceRetry, defaultCadenceSettle,
+		slog.New(slog.DiscardHandler))
+	s.T().Cleanup(s.cadence.Close)
+}
+
+func (s *CadenceSuite) TestOrdinaryCandidateRetainsConfiguredInitialGap() {
+	timers := s.captureTimers()
+	caller := stt.Participant{ID: "caller"}
+	s.cadence.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: "hello"})
+	s.Require().Len(*timers, 1)
+	s.Equal(5*time.Millisecond, (*timers)[0].delay,
+		"the final-only fast path is opt-in at the agent callsite, not a global cadence change")
+}
+
+func (s *CadenceSuite) TestPrimaryFinalExpeditesOnceButWaitRetryKeepsItsFullGap() {
+	s.useDefaultCadence()
+	timers := s.captureTimers()
+	caller := stt.Participant{ID: "caller"}
+	interim := stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "book a table"}
+	s.cadence.Observe(interim)
+	s.Require().Len(*timers, 1)
+	s.Equal(defaultCadenceGap, (*timers)[0].delay)
+
+	final := interim
+	final.Mode = stt.ModeFinal
+	s.True(s.cadence.ExpediteFinal(final), "a settled primary candidate should not wait for the initial gap")
+	ready := s.ready()
+	s.Equal(interim.Text, ready.Text)
+	(*timers)[0].fire()
+	s.quiet()
+
+	s.Require().True(s.cadence.Resolve(ready.ID, true))
+	s.Require().Len(*timers, 2)
+	s.Equal(defaultCadenceRetry, (*timers)[1].delay)
+	s.False(s.cadence.ExpediteFinal(final), "duplicate final events must not bypass the retry gap")
+	(*timers)[1].fire()
+	s.Equal(interim.Text, s.ready().Text)
+}
+
+func (s *CadenceSuite) TestChangedFinalCanExpediteAndEscapedTimerCannotReleaseIt() {
+	timers := s.captureTimers()
+	caller := stt.Participant{ID: "caller"}
+	s.cadence.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "book a table"})
+	oldTimer := (*timers)[0]
+
+	final := stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: "book a table for four"}
+	s.cadence.Observe(final)
+	newTimer := (*timers)[1]
+	s.True(s.cadence.ExpediteFinal(final))
+	first := s.ready()
+	oldTimer.fire()
+	newTimer.fire()
+	s.quiet()
+	s.Equal(final.Text, first.Text)
+}
+
+func (s *CadenceSuite) TestEscapedTimerAfterForgetCannotReleaseRejoinedParticipant() {
+	timers := s.captureTimers()
+	caller := stt.Participant{ID: "caller"}
+	s.cadence.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "old words"})
+	oldTimer := (*timers)[0]
+	s.cadence.Forget(caller)
+	s.cadence.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "new words"})
+	newTimer := (*timers)[1]
+
+	oldTimer.fire()
+	s.quiet()
+	newTimer.fire()
+	s.Equal("new words", s.ready().Text)
+}

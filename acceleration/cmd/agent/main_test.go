@@ -1,0 +1,143 @@
+package main
+
+import (
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+)
+
+func TestParseOptionsLoadsDotEnvBeforeEnvironmentFlagDefaults(t *testing.T) {
+	keys := []string{
+		skillsEnvVar,
+		toolsEnvVar,
+		demoEOTURLVar,
+		demoEOTModeVar,
+		demoEOTThresholdVar,
+		demoEOTTokenFileVar,
+	}
+	clearEnvironmentForTest(t, keys...)
+	t.Setenv(skillsEnvVar, "process-skills.yaml")
+
+	workingDir := t.TempDir()
+	dotEnv := "\n" +
+		"HARNESS_SKILLS=file-skills.yaml\n" +
+		"HARNESS_TOOLS=file-tools.yaml\n" +
+		"ROUTER_EOT_URL=https://custom.example/v1/eot\n" +
+		"ROUTER_EOT_MODE=gate\n" +
+		"ROUTER_EOT_THRESHOLD=0.37\n" +
+		"ROUTER_EOT_ID_TOKEN_FILE=/tmp/demo-id-token\n"
+	if err := os.WriteFile(filepath.Join(workingDir, ".env"), []byte(dotEnv), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(workingDir)
+
+	parsed, verbose, err := parseOptions([]string{"-call", "from-flag"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verbose || parsed.callID != "from-flag" {
+		t.Fatalf("parsed options: call=%q verbose=%t", parsed.callID, verbose)
+	}
+	if parsed.skillsFile != "process-skills.yaml" {
+		t.Fatalf("process environment should override .env for skills, got %q", parsed.skillsFile)
+	}
+	if parsed.toolsFile != "file-tools.yaml" {
+		t.Fatalf(".env should be loaded before tools flag defaults, got %q", parsed.toolsFile)
+	}
+
+	settings, err := demoEOTSettingsFrom(os.LookupEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.endpoint != "https://custom.example/v1/eot" || settings.mode != agent.EOTModeGate || settings.threshold != 0.37 || settings.tokenFile != "/tmp/demo-id-token" {
+		t.Fatalf("EOT environment settings were not loaded before run: %+v", settings)
+	}
+	if settings.usesGCloudTokenSource() {
+		t.Fatal("a .env endpoint or token-file override must not use the fixed demo credential")
+	}
+
+	parsed, _, err = parseOptions([]string{"-call", "from-flag", "-skills", "flag-skills.yaml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.skillsFile != "flag-skills.yaml" {
+		t.Fatalf("command-line flag should override environment default, got %q", parsed.skillsFile)
+	}
+}
+
+func TestParseOptionsKeepsZeroConfigEOTDefaults(t *testing.T) {
+	keys := []string{demoEOTURLVar, demoEOTModeVar, demoEOTThresholdVar, demoEOTTokenFileVar}
+	clearEnvironmentForTest(t, keys...)
+	t.Chdir(t.TempDir())
+
+	if _, _, err := parseOptions([]string{"-call", "demo-call"}); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := demoEOTSettingsFrom(os.LookupEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.endpoint != demoEOTDefaultEndpoint || settings.mode != agent.EOTModePrimary || settings.threshold != 0.5 {
+		t.Fatalf("unexpected local demo defaults: %+v", settings)
+	}
+	if !settings.usesGCloudTokenSource() {
+		t.Fatal("the unmodified canonical endpoint should use the local gcloud token source")
+	}
+}
+
+func TestRunPreflightsEOTBeforeBuildingRouters(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Method != http.MethodPost || r.Header.Get("X-Request-ID") != "demo-preflight" {
+			t.Errorf("unexpected preflight request: method=%q request-id=%q", r.Method, r.Header.Get("X-Request-ID"))
+		}
+		pcm, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read preflight body: %v", err)
+		} else if len(pcm) != 320*2 {
+			t.Errorf("preflight body has %d bytes, want 640", len(pcm))
+		}
+		_, _ = io.WriteString(w, `{"request_id":"demo-preflight","model":"audioturn-stack16k-blend","release":"c4497ce3ba47","probability":0.5,"wait_probability":0.5,"sample_rate":16000,"samples":320,"window_samples":320}`)
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv(demoEOTURLVar, server.URL)
+	t.Setenv(demoEOTModeVar, "gate")
+	t.Setenv(demoEOTThresholdVar, "0.5")
+	t.Setenv(demoEOTTokenFileVar, "")
+	t.Setenv(configEnvVar, filepath.Join(t.TempDir(), "missing-router-config.yaml"))
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	err := run(options{callID: "preflight-check"}, logger)
+	if err == nil || !strings.Contains(err.Error(), "routing: read config") {
+		t.Fatalf("run error = %v, want router config load error after successful EOT preflight", err)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("EOT preflight requests = %d, want 1 before router construction", got)
+	}
+}
+
+func clearEnvironmentForTest(t *testing.T, keys ...string) {
+	t.Helper()
+	for _, key := range keys {
+		value, wasSet := os.LookupEnv(key)
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if wasSet {
+				_ = os.Setenv(key, value)
+			} else {
+				_ = os.Unsetenv(key)
+			}
+		})
+	}
+}

@@ -1113,6 +1113,7 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 			a.lastParticipant = typed.Participant
 			a.mu.Unlock()
 			a.act(a.converse.Observe(typed, a.floor()))
+			a.expeditePrimaryEOTFinal(typed)
 
 		case stt.Connected:
 			a.logger.Info("listening", "provider", typed.Provider, "model", typed.Model)
@@ -1138,6 +1139,33 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 			}
 		}
 	}
+}
+
+func (a *Agent) expeditePrimaryEOTFinal(transcript stt.Transcript) {
+	if !transcript.Final() || a.options.EOT == nil || a.options.EOTMode != EOTModePrimary ||
+		a.options.Text || (a.options.Guardrail != nil &&
+		a.options.Guardrail.Policy().Mode == guardrail.ModeBlocking) ||
+		!a.hasEOTAudio(transcript.Participant.ID) {
+		return
+	}
+
+	current, ok := a.cadence.currentCandidate(transcript.Participant.ID)
+	if !ok || !sameWords(current.Text, transcript.Text) {
+		return
+	}
+	quiet := func() bool {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if a.closed || a.switching.Load() || a.harness == nil || a.pipe == nil || a.pipe.native ||
+			a.generating || a.utterances > 0 || a.pendingTools > 0 {
+			return false
+		}
+		return !a.anotherVoiceLocked(current)
+	}
+	if !quiet() || a.speechPending() || !quiet() {
+		return
+	}
+	a.cadence.ExpediteFinal(transcript)
 }
 
 // consumeCadence puts a turn to the conversation once its words have held still.

@@ -152,6 +152,24 @@ func NewEOTClient(endpoint, tokenFile string) (*EOTClient, error) {
 	}, nil
 }
 
+// NewEOTClientWithTokenSource builds a client that obtains bearer credentials from the
+// supplied reusable source. Token sources are accepted only for HTTPS endpoints so a
+// caller cannot accidentally send a bearer token over cleartext HTTP.
+func NewEOTClientWithTokenSource(endpoint string, source oauth2.TokenSource) (*EOTClient, error) {
+	if source == nil {
+		return nil, errors.New("agent: EOT token source is required")
+	}
+	client, err := NewEOTClient(endpoint, "")
+	if err != nil {
+		return nil, err
+	}
+	if client.endpoint.Scheme != "https" {
+		return nil, errors.New("agent: EOT token sources require HTTPS")
+	}
+	client.tokens = source
+	return client, nil
+}
+
 func isLoopbackHost(host string) bool {
 	if strings.EqualFold(host, "localhost") {
 		return true
