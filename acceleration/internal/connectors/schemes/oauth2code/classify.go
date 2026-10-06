@@ -15,7 +15,7 @@ import (
 
 // Classify maps a provider's answer to the one outcome the core acts on. It reads token
 // endpoint answers (RFC 6749 section 5.2) and protected resource answers (RFC 6750 section
-// 3) alike, since AccessCredential and a tool source both hand it theirs and the two cannot always be told
+// 3) alike, since Retrieve and a tool source both hand it theirs and the two cannot always be told
 // apart. In order:
 //
 //   - err with no response: a request that was never written (errNotSent, or a failed
@@ -37,7 +37,7 @@ import (
 //   - An error member in a JSON body that errorCodes names, at any status, because some
 //     servers answer errors with 200 (RFC 6749 section 5.2 does not, the fake's Slack shape
 //     does). An error member it does not name is a resource's own error, such as a 404's
-//     not_found, and falls through: AccessCredential's redeem makes it a refusal of the refresh.
+//     not_found, and falls through: Retrieve's redeem makes it a refusal of the refresh.
 //   - 503 is Transient (RFC 9110 section 15.6.4: the server «is currently unable to handle
 //     the request»). Any other 5xx is Uncertain: a 500 (section 15.6.1) does not say nothing
 //     happened, and a 502 or 504 (sections 15.6.3, 15.6.5) says a gateway lost the answer
@@ -91,6 +91,22 @@ func (s *Scheme) Classify(resp *http.Response, body []byte, err error) core.Outc
 	}
 	return core.Outcome{Kind: core.OutcomeOK}
 }
+
+// ClassifyStatic is Classify for a credential nothing renews (api_key, bearer, none), with
+// one more rule: a 401 that Classify finds nothing in is InvalidGrant. RFC 9110 section
+// 15.5.2 says the request «lacks valid authentication credentials», and a static credential
+// is never renewed, so only a new one helps.
+func ClassifyStatic(resp *http.Response, body []byte, err error) core.Outcome {
+	outcome := static.Classify(resp, body, err)
+	if outcome.Kind == core.OutcomeOK && resp != nil && resp.StatusCode == http.StatusUnauthorized {
+		return core.Outcome{Kind: core.OutcomeInvalidGrant}
+	}
+	return outcome
+}
+
+// static is the Scheme ClassifyStatic reads answers with. Classify sends nothing and reads
+// only Config.Now, so it needs no client.
+var static = &Scheme{cfg: Config{Now: time.Now}}
 
 // errorCodes are the error members Classify knows, and what each means.
 var errorCodes = map[string]core.OutcomeKind{

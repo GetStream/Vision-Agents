@@ -4,7 +4,7 @@
 // Begin discovers the authorization server when the manifest does not pin it, picks or
 // registers a client, and builds the authorize URL. Complete checks the callback against
 // the state Begin returned, redeems the code and applies the manifest's capture and
-// identity rules. AccessCredential renews the access token by the manifest's refresh policy,
+// identity rules. Retrieve renews the access token by the manifest's refresh policy,
 // Wrap puts it on a request, Classify says what a provider's answer means, and Revoke ends
 // the grant at the provider. Nothing here knows a provider: what differs between them is a
 // core.ResolvedManifest field.
@@ -105,7 +105,7 @@ type Config struct {
 	// the browser and never through the egress client, so this is the only check it gets.
 	// Tests that run against a loopback fake pass one that lets the fake's host through.
 	PublicEndpoint func(ctx context.Context, raw string) error
-	// Logger gets AccessCredential's warning that a connection is about to need a reconnect; nil is
+	// Logger gets Retrieve's warning that a connection is about to need a reconnect; nil is
 	// slog.Default(). Nothing logged names a token.
 	Logger *slog.Logger
 }
@@ -172,7 +172,7 @@ type attempt struct {
 // storedPayload is the sealed payload of a connection's StoredCredentials: everything a
 // refresh and a revocation need, so neither has to discover the server again.
 type storedPayload struct {
-	// Ref is the connection Complete ran for. AccessCredential and Revoke look a preregistered
+	// Ref is the connection Complete ran for. Retrieve and Revoke look a preregistered
 	// client's secret up by it, as Complete did, since core.Scheme hands them no
 	// ConnectionRef. The core seals StoredCredentials bound to that same connection, so it
 	// cannot name another.

@@ -32,6 +32,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/apikey"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
@@ -275,8 +278,9 @@ func newConnectorSealer(settings config.Config) (*auth.Sealer, error) {
 const connectorHTTPTimeout = 10 * time.Second
 
 // newConnectorRegistry is the connector adapters this deployment has: none when connectors
-// are off, so no connection and no custom connector can name a scheme, and oauth2_code when
-// they are on. It follows the sealer: without a keyring no attempt or grant can be sealed,
+// are off, so no connection and no custom connector can name a scheme, and oauth2_code,
+// api_key, bearer and none when they are on. A new scheme is one more entry in the list
+// below. It follows the sealer: without a keyring no attempt or grant can be sealed,
 // so a scheme registered without one would take connections nothing could ever authorize.
 //
 // ClientMetadataURL is left empty, which turns CIMD off. The client metadata document it
@@ -288,11 +292,15 @@ func newConnectorRegistry(settings config.Config) (core.Registry, error) {
 	if !settings.Connectors.Enabled {
 		return core.Registry{}, nil
 	}
-	scheme, err := oauth2code.New(oauth2code.Config{HTTP: egress.NewClient(connectorHTTPTimeout, nil)})
+	code, err := oauth2code.New(oauth2code.Config{HTTP: egress.NewClient(connectorHTTPTimeout, nil)})
 	if err != nil {
 		return core.Registry{}, err
 	}
-	return core.Registry{Schemes: map[string]core.Scheme{scheme.Name(): scheme}}, nil
+	schemes := map[string]core.Scheme{}
+	for _, scheme := range []core.Scheme{code, apikey.New(), bearer.New(), none.New()} {
+		schemes[scheme.Name()] = scheme
+	}
+	return core.Registry{Schemes: schemes}, nil
 }
 
 // newAuthenticator builds the authenticator the deployment's mode asks for.
