@@ -102,6 +102,27 @@ func (s *ConsentSuite) TestGitHubConnectsWithThePreregisteredClientAndRegistersN
 
 // The fake's preregistered client accepts both secret methods, so only the request on the
 // wire shows which one the manifest made the scheme send.
+// The bot install of a customer's Slack app: oauth.v2.access names the workspace as team.id
+// (https://docs.slack.dev/authentication/installing-with-oauth), which is the connection's
+// whole identity, so the bridge finds it by an event's team_id.
+func (s *ConsentSuite) TestSlackBotInstallsWithTheCustomersClientAndIsTheWorkspace() {
+	srv := fakeprovider.New(s.T(), fakeprovider.CommaScopes)
+	resolved := s.atFake(srv, s.resolve("slack_bot", nil))
+	scheme := s.scheme(srv, s.preregistered(srv, core.ClientCustomer))
+
+	out := s.begin(scheme, resolved)
+	s.Equal(0, srv.Hits(fakeprovider.PathRegister))
+	query := s.query(out.AuthorizeURL)
+	s.Equal(srv.ClientID, query.Get("client_id"))
+	s.Equal("chat:write,channels:history,im:history", query.Get("scope"))
+
+	stored, account, err := s.complete(srv, scheme, resolved, out)
+	s.Require().NoError(err)
+	s.NotEmpty(s.accessToken(stored))
+	s.Equal(srv.TeamID, account.AccountID)
+	s.Equal(map[string]string{"team_id": srv.TeamID}, account.Metadata)
+}
+
 func (s *ConsentSuite) TestGitHubSendsTheClientSecretInTheTokenRequestBody() {
 	srv := fakeprovider.New(s.T())
 	resolved := s.atFake(srv, s.resolve("github", nil))
