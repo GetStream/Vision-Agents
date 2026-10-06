@@ -31,22 +31,22 @@ Go goes first, and later on we update the others.
 
 Everything reads the repo-root `.env` for provider credentials.
 
-The backend and dashboard together:
+Run the router in Docker, with the Volt dashboard's override (see the `dashboard` skill):
 
 ```bash
-docker compose up --build
+docker compose -f compose.yaml -f ../volt-dashboard/docs/local-agents/compose.volt.yaml up -d --build router
 ```
 
-That serves the router on `:8080` and the dashboard on `:3000`, with Postgres on
-`:55432` and Redis on `:56379`. Those two ports are also what the standalone `va-pg`
-and `va-redis` containers use, so stop those first if they are running.
+That serves the router on `:8080`, with Postgres on `:55432` and Redis on `:56379`, its data
+in the `vision-agents_pgdata` volume. Rerun it after router changes so you never test an old
+build. Those two ports are also what the standalone `va-pg` and `va-redis` containers use, so
+stop those first if they are running.
 
-Without Docker, against the same Postgres and Redis:
+`.env` must set `ROUTER_AUTH_KEK` (single-quoted: compose expands a `$` in it) and
+`ROUTER_PUBLIC_URL=http://localhost:8080`. Without the KEK no plugin client secret can be
+saved, and changing it leaves the stored ones unreadable.
 
-```bash
-go run ./cmd/router            # in acceleration/
-npm run dev                    # in dashboard/, needs node >= 20.9
-```
+Logs: `docker compose logs -f router`.
 
 An agent, once the router is up:
 
