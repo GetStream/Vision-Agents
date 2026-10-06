@@ -259,6 +259,14 @@ func newConverse(
 // Two things can come of hearing more words: they may be worth acknowledging out loud,
 // and they may make a ruling already in flight about the words as they were pointless.
 func (c *converse) Observe(transcript stt.Transcript, state floor) []Action {
+	superseded, saying := c.cadence.Observe(transcript)
+	return c.observeRevision(transcript, state, superseded, saying)
+}
+
+// observeRevision applies the conversation decisions for a cadence observation that has
+// already been made. The agent uses this seam to act on an accepted transcript revision
+// before asking the overlap controller, without observing it twice.
+func (c *converse) observeRevision(transcript stt.Transcript, state floor, superseded, saying string) []Action {
 	var actions []Action
 
 	if phrase := c.duplex.Heard(transcript.Participant, transcript.Text, state.Quiet); phrase != "" {
@@ -270,7 +278,6 @@ func (c *converse) Observe(transcript stt.Transcript, state floor) []Action {
 		}))
 	}
 
-	superseded, saying := c.cadence.Observe(transcript)
 	if saying != "" {
 		c.emitter.Send(Hearing{
 			Participant: transcript.Participant,

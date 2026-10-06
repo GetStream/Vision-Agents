@@ -55,6 +55,11 @@ const (
 // providers that need one synthesis per sentence.
 const sentenceSuffix = "#"
 
+// interruptedReplyNote applies to the next caller response after we preserve generated
+// text from an interrupted cascade reply. It keeps that context from sounding like a
+// promise to continue unless the caller asks.
+const interruptedReplyNote = "The previous reply was interrupted; generated assistant text in the conversation history may not have been heard in full. Answer the latest caller turn, and resume the previous reply only if the caller asks."
+
 // Options configures an Agent.
 //
 // The three modalities arrive as routers plus targets rather than as providers, because the
@@ -299,10 +304,14 @@ type Agent struct {
 	// what may be heard, because the agent starts a turn for itself while the turn before
 	// it is still being spoken.
 	speakingTurn string
-	// saying is the reply as the caller has heard it so far, so a controller ruling on
-	// words that overlap it can tell a correction from the line echoing back. It is the
-	// spoken text as it streams, or the whole phrase for a greeting or a murmur.
+	// saying is the filtered generated text available for the current reply. It may be ahead
+	// of playout, so it gives overlap judgments and interruption context without claiming
+	// that every generated word reached the caller.
 	saying string
+	// interruptedReplyPending means the previous cascade reply was interrupted before its
+	// audio was known to be fully heard. The next real caller reply gets a private note;
+	// previews can use it but do not consume it.
+	interruptedReplyPending bool
 	// playoutCtx is shared by every synthesis sent since the last interruption. Cancelling
 	// it stops a writer already in the edge; synthesisContexts keeps late chunks attached
 	// to the epoch that owned their request instead of a newer one.
@@ -1140,20 +1149,22 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 			a.lastHeardAt = time.Now()
 			a.lastParticipant = typed.Participant
 			a.mu.Unlock()
+			superseded, saying := a.cadence.Observe(typed)
 			state := a.floor()
 			var stopped interruption
 			stopNow := false
-			if a.primaryPartialInterrupt(typed, state) {
+			fastTranscript := typed
+			fastTranscript.Text = saying
+			if saying != "" && a.primaryPartialInterrupt(fastTranscript, state) {
 				if current, ok := a.stopPlayback(typed.Participant, state.Speaking, receivedAt,
 					"primary_partial", "transcript"); ok {
 					stopped, stopNow = current, true
 					state = a.floor()
-					// Record these words while interruptDone still blocks queued work. The
-					// caller's newly arrived revision must own the floor before cleanup can
-					// release an older queued answer.
+					// Cadence already owns this accepted revision before provider cleanup
+					// can release queued work or another turn.
 				}
 			}
-			actions := a.converse.Observe(typed, state)
+			actions := a.converse.observeRevision(typed, state, superseded, saying)
 			if stopNow {
 				a.finishInterruptedTurn(stopped)
 			}
@@ -1421,7 +1432,7 @@ func (a *Agent) preview(ready candidate, current *harness.Harness, instructions 
 	history := append(a.replayLocked(), a.userTurnLocked(ready.Text, nil))
 	ctx, cancel := context.WithCancel(a.ctx)
 	turn := harness.Turn{ID: ready.ID, Instructions: instructions, History: history,
-		Note: a.duplex.Note(ready.Confidence)}
+		Note: joinNotes(a.pendingInterruptionNoteLocked(), a.duplex.Note(ready.Confidence))}
 	p := &replyPreview{model: model, turn: turn, ready: make(chan previewResult, 1),
 		events: make(chan llm.Event, replyBuffer), cancel: cancel,
 		startedAt: time.Now()}
@@ -1622,6 +1633,12 @@ func (a *Agent) respondTurn(
 		a.mu.Unlock()
 		return errors.New("agent: not joined")
 	}
+	// Only an actual caller response consumes this note. A speculative preview sees the
+	// same context, but cannot spend it before the settled turn is accepted.
+	interruptionNote := a.pendingInterruptionNoteLocked()
+	if interruptionNote != "" {
+		a.interruptedReplyPending = false
+	}
 	a.history = append(a.history, a.userTurnLocked(text, images))
 	history := a.replayLocked()
 
@@ -1647,8 +1664,17 @@ func (a *Agent) respondTurn(
 		ID:           turnID,
 		Instructions: instructions,
 		History:      history,
-		Note:         joinNotes(note, a.duplex.Note(listened.confidence)),
+		Note:         joinNotes(note, interruptionNote, a.duplex.Note(listened.confidence)),
 	}, text)
+}
+
+// pendingInterruptionNoteLocked returns the private context note for the next caller
+// response. The caller must hold a.mu.
+func (a *Agent) pendingInterruptionNoteLocked() string {
+	if a.interruptedReplyPending {
+		return interruptedReplyNote
+	}
+	return ""
 }
 
 func (a *Agent) userTurnLocked(text string, images []llm.ImagePart) llm.Message {
@@ -2028,14 +2054,19 @@ func (a *Agent) handle(event llm.Event) {
 
 // say sends one delta of a reply on its way to the voice.
 func (a *Agent) say(turnID, delta string) {
+	if !a.claimModelBuffers(turnID) {
+		return
+	}
 	// What the model wrote is not all meant for the caller: a request for help is
 	// addressed to the harness, and is taken out here rather than spoken.
 	speech := a.harness.Filter(turnID, delta)
 	if speech == "" {
 		return
 	}
+	if !a.speaking(turnID) {
+		return
+	}
 	a.turns.firstText(turnID, time.Now())
-	a.replying = turnID
 
 	// A stage direction is addressed to the voice, not to the caller: it is taken out of
 	// what is read and remembered, and left in only for a voice that can act it. A
@@ -2045,11 +2076,17 @@ func (a *Agent) say(turnID, delta string) {
 	if !a.options.Text {
 		plain = a.directions.Add(speech)
 	}
+	a.mu.Lock()
+	if a.speakingTurn != turnID {
+		a.mu.Unlock()
+		return
+	}
 	if plain != "" {
 		a.spoken.WriteString(plain)
-		a.mu.Lock()
 		a.saying = a.spoken.String()
-		a.mu.Unlock()
+	}
+	a.mu.Unlock()
+	if plain != "" {
 		a.emitter.Send(ResponseDelta{TurnID: turnID, Text: plain})
 	}
 	// The delta is the whole of the reply when there is no voice: a reader has already
@@ -2071,8 +2108,12 @@ func (a *Agent) say(turnID, delta string) {
 	}
 }
 
-// finish closes out a reply the caller heard.
+// finish closes out a completed model reply.
 func (a *Agent) finish(response llm.Response) {
+	if !a.claimModelBuffers(response.ID) {
+		return
+	}
+
 	// Text the harness was holding on the chance it began a request for help was only
 	// ever text, so it is spoken.
 	tail := a.harness.Flush()
@@ -2090,6 +2131,21 @@ func (a *Agent) finish(response llm.Response) {
 	// turn made, and has to be on the history the result answers.
 	asked := a.harness.TakeAsked()
 	calls := append(append([]llm.ToolCall(nil), response.ToolCalls...), asked...)
+	said := strings.TrimSpace(a.spoken.String())
+	a.mu.Lock()
+	_, abandoned := a.abandoned[response.ID]
+	active := a.speakingTurn == response.ID && !abandoned
+	if active {
+		// The ResponseCompleted tail is generated text too. Publish it as current context
+		// before output work so a concurrent interruption can preserve the whole prefix.
+		a.saying = said
+	}
+	a.mu.Unlock()
+	if !active {
+		a.resetTurn()
+		return
+	}
+
 	if a.options.Text {
 		// There is no voice to release it to, so the held text is reported as the last
 		// of the reply. Without this a reader would be missing whatever the harness was
@@ -2116,6 +2172,11 @@ func (a *Agent) finish(response llm.Response) {
 		if fillsPause(response.ID, calls) && strings.TrimSpace(a.spoken.String()) == "" {
 			filler := a.duplex.Working()
 			a.spoken.WriteString(filler)
+			a.mu.Lock()
+			if a.speakingTurn == response.ID {
+				a.saying = strings.TrimSpace(a.spoken.String())
+			}
+			a.mu.Unlock()
 			if err := a.speakSentence(response.ID, filler); err != nil {
 				a.fail(err, "tts")
 			}
@@ -2124,14 +2185,20 @@ func (a *Agent) finish(response llm.Response) {
 			a.fail(err, "tts")
 		}
 	}
-	// How many syntheses the turn produces is only settled once the reply is, and it is
-	// what tells the tracker when the turn has finished being spoken.
-	a.turns.completed(response.ID, response.TimeToFirstTokenMs, a.expectedSyntheses(response.ID))
-	said := strings.TrimSpace(a.spoken.String())
+	said = strings.TrimSpace(a.spoken.String())
+	expected := a.expectedSyntheses(response.ID)
+	// Reset model-consumer buffers before releasing ownership, but leave a.saying intact
+	// until history and generating state are committed under Agent.mu below.
 	a.resetTurn()
 
 	a.mu.Lock()
+	_, abandoned = a.abandoned[response.ID]
+	if a.speakingTurn != response.ID || abandoned {
+		a.mu.Unlock()
+		return
+	}
 	a.generating = false
+	a.saying = ""
 	// A reply that only called a tool is still a turn the model took, and it has to be
 	// recorded with the calls on it: the result sent back answers one of them, and a
 	// provider refuses a conversation where it answers nothing.
@@ -2142,10 +2209,15 @@ func (a *Agent) finish(response llm.Response) {
 			ToolCalls: calls,
 		})
 	}
+	// History commit and generating=false are one ownership transition. stopPlayback uses
+	// the same lock to decide whether this turn still needs a partial assistant entry.
 	exchange := lastExchange(a.history)
 	history := append([]llm.Message(nil), a.history...)
 	currentHarness := a.harness
 	a.mu.Unlock()
+
+	// A model-complete turn is counted only if it won the race with interruption.
+	a.turns.completed(response.ID, response.TimeToFirstTokenMs, expected)
 
 	// A provider that kept this reply can be asked to carry on from it next turn rather
 	// than read the conversation again.
@@ -2186,6 +2258,25 @@ func (a *Agent) finish(response llm.Response) {
 	a.respondQueued()
 	// A note that landed while this reply was being written waited for it to finish.
 	a.followUp()
+}
+
+// claimModelBuffers assigns the harness, direction stripper and chunker to one active
+// model response. After interruption, the next response must clear any unfinished buffers
+// before it filters new text; a late completion for the abandoned response then cannot
+// clear those new buffers because replying already names their owner.
+func (a *Agent) claimModelBuffers(turnID string) bool {
+	a.mu.Lock()
+	if a.speakingTurn != turnID {
+		a.mu.Unlock()
+		return false
+	}
+	reset := a.replying != turnID
+	a.replying = turnID
+	a.mu.Unlock()
+	if reset {
+		a.resetTurn()
+	}
+	return true
 }
 
 // fillsPause reports whether a turn that said nothing should say something before the
@@ -2646,18 +2737,18 @@ func (a *Agent) expectedSyntheses(turnID string) int {
 	return a.sentences
 }
 
-// resetTurn forgets the text and the utterance of a turn that has ended, whether it
-// finished or was interrupted.
+// resetTurn forgets the model-consumer buffers of a turn. saying has its own Agent.mu
+// ownership transition: finish clears it when history commits, and interruption clears
+// it when local playout stops.
 func (a *Agent) resetTurn() {
 	a.chunk.Reset()
-	a.harness.Reset()
+	if a.harness != nil {
+		a.harness.Reset()
+	}
 	a.directions.Reset()
 	a.spoken.Reset()
 	a.sentences = 0
 	a.openTurn = ""
-	a.mu.Lock()
-	a.saying = ""
-	a.mu.Unlock()
 }
 
 // primaryPartialInterrupt recognizes a substantive transcript revision before it waits for
@@ -2718,6 +2809,8 @@ func (a *Agent) stopPlayback(
 		a.mu.Unlock()
 		return interruption{}, false
 	}
+	wasGenerating := a.generating
+	partial := a.saying // Keep only the string header on the local-stop path.
 	a.abandoned[turnID] = struct{}{}
 	a.speakingTurn = ""
 	a.generating = false
@@ -2739,6 +2832,18 @@ func (a *Agent) stopPlayback(
 	a.utterances = 0
 	a.dropSpeech()
 	localStopAt := time.Now()
+	// Native replies already record their partial response in replyComplete. For a cascade,
+	// save an unfinished generated prefix once; a normal completed history entry is already
+	// present when the model won the race, but its audio may still have been interrupted.
+	if !a.nativeMode.Load() {
+		if wasGenerating {
+			partial = strings.TrimSpace(partial)
+			if partial != "" {
+				a.history = append(a.history, llm.Message{Role: llm.Assistant, Content: partial})
+			}
+		}
+		a.interruptedReplyPending = true
+	}
 	for _, cancel := range a.toolCancels {
 		cancel()
 	}

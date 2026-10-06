@@ -1154,6 +1154,11 @@ directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
 ## Bug Fixes
 
+- Interrupted voice replies retain their unfinished generated text as conversation
+  context, so the next caller turn can be answered naturally and explicit continuation
+  requests can pick up the explanation. Repeated transcription updates no longer cancel
+  a reply without scheduling a replacement. (#749)
+
 - Primary EOT voice calls stop an active reply on clear caller interruptions without
   waiting for a second model decision. Local playback clears before provider cancellation,
   and delayed audio from the interrupted reply cannot restart it. Brief acknowledgements
