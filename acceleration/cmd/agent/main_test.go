@@ -60,8 +60,8 @@ func TestParseOptionsLoadsDotEnvBeforeEnvironmentFlagDefaults(t *testing.T) {
 	if settings.endpoint != "https://custom.example/v1/eot" || settings.mode != agent.EOTModeGate || settings.threshold != 0.37 || settings.tokenFile != "/tmp/demo-id-token" {
 		t.Fatalf("EOT environment settings were not loaded before run: %+v", settings)
 	}
-	if settings.usesGCloudTokenSource() {
-		t.Fatal("a .env endpoint or token-file override must not use the fixed demo credential")
+	if settings.usesHostedDemoClient() {
+		t.Fatal("a .env custom endpoint must not use the fixed hosted client")
 	}
 
 	parsed, _, err = parseOptions([]string{"-call", "from-flag", "-skills", "flag-skills.yaml"})
@@ -88,8 +88,8 @@ func TestParseOptionsKeepsZeroConfigEOTDefaults(t *testing.T) {
 	if settings.endpoint != demoEOTDefaultEndpoint || settings.mode != agent.EOTModePrimary || settings.threshold != 0.5 {
 		t.Fatalf("unexpected local demo defaults: %+v", settings)
 	}
-	if !settings.usesGCloudTokenSource() {
-		t.Fatal("the unmodified canonical endpoint should use the local gcloud token source")
+	if !settings.usesHostedDemoClient() {
+		t.Fatal("the unmodified canonical endpoint should use the anonymous hosted client")
 	}
 }
 

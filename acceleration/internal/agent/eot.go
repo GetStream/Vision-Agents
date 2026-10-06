@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/eotdefaults"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/idtoken"
 )
@@ -97,6 +98,13 @@ func eotErrorMetadata(err error) (eotFailureClass, time.Duration, bool) {
 	return eotFailureUnknown, 0, false
 }
 
+// IsTransientEOTError reports whether a failed EOT request is safe to retry. It exposes
+// only the client's bounded classification, never transport details or response bodies.
+func IsTransientEOTError(err error) bool {
+	var failure *eotAttemptError
+	return errors.As(err, &failure) && failure.retryable()
+}
+
 // EOTMode determines whether an acoustic score gates the semantic flow controller or
 // answers eligible quiet-floor completion candidates directly.
 type EOTMode string
@@ -116,6 +124,7 @@ type EOTClient struct {
 	audience  string
 	tokenFile string
 	client    *http.Client
+	anonymous bool
 
 	tokenMu sync.Mutex
 	tokens  oauth2.TokenSource
@@ -183,6 +192,13 @@ func (b *eotRequestBody) Close() error {
 // NewEOTClient builds a reusable scalar client. endpoint may be the service base URL or
 // its /v1/eot URL. Plain HTTP is accepted only for loopback development servers.
 func NewEOTClient(endpoint, tokenFile string) (*EOTClient, error) {
+	if eotdefaults.IsHostedDemoOrigin(endpoint) {
+		return nil, errors.New("agent: use NewHostedDemoEOTClient for the hosted demo endpoint")
+	}
+	return newEOTClient(endpoint, tokenFile)
+}
+
+func newEOTClient(endpoint, tokenFile string) (*EOTClient, error) {
 	parsed, err := url.Parse(strings.TrimSpace(endpoint))
 	if err != nil || parsed == nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
 		return nil, errors.New("agent: invalid EOT endpoint")
@@ -215,6 +231,18 @@ func NewEOTClient(endpoint, tokenFile string) (*EOTClient, error) {
 		tokenFile: strings.TrimSpace(tokenFile),
 		client:    client,
 	}, nil
+}
+
+// NewHostedDemoEOTClient builds the fixed hosted demo client. It sends no credentials
+// and never probes ADC; callers that need an authenticated private scorer should use
+// NewEOTClient with that private endpoint and its existing credential configuration.
+func NewHostedDemoEOTClient() (*EOTClient, error) {
+	client, err := newEOTClient(eotdefaults.HostedDemoEndpoint, "")
+	if err != nil {
+		return nil, err
+	}
+	client.anonymous = true
+	return client, nil
 }
 
 // NewEOTClientWithTokenSource builds a client that obtains bearer credentials from the
@@ -407,6 +435,9 @@ func parseEOTRetryAfter(value string, now time.Time) (time.Duration, bool) {
 }
 
 func (c *EOTClient) token(ctx context.Context) (string, error) {
+	if c.anonymous {
+		return "", nil
+	}
 	if c.tokenFile != "" {
 		file, err := os.Open(c.tokenFile)
 		if err != nil {

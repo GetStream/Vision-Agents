@@ -25,6 +25,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/eotdefaults"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
@@ -804,7 +805,7 @@ func buildSessions(
 
 	var eotClient *agent.EOTClient
 	if endpoint := strings.TrimSpace(settings.EOT.Endpoint); endpoint != "" {
-		client, err := agent.NewEOTClient(endpoint, settings.EOT.IDTokenFile)
+		client, err := configuredEOTClient(settings.EOT)
 		if err != nil {
 			logger.Warn("acoustic endpoint gate is disabled", "reason", "invalid configuration")
 		} else {
@@ -855,6 +856,24 @@ func buildSessions(
 			})
 		},
 	})
+}
+
+func configuredEOTClient(settings config.EOT) (*agent.EOTClient, error) {
+	endpoint := strings.TrimSpace(settings.Endpoint)
+	tokenFile := strings.TrimSpace(settings.IDTokenFile)
+	if endpoint == "" {
+		return nil, nil
+	}
+	if eotdefaults.IsHostedDemoOrigin(endpoint) {
+		if tokenFile != "" {
+			return nil, errors.New("eot.id_token_file cannot be used with the hosted demo endpoint; configure a private endpoint")
+		}
+		if !eotdefaults.IsHostedDemoEndpoint(endpoint) {
+			return nil, errors.New("the hosted demo endpoint path must be /v1/eot")
+		}
+		return agent.NewHostedDemoEOTClient()
+	}
+	return agent.NewEOTClient(endpoint, tokenFile)
 }
 
 // buildKnowledgeURLs wires the control plane for pages a knowledge base is kept filled

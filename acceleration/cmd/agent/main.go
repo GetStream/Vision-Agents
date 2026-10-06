@@ -210,7 +210,9 @@ func run(options options, logger *slog.Logger) error {
 		return err
 	}
 	defer closeEOT()
-	if err := preflightDemoEOT(ctx, eotClient); err != nil {
+	if err := preflightDemoEOTWithPolicy(ctx, eotClient, eotSettings.usesHostedDemoClient(), func() {
+		logger.Warn("hosted EOT preflight is temporarily unavailable; runtime retries remain enabled")
+	}); err != nil {
 		return err
 	}
 

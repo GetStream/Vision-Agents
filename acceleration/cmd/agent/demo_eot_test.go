@@ -1,6 +1,10 @@
 package main
 
 import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,7 +20,7 @@ func lookupMap(values map[string]string) func(string) (string, bool) {
 	}
 }
 
-func TestDemoEOTSettingsDefaultsToPrimaryCloudRunScorer(t *testing.T) {
+func TestDemoEOTSettingsDefaultsToPrimaryHostedScorer(t *testing.T) {
 	settings, err := demoEOTSettingsFrom(lookupMap(nil))
 	if err != nil {
 		t.Fatal(err)
@@ -24,8 +28,8 @@ func TestDemoEOTSettingsDefaultsToPrimaryCloudRunScorer(t *testing.T) {
 	if settings.endpoint != demoEOTDefaultEndpoint || settings.mode != agent.EOTModePrimary || settings.threshold != 0.5 {
 		t.Fatalf("unexpected demo defaults: %+v", settings)
 	}
-	if !settings.usesGCloudTokenSource() {
-		t.Fatal("the trusted default endpoint should reuse the local gcloud login")
+	if !settings.usesHostedDemoClient() {
+		t.Fatal("the default endpoint should use the fixed anonymous hosted client")
 	}
 }
 
@@ -42,12 +46,12 @@ func TestDemoEOTSettingsPreserveExplicitOverrides(t *testing.T) {
 	if settings.endpoint != "http://127.0.0.1:8080/v1/eot" || settings.mode != agent.EOTModeGate || settings.threshold != 0.72 || settings.tokenFile != "/tmp/eot-token" {
 		t.Fatalf("explicit settings were not applied: %+v", settings)
 	}
-	if settings.usesGCloudTokenSource() {
-		t.Fatal("an overridden endpoint/token file must not receive the demo's gcloud credential")
+	if settings.usesHostedDemoClient() {
+		t.Fatal("a private endpoint must not use the hosted demo client")
 	}
 }
 
-func TestDemoEOTGCloudTokenSourceIsRestrictedToCanonicalEndpoint(t *testing.T) {
+func TestDemoEOTAnonymousClientIsRestrictedToCanonicalEndpoint(t *testing.T) {
 	for _, test := range []struct {
 		endpoint  string
 		tokenFile string
@@ -59,8 +63,8 @@ func TestDemoEOTGCloudTokenSourceIsRestrictedToCanonicalEndpoint(t *testing.T) {
 		{endpoint: "https://audioturn-edge-5gdhza7snq-wn.a.run.app.attacker.example/v1/eot", want: false},
 	} {
 		settings := demoEOTSettings{endpoint: test.endpoint, tokenFile: test.tokenFile}
-		if got := settings.usesGCloudTokenSource(); got != test.want {
-			t.Errorf("usesGCloudTokenSource(%q, tokenFile=%t) = %t, want %t",
+		if got := settings.usesHostedDemoClient(); got != test.want {
+			t.Errorf("usesHostedDemoClient(%q, tokenFile=%t) = %t, want %t",
 				test.endpoint, test.tokenFile != "", got, test.want)
 		}
 	}
@@ -69,8 +73,8 @@ func TestDemoEOTGCloudTokenSourceIsRestrictedToCanonicalEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !explicitDefault.usesGCloudTokenSource() {
-		t.Fatal("an explicit .env copy of the canonical endpoint should retain the demo auth path")
+	if !explicitDefault.usesHostedDemoClient() {
+		t.Fatal("the exact hosted endpoint should use the fixed anonymous client")
 	}
 }
 
@@ -89,8 +93,66 @@ func TestDemoEOTSettingsAllowAnExplicitDisable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings.endpoint != "" || settings.mode != agent.EOTModePrimary || settings.usesGCloudTokenSource() {
+	if settings.endpoint != "" || settings.mode != agent.EOTModePrimary || settings.usesHostedDemoClient() {
 		t.Fatalf("explicit primary mode without a scorer should fall back to semantic cadence: %+v", settings)
+	}
+}
+
+func TestDemoEOTCustomEndpointDefaultsToGateAndHostedTokenFileIsRejected(t *testing.T) {
+	settings, err := demoEOTSettingsFrom(lookupMap(map[string]string{demoEOTURLVar: "https://private.example/v1/eot"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.mode != agent.EOTModeGate {
+		t.Fatalf("custom endpoint without explicit mode should preserve semantic gating, got %q", settings.mode)
+	}
+	if _, err := demoEOTSettingsFrom(lookupMap(map[string]string{
+		demoEOTTokenFileVar: "/tmp/token",
+	})); err == nil {
+		t.Fatal("token-file-only configuration must not attach credentials to the hosted demo endpoint")
+	}
+}
+
+func TestHostedPreflightContinuesOnlyForTransientFailures(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		status   int
+		body     string
+		hosted   bool
+		wantWarn bool
+		wantErr  bool
+	}{
+		{name: "hosted transient", status: http.StatusServiceUnavailable, hosted: true, wantWarn: true},
+		{name: "private transient", status: http.StatusServiceUnavailable, wantErr: true},
+		{name: "hosted auth error", status: http.StatusForbidden, hosted: true, wantErr: true},
+		{name: "hosted invalid response", status: http.StatusOK, body: "not-json", hosted: true, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				_, _ = io.Copy(io.Discard, request.Body)
+				w.WriteHeader(test.status)
+				if test.body != "" {
+					_, _ = io.WriteString(w, test.body)
+				}
+			}))
+			t.Cleanup(server.Close)
+			client, err := agent.NewEOTClient(server.URL, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, scoreErr := client.Score(context.Background(), "preflight-candidate", make([]byte, 640))
+			if scoreErr == nil {
+				t.Fatal("test endpoint unexpectedly returned a valid score")
+			}
+			warned := false
+			gotErr := handleDemoEOTPreflightError(test.hosted, scoreErr, func() { warned = true })
+			if (gotErr != nil) != test.wantErr {
+				t.Fatalf("preflight policy error = %v, wantErr %t", gotErr, test.wantErr)
+			}
+			if warned != test.wantWarn {
+				t.Fatalf("preflight warning = %t, want %t", warned, test.wantWarn)
+			}
+		})
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/eotdefaults"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/env/v2"
 	"github.com/knadh/koanf/providers/file"
@@ -172,7 +173,7 @@ func Defaults() Config {
 		// so it should only be reached by somebody making a few enormous requests.
 		RateLimit: RateLimit{MessagesPerDay: 200, TokensPerDay: 500_000},
 		DataMove:  DataMove{Retention: 7 * 24 * time.Hour},
-		EOT:       EOT{Mode: "gate", Threshold: 0.5},
+		EOT:       EOT{Endpoint: eotdefaults.HostedDemoEndpoint, Mode: "primary", Threshold: 0.5},
 	}
 }
 
@@ -227,10 +228,21 @@ func Load(path string) (Config, string, error) {
 			return Config{}, "", err
 		}
 	}
+	modeExplicit := k.Exists("eot.mode")
 
 	config := Defaults()
 	if err := k.Unmarshal("", &config); err != nil {
 		return Config{}, "", fmt.Errorf("config: %s: %w", name, err)
+	}
+	config.EOT.Endpoint = strings.TrimSpace(config.EOT.Endpoint)
+	config.EOT.IDTokenFile = strings.TrimSpace(config.EOT.IDTokenFile)
+	config.EOT.Mode = strings.TrimSpace(config.EOT.Mode)
+	if !modeExplicit {
+		if eotdefaults.IsHostedDemoEndpoint(config.EOT.Endpoint) {
+			config.EOT.Mode = "primary"
+		} else {
+			config.EOT.Mode = "gate"
+		}
 	}
 	if err := config.validate(); err != nil {
 		return Config{}, "", err
@@ -276,6 +288,14 @@ func (c Config) validate() error {
 	if c.EOT.Mode != "gate" && c.EOT.Mode != "primary" {
 		return fmt.Errorf("config: eot.mode must be gate or primary, got %q", c.EOT.Mode)
 	}
+	if eotdefaults.IsHostedDemoOrigin(c.EOT.Endpoint) {
+		if !eotdefaults.IsHostedDemoEndpoint(c.EOT.Endpoint) {
+			return errors.New("config: the hosted demo endpoint path must be /v1/eot")
+		}
+		if strings.TrimSpace(c.EOT.IDTokenFile) != "" {
+			return errors.New("config: eot.id_token_file cannot be used with the hosted demo endpoint; configure a private endpoint")
+		}
+	}
 	if math.IsNaN(c.EOT.Threshold) || math.IsInf(c.EOT.Threshold, 0) ||
 		c.EOT.Threshold < 0 || c.EOT.Threshold > 1 {
 		return fmt.Errorf("config: eot.threshold must be between 0 and 1, got %v", c.EOT.Threshold)
@@ -317,7 +337,7 @@ func (c Config) export() error {
 		"rate_limit.tokens_per_day":   fmt.Sprint(c.RateLimit.TokensPerDay),
 	}
 	for key, value := range values {
-		if value == "" {
+		if value == "" && key != "eot.endpoint" {
 			continue
 		}
 		if err := os.Setenv(variables[key], value); err != nil {
