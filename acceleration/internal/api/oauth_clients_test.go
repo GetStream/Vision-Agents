@@ -17,8 +17,8 @@ import (
 
 // OAuthClientsSuite is an app's own OAuth client for a connector: put, replaced, removed, and
 // found by the lookup oauth2_code is started with. The built-ins are seeded, so github
-// (client.registration [operator, customer]) takes an app's own client and slack ([operator])
-// does not. Each test has an app of its own.
+// (client.registration [operator, customer]) takes an app's own client and slack ([managed,
+// operator]) does not. Each test has an app of its own.
 type OAuthClientsSuite struct {
 	RouterSuite
 }
@@ -84,11 +84,11 @@ func (s *OAuthClientsSuite) TestTheSecretIsNeverInAnAnswer() {
 	}
 }
 
-func (s *OAuthClientsSuite) TestAConnectorTakingOnlyTheOperatorsClientRefusesTheAppsOwn() {
+func (s *OAuthClientsSuite) TestAConnectorWhoseRegistrationListsNoCustomerRefusesTheAppsOwn() {
 	status, failure := s.serverClient.failure(http.MethodPut, oauthClientPath("slack"), confidentialClient("secret"))
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Equal("slack does not take an app's own OAuth client: its client.registration is [operator], which does not list customer", failure)
+	s.Equal("slack does not take an app's own OAuth client: its client.registration is [managed operator], which does not list customer", failure)
 	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "slack")
 	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
 }

@@ -40,6 +40,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/slackapps"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
@@ -204,6 +205,11 @@ type RouterSuite struct {
 	// takes no events and drops messages, as a deployment without them does.
 	eventSecrets EventSecretLookup
 	bridge       ChannelBridge
+	// slackApps and operatorApps are what the provider app paths reach Slack with and find
+	// the operator's app by, for a suite about provider apps to set before it starts the
+	// harness. Nil leaves those paths unconfigured, as a deployment without connectors has.
+	slackApps    *slackapps.Client
+	operatorApps OperatorAppLookup
 	// resolver is the router's connector resolver over the suite's store and sealer, with
 	// connectors' schemes, set by SetupSuite.
 	resolver *resolver.Resolver
@@ -397,6 +403,8 @@ func (s *RouterSuite) SetupSuite() {
 		ConnectorTransports:   transports,
 		ConnectorEventSecrets: s.eventSecrets,
 		ChannelBridge:         s.bridge,
+		SlackApps:             s.slackApps,
+		OperatorProviderApps:  s.operatorApps,
 	})
 	s.Require().NoError(err)
 	listener.Config.Handler = server.Handler()

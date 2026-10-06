@@ -37,6 +37,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/slackapps"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -246,6 +247,13 @@ type Options struct {
 	// ChannelBridge takes the messages a verified provider event carries. Absent, they are
 	// logged and dropped, until the channel bridge (T57) registers here.
 	ChannelBridge ChannelBridge
+	// SlackApps creates, updates and deletes the Slack app the router keeps for a customer
+	// (managed, T54). Absent, the provider app paths say connectors are not enabled.
+	SlackApps *slackapps.Client
+	// OperatorProviderApps finds this deployment's own provider app for a built-in connector
+	// (ConnectorOperatorApps reads it from the environment), which Stream staff make one
+	// customer's. Absent, the staff paths say it is not configured.
+	OperatorProviderApps OperatorAppLookup
 	// TrustedProxies are the ranges this deployment's own proxies sit in, and they decide
 	// how much of X-Forwarded-For is believed when working out who a request is from.
 	// Empty means none of it is, and the connection's own address is used.
@@ -307,7 +315,10 @@ type Server struct {
 	connectorResolver core.Resolver
 	eventSecrets      EventSecretLookup
 	channelBridge     ChannelBridge
-	trusted           []netip.Prefix
+	// slackApps and operatorApps serve the provider app paths.
+	slackApps    *slackapps.Client
+	operatorApps OperatorAppLookup
+	trusted      []netip.Prefix
 
 	// connectorTransports is what the validate endpoint reaches a connection's tools through.
 	connectorTransports *core.Transports
@@ -424,6 +435,8 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		connectorResolver: options.ConnectorResolver,
 		eventSecrets:      options.ConnectorEventSecrets,
 		channelBridge:     options.ChannelBridge,
+		slackApps:         options.SlackApps,
+		operatorApps:      options.OperatorProviderApps,
 		trusted:           options.TrustedProxies,
 		upgrader:          newUpgrader(options.CORSOrigins),
 		oauth: &plugins.Auth{

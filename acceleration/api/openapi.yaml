@@ -1906,10 +1906,11 @@ components:
         - tls_client_auth
       type: string
     ConnectorClientRegistrationMethod:
-      description: operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+      description: operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
       enum:
         - operator
         - customer
+        - managed
         - dcr
         - cimd
       type: string
@@ -2007,6 +2008,63 @@ components:
       required:
         - items
         - has_more
+      type: object
+    ConnectorProviderApp:
+      description: The customer's app at a connector's provider, such as a Slack app. Its client secret and signing secret are kept sealed and never returned.
+      properties:
+        client_id:
+          description: The app's OAuth client, which every consent of the connector's connections uses.
+          readOnly: true
+          type: string
+        connector_id:
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        provider_app_id:
+          description: The provider's id for the app, such as a Slack app id.
+          readOnly: true
+          type: string
+        registration:
+          $ref: '#/components/schemas/ConnectorClientRegistrationMethod'
+          description: 'managed: the router created the app in the customer''s workspace. operator: Stream''s own app, which serves Stream''s own agents.'
+          readOnly: true
+        updated_at:
+          format: date-time
+          readOnly: true
+          type: string
+      required:
+        - connector_id
+        - registration
+        - provider_app_id
+        - client_id
+        - created_at
+        - updated_at
+      type: object
+    ConnectorProviderAppRequest:
+      additionalProperties: false
+      description: The app the router creates and keeps in the customer's workspace. An unknown field is refused rather than ignored.
+      properties:
+        allowed_ip_address_ranges:
+          description: IP addresses or CIDR ranges the app's tokens work from, at most 10. Left out, they work from anywhere.
+          items:
+            type: string
+          maxItems: 10
+          nullable: true
+          type: array
+        config_refresh_token:
+          description: The refresh token of an app configuration token a workspace admin generated in Slack's app settings. Required the first time; the router rotates it and keeps the result sealed. Sent again, it replaces the one kept. Never returned.
+          type: string
+          writeOnly: true
+        name:
+          description: The app's name in the customer's workspace.
+          maxLength: 35
+          minLength: 1
+          type: string
+      required:
+        - name
       type: object
     ConnectorToolGrant:
       description: One tool a binding allows.
@@ -8626,6 +8684,115 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Set the app's own OAuth client for a connector
+  /v1/agents/connectors/{id}/provider-app:
+    delete:
+      description: |-
+        Deletes the customer's Slack app with Slack's apps.manifest.delete, then its record and the configuration token the router kept. An app already deleted in Slack is removed here too. Connections consented with it need a reconnect.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: deleteConnectorProviderApp
+      parameters:
+        - description: The connector, such as slack.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connector, such as slack.
+            type: string
+      responses:
+        "204":
+          description: The app is deleted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Too Many Requests
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Service Unavailable
+      summary: Delete the app the router keeps at the connector's provider
+    put:
+      description: |-
+        Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: setConnectorProviderApp
+      parameters:
+        - description: The connector, such as slack.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connector, such as slack.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectorProviderAppRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorProviderApp'
+          description: The app exists; its manifest was applied again
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorProviderApp'
+          description: The app was created
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Too Many Requests
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Service Unavailable
+      summary: Create or update the app the router keeps at the connector's provider
   /v1/agents/connectors/events/{connector_id}:
     post:
       description: 'Where a provider delivers the events of a built-in connector: Slack''s tokens_revoked and app_uninstalled to the operator''s Slack app''s Request URL, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector''s manifest names (channel.verifier) against the operator''s secret, and an unsigned or stale one changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves every connection of that account to needs_reauthorization; a message goes to the channel bridge. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.'
@@ -11299,6 +11466,99 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Draw pictures from a prompt, and return them
+  /v1/ops/customers/{customer_id}/connectors/{id}/provider-app:
+    delete:
+      description: |-
+        Removes the record setOperatorProviderApp made. The app itself is Stream's and stays.
+
+        Stream staff only: it needs the ops key.
+      operationId: deleteOperatorProviderApp
+      parameters:
+        - description: The customer Stream's app serves.
+          in: path
+          name: customer_id
+          required: true
+          schema:
+            description: The customer Stream's app serves.
+            type: string
+        - description: The built-in connector, such as slack.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The built-in connector, such as slack.
+            type: string
+      responses:
+        "204":
+          description: The record is removed
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - OpsKey: []
+      summary: Stop Stream's own app being a customer's provider app
+    put:
+      description: |-
+        Records this deployment's own app for a built-in connector, as its environment holds it (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the customer's provider app, so its events reach that customer. One customer per app: another customer's record of it is a conflict.
+
+        Stream staff only: it needs the ops key.
+      operationId: setOperatorProviderApp
+      parameters:
+        - description: The customer Stream's app serves.
+          in: path
+          name: customer_id
+          required: true
+          schema:
+            description: The customer Stream's app serves.
+            type: string
+        - description: The built-in connector, such as slack.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The built-in connector, such as slack.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorProviderApp'
+          description: The record was replaced
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorProviderApp'
+          description: The record was stored
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - OpsKey: []
+      summary: Make Stream's own app a customer's provider app
   /v1/ops/use-cases:
     get:
       description: |-

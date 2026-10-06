@@ -535,6 +535,7 @@ const (
 	Cimd     ConnectorClientRegistrationMethod = "cimd"
 	Customer ConnectorClientRegistrationMethod = "customer"
 	Dcr      ConnectorClientRegistrationMethod = "dcr"
+	Managed  ConnectorClientRegistrationMethod = "managed"
 	Operator ConnectorClientRegistrationMethod = "operator"
 )
 
@@ -546,6 +547,8 @@ func (e ConnectorClientRegistrationMethod) Valid() bool {
 	case Customer:
 		return true
 	case Dcr:
+		return true
+	case Managed:
 		return true
 	case Operator:
 		return true
@@ -3284,7 +3287,7 @@ type ConnectorClientAlg string
 // ConnectorClientAuthMethod How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
 type ConnectorClientAuthMethod string
 
-// ConnectorClientRegistrationMethod operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+// ConnectorClientRegistrationMethod operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
 type ConnectorClientRegistrationMethod string
 
 // ConnectorInput defines model for ConnectorInput.
@@ -3308,7 +3311,7 @@ type ConnectorOAuthClient struct {
 	ConnectorId *string                         `json:"connector_id,omitempty"`
 	CreatedAt   *time.Time                      `json:"created_at,omitempty"`
 
-	// Registration operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+	// Registration operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
 	Registration ConnectorClientRegistrationMethod `json:"registration"`
 
 	// UpdatedAt When the client, its secret or its method last changed.
@@ -3335,6 +3338,33 @@ type ConnectorPage struct {
 
 	// NextCursor Pass as cursor for the next page, with the same q. Absent on the last one.
 	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// ConnectorProviderApp The customer's app at a connector's provider, such as a Slack app. Its client secret and signing secret are kept sealed and never returned.
+type ConnectorProviderApp struct {
+	// ClientId The app's OAuth client, which every consent of the connector's connections uses.
+	ClientId    *string    `json:"client_id,omitempty"`
+	ConnectorId *string    `json:"connector_id,omitempty"`
+	CreatedAt   *time.Time `json:"created_at,omitempty"`
+
+	// ProviderAppId The provider's id for the app, such as a Slack app id.
+	ProviderAppId *string `json:"provider_app_id,omitempty"`
+
+	// Registration operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+	Registration ConnectorClientRegistrationMethod `json:"registration"`
+	UpdatedAt    *time.Time                        `json:"updated_at,omitempty"`
+}
+
+// ConnectorProviderAppRequest The app the router creates and keeps in the customer's workspace. An unknown field is refused rather than ignored.
+type ConnectorProviderAppRequest struct {
+	// AllowedIpAddressRanges IP addresses or CIDR ranges the app's tokens work from, at most 10. Left out, they work from anywhere.
+	AllowedIpAddressRanges *[]string `json:"allowed_ip_address_ranges,omitempty"`
+
+	// ConfigRefreshToken The refresh token of an app configuration token a workspace admin generated in Slack's app settings. Required the first time; the router rotates it and keeps the result sealed. Sent again, it replaces the one kept. Never returned.
+	ConfigRefreshToken *string `json:"config_refresh_token,omitempty"`
+
+	// Name The app's name in the customer's workspace.
+	Name string `json:"name"`
 }
 
 // ConnectorToolGrant One tool a binding allows.
@@ -6926,6 +6956,9 @@ type CreateConnectorJSONRequestBody = CustomConnectorRequest
 // SetConnectorOAuthClientJSONRequestBody defines body for SetConnectorOAuthClient for application/json ContentType.
 type SetConnectorOAuthClientJSONRequestBody = ConnectorOAuthClientRequest
 
+// SetConnectorProviderAppJSONRequestBody defines body for SetConnectorProviderApp for application/json ContentType.
+type SetConnectorProviderAppJSONRequestBody = ConnectorProviderAppRequest
+
 // CreateGuestUserJSONRequestBody defines body for CreateGuestUser for application/json ContentType.
 type CreateGuestUserJSONRequestBody = GuestUserRequest
 
@@ -7974,6 +8007,37 @@ type ClientInterface interface {
 	// Corresponds with PUT /v1/agents/connectors/{id}/oauth-client (the `SetConnectorOAuthClient` operationId).
 	SetConnectorOAuthClient(ctx context.Context, id string, body SetConnectorOAuthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DeleteConnectorProviderApp Delete the app the router keeps at the connector's provider
+	//
+	// Deletes the customer's Slack app with Slack's apps.manifest.delete, then its record and the configuration token the router kept. An app already deleted in Slack is removed here too. Connections consented with it need a reconnect.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/agents/connectors/{id}/provider-app (the `DeleteConnectorProviderApp` operationId).
+	DeleteConnectorProviderApp(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetConnectorProviderAppWithBody Create or update the app the router keeps at the connector's provider
+	//
+	// Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/agents/connectors/{id}/provider-app (the `SetConnectorProviderApp` operationId).
+	SetConnectorProviderAppWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetConnectorProviderApp Create or update the app the router keeps at the connector's provider
+	//
+	// Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/agents/connectors/{id}/provider-app (the `SetConnectorProviderApp` operationId).
+	SetConnectorProviderApp(ctx context.Context, id string, body SetConnectorProviderAppJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetConversationCommand What a command in this conversation ended as
 	//
 	// Reads one command's receipt from the conversation's own durable record. It opens nothing and starts nothing, so a client whose stop found no session left to reach reconciles that command here rather than reopening a session to ask about it.
@@ -8862,6 +8926,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/image/generations (the `GenerateImage` operationId).
 	GenerateImage(ctx context.Context, body GenerateImageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteOperatorProviderApp Stop Stream's own app being a customer's provider app
+	//
+	// Removes the record setOperatorProviderApp made. The app itself is Stream's and stays.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Corresponds with DELETE /v1/ops/customers/{customer_id}/connectors/{id}/provider-app (the `DeleteOperatorProviderApp` operationId).
+	DeleteOperatorProviderApp(ctx context.Context, customerId string, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetOperatorProviderApp Make Stream's own app a customer's provider app
+	//
+	// Records this deployment's own app for a built-in connector, as its environment holds it (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the customer's provider app, so its events reach that customer. One customer per app: another customer's record of it is a conflict.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Corresponds with PUT /v1/ops/customers/{customer_id}/connectors/{id}/provider-app (the `SetOperatorProviderApp` operationId).
+	SetOperatorProviderApp(ctx context.Context, customerId string, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListUseCasesForReview List use cases waiting on Stream
 	//
@@ -10757,6 +10839,67 @@ func (c *Client) SetConnectorOAuthClient(ctx context.Context, id string, body Se
 	return c.Client.Do(req)
 }
 
+// DeleteConnectorProviderApp Delete the app the router keeps at the connector's provider
+//
+// Deletes the customer's Slack app with Slack's apps.manifest.delete, then its record and the configuration token the router kept. An app already deleted in Slack is removed here too. Connections consented with it need a reconnect.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/agents/connectors/{id}/provider-app (the `DeleteConnectorProviderApp` operationId).
+func (c *Client) DeleteConnectorProviderApp(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteConnectorProviderAppRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetConnectorProviderAppWithBody Create or update the app the router keeps at the connector's provider
+//
+// Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/agents/connectors/{id}/provider-app (the `SetConnectorProviderApp` operationId).
+func (c *Client) SetConnectorProviderAppWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetConnectorProviderAppRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetConnectorProviderApp Create or update the app the router keeps at the connector's provider
+//
+// Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/agents/connectors/{id}/provider-app (the `SetConnectorProviderApp` operationId).
+func (c *Client) SetConnectorProviderApp(ctx context.Context, id string, body SetConnectorProviderAppJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetConnectorProviderAppRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetConversationCommand What a command in this conversation ended as
 //
 // Reads one command's receipt from the conversation's own durable record. It opens nothing and starts nothing, so a client whose stop found no session left to reach reconciles that command here rather than reopening a session to ask about it.
@@ -12626,6 +12769,44 @@ func (c *Client) GenerateImageWithBody(ctx context.Context, contentType string, 
 // Corresponds with POST /v1/image/generations (the `GenerateImage` operationId).
 func (c *Client) GenerateImage(ctx context.Context, body GenerateImageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGenerateImageRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteOperatorProviderApp Stop Stream's own app being a customer's provider app
+//
+// Removes the record setOperatorProviderApp made. The app itself is Stream's and stays.
+//
+// Stream staff only: it needs the ops key.
+//
+// Corresponds with DELETE /v1/ops/customers/{customer_id}/connectors/{id}/provider-app (the `DeleteOperatorProviderApp` operationId).
+func (c *Client) DeleteOperatorProviderApp(ctx context.Context, customerId string, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteOperatorProviderAppRequest(c.Server, customerId, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetOperatorProviderApp Make Stream's own app a customer's provider app
+//
+// Records this deployment's own app for a built-in connector, as its environment holds it (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the customer's provider app, so its events reach that customer. One customer per app: another customer's record of it is a conflict.
+//
+// Stream staff only: it needs the ops key.
+//
+// Corresponds with PUT /v1/ops/customers/{customer_id}/connectors/{id}/provider-app (the `SetOperatorProviderApp` operationId).
+func (c *Client) SetOperatorProviderApp(ctx context.Context, customerId string, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetOperatorProviderAppRequest(c.Server, customerId, id)
 	if err != nil {
 		return nil, err
 	}
@@ -16237,6 +16418,87 @@ func NewSetConnectorOAuthClientRequestWithBody(server string, id string, content
 	return req, nil
 }
 
+// NewDeleteConnectorProviderAppRequest constructs an http.Request for the DeleteConnectorProviderApp method
+func NewDeleteConnectorProviderAppRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/%s/provider-app", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSetConnectorProviderAppRequest calls the generic SetConnectorProviderApp builder with application/json body
+func NewSetConnectorProviderAppRequest(server string, id string, body SetConnectorProviderAppJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetConnectorProviderAppRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewSetConnectorProviderAppRequestWithBody constructs an http.Request for the SetConnectorProviderApp method, with any body, and a specified content type
+func NewSetConnectorProviderAppRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/%s/provider-app", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetConversationCommandRequest constructs an http.Request for the GetConversationCommand method
 func NewGetConversationCommandRequest(server string, cid string, commandId string, params *GetConversationCommandParams) (*http.Request, error) {
 	var err error
@@ -19595,6 +19857,88 @@ func NewGenerateImageRequestWithBody(server string, contentType string, body io.
 	return req, nil
 }
 
+// NewDeleteOperatorProviderAppRequest constructs an http.Request for the DeleteOperatorProviderApp method
+func NewDeleteOperatorProviderAppRequest(server string, customerId string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "customer_id", customerId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ops/customers/%s/connectors/%s/provider-app", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSetOperatorProviderAppRequest constructs an http.Request for the SetOperatorProviderApp method
+func NewSetOperatorProviderAppRequest(server string, customerId string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "customer_id", customerId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ops/customers/%s/connectors/%s/provider-app", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListUseCasesForReviewRequest constructs an http.Request for the ListUseCasesForReview method
 func NewListUseCasesForReviewRequest(server string, params *ListUseCasesForReviewParams) (*http.Request, error) {
 	var err error
@@ -22846,6 +23190,39 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /v1/agents/connectors/{id}/oauth-client (the `SetConnectorOAuthClient` operationId).
 	SetConnectorOAuthClientWithResponse(ctx context.Context, id string, body SetConnectorOAuthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*SetConnectorOAuthClientResponse, error)
 
+	// DeleteConnectorProviderAppWithResponse Delete the app the router keeps at the connector's provider
+	//
+	// Deletes the customer's Slack app with Slack's apps.manifest.delete, then its record and the configuration token the router kept. An app already deleted in Slack is removed here too. Connections consented with it need a reconnect.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/connectors/{id}/provider-app (the `DeleteConnectorProviderApp` operationId).
+	DeleteConnectorProviderAppWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteConnectorProviderAppResponse, error)
+
+	// SetConnectorProviderAppWithBodyWithResponse Create or update the app the router keeps at the connector's provider
+	//
+	// Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/agents/connectors/{id}/provider-app (the `SetConnectorProviderApp` operationId).
+	SetConnectorProviderAppWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetConnectorProviderAppResponse, error)
+
+	// SetConnectorProviderAppWithResponse Create or update the app the router keeps at the connector's provider
+	//
+	// Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/agents/connectors/{id}/provider-app (the `SetConnectorProviderApp` operationId).
+	SetConnectorProviderAppWithResponse(ctx context.Context, id string, body SetConnectorProviderAppJSONRequestBody, reqEditors ...RequestEditorFn) (*SetConnectorProviderAppResponse, error)
+
 	// GetConversationCommandWithResponse What a command in this conversation ended as
 	//
 	// Reads one command's receipt from the conversation's own durable record. It opens nothing and starts nothing, so a client whose stop found no session left to reach reconciles that command here rather than reopening a session to ask about it.
@@ -23826,6 +24203,28 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/image/generations (the `GenerateImage` operationId).
 	GenerateImageWithResponse(ctx context.Context, body GenerateImageJSONRequestBody, reqEditors ...RequestEditorFn) (*GenerateImageResponse, error)
+
+	// DeleteOperatorProviderAppWithResponse Stop Stream's own app being a customer's provider app
+	//
+	// Removes the record setOperatorProviderApp made. The app itself is Stream's and stays.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/ops/customers/{customer_id}/connectors/{id}/provider-app (the `DeleteOperatorProviderApp` operationId).
+	DeleteOperatorProviderAppWithResponse(ctx context.Context, customerId string, id string, reqEditors ...RequestEditorFn) (*DeleteOperatorProviderAppResponse, error)
+
+	// SetOperatorProviderAppWithResponse Make Stream's own app a customer's provider app
+	//
+	// Records this deployment's own app for a built-in connector, as its environment holds it (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the customer's provider app, so its events reach that customer. One customer per app: another customer's record of it is a conflict.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/ops/customers/{customer_id}/connectors/{id}/provider-app (the `SetOperatorProviderApp` operationId).
+	SetOperatorProviderAppWithResponse(ctx context.Context, customerId string, id string, reqEditors ...RequestEditorFn) (*SetOperatorProviderAppResponse, error)
 
 	// ListUseCasesForReviewWithResponse List use cases waiting on Stream
 	//
@@ -28006,6 +28405,200 @@ func (r SetConnectorOAuthClientResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r SetConnectorOAuthClientResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteConnectorProviderAppResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteConnectorProviderAppResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteConnectorProviderAppResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteConnectorProviderAppResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteConnectorProviderAppResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DeleteConnectorProviderAppResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r DeleteConnectorProviderAppResponse) GetJSON429() *ErrorResponse {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteConnectorProviderAppResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteConnectorProviderAppResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteConnectorProviderAppResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteConnectorProviderAppResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteConnectorProviderAppResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteConnectorProviderAppResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetConnectorProviderAppResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorProviderApp
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *ConnectorProviderApp
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetConnectorProviderAppResponse) GetJSON200() *ConnectorProviderApp {
+	return r.JSON200
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r SetConnectorProviderAppResponse) GetJSON201() *ConnectorProviderApp {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SetConnectorProviderAppResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SetConnectorProviderAppResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SetConnectorProviderAppResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SetConnectorProviderAppResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r SetConnectorProviderAppResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r SetConnectorProviderAppResponse) GetJSON429() *ErrorResponse {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SetConnectorProviderAppResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SetConnectorProviderAppResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r SetConnectorProviderAppResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetConnectorProviderAppResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetConnectorProviderAppResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetConnectorProviderAppResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -33238,6 +33831,158 @@ func (r GenerateImageResponse) ContentType() string {
 	return ""
 }
 
+type DeleteOperatorProviderAppResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteOperatorProviderAppResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteOperatorProviderAppResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteOperatorProviderAppResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DeleteOperatorProviderAppResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteOperatorProviderAppResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteOperatorProviderAppResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteOperatorProviderAppResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteOperatorProviderAppResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteOperatorProviderAppResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetOperatorProviderAppResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorProviderApp
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *ConnectorProviderApp
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetOperatorProviderAppResponse) GetJSON200() *ConnectorProviderApp {
+	return r.JSON200
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r SetOperatorProviderAppResponse) GetJSON201() *ConnectorProviderApp {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SetOperatorProviderAppResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SetOperatorProviderAppResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SetOperatorProviderAppResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r SetOperatorProviderAppResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SetOperatorProviderAppResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r SetOperatorProviderAppResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetOperatorProviderAppResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetOperatorProviderAppResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetOperatorProviderAppResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListUseCasesForReviewResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -38198,6 +38943,57 @@ func (c *ClientWithResponses) SetConnectorOAuthClientWithResponse(ctx context.Co
 	return ParseSetConnectorOAuthClientResponse(rsp)
 }
 
+// DeleteConnectorProviderAppWithResponse Delete the app the router keeps at the connector's provider
+//
+// Deletes the customer's Slack app with Slack's apps.manifest.delete, then its record and the configuration token the router kept. An app already deleted in Slack is removed here too. Connections consented with it need a reconnect.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/connectors/{id}/provider-app (the `DeleteConnectorProviderApp` operationId).
+func (c *ClientWithResponses) DeleteConnectorProviderAppWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteConnectorProviderAppResponse, error) {
+	rsp, err := c.DeleteConnectorProviderApp(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteConnectorProviderAppResponse(rsp)
+}
+
+// SetConnectorProviderAppWithBodyWithResponse Create or update the app the router keeps at the connector's provider
+//
+// Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/agents/connectors/{id}/provider-app (the `SetConnectorProviderApp` operationId).
+func (c *ClientWithResponses) SetConnectorProviderAppWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetConnectorProviderAppResponse, error) {
+	rsp, err := c.SetConnectorProviderAppWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetConnectorProviderAppResponse(rsp)
+}
+
+// SetConnectorProviderAppWithResponse Create or update the app the router keeps at the connector's provider
+//
+// Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/agents/connectors/{id}/provider-app (the `SetConnectorProviderApp` operationId).
+func (c *ClientWithResponses) SetConnectorProviderAppWithResponse(ctx context.Context, id string, body SetConnectorProviderAppJSONRequestBody, reqEditors ...RequestEditorFn) (*SetConnectorProviderAppResponse, error) {
+	rsp, err := c.SetConnectorProviderApp(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetConnectorProviderAppResponse(rsp)
+}
+
 // GetConversationCommandWithResponse What a command in this conversation ended as
 //
 // Reads one command's receipt from the conversation's own durable record. It opens nothing and starts nothing, so a client whose stop found no session left to reach reconciles that command here rather than reopening a session to ask about it.
@@ -39771,6 +40567,40 @@ func (c *ClientWithResponses) GenerateImageWithResponse(ctx context.Context, bod
 		return nil, err
 	}
 	return ParseGenerateImageResponse(rsp)
+}
+
+// DeleteOperatorProviderAppWithResponse Stop Stream's own app being a customer's provider app
+//
+// Removes the record setOperatorProviderApp made. The app itself is Stream's and stays.
+//
+// Stream staff only: it needs the ops key.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/ops/customers/{customer_id}/connectors/{id}/provider-app (the `DeleteOperatorProviderApp` operationId).
+func (c *ClientWithResponses) DeleteOperatorProviderAppWithResponse(ctx context.Context, customerId string, id string, reqEditors ...RequestEditorFn) (*DeleteOperatorProviderAppResponse, error) {
+	rsp, err := c.DeleteOperatorProviderApp(ctx, customerId, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteOperatorProviderAppResponse(rsp)
+}
+
+// SetOperatorProviderAppWithResponse Make Stream's own app a customer's provider app
+//
+// Records this deployment's own app for a built-in connector, as its environment holds it (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the customer's provider app, so its events reach that customer. One customer per app: another customer's record of it is a conflict.
+//
+// Stream staff only: it needs the ops key.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/ops/customers/{customer_id}/connectors/{id}/provider-app (the `SetOperatorProviderApp` operationId).
+func (c *ClientWithResponses) SetOperatorProviderAppWithResponse(ctx context.Context, customerId string, id string, reqEditors ...RequestEditorFn) (*SetOperatorProviderAppResponse, error) {
+	rsp, err := c.SetOperatorProviderApp(ctx, customerId, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetOperatorProviderAppResponse(rsp)
 }
 
 // ListUseCasesForReviewWithResponse List use cases waiting on Stream
@@ -43705,6 +44535,173 @@ func ParseSetConnectorOAuthClientResponse(rsp *http.Response) (*SetConnectorOAut
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteConnectorProviderAppResponse parses an HTTP response from a DeleteConnectorProviderAppWithResponse call
+func ParseDeleteConnectorProviderAppResponse(rsp *http.Response) (*DeleteConnectorProviderAppResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteConnectorProviderAppResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetConnectorProviderAppResponse parses an HTTP response from a SetConnectorProviderAppWithResponse call
+func ParseSetConnectorProviderAppResponse(rsp *http.Response) (*SetConnectorProviderAppResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetConnectorProviderAppResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorProviderApp
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest ConnectorProviderApp
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -47889,6 +48886,131 @@ func ParseGenerateImageResponse(rsp *http.Response) (*GenerateImageResponse, err
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteOperatorProviderAppResponse parses an HTTP response from a DeleteOperatorProviderAppWithResponse call
+func ParseDeleteOperatorProviderAppResponse(rsp *http.Response) (*DeleteOperatorProviderAppResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteOperatorProviderAppResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetOperatorProviderAppResponse parses an HTTP response from a SetOperatorProviderAppWithResponse call
+func ParseSetOperatorProviderAppResponse(rsp *http.Response) (*SetOperatorProviderAppResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetOperatorProviderAppResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorProviderApp
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest ConnectorProviderApp
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError

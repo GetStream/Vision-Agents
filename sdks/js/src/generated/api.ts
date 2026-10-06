@@ -868,6 +868,34 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/connectors/{id}/provider-app": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Create or update the app the router keeps at the connector's provider
+         * @description Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly put: operations["setConnectorProviderApp"];
+        readonly post?: never;
+        /**
+         * Delete the app the router keeps at the connector's provider
+         * @description Deletes the customer's Slack app with Slack's apps.manifest.delete, then its record and the configuration token the router kept. An app already deleted in Slack is removed here too. Connections consented with it need a reconnect.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteConnectorProviderApp"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/connectors/events/{connector_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -2236,6 +2264,34 @@ export type paths = {
          */
         readonly post: operations["generateImage"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/ops/customers/{customer_id}/connectors/{id}/provider-app": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Make Stream's own app a customer's provider app
+         * @description Records this deployment's own app for a built-in connector, as its environment holds it (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the customer's provider app, so its events reach that customer. One customer per app: another customer's record of it is a conflict.
+         *
+         *     Stream staff only: it needs the ops key.
+         */
+        readonly put: operations["setOperatorProviderApp"];
+        readonly post?: never;
+        /**
+         * Stop Stream's own app being a customer's provider app
+         * @description Removes the record setOperatorProviderApp made. The app itself is Stream's and stays.
+         *
+         *     Stream staff only: it needs the ops key.
+         */
+        readonly delete: operations["deleteOperatorProviderApp"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -4090,10 +4146,10 @@ export type components = {
          */
         readonly ConnectorClientAuthMethod: "none" | "client_secret_post" | "client_secret_basic" | "private_key_jwt" | "tls_client_auth";
         /**
-         * @description operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+         * @description operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
          * @enum {string}
          */
-        readonly ConnectorClientRegistrationMethod: "operator" | "customer" | "dcr" | "cimd";
+        readonly ConnectorClientRegistrationMethod: "operator" | "customer" | "managed" | "dcr" | "cimd";
         readonly ConnectorInput: {
             /** @description Used when the connection gives no value. An input without one is required. */
             readonly default?: string;
@@ -4136,6 +4192,29 @@ export type components = {
             readonly items: readonly components["schemas"]["Connector"][] | null;
             /** @description Pass as cursor for the next page, with the same q. Absent on the last one. */
             readonly next_cursor?: string;
+        };
+        /** @description The customer's app at a connector's provider, such as a Slack app. Its client secret and signing secret are kept sealed and never returned. */
+        readonly ConnectorProviderApp: {
+            /** @description The app's OAuth client, which every consent of the connector's connections uses. */
+            readonly client_id: string;
+            readonly connector_id: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            /** @description The provider's id for the app, such as a Slack app id. */
+            readonly provider_app_id: string;
+            /** @description managed: the router created the app in the customer's workspace. operator: Stream's own app, which serves Stream's own agents. */
+            readonly registration: components["schemas"]["ConnectorClientRegistrationMethod"];
+            /** Format: date-time */
+            readonly updated_at: string;
+        };
+        /** @description The app the router creates and keeps in the customer's workspace. An unknown field is refused rather than ignored. */
+        readonly ConnectorProviderAppRequest: {
+            /** @description IP addresses or CIDR ranges the app's tokens work from, at most 10. Left out, they work from anywhere. */
+            readonly allowed_ip_address_ranges?: readonly string[] | null;
+            /** @description The refresh token of an app configuration token a workspace admin generated in Slack's app settings. Required the first time; the router rotates it and keeps the result sealed. Sent again, it replaces the one kept. Never returned. */
+            readonly config_refresh_token?: string;
+            /** @description The app's name in the customer's workspace. */
+            readonly name: string;
         };
         /** @description One tool a binding allows. */
         readonly ConnectorToolGrant: {
@@ -8594,6 +8673,127 @@ export interface operations {
             readonly 500: components["responses"]["InternalError"];
         };
     };
+    readonly setConnectorProviderApp: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector, such as slack. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectorProviderAppRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The app exists; its manifest was applied again */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorProviderApp"];
+                };
+            };
+            /** @description The app was created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorProviderApp"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description Service Unavailable */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly deleteConnectorProviderApp: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector, such as slack. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The app is deleted */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description Service Unavailable */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     readonly receiveConnectorEvent: {
         readonly parameters: {
             readonly query?: never;
@@ -11025,6 +11225,89 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly setOperatorProviderApp: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The customer Stream's app serves. */
+                readonly customer_id: string;
+                /** @description The built-in connector, such as slack. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The record was replaced */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorProviderApp"];
+                };
+            };
+            /** @description The record was stored */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorProviderApp"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deleteOperatorProviderApp: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The customer Stream's app serves. */
+                readonly customer_id: string;
+                /** @description The built-in connector, such as slack. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The record is removed */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 500: components["responses"]["InternalError"];
         };
     };

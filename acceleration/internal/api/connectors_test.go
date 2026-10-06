@@ -48,7 +48,7 @@ func (s *ConnectorsSuite) TestABuiltInShowsItsSchemesInputsScopesAndClientRegist
 	s.Equal([]string{"oauth2_code"}, slack.Schemes)
 	s.Empty(slack.Inputs, "Slack is connected with nothing but a consent")
 	s.Contains(slack.Scopes, "chat:write")
-	s.Equal([]ConnectorClientRegistrationMethod{"operator"}, slack.Client.Registration)
+	s.Equal([]ConnectorClientRegistrationMethod{"managed", "operator"}, slack.Client.Registration)
 	s.Equal(ConnectorClientAuthMethod("client_secret_post"), slack.Client.AuthMethod)
 }
 
