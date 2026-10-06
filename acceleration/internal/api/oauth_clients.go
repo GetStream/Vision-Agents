@@ -167,7 +167,7 @@ func (s *Server) setConnectorOAuthClient(ctx context.Context, request *oauthClie
 	created, err := s.store.PutConnectorOAuthClient(ctx, record)
 	// 409: the request conflicts with the state of the resource (RFC 9110 section 15.5.10).
 	if errors.Is(err, store.ErrOAuthClientRegistration) {
-		return nil, conflict("this deployment's operator registered the connector's OAuth client for the app, and it cannot be replaced through the API")
+		return nil, conflict("the connector's OAuth client for the app is one this deployment's operator registered or the router created, and it cannot be replaced through the API")
 	}
 	if err != nil {
 		return nil, err
@@ -231,7 +231,8 @@ func checkOAuthClient(manifest core.Manifest, sent ConnectorOAuthClientRequest) 
 }
 
 // ConnectorClients is how oauth2_code finds a client registered in advance (oauth2code.Config.Clients):
-// the app's own from its record (setConnectorOAuthClient), and the operator's from a record
+// the app's own from its record (setConnectorOAuthClient), the one the router created for the
+// app (managed, T54) from its record, and the operator's from a record
 // this deployment keeps for the app, else from the environment, <client.env>_MCP_CLIENT_ID and
 // _SECRET (oauth2code.EnvClients). It is called at every exchange, refresh and revocation, so
 // a secret put again is the one the next refresh sends. Without a store or a keyring no record
@@ -268,6 +269,39 @@ func openOAuthClient(secrets *auth.Sealer, record store.ConnectorOAuthClient) (o
 	}
 	client.Secret = secret
 	return client, true, nil
+}
+
+// ProviderApp is the record of the provider app an inbound request names, with the secret the
+// provider signs that app's requests with, opened: what the events route for one provider app
+// (T38) hands the verifier (secret source provider_app, core.SecretProviderApp). The record
+// says whose app it is. A record without a signing secret is
+// store.ErrNoConnectorOAuthClient, as a missing one is: an HMAC under an empty key is one
+// anybody can compute.
+func ProviderApp(ctx context.Context, records *store.Store, secrets *auth.Sealer, connectorID, providerAppID string) (store.ConnectorOAuthClient, string, error) {
+	record, err := records.ConnectorOAuthClientByProviderApp(ctx, connectorID, providerAppID)
+	if err != nil {
+		return store.ConnectorOAuthClient{}, "", err
+	}
+	if len(record.SigningSecretSealed) == 0 {
+		return store.ConnectorOAuthClient{}, "", stack.Wrap(fmt.Errorf("%w: provider app %s of %s has no signing secret",
+			store.ErrNoConnectorOAuthClient, providerAppID, connectorID))
+	}
+	secret, err := secrets.OpenWithAADVersion(record.SigningSecretSealed,
+		providerAppAAD(record.CustomerID, record.ConnectorID, record.ProviderAppID), record.SigningKEKVersion)
+	if err != nil {
+		return store.ConnectorOAuthClient{}, "", stack.Wrap(fmt.Errorf("api: the signing secret of provider app %s of %s does not open: %w",
+			providerAppID, connectorID, err))
+	}
+	return record, secret, nil
+}
+
+// providerAppAAD binds a sealed signing secret to its customer, its connector and the provider
+// app it signs for, so a blob copied onto another app's row, or a row whose app id was changed,
+// does not open. Laid out as oauthClientAAD, with its own prefix, so a client secret's blob
+// never opens as a signing secret. v1 changes with the layout.
+func providerAppAAD(customerID, connectorID, providerAppID string) []byte {
+	return fmt.Appendf(nil, "accelerate:connector-provider-app-signing-secret:v1:%d:%s:%d:%s:%d:%s",
+		len(customerID), customerID, len(connectorID), connectorID, len(providerAppID), providerAppID)
 }
 
 // oauthClientAAD binds a sealed client secret to its customer and connector, the row's key,

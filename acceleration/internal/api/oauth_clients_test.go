@@ -243,6 +243,105 @@ func (s *OAuthClientsSuite) TestASecretMovedToAnotherAppDoesNotOpen() {
 	s.ErrorContains(err, "does not open")
 }
 
+func (s *OAuthClientsSuite) TestTheLookupFindsTheClientTheRouterCreatedForTheApp() {
+	id := s.customConnector("  registration: [managed, customer]")
+	s.providerApp(id, core.ClientManaged, "the-routers-secret", "")
+
+	found, ok, err := s.lookup(id, core.ClientManaged)
+
+	s.Require().NoError(err)
+	s.True(ok)
+	s.Equal(oauth2code.Client{ID: "created-by-the-router", Secret: "the-routers-secret", AuthMethod: core.AuthClientSecretPost}, found)
+	_, ok, err = s.lookup(id, core.ClientCustomer)
+	s.Require().NoError(err)
+	s.False(ok, "the router's app is not the app's own")
+}
+
+func (s *OAuthClientsSuite) TestTheClientTheRouterCreatedCannotBeReplacedThroughTheAPI() {
+	id := s.customConnector("  registration: [managed, customer]")
+	s.providerApp(id, core.ClientManaged, "the-routers-secret", "")
+
+	status, failure := s.serverClient.failure(http.MethodPut, oauthClientPath(id), confidentialClient("secret"))
+
+	s.Equal(http.StatusConflict, status)
+	s.Contains(failure, "the router created")
+	s.Equal(http.StatusNotFound, s.serverClient.do(http.MethodDelete, oauthClientPath(id), nil, nil))
+	found, ok, err := s.lookup(id, core.ClientManaged)
+	s.Require().NoError(err)
+	s.True(ok)
+	s.Equal("created-by-the-router", found.ID)
+}
+
+func (s *OAuthClientsSuite) TestASigningSecretIsOpenedOnlyForTheProviderAppItSignsFor() {
+	first := s.providerApp("github", core.ClientCustomer, "first-client-secret", "first-signing-secret")
+	s.useApp(s.data.createApp())
+	second := s.providerApp("github", core.ClientCustomer, "second-client-secret", "second-signing-secret")
+
+	record, secret, err := ProviderApp(context.Background(), s.store, s.sealer, "github", first.ProviderAppID)
+	s.Require().NoError(err)
+	s.Equal(first.CustomerID, record.CustomerID)
+	s.Equal("first-signing-secret", secret)
+
+	record, secret, err = ProviderApp(context.Background(), s.store, s.sealer, "github", second.ProviderAppID)
+	s.Require().NoError(err)
+	s.Equal(second.CustomerID, record.CustomerID)
+	s.Equal("second-signing-secret", secret)
+
+	_, _, err = ProviderApp(context.Background(), s.store, s.sealer, "github", "A"+strings.ReplaceAll(s.utils.uuid(), "-", ""))
+	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
+	_, _, err = ProviderApp(context.Background(), s.store, s.sealer, "gong", first.ProviderAppID)
+	s.ErrorIs(err, store.ErrNoConnectorOAuthClient, "the app is github's")
+}
+
+func (s *OAuthClientsSuite) TestASigningSecretMovedToAnotherProviderAppDoesNotOpen() {
+	first := s.providerApp("github", core.ClientCustomer, "first-client-secret", "first-signing-secret")
+	s.useApp(s.data.createApp())
+	second := s.providerApp("github", core.ClientCustomer, "second-client-secret", "second-signing-secret")
+
+	_, err := s.store.DB().ExecContext(context.Background(), `
+UPDATE connector_oauth_clients AS target
+SET signing_secret_sealed = source.signing_secret_sealed, signing_kek_version = source.signing_kek_version
+FROM connector_oauth_clients AS source
+WHERE source.connector_id = 'github' AND source.provider_app_id = ?
+  AND target.connector_id = 'github' AND target.provider_app_id = ?`, first.ProviderAppID, second.ProviderAppID)
+	s.Require().NoError(err)
+
+	_, _, err = ProviderApp(context.Background(), s.store, s.sealer, "github", second.ProviderAppID)
+	s.ErrorContains(err, "does not open")
+}
+
+func (s *OAuthClientsSuite) TestAProviderAppWithoutASigningSecretIsNotFound() {
+	app := s.providerApp("github", core.ClientCustomer, "client-secret", "")
+
+	_, secret, err := ProviderApp(context.Background(), s.store, s.sealer, "github", app.ProviderAppID)
+
+	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
+	s.Empty(secret, "no event verifies under an empty key")
+}
+
+// providerApp stores the test app's record for connector as the router would write one it
+// created or was handed (T54): with a provider app id of its own and both secrets sealed, the
+// signing secret only when one is given. The API takes neither the app id nor the signing secret.
+func (s *OAuthClientsSuite) providerApp(connector string, registration core.ClientRegistrationMethod, clientSecret, signingSecret string) store.ConnectorOAuthClient {
+	record := &store.ConnectorOAuthClient{
+		CustomerID: s.customerID(), ConnectorID: connector, Registration: registration,
+		ClientID: "created-by-the-router", AuthMethod: core.AuthClientSecretPost,
+		ProviderAppID: "A" + strings.ReplaceAll(s.utils.uuid(), "-", ""),
+	}
+	var err error
+	record.SecretSealed, err = s.sealer.SealWithAAD(clientSecret, oauthClientAAD(record.CustomerID, connector))
+	s.Require().NoError(err)
+	record.KEKVersion = s.sealer.CurrentVersion()
+	if signingSecret != "" {
+		record.SigningSecretSealed, err = s.sealer.SealWithAAD(signingSecret, providerAppAAD(record.CustomerID, connector, record.ProviderAppID))
+		s.Require().NoError(err)
+		record.SigningKEKVersion = s.sealer.CurrentVersion()
+	}
+	_, err = s.store.PutConnectorOAuthClient(context.Background(), record)
+	s.Require().NoError(err)
+	return *record
+}
+
 // put is the app's backend putting its own client for connector.
 func (s *OAuthClientsSuite) put(connector string, client ConnectorOAuthClientRequest) {
 	status, payload := s.serverClient.call(http.MethodPut, oauthClientPath(connector), client)
