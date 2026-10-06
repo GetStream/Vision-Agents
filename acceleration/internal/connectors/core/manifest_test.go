@@ -464,6 +464,17 @@ func (s *ManifestSuite) TestAnUnknownClientAuthMethodIsRejected() {
 	s.ErrorContains(err, `client.auth_method: "client_secret_jwt" is not one of`)
 }
 
+func (s *ManifestSuite) TestAProviderAppTheRouterCreatesIsAClientRegistration() {
+	m, err := ParseManifest(minimal("client:\n  registration: [managed, customer]\n"))
+	s.Require().NoError(err)
+	s.Equal([]ClientRegistrationMethod{ClientManaged, ClientCustomer}, m.Client.Registration)
+}
+
+func (s *ManifestSuite) TestAnUnknownClientRegistrationIsRejected() {
+	_, err := ParseManifest(minimal("client:\n  registration: [brokered]\n"))
+	s.ErrorContains(err, `client.registration[0]: "brokered" is not one of [operator customer managed dcr cimd]`)
+}
+
 func (s *ManifestSuite) TestAnUnknownFieldIsRejected() {
 	_, err := ParseManifest(minimal("scope_separator: \",\"\n"))
 	s.ErrorContains(err, "field scope_separator not found")

@@ -100,6 +100,30 @@ func (s *OAuth2CodeSuite) TestAPreregisteredConfidentialClientConnectsWithPKCE()
 	s.Equal([]string{"channels:history", "chat:write", "users:read"}, account.Scopes)
 }
 
+// The fake knows only its own client, so a consent that used the operator's shared app would
+// fail at the exchange.
+func (s *OAuth2CodeSuite) TestTheAppTheRouterCreatedForTheCustomerIsUsedBeforeTheOperatorsShared() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.static(srv, s.resolve("../../core/testdata/manifests/slack.yaml", nil))
+	resolved.Capture, resolved.Identity = nil, nil
+	resolved.Client.Registration = []core.ClientRegistrationMethod{core.ClientOperator, core.ClientManaged}
+	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: func(_ context.Context, _ core.ConnectionRef, _ core.ResolvedManifest, registration core.ClientRegistrationMethod) (oauth2code.Client, bool, error) {
+		switch registration {
+		case core.ClientManaged:
+			return oauth2code.Client{ID: srv.ClientID, Secret: srv.ClientSecret}, true, nil
+		case core.ClientOperator:
+			return oauth2code.Client{ID: "operators-shared-app", Secret: "operators-secret"}, true, nil
+		}
+		return oauth2code.Client{}, false, nil
+	}})
+
+	out, callback := s.consent(srv, scheme, resolved)
+	s.Equal(srv.ClientID, s.query(out.AuthorizeURL).Get("client_id"))
+	stored, _, err := scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Manifest: resolved, State: out.State, Query: callback})
+	s.Require().NoError(err, "the exchange sent the managed client's secret, looked up again")
+	s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)))
+}
+
 func (s *OAuth2CodeSuite) TestTheManifestAuthMethodIsHowAPreregisteredClientAuthenticates() {
 	srv := fakeprovider.New(s.T())
 	resolved := s.static(srv, s.resolve("../../core/testdata/manifests/slack.yaml", nil))
