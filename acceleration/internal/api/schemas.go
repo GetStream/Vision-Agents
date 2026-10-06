@@ -260,6 +260,7 @@ type CreateSessionRequest struct {
 	Custom           *map[string]interface{} `json:"custom,omitempty" doc:"Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing."`
 	Description      *string                 `json:"description,omitempty" doc:"A longer note about the conversation, searched alongside the title."`
 	Greeting         *string                 `json:"greeting,omitempty" doc:"Said on joining without going through the model. Empty means the agent waits to be spoken to."`
+	History          *[]HistoryMessage       `json:"history,omitempty" doc:"The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth." maxItems:"100"`
 	Id               *string                 `json:"id,omitempty" doc:"The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7."`
 	Incognito        *bool                   `json:"incognito,omitempty" doc:"Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from." default:"false"`
 	Instructions     *string                 `json:"instructions,omitempty"`
@@ -366,6 +367,41 @@ func (e Harness) Valid() bool {
 	default:
 		return false
 	}
+}
+
+// HistoryMessage is one message of a conversation the caller kept itself. Its name, text
+// and created_at are what a TranscriptMessage calls them; a transcript line is not reused
+// whole because its speaker and created_at are required, and a caller's thread may know
+// neither.
+//
+// The 256 and 60000 here and the 100 on CreateSessionRequest.history are
+// conversation.MaxAuthorName, MaxHistoryRunes and MaxHistoryMessages, which a tag cannot
+// name; session.Spec.Normalize refuses past the constants whatever the tags say.
+type HistoryMessage struct {
+	CreatedAt *time.Time  `json:"created_at,omitempty" doc:"When it was said. The model is shown it beside a person's message, so it can tell an hour ago from just now."`
+	Name      *string     `json:"name,omitempty" doc:"Who said it, when several people share the thread. The model is shown it as a label, never as who is asking now." maxLength:"256"`
+	Role      HistoryRole `json:"role"`
+	Text      string      `json:"text" minLength:"1" maxLength:"60000"`
+}
+
+// HistoryRole user is what a person said, assistant what the agent answered.
+type HistoryRole string
+
+// Defines values for HistoryRole.
+const (
+	HistoryRoleAssistant HistoryRole = "assistant"
+	HistoryRoleUser      HistoryRole = "user"
+)
+
+func (HistoryRole) Schema(registry huma.Registry) *huma.Schema {
+	ref := namedEnum(registry, "HistoryRole", "user is what a person said, assistant what the agent answered. These are the only turns a resumed conversation hands the model; instructions say anything a system message would.", "user", "assistant")
+	// AgentLogSource has user too, and oapi-codegen prefixes every constant of two enums
+	// sharing a value, which would rename the Go SDK's User, Agent, System and Tool. Naming
+	// these keeps them, as ConnectionOwnerType does.
+	registry.Map()["HistoryRole"].Extensions = map[string]any{
+		"x-enum-varnames": []string{"HistoryRoleUser", "HistoryRoleAssistant"},
+	}
+	return ref
 }
 
 // ImageContentPart is the ImageContentPart schema.

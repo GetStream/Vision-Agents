@@ -95,6 +95,7 @@ func reasoningConfig() routing.ModalityConfig {
 		routing.ProviderConfig{Provider: "noted", Model: "noted-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "tooling", Model: "tool-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "slow", Model: "slow-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "recites", Model: "recites-model", Languages: []string{"la"}},
 	)
 	// Where a socket that names no target goes.
 	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}}
@@ -125,6 +126,9 @@ type scriptedLLM struct {
 	// echoes answers with the instructions the model was given instead of reply, which is
 	// how a test reads back what a session knew before anybody spoke.
 	echoes bool
+	// recites answers with every message it was handed, one per line in the order it was
+	// handed them, which is how a test reads back the history a session was opened with.
+	recites bool
 	// held, when set, makes each reply wait for the test to let it through, which is what
 	// stopping a command mid-answer needs.
 	held chan struct{}
@@ -143,6 +147,13 @@ func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*l
 	reply := s.reply
 	if s.echoes {
 		reply = params.Instructions
+	}
+	if s.recites {
+		handed := make([]string, 0, len(params.Input))
+		for _, message := range params.Input {
+			handed = append(handed, string(message.Role)+": "+message.Content)
+		}
+		reply = strings.Join(handed, "\n")
 	}
 	held := s.held
 	var calls []llm.ToolCall

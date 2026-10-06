@@ -367,6 +367,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if spec.Recall != nil && spec.Recall.Messages != nil {
 		previous = append(append([]llm.Message(nil), spec.Recall.Messages...), previous...)
 	}
+	// History the caller kept itself goes where a resumed conversation's goes, and only
+	// there: it is never written down as turns, a transcript or Chat messages.
+	if len(spec.History) > 0 {
+		previous = append(persistent.Supplied(spec.History), previous...)
+	}
 	m.supersede(spec)
 	m.think(ctx, &spec)
 
