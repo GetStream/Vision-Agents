@@ -8396,6 +8396,34 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Set the app's own OAuth client for a connector
+  /v1/agents/connectors/events/{connector_id}:
+    post:
+      description: 'Where a provider delivers the events of a built-in connector: Slack''s tokens_revoked and app_uninstalled to the operator''s Slack app''s Request URL, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector''s manifest names (channel.verifier) against the operator''s secret, and an unsigned or stale one changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves every connection of that account to needs_reauthorization; a message goes to the channel bridge. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.'
+      operationId: receiveConnectorEvent
+      parameters:
+        - description: A built-in connector id such as slack.
+          in: path
+          name: connector_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: The event is taken, or a URL verification's challenge, echoed
+        "401":
+          description: The request is not signed by the provider, or its signed timestamp is more than the manifest's max_age from now
+        "404":
+          description: This connector takes no events here
+        "413":
+          description: The event is over 256 KiB
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Receive a connector's provider event
   /v1/agents/connectors/oauth/callback:
     get:
       description: 'The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.'

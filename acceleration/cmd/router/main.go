@@ -34,6 +34,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2cc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	dlctelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/dlc/telnyx"
@@ -345,7 +346,12 @@ func newConnectorRegistry(settings config.Config, clients oauth2code.ClientLooku
 	for _, scheme := range []core.Scheme{code, clientCredentials, apikey.New(), bearer.New(), none.New()} {
 		schemes[scheme.Name()] = scheme
 	}
-	return core.Registry{Schemes: schemes}, nil
+	// The verifiers a manifest's channel.verifier.kind may name; a new one is one more entry.
+	verifiers := map[string]core.Verifier{}
+	for _, verifier := range []core.Verifier{hmacheader.New()} {
+		verifiers[verifier.Name()] = verifier
+	}
+	return core.Registry{Schemes: schemes, Verifiers: verifiers}, nil
 }
 
 // connectorSchemeConfig is the oauth2code.Config newConnectorRegistry starts the scheme with.
@@ -451,12 +457,12 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	// Nothing asks it for a credential yet: the session's dispatcher will (T21, AI-851).
+	// Nothing asks it for a credential yet: the session's dispatcher will (T21, AI-851). The
+	// events endpoint revokes through it.
 	connectorResolver, err := newConnectorResolver(connectors, pgStore, connectorSecrets)
 	if err != nil {
 		return err
 	}
-	_ = connectorResolver
 
 	var liveClient *live.Client
 	if settings.Redis.Addr != "" {
@@ -983,6 +989,12 @@ func run(settings config.Config, logger *slog.Logger) error {
 		DashboardURL:      settings.DashboardURL,
 		Auth:              authenticator,
 		Logger:            logger,
+	}
+	// A nil *resolver.Resolver in the interface would not be a nil interface, so the absence
+	// stays absent, and the events endpoint takes no events without it.
+	if connectorResolver != nil {
+		options.ConnectorResolver = connectorResolver
+		options.ConnectorEventSecrets = api.ConnectorEventSecrets(os.Getenv)
 	}
 	if streamClients.PerApp() {
 		// Each registered app signs its own hooks and mints its own tokens, so only work in

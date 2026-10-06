@@ -308,6 +308,30 @@ func documentHandWritten(api huma.API) {
 		},
 	})
 	document.AddOperation(&huma.Operation{
+		OperationID: "receiveConnectorEvent",
+		Method:      http.MethodPost,
+		Path:        connectorEventsPath + "{connector_id}",
+		Summary:     "Receive a connector's provider event",
+		Description: "Where a provider delivers the events of a built-in connector: Slack's tokens_revoked " +
+			"and app_uninstalled to the operator's Slack app's Request URL, for one. Unauthenticated " +
+			"because the provider is not a customer: each request is checked by the verifier the " +
+			"connector's manifest names (channel.verifier) against the operator's secret, and an " +
+			"unsigned or stale one changes nothing. A URL verification is answered with its " +
+			"challenge as text/plain. A signal that a grant ended moves every connection of that " +
+			"account to needs_reauthorization; a message goes to the channel bridge. The body is " +
+			"at most 256 KiB. No SDK wraps it: only a provider calls it.",
+		Security: []map[string][]string{},
+		Parameters: []*huma.Param{
+			{Name: "connector_id", In: "path", Description: "A built-in connector id such as slack.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The event is taken, or a URL verification's challenge, echoed", Content: map[string]*huma.MediaType{"text/plain": {Schema: &huma.Schema{Type: huma.TypeString}}}},
+			"401": {Description: "The request is not signed by the provider, or its signed timestamp is more than the manifest's max_age from now"},
+			"404": {Description: "This connector takes no events here"},
+			"413": {Description: "The event is over 256 KiB"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
 		OperationID: "getPluginLogo",
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/plugins/{plugin_id}/logo",

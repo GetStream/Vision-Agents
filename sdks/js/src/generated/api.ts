@@ -802,6 +802,26 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/connectors/events/{connector_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive a connector's provider event
+         * @description Where a provider delivers the events of a built-in connector: Slack's tokens_revoked and app_uninstalled to the operator's Slack app's Request URL, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector's manifest names (channel.verifier) against the operator's secret, and an unsigned or stale one changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves every connection of that account to needs_reauthorization; a message goes to the channel bridge. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.
+         */
+        readonly post: operations["receiveConnectorEvent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/connectors/oauth/callback": {
         readonly parameters: {
             readonly query?: never;
@@ -8339,6 +8359,51 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly receiveConnectorEvent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description A built-in connector id such as slack. */
+                readonly connector_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The event is taken, or a URL verification's challenge, echoed */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "text/plain": string;
+                };
+            };
+            /** @description The request is not signed by the provider, or its signed timestamp is more than the manifest's max_age from now */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description This connector takes no events here */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The event is over 256 KiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
             readonly 500: components["responses"]["InternalError"];
         };
     };

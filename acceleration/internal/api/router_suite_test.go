@@ -38,6 +38,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
@@ -197,6 +199,14 @@ type RouterSuite struct {
 	// connectors is what connector adapters the router has, for a suite about connectors to
 	// set before it starts the harness. Empty has none.
 	connectors core.Registry
+	// eventSecrets and bridge are the connector events endpoint's secrets and channel
+	// bridge, for a suite about connector events to set before it starts the harness. Nil
+	// takes no events and drops messages, as a deployment without them does.
+	eventSecrets EventSecretLookup
+	bridge       ChannelBridge
+	// resolver is the router's connector resolver over the suite's store and sealer, with
+	// connectors' schemes, set by SetupSuite.
+	resolver *resolver.Resolver
 	// publicURL and dashboardURL are the router's ROUTER_PUBLIC_URL and DASHBOARD_BASE_URL,
 	// for a suite about connector consents to set before it starts the harness. Empty leaves
 	// them unset, as a deployment that never set them has.
@@ -331,6 +341,11 @@ func (s *RouterSuite) SetupSuite() {
 		routing.Image:  streams.Image,
 	}
 
+	credentials, err := pgsealed.New(pgStore, s.sealer)
+	s.Require().NoError(err)
+	s.resolver, err = resolver.New(resolver.Config{Store: pgStore, Credentials: credentials, Schemes: s.connectors.Schemes})
+	s.Require().NoError(err)
+
 	server, err := NewServer(Options{
 		Routers:       s.modalities,
 		Streams:       streams,
@@ -370,6 +385,10 @@ func (s *RouterSuite) SetupSuite() {
 		TrustAPIKeyHeader: s.trustAPIKeyHeader,
 		DenyRegistration:  s.denied,
 		Logger:            logger,
+		// The connector events endpoint revokes through the suite's resolver.
+		ConnectorResolver:     s.resolver,
+		ConnectorEventSecrets: s.eventSecrets,
+		ChannelBridge:         s.bridge,
 	})
 	s.Require().NoError(err)
 	listener.Config.Handler = server.Handler()

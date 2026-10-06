@@ -7752,6 +7752,13 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/connectors (the `CreateConnector` operationId).
 	CreateConnector(ctx context.Context, body CreateConnectorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReceiveConnectorEvent Receive a connector's provider event
+	//
+	// Where a provider delivers the events of a built-in connector: Slack's tokens_revoked and app_uninstalled to the operator's Slack app's Request URL, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector's manifest names (channel.verifier) against the operator's secret, and an unsigned or stale one changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves every connection of that account to needs_reauthorization; a message goes to the channel bridge. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.
+	//
+	// Corresponds with POST /v1/agents/connectors/events/{connector_id} (the `ReceiveConnectorEvent` operationId).
+	ReceiveConnectorEvent(ctx context.Context, connectorId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// FinishConnectorConsent Finish a consent
 	//
 	// The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
@@ -10335,6 +10342,23 @@ func (c *Client) CreateConnectorWithBody(ctx context.Context, contentType string
 // Corresponds with POST /v1/agents/connectors (the `CreateConnector` operationId).
 func (c *Client) CreateConnector(ctx context.Context, body CreateConnectorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateConnectorRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReceiveConnectorEvent Receive a connector's provider event
+//
+// Where a provider delivers the events of a built-in connector: Slack's tokens_revoked and app_uninstalled to the operator's Slack app's Request URL, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector's manifest names (channel.verifier) against the operator's secret, and an unsigned or stale one changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves every connection of that account to needs_reauthorization; a message goes to the channel bridge. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.
+//
+// Corresponds with POST /v1/agents/connectors/events/{connector_id} (the `ReceiveConnectorEvent` operationId).
+func (c *Client) ReceiveConnectorEvent(ctx context.Context, connectorId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReceiveConnectorEventRequest(c.Server, connectorId)
 	if err != nil {
 		return nil, err
 	}
@@ -15517,6 +15541,40 @@ func NewCreateConnectorRequestWithBody(server string, contentType string, body i
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewReceiveConnectorEventRequest constructs an http.Request for the ReceiveConnectorEvent method
+func NewReceiveConnectorEventRequest(server string, connectorId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "connector_id", connectorId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/events/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -22268,6 +22326,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/connectors (the `CreateConnector` operationId).
 	CreateConnectorWithResponse(ctx context.Context, body CreateConnectorJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateConnectorResponse, error)
 
+	// ReceiveConnectorEventWithResponse Receive a connector's provider event
+	//
+	// Where a provider delivers the events of a built-in connector: Slack's tokens_revoked and app_uninstalled to the operator's Slack app's Request URL, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector's manifest names (channel.verifier) against the operator's secret, and an unsigned or stale one changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves every connection of that account to needs_reauthorization; a message goes to the channel bridge. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/connectors/events/{connector_id} (the `ReceiveConnectorEvent` operationId).
+	ReceiveConnectorEventWithResponse(ctx context.Context, connectorId string, reqEditors ...RequestEditorFn) (*ReceiveConnectorEventResponse, error)
+
 	// FinishConnectorConsentWithResponse Finish a consent
 	//
 	// The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
@@ -26851,6 +26918,47 @@ func (r CreateConnectorResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateConnectorResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReceiveConnectorEventResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ReceiveConnectorEventResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ReceiveConnectorEventResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReceiveConnectorEventResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReceiveConnectorEventResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReceiveConnectorEventResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -37202,6 +37310,21 @@ func (c *ClientWithResponses) CreateConnectorWithResponse(ctx context.Context, b
 	return ParseCreateConnectorResponse(rsp)
 }
 
+// ReceiveConnectorEventWithResponse Receive a connector's provider event
+//
+// Where a provider delivers the events of a built-in connector: Slack's tokens_revoked and app_uninstalled to the operator's Slack app's Request URL, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector's manifest names (channel.verifier) against the operator's secret, and an unsigned or stale one changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves every connection of that account to needs_reauthorization; a message goes to the channel bridge. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/connectors/events/{connector_id} (the `ReceiveConnectorEvent` operationId).
+func (c *ClientWithResponses) ReceiveConnectorEventWithResponse(ctx context.Context, connectorId string, reqEditors ...RequestEditorFn) (*ReceiveConnectorEventResponse, error) {
+	rsp, err := c.ReceiveConnectorEvent(ctx, connectorId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReceiveConnectorEventResponse(rsp)
+}
+
 // FinishConnectorConsentWithResponse Finish a consent
 //
 // The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
@@ -42293,6 +42416,41 @@ func ParseCreateConnectorResponse(rsp *http.Response) (*CreateConnectorResponse,
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReceiveConnectorEventResponse parses an HTTP response from a ReceiveConnectorEventWithResponse call
+func ParseReceiveConnectorEventResponse(rsp *http.Response) (*ReceiveConnectorEventResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReceiveConnectorEventResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		break // No content-type
+
+	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case rsp.StatusCode == 413:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
