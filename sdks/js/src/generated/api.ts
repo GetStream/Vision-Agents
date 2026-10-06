@@ -784,7 +784,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Bind a consent to this browser
-         * @description What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. Unauthenticated because a browser sends it; the handoff token is the secret.
+         * @description What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. A handoff token is traded once: a second handoff for the same consent is a 400. Unauthenticated because a browser sends it; the handoff token is the secret.
          */
         readonly post: operations["handOffConnectorLaunch"];
         readonly delete?: never;
@@ -3198,7 +3198,7 @@ export type components = {
              * @description When the attempt ends, 10 minutes after it began. A callback after that is refused.
              */
             readonly expires_at: string;
-            /** @description Handed to the launch page by postMessage, never put in a URL. It binds the attempt to the browser that opens launch_url. */
+            /** @description Handed to the launch page by postMessage, never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused. */
             readonly handoff_token: string;
             /** @description The attempt. */
             readonly id: string;

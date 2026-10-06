@@ -2284,7 +2284,7 @@ type Authorization struct {
 	// ExpiresAt When the attempt ends, 10 minutes after it began. A callback after that is refused.
 	ExpiresAt time.Time `json:"expires_at"`
 
-	// HandoffToken Handed to the launch page by postMessage, never put in a URL. It binds the attempt to the browser that opens launch_url.
+	// HandoffToken Handed to the launch page by postMessage, never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused.
 	HandoffToken string `json:"handoff_token"`
 
 	// Id The attempt.
@@ -7313,7 +7313,7 @@ type ClientInterface interface {
 
 	// HandOffConnectorLaunch Bind a consent to this browser
 	//
-	// What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. Unauthenticated because a browser sends it; the handoff token is the secret.
+	// What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. A handoff token is traded once: a second handoff for the same consent is a 400. Unauthenticated because a browser sends it; the handoff token is the secret.
 	//
 	// Corresponds with POST /v1/agents/connectors/oauth/launch/{id} (the `HandOffConnectorLaunch` operationId).
 	HandOffConnectorLaunch(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -9798,7 +9798,7 @@ func (c *Client) GetConnectorLaunchPage(ctx context.Context, id string, reqEdito
 
 // HandOffConnectorLaunch Bind a consent to this browser
 //
-// What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. Unauthenticated because a browser sends it; the handoff token is the secret.
+// What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. A handoff token is traded once: a second handoff for the same consent is a 400. Unauthenticated because a browser sends it; the handoff token is the secret.
 //
 // Corresponds with POST /v1/agents/connectors/oauth/launch/{id} (the `HandOffConnectorLaunch` operationId).
 func (c *Client) HandOffConnectorLaunch(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -21265,7 +21265,7 @@ type ClientWithResponsesInterface interface {
 
 	// HandOffConnectorLaunchWithResponse Bind a consent to this browser
 	//
-	// What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. Unauthenticated because a browser sends it; the handoff token is the secret.
+	// What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. A handoff token is traded once: a second handoff for the same consent is a 400. Unauthenticated because a browser sends it; the handoff token is the secret.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -35408,7 +35408,7 @@ func (c *ClientWithResponses) GetConnectorLaunchPageWithResponse(ctx context.Con
 
 // HandOffConnectorLaunchWithResponse Bind a consent to this browser
 //
-// What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. Unauthenticated because a browser sends it; the handoff token is the secret.
+// What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. A handoff token is traded once: a second handoff for the same consent is a 400. Unauthenticated because a browser sends it; the handoff token is the secret.
 //
 // Returns a wrapper object for the known response body format(s).
 //
