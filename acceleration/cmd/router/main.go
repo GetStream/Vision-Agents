@@ -292,10 +292,7 @@ func newConnectorRegistry(settings config.Config) (core.Registry, error) {
 	if !settings.Connectors.Enabled {
 		return core.Registry{}, nil
 	}
-	code, err := oauth2code.New(oauth2code.Config{
-		HTTP:              egress.NewClient(connectorHTTPTimeout, nil),
-		ClientMetadataURL: api.ConnectorClientMetadataURL(settings.PublicURL),
-	})
+	code, err := oauth2code.New(connectorSchemeConfig(settings))
 	if err != nil {
 		return core.Registry{}, err
 	}
@@ -304,6 +301,16 @@ func newConnectorRegistry(settings config.Config) (core.Registry, error) {
 		schemes[scheme.Name()] = scheme
 	}
 	return core.Registry{Schemes: schemes}, nil
+}
+
+// connectorSchemeConfig is the oauth2code.Config newConnectorRegistry starts the scheme with.
+// A test runs it against a loopback fake by replacing HTTP and PublicEndpoint, which egress
+// refuses loopback for, and keeps the rest.
+func connectorSchemeConfig(settings config.Config) oauth2code.Config {
+	return oauth2code.Config{
+		HTTP:              egress.NewClient(connectorHTTPTimeout, nil),
+		ClientMetadataURL: api.ConnectorClientMetadataURL(settings.PublicURL),
+	}
 }
 
 // newAuthenticator builds the authenticator the deployment's mode asks for.

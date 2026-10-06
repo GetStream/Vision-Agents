@@ -1,12 +1,19 @@
 package main
 
 import (
+	"context"
+	"fmt"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 )
 
 // ConnectorRegistrySuite covers which connector adapters the router starts with.
@@ -44,22 +51,51 @@ func (s *ConnectorRegistrySuite) TestWithConnectorsOnTheFourSchemesAreRegistered
 	s.Len(registry.Schemes, 4)
 }
 
-func (s *ConnectorRegistrySuite) TestAnHTTPSPublicURLIsTheClientMetadataDocumentsHost() {
-	s.settings.Connectors.Enabled = true
+// TestAnHTTPSPublicURLIsTheClientIDUnderCIMD pins the client_id the router hands an
+// authorization server that supports CIMD: the URL the API serves the client metadata
+// document at under that public URL (api.ConnectorClientMetadataPath).
+func (s *ConnectorRegistrySuite) TestAnHTTPSPublicURLIsTheClientIDUnderCIMD() {
 	s.settings.PublicURL = "https://router.example"
 
-	registry, err := newConnectorRegistry(s.settings)
+	out, err := s.beginWithCIMDOnly()
 
-	s.Require().NoError(err, "oauth2code takes the client_id URL the API serves the document at")
-	s.Contains(registry.Schemes, "oauth2_code")
+	s.Require().NoError(err)
+	authorize, err := url.Parse(out.AuthorizeURL)
+	s.Require().NoError(err)
+	s.Equal("https://router.example/.well-known/oauth-client-metadata", authorize.Query().Get("client_id"))
 }
 
 func (s *ConnectorRegistrySuite) TestAPlainHTTPPublicURLStartsWithCIMDOff() {
-	s.settings.Connectors.Enabled = true
 	s.settings.PublicURL = "http://localhost:8080"
 
-	registry, err := newConnectorRegistry(s.settings)
+	_, err := s.beginWithCIMDOnly()
 
-	s.Require().NoError(err, "an http client_id URL is not CIMD's (section 3), so none is passed")
-	s.Contains(registry.Schemes, "oauth2_code")
+	s.ErrorIs(err, oauth2code.ErrNoClient, "an http client_id URL is not CIMD's (section 3), so none is passed")
+}
+
+// beginWithCIMDOnly starts a consent with the scheme the router builds from s.settings,
+// against a fake authorization server that supports CIMD, for a manifest whose only
+// client.registration is cimd. HTTP and PublicEndpoint point at the fake, since egress
+// refuses its loopback address.
+func (s *ConnectorRegistrySuite) beginWithCIMDOnly() (core.BeginOutput, error) {
+	srv := fakeprovider.New(s.T(), fakeprovider.ClientMetadataDocuments)
+	cfg := connectorSchemeConfig(s.settings)
+	cfg.HTTP = srv.Client()
+	cfg.PublicEndpoint = func(_ context.Context, raw string) error {
+		if !strings.HasPrefix(raw, srv.URL+"/") {
+			return fmt.Errorf("%s is not the fake provider", raw)
+		}
+		return nil
+	}
+	scheme, err := oauth2code.New(cfg)
+	s.Require().NoError(err)
+	return scheme.Begin(context.Background(), core.BeginInput{
+		Ref: core.ConnectionRef{CustomerID: "acme", ConnectionID: "conn-1"},
+		Manifest: core.ResolvedManifest{
+			Scheme:    oauth2code.Name,
+			Endpoints: map[string]string{"mcp": srv.URL + fakeprovider.PathMCP},
+			Client:    core.ClientPolicy{Registration: []core.ClientRegistrationMethod{core.ClientCIMD}},
+		},
+		RedirectURI: fakeprovider.RedirectURI,
+	})
 }
