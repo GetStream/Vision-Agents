@@ -10,6 +10,8 @@
 #   [post]     https://docs.slack.dev/reference/methods/chat.postMessage
 #   [created]  https://docs.slack.dev/reference/events/channel_created
 #   [mention]  https://docs.slack.dev/reference/events/app_mention
+#   [revoked]  https://docs.slack.dev/reference/events/tokens_revoked
+#   [uninstalled] https://docs.slack.dev/reference/events/app_uninstalled
 id: slack_bot
 revision: 1
 name: Slack bot
@@ -86,6 +88,22 @@ channel:
     author_id: $.event.user
     provider_message_id: $.event.ts
     text: $.event.text
+  signals:
+    # [revoked]: event.tokens.bot lists the bot user ids whose bot tokens were revoked. The
+    # connection is the workspace's bot token, so a revoked bot token ends it, and a revoked
+    # user token (event.tokens.oauth) does not.
+    - kind: revoked
+      match:
+        $.event.type: tokens_revoked
+      each: $.event.tokens.bot[*]
+      identity:
+        team_id: $.team_id
+    # [uninstalled]: team_id on the envelope.
+    - kind: uninstalled
+      match:
+        $.event.type: app_uninstalled
+      identity:
+        team_id: $.team_id
   reply:
     # [post]: POST, JSON accepted, the token as a bearer header (the scheme's).
     url: https://slack.com/api/chat.postMessage

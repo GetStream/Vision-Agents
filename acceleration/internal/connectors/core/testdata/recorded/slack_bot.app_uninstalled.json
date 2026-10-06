@@ -1,0 +1,1 @@
+{"token":"synthetic-verification-token","team_id":"T0000TEAM","api_app_id":"A0000APP","event":{"type":"app_uninstalled"},"type":"event_callback","authorizations":[{"team_id":"T0000TEAM","user_id":"U0000USER","is_bot":false,"is_enterprise_install":false}],"event_id":"Ev0000UNINSTALLED","event_time":1759740000}

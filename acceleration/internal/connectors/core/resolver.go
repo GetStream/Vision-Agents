@@ -22,6 +22,12 @@ type Resolver interface {
 	// or whose Revision the stored credentials have moved past (another router renewed
 	// them), says nothing about the grant: then only the cache is dropped.
 	Invalidate(ctx context.Context, ref ConnectionRef, rejected AccessCredential, why Outcome) error
+	// Revoke marks a connected connection as needing a reconnect and drops anything cached,
+	// because the provider said the grant ended (a verified Signal of kind why). Unlike
+	// Invalidate it names no credential: the provider ended the grant itself, whatever
+	// revision the stored credentials are at, so the status moves under the lock whichever
+	// router renewed them last.
+	Revoke(ctx context.Context, ref ConnectionRef, why SignalKind) error
 }
 
 // CredentialRequest is what one call asks of a credential.

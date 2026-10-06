@@ -231,6 +231,17 @@ type Options struct {
 	// ConnectorSecrets is the keyring connector consents and credentials are sealed under.
 	// Absent when connectors are off, in which case no consent can be started.
 	ConnectorSecrets *auth.Sealer
+	// ConnectorResolver is the one door to a connection's credential. The events endpoint
+	// revokes through it when a provider says a grant ended. Absent when connectors are off,
+	// in which case the endpoint takes no events.
+	ConnectorResolver core.Resolver
+	// ConnectorEventSecrets finds the secret a connector's events are verified with
+	// (ConnectorEventSecrets reads the operator's from the environment). Absent, the
+	// endpoint takes no events.
+	ConnectorEventSecrets EventSecretLookup
+	// ChannelBridge takes the messages a verified provider event carries. Absent, they are
+	// logged and dropped, until the channel bridge (T57) registers here.
+	ChannelBridge ChannelBridge
 	// TrustedProxies are the ranges this deployment's own proxies sit in, and they decide
 	// how much of X-Forwarded-For is believed when working out who a request is from.
 	// Empty means none of it is, and the connection's own address is used.
@@ -288,7 +299,11 @@ type Server struct {
 	// are nil when connectors are off.
 	connectorSecrets *auth.Sealer
 	credentials      core.CredentialStore
-	trusted          []netip.Prefix
+	// connectorResolver, eventSecrets and channelBridge serve the connector events endpoint.
+	connectorResolver core.Resolver
+	eventSecrets      EventSecretLookup
+	channelBridge     ChannelBridge
+	trusted           []netip.Prefix
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
 	serverSide *http.ServeMux
@@ -398,6 +413,9 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		quota:             options.Quota,
 		policies:          options.Policies,
 		connectors:        options.Connectors,
+		connectorResolver: options.ConnectorResolver,
+		eventSecrets:      options.ConnectorEventSecrets,
+		channelBridge:     options.ChannelBridge,
 		trusted:           options.TrustedProxies,
 		upgrader:          newUpgrader(options.CORSOrigins),
 		oauth: &plugins.Auth{
@@ -420,6 +438,9 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 			return nil, err
 		}
 		server.connectorSecrets, server.credentials = options.ConnectorSecrets, credentials
+	}
+	if server.channelBridge == nil {
+		server.channelBridge = droppingBridge{logger: logger}
 	}
 	serverSide, err := serverSideRoutes(server.newAPI(chi.NewRouter()).OpenAPI())
 	if err != nil {
@@ -478,6 +499,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+connectorLaunchPath+"{id}", s.handOffConnectorLaunch)
 	mux.HandleFunc("GET "+ConnectorCallbackPath, s.finishConnectorConsent)
 	mux.HandleFunc("GET "+ConnectorClientMetadataPath, s.serveConnectorClientMetadata)
+	mux.HandleFunc("POST "+connectorEventsPath+"{connector_id}", s.receiveConnectorEvent)
 	mux.HandleFunc("GET /v1/agents/plugins/{plugin_id}/logo", s.servePluginLogo)
 	mux.HandleFunc("POST "+plugins.EventsPath+"{token}", s.receivePluginEvent)
 	mux.HandleFunc("GET "+channels.HookPath+"{token}", s.receiveChannelMessage)

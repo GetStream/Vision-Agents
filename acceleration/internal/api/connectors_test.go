@@ -62,7 +62,7 @@ func (s *ConnectorsSuite) TestWhatTheRouterReadsToConnectIsNeverShown() {
 	s.Require().NoError(json.Unmarshal(raw, &shown))
 	for _, withheld := range []string{
 		"endpoints", "vars", "authorize_params", "token_params", "identity", "capture",
-		"refresh", "rate_limit", "sources", "hooks", "manifest",
+		"refresh", "rate_limit", "sources", "hooks", "manifest", "channel",
 	} {
 		s.NotContains(shown, withheld)
 	}

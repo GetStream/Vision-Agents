@@ -127,6 +127,22 @@ func (s *Store) LatestConnectorDefinition(ctx context.Context, customerID, id st
 	return definition, nil
 }
 
+// LatestBuiltinConnectorDefinition returns the newest revision of a built-in definition, for
+// a caller that is no customer: a provider delivering an event to a connector's route.
+func (s *Store) LatestBuiltinConnectorDefinition(ctx context.Context, id string) (ConnectorDefinition, error) {
+	if id == "" {
+		return ConnectorDefinition{}, stack.Wrap(errors.New("store: a connector id is required"))
+	}
+	definition, err := latestDefinition(ctx, s.db, []string{BuiltinCustomer}, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ConnectorDefinition{}, stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorDefinition, id))
+	}
+	if err != nil {
+		return ConnectorDefinition{}, stack.Wrap(fmt.Errorf("store: latest built-in connector definition: %w", err))
+	}
+	return definition, nil
+}
+
 // How many connector definitions are handed back at once: the session list's numbers
 // (sessions.go), since a catalog is read a page at a time in a picker the same way a
 // sidebar is. Not measured for a catalog.

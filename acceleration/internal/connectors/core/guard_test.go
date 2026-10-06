@@ -92,7 +92,7 @@ func (s *GuardSuite) TestCoreImportsNoAdapter() {
 				continue
 			}
 			s.Failf("core imports a connectors package outside core",
-				"%s imports %s; adapters under schemes/, sources/, credentialstores/, signals/ and "+
+				"%s imports %s; adapters under schemes/, sources/, credentialstores/, verifiers/ and "+
 					"providers/ import core, never the other way", path, imported)
 		}
 	}
