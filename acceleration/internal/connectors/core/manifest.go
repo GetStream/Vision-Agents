@@ -91,9 +91,11 @@ type Var struct {
 // ClientPolicy says how the OAuth client is registered and how it authenticates at the token
 // endpoint.
 type ClientPolicy struct {
-	// Registration lists the client registration mechanisms the connector allows: the two
-	// kinds of pre-registration (operator, customer) and the two on-the-fly ones (dcr, cimd).
-	// MCP's authorization spec, «Client Registration Approaches», names the same mechanisms.
+	// Registration lists the client registration mechanisms the connector allows: the three
+	// kinds of pre-registration (operator, customer, managed) and the two on-the-fly ones
+	// (dcr, cimd). MCP's authorization spec, «Client Registration Approaches», names the same
+	// mechanisms but managed, which it has no word for: an app registered in advance, by the
+	// router.
 	Registration []ClientRegistrationMethod `yaml:"registration,omitempty" json:"registration,omitempty"`
 	AuthMethod   ClientAuthMethod           `yaml:"auth_method,omitempty" json:"auth_method,omitempty"`
 	// Alg is the signing algorithm of a private_key_jwt assertion, and set only for it.
@@ -178,15 +180,22 @@ const (
 )
 
 // ClientRegistrationMethod is how the OAuth client a connection uses is registered: in advance by the
-// operator or the customer, or on the fly. «Client registration» is the OAuth and MCP term
+// operator, the customer or the router, or on the fly. «Client registration» is the OAuth and MCP term
 // (RFC 7591; MCP spec 2025-11-25, «Client Registration Approaches»).
 type ClientRegistrationMethod string
 
 // The mechanisms from the architecture doc's «Axes where providers differ», row 10. A broker's
-// client is not here: a broker sits behind the CredentialStore, not in a manifest.
+// client is not here: a broker sits behind the CredentialStore, not in a manifest. managed is
+// the provider app the router created for one customer (T40, T54 in subtasks.md on
+// connectors/planning): a Slack app made with apps.manifest.create
+// (https://docs.slack.dev/reference/methods/apps.manifest.create). Each value also says whose
+// app it is and who registered it: operator is Stream's app, registered by the operator;
+// customer is the customer's, registered by the customer; managed is the customer's,
+// registered by the router.
 const (
 	ClientOperator ClientRegistrationMethod = "operator"
 	ClientCustomer ClientRegistrationMethod = "customer"
+	ClientManaged  ClientRegistrationMethod = "managed"
 	ClientDCR      ClientRegistrationMethod = "dcr"
 	ClientCIMD     ClientRegistrationMethod = "cimd"
 )
@@ -220,7 +229,7 @@ const (
 
 var (
 	valueSources        = []ValueSource{FromTokenResponse, FromIDToken, FromCallbackQuery}
-	clientRegistrations = []ClientRegistrationMethod{ClientOperator, ClientCustomer, ClientDCR, ClientCIMD}
+	clientRegistrations = []ClientRegistrationMethod{ClientOperator, ClientCustomer, ClientManaged, ClientDCR, ClientCIMD}
 	clientAuthMethods   = []ClientAuthMethod{AuthNone, AuthClientSecretPost, AuthClientSecretBasic, AuthPrivateKeyJWT, AuthTLSClientAuth}
 	rateLimitScopes     = []RateLimitScope{RateLimitPerApp, RateLimitPerTenant, RateLimitPerUser}
 	hookPoints          = []string{HookBeforeAuthorize, HookBeforeComplete, HookAfterToken}

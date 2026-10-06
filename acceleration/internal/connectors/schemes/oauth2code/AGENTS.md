@@ -12,8 +12,8 @@ Begin(Ref, Manifest, RedirectURI)
              resource or issuer) is skipped, and only if none is usable is it an error naming every failure
   endpoints  every endpoint, pinned or discovered, passes Config.PublicEndpoint (egress) with its query removed
   PKCE       refuse a server listing methods without S256; refuse one found through RFC 9728 that lists none
-  client     customer, operator (ClientLookup), cimd (Config.ClientMetadataURL), dcr (RFC 7591), in that order,
-             each only if client.registration names it
+  client     customer, managed, operator (ClientLookup), cimd (Config.ClientMetadataURL), dcr (RFC 7591), in
+             that order, each only if client.registration names it
   URL        authorize endpoint + authorize_params + response_type, client_id, redirect_uri, state,
              code_challenge, S256, resource, scope joined by scopes.separator
   -> AuthorizeURL, State (JSON: state, verifier, redirect URI, client, issuer, token endpoint, resource,
