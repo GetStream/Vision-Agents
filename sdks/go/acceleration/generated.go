@@ -170,6 +170,24 @@ func (e AgentResponseItemKind) Valid() bool {
 	}
 }
 
+// Defines values for AuthorizationKind.
+const (
+	Consent   AuthorizationKind = "consent"
+	Reconnect AuthorizationKind = "reconnect"
+)
+
+// Valid indicates whether the value is a known member of the AuthorizationKind enum.
+func (e AuthorizationKind) Valid() bool {
+	switch e {
+	case Consent:
+		return true
+	case Reconnect:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for BudgetInterval.
 const (
 	BudgetIntervalDaily   BudgetInterval = "daily"
@@ -2260,6 +2278,27 @@ type AttachedNumber struct {
 	SipUri  string `json:"sip_uri"`
 	TrunkId string `json:"trunk_id"`
 }
+
+// Authorization A consent in flight for one connection: the page that starts it in a browser and the token that binds it to that browser.
+type Authorization struct {
+	// ExpiresAt When the attempt ends, 10 minutes after it began. A callback after that is refused.
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// HandoffToken Handed to the launch page by postMessage, never put in a URL. It binds the attempt to the browser that opens launch_url.
+	HandoffToken string `json:"handoff_token"`
+
+	// Id The attempt.
+	Id string `json:"id"`
+
+	// Kind consent for a connection no account was connected to yet, reconnect for one that has been connected before, which must come back with the same provider account.
+	Kind AuthorizationKind `json:"kind"`
+
+	// LaunchUrl The router's page to open in a popup from the dashboard. It asks the opener for handoff_token and then sends the browser to the provider.
+	LaunchUrl string `json:"launch_url"`
+}
+
+// AuthorizationKind consent for a connection no account was connected to yet, reconnect for one that has been connected before, which must come back with the same provider account.
+type AuthorizationKind string
 
 // AuthorizePluginRequest defines model for AuthorizePluginRequest.
 type AuthorizePluginRequest struct {
@@ -6032,6 +6071,14 @@ type ListConnectorsParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// FinishConnectorConsentParams defines parameters for FinishConnectorConsent.
+type FinishConnectorConsentParams struct {
+	State *string `form:"state,omitempty" json:"state,omitempty"`
+	Code  *string `form:"code,omitempty" json:"code,omitempty"`
+	Iss   *string `form:"iss,omitempty" json:"iss,omitempty"`
+	Error *string `form:"error,omitempty" json:"error,omitempty"`
+}
+
 // GetConversationCommandParams defines parameters for GetConversationCommand.
 type GetConversationCommandParams struct {
 	AgentId string `form:"agent_id" json:"agent_id"`
@@ -6810,6 +6857,13 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
+	// GetConnectorClientMetadata The router's OAuth client metadata
+	//
+	// The OAuth Client ID Metadata Document a provider that supports it fetches, at the URL that is the router's client_id. Served only when ROUTER_PUBLIC_URL is https. Unauthenticated because the provider fetches it.
+	//
+	// Corresponds with GET /.well-known/oauth-client-metadata (the `GetConnectorClientMetadata` operationId).
+	GetConnectorClientMetadata(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetHealth Liveness and dependency check
 	//
 	// Corresponds with GET /health (the `GetHealth` operationId).
@@ -7203,6 +7257,15 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/agents/connections/{id} (the `GetConnection` operationId).
 	GetConnection(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CreateAuthorization Start a consent
+	//
+	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with POST /v1/agents/connections/{id}/authorizations (the `CreateAuthorization` operationId).
+	CreateAuthorization(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListConnectors List or search connectors
 	//
 	// The built-ins first, then the app's own, each by id and at its newest revision. `q` keeps the ones whose id, name, category or description holds it.
@@ -7233,6 +7296,27 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/connectors (the `CreateConnector` operationId).
 	CreateConnector(ctx context.Context, body CreateConnectorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// FinishConnectorConsent Finish a consent
+	//
+	// The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
+	//
+	// Corresponds with GET /v1/agents/connectors/oauth/callback (the `FinishConnectorConsent` operationId).
+	FinishConnectorConsent(ctx context.Context, params *FinishConnectorConsentParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetConnectorLaunchPage The page a consent starts on
+	//
+	// The launch_url of an authorization, opened in a popup by the dashboard. The page waits for the dashboard's origin to post the handoff token, trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens it; the page names no attempt and is the same for every one.
+	//
+	// Corresponds with GET /v1/agents/connectors/oauth/launch/{id} (the `GetConnectorLaunchPage` operationId).
+	GetConnectorLaunchPage(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// HandOffConnectorLaunch Bind a consent to this browser
+	//
+	// What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. Unauthenticated because a browser sends it; the handoff token is the secret.
+	//
+	// Corresponds with POST /v1/agents/connectors/oauth/launch/{id} (the `HandOffConnectorLaunch` operationId).
+	HandOffConnectorLaunch(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetConnector Read a connector
 	//
@@ -8738,6 +8822,23 @@ type ClientInterface interface {
 	GetTagStats(ctx context.Context, modality Modality, params *GetTagStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
+// GetConnectorClientMetadata The router's OAuth client metadata
+//
+// The OAuth Client ID Metadata Document a provider that supports it fetches, at the URL that is the router's client_id. Served only when ROUTER_PUBLIC_URL is https. Unauthenticated because the provider fetches it.
+//
+// Corresponds with GET /.well-known/oauth-client-metadata (the `GetConnectorClientMetadata` operationId).
+func (c *Client) GetConnectorClientMetadata(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConnectorClientMetadataRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetHealth Liveness and dependency check
 //
 // Corresponds with GET /health (the `GetHealth` operationId).
@@ -9581,6 +9682,25 @@ func (c *Client) GetConnection(ctx context.Context, id string, reqEditors ...Req
 	return c.Client.Do(req)
 }
 
+// CreateAuthorization Start a consent
+//
+// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with POST /v1/agents/connections/{id}/authorizations (the `CreateAuthorization` operationId).
+func (c *Client) CreateAuthorization(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateAuthorizationRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListConnectors List or search connectors
 //
 // The built-ins first, then the app's own, each by id and at its newest revision. `q` keeps the ones whose id, name, category or description holds it.
@@ -9632,6 +9752,57 @@ func (c *Client) CreateConnectorWithBody(ctx context.Context, contentType string
 // Corresponds with POST /v1/agents/connectors (the `CreateConnector` operationId).
 func (c *Client) CreateConnector(ctx context.Context, body CreateConnectorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateConnectorRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// FinishConnectorConsent Finish a consent
+//
+// The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
+//
+// Corresponds with GET /v1/agents/connectors/oauth/callback (the `FinishConnectorConsent` operationId).
+func (c *Client) FinishConnectorConsent(ctx context.Context, params *FinishConnectorConsentParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewFinishConnectorConsentRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetConnectorLaunchPage The page a consent starts on
+//
+// The launch_url of an authorization, opened in a popup by the dashboard. The page waits for the dashboard's origin to post the handoff token, trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens it; the page names no attempt and is the same for every one.
+//
+// Corresponds with GET /v1/agents/connectors/oauth/launch/{id} (the `GetConnectorLaunchPage` operationId).
+func (c *Client) GetConnectorLaunchPage(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConnectorLaunchPageRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// HandOffConnectorLaunch Bind a consent to this browser
+//
+// What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. Unauthenticated because a browser sends it; the handoff token is the secret.
+//
+// Corresponds with POST /v1/agents/connectors/oauth/launch/{id} (the `HandOffConnectorLaunch` operationId).
+func (c *Client) HandOffConnectorLaunch(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewHandOffConnectorLaunchRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -12845,6 +13016,33 @@ func (c *Client) GetTagStats(ctx context.Context, modality Modality, params *Get
 	return c.Client.Do(req)
 }
 
+// NewGetConnectorClientMetadataRequest constructs an http.Request for the GetConnectorClientMetadata method
+func NewGetConnectorClientMetadataRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/.well-known/oauth-client-metadata")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetHealthRequest constructs an http.Request for the GetHealth method
 func NewGetHealthRequest(server string) (*http.Request, error) {
 	var err error
@@ -14352,6 +14550,40 @@ func NewGetConnectionRequest(server string, id string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewCreateAuthorizationRequest constructs an http.Request for the CreateAuthorization method
+func NewCreateAuthorizationRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connections/%s/authorizations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListConnectorsRequest constructs an http.Request for the ListConnectors method
 func NewListConnectorsRequest(server string, params *ListConnectorsParams) (*http.Request, error) {
 	var err error
@@ -14466,6 +14698,164 @@ func NewCreateConnectorRequestWithBody(server string, contentType string, body i
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewFinishConnectorConsentRequest constructs an http.Request for the FinishConnectorConsent method
+func NewFinishConnectorConsentRequest(server string, params *FinishConnectorConsentParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/oauth/callback")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.State != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Code != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "code", *params.Code, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Iss != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "iss", *params.Iss, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Error != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "error", *params.Error, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetConnectorLaunchPageRequest constructs an http.Request for the GetConnectorLaunchPage method
+func NewGetConnectorLaunchPageRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/oauth/launch/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewHandOffConnectorLaunchRequest constructs an http.Request for the HandOffConnectorLaunch method
+func NewHandOffConnectorLaunchRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/oauth/launch/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -20363,6 +20753,15 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// GetConnectorClientMetadataWithResponse The router's OAuth client metadata
+	//
+	// The OAuth Client ID Metadata Document a provider that supports it fetches, at the URL that is the router's client_id. Served only when ROUTER_PUBLIC_URL is https. Unauthenticated because the provider fetches it.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /.well-known/oauth-client-metadata (the `GetConnectorClientMetadata` operationId).
+	GetConnectorClientMetadataWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetConnectorClientMetadataResponse, error)
+
 	// GetHealthWithResponse Liveness and dependency check
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -20802,6 +21201,17 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/connections/{id} (the `GetConnection` operationId).
 	GetConnectionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectionResponse, error)
 
+	// CreateAuthorizationWithResponse Start a consent
+	//
+	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/connections/{id}/authorizations (the `CreateAuthorization` operationId).
+	CreateAuthorizationWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*CreateAuthorizationResponse, error)
+
 	// ListConnectorsWithResponse List or search connectors
 	//
 	// The built-ins first, then the app's own, each by id and at its newest revision. `q` keeps the ones whose id, name, category or description holds it.
@@ -20834,6 +21244,33 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/connectors (the `CreateConnector` operationId).
 	CreateConnectorWithResponse(ctx context.Context, body CreateConnectorJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateConnectorResponse, error)
+
+	// FinishConnectorConsentWithResponse Finish a consent
+	//
+	// The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/connectors/oauth/callback (the `FinishConnectorConsent` operationId).
+	FinishConnectorConsentWithResponse(ctx context.Context, params *FinishConnectorConsentParams, reqEditors ...RequestEditorFn) (*FinishConnectorConsentResponse, error)
+
+	// GetConnectorLaunchPageWithResponse The page a consent starts on
+	//
+	// The launch_url of an authorization, opened in a popup by the dashboard. The page waits for the dashboard's origin to post the handoff token, trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens it; the page names no attempt and is the same for every one.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/connectors/oauth/launch/{id} (the `GetConnectorLaunchPage` operationId).
+	GetConnectorLaunchPageWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectorLaunchPageResponse, error)
+
+	// HandOffConnectorLaunchWithResponse Bind a consent to this browser
+	//
+	// What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. Unauthenticated because a browser sends it; the handoff token is the secret.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/connectors/oauth/launch/{id} (the `HandOffConnectorLaunch` operationId).
+	HandOffConnectorLaunchWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*HandOffConnectorLaunchResponse, error)
 
 	// GetConnectorWithResponse Read a connector
 	//
@@ -22495,6 +22932,54 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/{modality}/stats/tags (the `GetTagStats` operationId).
 	GetTagStatsWithResponse(ctx context.Context, modality Modality, params *GetTagStatsParams, reqEditors ...RequestEditorFn) (*GetTagStatsResponse, error)
+}
+
+type GetConnectorClientMetadataResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetConnectorClientMetadataResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetConnectorClientMetadataResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r GetConnectorClientMetadataResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetConnectorClientMetadataResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetConnectorClientMetadataResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetConnectorClientMetadataResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type GetHealthResponse struct {
@@ -24878,6 +25363,82 @@ func (r GetConnectionResponse) ContentType() string {
 	return ""
 }
 
+type CreateAuthorizationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Authorization
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateAuthorizationResponse) GetJSON201() *Authorization {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateAuthorizationResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateAuthorizationResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateAuthorizationResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateAuthorizationResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateAuthorizationResponse) GetJSON500() *Error {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateAuthorizationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateAuthorizationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateAuthorizationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateAuthorizationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListConnectorsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -25010,6 +25571,122 @@ func (r CreateConnectorResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateConnectorResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type FinishConnectorConsentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r FinishConnectorConsentResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetBody returns the raw response body bytes
+func (r FinishConnectorConsentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r FinishConnectorConsentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r FinishConnectorConsentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r FinishConnectorConsentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetConnectorLaunchPageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// GetBody returns the raw response body bytes
+func (r GetConnectorLaunchPageResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetConnectorLaunchPageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetConnectorLaunchPageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetConnectorLaunchPageResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type HandOffConnectorLaunchResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r HandOffConnectorLaunchResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetBody returns the raw response body bytes
+func (r HandOffConnectorLaunchResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r HandOffConnectorLaunchResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r HandOffConnectorLaunchResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r HandOffConnectorLaunchResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -33907,6 +34584,21 @@ func (r GetTagStatsResponse) ContentType() string {
 	return ""
 }
 
+// GetConnectorClientMetadataWithResponse The router's OAuth client metadata
+//
+// The OAuth Client ID Metadata Document a provider that supports it fetches, at the URL that is the router's client_id. Served only when ROUTER_PUBLIC_URL is https. Unauthenticated because the provider fetches it.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /.well-known/oauth-client-metadata (the `GetConnectorClientMetadata` operationId).
+func (c *ClientWithResponses) GetConnectorClientMetadataWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetConnectorClientMetadataResponse, error) {
+	rsp, err := c.GetConnectorClientMetadata(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetConnectorClientMetadataResponse(rsp)
+}
+
 // GetHealthWithResponse Liveness and dependency check
 //
 // Returns a wrapper object for the known response body format(s).
@@ -34616,6 +35308,23 @@ func (c *ClientWithResponses) GetConnectionWithResponse(ctx context.Context, id 
 	return ParseGetConnectionResponse(rsp)
 }
 
+// CreateAuthorizationWithResponse Start a consent
+//
+// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/connections/{id}/authorizations (the `CreateAuthorization` operationId).
+func (c *ClientWithResponses) CreateAuthorizationWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*CreateAuthorizationResponse, error) {
+	rsp, err := c.CreateAuthorization(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateAuthorizationResponse(rsp)
+}
+
 // ListConnectorsWithResponse List or search connectors
 //
 // The built-ins first, then the app's own, each by id and at its newest revision. `q` keeps the ones whose id, name, category or description holds it.
@@ -34665,6 +35374,51 @@ func (c *ClientWithResponses) CreateConnectorWithResponse(ctx context.Context, b
 		return nil, err
 	}
 	return ParseCreateConnectorResponse(rsp)
+}
+
+// FinishConnectorConsentWithResponse Finish a consent
+//
+// The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/connectors/oauth/callback (the `FinishConnectorConsent` operationId).
+func (c *ClientWithResponses) FinishConnectorConsentWithResponse(ctx context.Context, params *FinishConnectorConsentParams, reqEditors ...RequestEditorFn) (*FinishConnectorConsentResponse, error) {
+	rsp, err := c.FinishConnectorConsent(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseFinishConnectorConsentResponse(rsp)
+}
+
+// GetConnectorLaunchPageWithResponse The page a consent starts on
+//
+// The launch_url of an authorization, opened in a popup by the dashboard. The page waits for the dashboard's origin to post the handoff token, trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens it; the page names no attempt and is the same for every one.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/connectors/oauth/launch/{id} (the `GetConnectorLaunchPage` operationId).
+func (c *ClientWithResponses) GetConnectorLaunchPageWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectorLaunchPageResponse, error) {
+	rsp, err := c.GetConnectorLaunchPage(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetConnectorLaunchPageResponse(rsp)
+}
+
+// HandOffConnectorLaunchWithResponse Bind a consent to this browser
+//
+// What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. Unauthenticated because a browser sends it; the handoff token is the secret.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/connectors/oauth/launch/{id} (the `HandOffConnectorLaunch` operationId).
+func (c *ClientWithResponses) HandOffConnectorLaunchWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*HandOffConnectorLaunchResponse, error) {
+	rsp, err := c.HandOffConnectorLaunch(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseHandOffConnectorLaunchResponse(rsp)
 }
 
 // GetConnectorWithResponse Read a connector
@@ -37348,6 +38102,39 @@ func (c *ClientWithResponses) GetTagStatsWithResponse(ctx context.Context, modal
 	return ParseGetTagStatsResponse(rsp)
 }
 
+// ParseGetConnectorClientMetadataResponse parses an HTTP response from a GetConnectorClientMetadataWithResponse call
+func ParseGetConnectorClientMetadataResponse(rsp *http.Response) (*GetConnectorClientMetadataResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetConnectorClientMetadataResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetHealthResponse parses an HTTP response from a GetHealthWithResponse call
 func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -39225,6 +40012,67 @@ func ParseGetConnectionResponse(rsp *http.Response) (*GetConnectionResponse, err
 	return response, nil
 }
 
+// ParseCreateAuthorizationResponse parses an HTTP response from a CreateAuthorizationWithResponse call
+func ParseCreateAuthorizationResponse(rsp *http.Response) (*CreateAuthorizationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateAuthorizationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Authorization
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListConnectorsResponse parses an HTTP response from a ListConnectorsWithResponse call
 func ParseListConnectorsResponse(rsp *http.Response) (*ListConnectorsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -39327,6 +40175,86 @@ func ParseCreateConnectorResponse(rsp *http.Response) (*CreateConnectorResponse,
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseFinishConnectorConsentResponse parses an HTTP response from a FinishConnectorConsentWithResponse call
+func ParseFinishConnectorConsentResponse(rsp *http.Response) (*FinishConnectorConsentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &FinishConnectorConsentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 302:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case rsp.StatusCode == 403:
+		break // No content-type
+
+	}
+
+	return response, nil
+}
+
+// ParseGetConnectorLaunchPageResponse parses an HTTP response from a GetConnectorLaunchPageWithResponse call
+func ParseGetConnectorLaunchPageResponse(rsp *http.Response) (*GetConnectorLaunchPageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetConnectorLaunchPageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseHandOffConnectorLaunchResponse parses an HTTP response from a HandOffConnectorLaunchWithResponse call
+func ParseHandOffConnectorLaunchResponse(rsp *http.Response) (*HandOffConnectorLaunchResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &HandOffConnectorLaunchResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case rsp.StatusCode == 403:
+		break // No content-type
 
 	}
 
