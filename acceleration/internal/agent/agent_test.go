@@ -932,7 +932,57 @@ func (s *AgentSuite) saysInVoice(participant stt.Participant, text, voice string
 // eventually waits for a condition, which is how a test asserts on a flow that crosses
 // goroutines without sleeping for a fixed time.
 func (s *AgentSuite) eventually(condition func() bool, message string) {
-	s.Require().Eventually(condition, settleFor, 5*time.Millisecond, message)
+	s.T().Helper()
+	s.eventuallyWithin(condition, settleFor, message)
+}
+
+// eventuallyWithin is eventually for a flow that is given longer than settleFor.
+func (s *AgentSuite) eventuallyWithin(condition func() bool, waitFor time.Duration, message string) {
+	s.T().Helper()
+	if !holds(condition, waitFor, 5*time.Millisecond) {
+		s.Require().Fail("Condition never satisfied", message)
+	}
+}
+
+// neverWithin asserts that something stays untrue for as long as it is given.
+func (s *AgentSuite) neverWithin(condition func() bool, waitFor time.Duration, message string) {
+	s.T().Helper()
+	if holds(condition, waitFor, 5*time.Millisecond) {
+		s.Require().Fail("Condition satisfied", message)
+	}
+}
+
+// holds polls the condition on the test's own goroutine until it is true or waitFor has
+// passed. Testify polls on a goroutine of its own, which can still be reading the suite's
+// fields when the test has ended and the next one replaces them.
+func holds(condition func() bool, waitFor, tick time.Duration) bool {
+	deadline := time.Now().Add(waitFor)
+	for {
+		if condition() {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(tick)
+	}
+}
+
+// Eventually and Never are testify's, polling on the test's goroutine as holds does.
+func (s *AgentSuite) Eventually(condition func() bool, waitFor, tick time.Duration, msgAndArgs ...any) bool {
+	s.T().Helper()
+	if holds(condition, waitFor, tick) {
+		return true
+	}
+	return s.Fail("Condition never satisfied", msgAndArgs...)
+}
+
+func (s *AgentSuite) Never(condition func() bool, waitFor, tick time.Duration, msgAndArgs ...any) bool {
+	s.T().Helper()
+	if !holds(condition, waitFor, tick) {
+		return true
+	}
+	return s.Fail("Condition satisfied", msgAndArgs...)
 }
 
 // reported returns the events seen so far.
@@ -1340,8 +1390,8 @@ func (s *AgentSuite) pacedVoiceTurn(flow, reply, voice time.Duration, sttMs floa
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
 	s.saysAfter(participant, "could you help me plan dinner?", sttMs)
-	s.Require().Eventually(func() bool { return countOf[Turn](s.reported()) == 1 },
-		5*time.Second, 5*time.Millisecond, "the paced voice turn never reached audio")
+	s.eventuallyWithin(func() bool { return countOf[Turn](s.reported()) == 1 },
+		5*time.Second, "the paced voice turn never reached audio")
 	turn, _ := firstOf[Turn](s.reported())
 	s.T().Logf("paced voice turn: speech_end_to_audio_ms=%.0f stt_ms=%.0f cadence_ms=%.0f decision_ms=%.0f model_to_first_text_ms=%.0f tts_to_audio_ms=%.0f llm_ttft_ms=%.0f",
 		turn.SpeechEndToAudioMs, turn.STTLatencyMs, turn.CadenceMs, turn.DecisionMs,
@@ -1952,8 +2002,8 @@ func (s *AgentSuite) TestAnAnswerComingBackWaitsForSpeechToGoOut() {
 		return countOf[Responded](s.reported()) == 1 && countOf[TaskSettled](s.reported()) == 1 &&
 			countOf[Spoke](s.reported()) >= 1
 	}, "the first reply never finished")
-	s.Require().Never(func() bool { return len(s.model.requests()) > 1 },
-		presenceTick+100*time.Millisecond, 10*time.Millisecond,
+	s.neverWithin(func() bool { return len(s.model.requests()) > 1 },
+		presenceTick+100*time.Millisecond,
 		"a follow-up must not start while speech is still going out")
 
 	s.edge.holdSpeech(false)
@@ -1980,8 +2030,8 @@ func (s *AgentSuite) TestAStuckPlayoutSignalDoesNotStrandAFollowUp() {
 		return countOf[Responded](s.reported()) == 1 && countOf[TaskSettled](s.reported()) == 1 &&
 			countOf[Spoke](s.reported()) >= 1
 	}, "the first reply never finished")
-	s.Require().Never(func() bool { return len(s.model.requests()) > 1 },
-		presenceTick+100*time.Millisecond, 10*time.Millisecond,
+	s.neverWithin(func() bool { return len(s.model.requests()) > 1 },
+		presenceTick+100*time.Millisecond,
 		"a fresh tail still gets time to drain")
 
 	s.eventually(func() bool { return len(s.model.requests()) == 2 },
@@ -2569,7 +2619,7 @@ func (s *AgentSuite) TestRelatedOverlapShortensThenAnswersTheAddition() {
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
 	s.says(participant, "explain the menu")
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.eventually(s.openingReplyStarted, "the first reply never started")
 	s.flow.then = []string{`{"disposition":"respond","floor":"shorten"}`}
 
 	s.says(participant, "only the vegetarian options")
@@ -2589,7 +2639,7 @@ func (s *AgentSuite) TestAcknowledgementOverlapLetsTheCurrentReplyContinue() {
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
 	s.says(participant, "explain the menu")
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.eventually(s.openingReplyStarted, "the first reply never started")
 	first := s.model.requests()[0].ID
 	s.flow.then = []string{`{"disposition":"respond","floor":"continue"}`}
 
@@ -2639,7 +2689,7 @@ func (s *AgentSuite) TestAnAcknowledgementInProgressDoesNotStopTheAgent() {
 	s.voice.silent = true
 	s.speak(participant)
 	s.says(participant, "explain the menu")
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.eventually(s.openingReplyStarted, "the first reply never started")
 	s.flow.then = []string{`{"disposition":"wait","floor":"continue"}`}
 
 	s.mutters(participant, "okay")
@@ -2662,7 +2712,7 @@ func (s *AgentSuite) TestTheControllerIsToldWhatTheAgentIsSaying() {
 	s.voice.silent = true
 	s.speak(participant)
 	s.says(participant, "explain the menu")
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.eventually(s.openingReplyStarted, "the first reply never started")
 	turnA := s.model.requests()[0].ID
 	s.model.writes(turnA, "The menu has three courses")
 	s.eventually(func() bool { return countOf[ResponseDelta](s.reported()) >= 1 }, "the reply never streamed")

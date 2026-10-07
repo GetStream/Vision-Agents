@@ -580,7 +580,8 @@ func (s *AgentSuite) left() bool { return countOf[Left](s.reported()) > 0 }
 
 // never asserts that something stays untrue for long enough to believe it.
 func (s *AgentSuite) never(condition func() bool, message string) {
-	s.Require().Never(condition, 500*time.Millisecond, 5*time.Millisecond, message)
+	s.T().Helper()
+	s.neverWithin(condition, 500*time.Millisecond, message)
 }
 
 // spokenText reports whether the voice was asked to say something containing the text.
