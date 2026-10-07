@@ -365,7 +365,8 @@ func (s *RouterSuite) SetupSuite() {
 	transports, err := core.NewTransports(core.TransportsConfig{Resolver: s.resolver, Timeout: suiteConnectorTimeout,
 		NewClient: loopbackClients(s.connectorHTTP)})
 	s.Require().NoError(err)
-	sessions := s.sessionManager(streams, directory, session.Connectors{Registry: s.connectors, Transports: transports}, logger)
+	sessions := s.sessionManager(streams, directory, session.Connectors{Registry: s.connectors, Transports: transports,
+		Consents: ConnectorConsents(pgStore, s.connectors, s.sealer, s.publicURL)}, logger)
 	// A nil client reaches public hosts alone, and every auth server here is a local one.
 	public := &plugins.Auth{HTTP: http.DefaultClient}
 	s.events = s.pluginEvents(sessions, public, logger)
@@ -627,6 +628,9 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 			ID: store.NewID(), Name: connectorEcho, Arguments: `{"text":"` + connectorEchoText + `"}`,
 		}}}, nil
 	})
+	// A model that runs crm's echo through a waiting binding's call_tool whenever somebody
+	// asks it something, a follow-up after a login included (chat_logins_test.go).
+	reasoning.Register("logging-in", func(routing.Spec) (llmrouter.Provider, error) { return &loggingInLLM{}, nil })
 	reasoner, err := llmrouter.New(llmrouter.Options{
 		Config: reasoningConfig(), Registry: reasoning, Store: s.store, Live: s.live,
 		Quota: limiter, Gate: gate, Logger: logger,
