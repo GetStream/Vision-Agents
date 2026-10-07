@@ -8,6 +8,7 @@ import (
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -65,6 +66,49 @@ func (c *callCards) started(created *Session, stream streamapp.Bound) {
 			c.logger.Error("could not write a call's episode card", "session", created.id, "call", spec.CallID, "error", err)
 		}
 	}()
+}
+
+// read is the person's other episode cards, for a session to start with (T56 and T42,
+// AI-885), when its agent config turned the cards on. Off, which every config is unless it
+// says otherwise, nothing is read: no call, no contact map, no Stream Chat, and the session
+// starts with what it did before the cards existed. On:
+//
+//   - a text session on a thread channel reads the cards of the person its thread's episode
+//     is with, the thread itself left out, since it reads that word for word;
+//   - a voice session reads the cards of the number on its call (calledParty), its own
+//     call's card left out.
+//
+// Any other session reads none: an incognito one, which keeps nothing of the person, one
+// with no agent config, whose contact map the cards are keyed by, and a text session on any
+// other channel, whose person the contact map cannot key yet. A card that cannot be read is
+// logged and left out; the session starts all the same.
+func (c *callCards) read(ctx context.Context, spec Spec, stream streamapp.Bound) []llm.Message {
+	if c == nil || !spec.EpisodeCards || spec.Incognito || spec.ConfigID == "" {
+		return nil
+	}
+	reading := omnichannel.Reading{CustomerID: spec.CustomerID, AgentConfigID: spec.ConfigID, StreamAppPK: spec.StreamApp}
+	switch {
+	case spec.Text && spec.PersistConversation && spec.Shared():
+		reading.Thread = spec.ConversationID
+	case !spec.Text && spec.CallID != "" && stream.Client != nil:
+		number, err := calledParty(ctx, spec, stream)
+		if err != nil {
+			c.logger.Error("could not read who is on a call for its episode cards", "session", spec.ID, "call", spec.CallID, "error", err)
+			return nil
+		}
+		person, err := omnichannel.Phone(number)
+		if err != nil {
+			return nil
+		}
+		reading.Person, reading.SessionID = person, spec.ID
+	default:
+		return nil
+	}
+	cards, err := c.cards.Context(ctx, reading)
+	if err != nil {
+		c.logger.Error("could not read every episode card", "session", spec.ID, "error", err)
+	}
+	return cards
 }
 
 // Close abandons the cards still being written and waits for them to stop.

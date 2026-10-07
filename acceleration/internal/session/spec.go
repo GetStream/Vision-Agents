@@ -190,7 +190,8 @@ type Spec struct {
 	// than the model, from the agent's config. The model answers only the server.
 	DispatchText bool
 	// EpisodeCards has a phone call write its episode card into the caller's omni-channel,
-	// from the agent's config. Off, the call does what it did before the cards existed.
+	// and a session on a thread channel or a phone call start with the person's other cards,
+	// from the agent's config. Off, the session does what it did before the cards existed.
 	EpisodeCards bool
 
 	// SkillNames are the skills the voice model may hand to the subagent: the agent
