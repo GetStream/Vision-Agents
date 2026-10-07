@@ -2,6 +2,7 @@ package eventforward
 
 import (
 	"net/http"
+	"net/url"
 	"strconv"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 )
 
@@ -63,10 +65,46 @@ func (s *SigningSuite) TestASignatureVerifiesWithEachSecretItWasSignedWithAndNoO
 
 // https://www.standardwebhooks.com/: the id «remains the same no matter how many times a
 // webhook that has failed is retried», and must hold no «.».
-func (s *SigningSuite) TestTheSameBodyIsTheSameWebhookID() {
-	s.Equal(deliveryID([]byte("one")), deliveryID([]byte("one")))
-	s.NotEqual(deliveryID([]byte("one")), deliveryID([]byte("two")))
-	s.NotContains(deliveryID([]byte("one")), ".")
+func (s *SigningSuite) TestADeliveryWithoutAProviderIDIsKeyedByItsBody() {
+	s.Equal(deliveryID("", []byte("one")), deliveryID("", []byte("one")))
+	s.NotEqual(deliveryID("", []byte("one")), deliveryID("", []byte("two")))
+	s.NotContains(deliveryID("", []byte("one")), ".")
+}
+
+// Two Slack events whose bodies are byte for byte the same are still two events when their
+// event_ids differ, and one event delivered again with another body is still one.
+func (s *SigningSuite) TestTheProvidersEventIDIsTheWebhookIDNotTheBody() {
+	body := []byte(`{"type":"event_callback"}`)
+
+	s.NotEqual(deliveryID("Ev0000ONE", body), deliveryID("Ev0000TWO", body))
+	s.Equal(deliveryID("Ev0000ONE", body), deliveryID("Ev0000ONE", []byte(`{"type":"event_callback","retried":true}`)))
+	s.NotContains(deliveryID("1.2.abc", body), ".", "a trigger_id's dots stay out of webhook-id")
+}
+
+// slack_bot.yaml names event_id and trigger_id, and signs X-Slack-Request-Timestamp with a
+// max_age of 5m.
+func (s *SigningSuite) TestASlackEventIsKeyedByItsEventIDAndItsHeadersVerifyForFiveMinutes() {
+	header := http.Header{}
+	header.Set("X-Slack-Request-Timestamp", "1759740000")
+
+	event := ProviderEvent(s.slackBot(), header, []byte(`{"type":"event_callback","event_id":"Ev0000ONE"}`))
+
+	s.Equal("Ev0000ONE", event.ID)
+	s.Equal(time.Unix(1759740000, 0).Add(5*time.Minute), event.HeadersUntil)
+}
+
+func (s *SigningSuite) TestASlackInteractionIsKeyedByItsTriggerID() {
+	body := url.Values{"payload": {`{"type":"block_actions","trigger_id":"1.2.abc"}`}}.Encode()
+
+	s.Equal("1.2.abc", ProviderEvent(s.slackBot(), http.Header{}, []byte(body)).ID)
+}
+
+func (s *SigningSuite) slackBot() core.Manifest {
+	raw, err := providers.FS.ReadFile("slack_bot.yaml")
+	s.Require().NoError(err)
+	m, err := core.ParseManifest(raw)
+	s.Require().NoError(err)
+	return m
 }
 
 func (s *SigningSuite) secret() string {

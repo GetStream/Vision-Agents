@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/pgdialect"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -194,6 +195,9 @@ type EventDelivery struct {
 	Attempts      int       `bun:"attempts,notnull"`
 	NextAttemptAt time.Time `bun:"next_attempt_at,notnull"`
 	CreatedAt     time.Time `bun:"created_at,notnull"`
+	// ProviderHeadersUntil is when the provider's signature headers in Headers stop verifying
+	// at a receiver that checks them. Nil when they do not age.
+	ProviderHeadersUntil *time.Time `bun:"provider_headers_until"`
 }
 
 // ClaimedEventDelivery is a delivery a worker took, with what sending it needs of its
@@ -211,28 +215,29 @@ type ClaimedEventDelivery struct {
 }
 
 // QueueEventDeliveries queues one provider delivery for each of the customer's destinations of
-// the connector that takes it: every one that forwards all, and those that forward unhandled
-// when handled is false. A delivery already queued for a destination under the same id is not
-// queued again. It returns how many it queued.
-func (s *Store) QueueEventDeliveries(ctx context.Context, customerID, connectorID string, handled bool, delivery EventDelivery) (int, error) {
-	if customerID == "" || connectorID == "" || delivery.ID == "" {
-		return 0, stack.Wrap(errors.New("store: a customer, a connector id and a delivery id are required"))
-	}
-	takes := []string{ForwardAll}
-	if !handled {
-		takes = append(takes, ForwardUnhandled)
+// the connector whose forward is one of forwards (ForwardAll, ForwardUnhandled). A delivery
+// already queued for a destination under the same id is not queued again. It returns how many
+// it queued.
+func (s *Store) QueueEventDeliveries(ctx context.Context, customerID, connectorID string, forwards []string, delivery EventDelivery) (int, error) {
+	if customerID == "" || connectorID == "" || delivery.ID == "" || len(forwards) == 0 {
+		return 0, stack.Wrap(errors.New("store: a customer, a connector id, a delivery id and the forwards that take it are required"))
 	}
 	headers, err := json.Marshal(delivery.Headers)
 	if err != nil {
 		return 0, stack.Wrap(err)
 	}
+	var headersUntil *time.Time
+	if delivery.ProviderHeadersUntil != nil {
+		until := delivery.ProviderHeadersUntil.UTC()
+		headersUntil = &until
+	}
 	result, err := s.db.NewRaw(`
-INSERT INTO connector_event_deliveries (destination_id, id, headers, body, attempts, next_attempt_at)
-SELECT ced.id, ?, ?::jsonb, ?, 0, ?
+INSERT INTO connector_event_deliveries (destination_id, id, headers, body, attempts, next_attempt_at, provider_headers_until)
+SELECT ced.id, ?, ?::jsonb, ?, 0, ?, ?
 FROM connector_event_destinations AS ced
 WHERE ced.customer_id = ? AND ced.connector_id = ? AND ced.forward IN (?)
 ON CONFLICT (destination_id, id) DO NOTHING`,
-		delivery.ID, string(headers), delivery.Body, delivery.NextAttemptAt.UTC(), customerID, connectorID, bun.In(takes)).Exec(ctx)
+		delivery.ID, string(headers), delivery.Body, delivery.NextAttemptAt.UTC(), headersUntil, customerID, connectorID, bun.In(forwards)).Exec(ctx)
 	if err != nil {
 		return 0, stack.Wrap(fmt.Errorf("store: queue event deliveries: %w", err))
 	}
@@ -243,31 +248,62 @@ ON CONFLICT (destination_id, id) DO NOTHING`,
 // ClaimEventDeliveries takes at most limit deliveries due at now, oldest due first, and moves
 // each one's next attempt to leaseUntil, so no other worker takes it while this one sends it.
 // Rows another worker is claiming at the same moment are skipped, not waited for.
-func (s *Store) ClaimEventDeliveries(ctx context.Context, now time.Time, limit int, leaseUntil time.Time) ([]ClaimedEventDelivery, error) {
+//
+// It takes at most perDestination deliveries of one destination, less the ones of it the
+// caller is still sending (sending, by destination id). So one destination that never answers
+// holds perDestination of the caller's sends, and other destinations' deliveries are taken
+// past its own.
+func (s *Store) ClaimEventDeliveries(ctx context.Context, now time.Time, limit, perDestination int, sending map[string]int, leaseUntil time.Time) ([]ClaimedEventDelivery, error) {
 	claimed := []ClaimedEventDelivery{}
-	if limit < 1 {
+	if limit < 1 || perDestination < 1 {
 		return claimed, nil
 	}
+	busy, counts := make([]string, 0, len(sending)), make([]int, 0, len(sending))
+	for destination, count := range sending {
+		busy, counts = append(busy, destination), append(counts, count)
+	}
+	// Postgres refuses FOR UPDATE beside a window function in one SELECT, so ranked numbers
+	// each destination's due rows first and due locks the ones within the cap.
 	err := s.db.NewRaw(`
-WITH due AS (
-    SELECT destination_id, id FROM connector_event_deliveries
-    WHERE next_attempt_at <= ?
-    ORDER BY next_attempt_at
+WITH sending AS (
+    SELECT * FROM unnest(?::text[], ?::int[]) AS s (destination_id, count)
+), ranked AS (
+    SELECT cedl.destination_id, cedl.id,
+        row_number() OVER (PARTITION BY cedl.destination_id ORDER BY cedl.next_attempt_at, cedl.id)
+            + coalesce(sending.count, 0) AS slot
+    FROM connector_event_deliveries AS cedl
+    LEFT JOIN sending ON sending.destination_id = cedl.destination_id
+    WHERE cedl.next_attempt_at <= ?
+), due AS (
+    SELECT cedl.destination_id, cedl.id FROM connector_event_deliveries AS cedl
+    JOIN ranked ON ranked.destination_id = cedl.destination_id AND ranked.id = cedl.id
+    WHERE ranked.slot <= ?
+    ORDER BY cedl.next_attempt_at
     LIMIT ?
-    FOR UPDATE SKIP LOCKED
+    FOR UPDATE OF cedl SKIP LOCKED
 )
 UPDATE connector_event_deliveries AS cedl
 SET next_attempt_at = ?
 FROM due, connector_event_destinations AS ced
 WHERE cedl.destination_id = due.destination_id AND cedl.id = due.id AND ced.id = cedl.destination_id
 RETURNING cedl.destination_id, cedl.id, cedl.headers, cedl.body, cedl.attempts, cedl.next_attempt_at, cedl.created_at,
-    ced.customer_id, ced.connector_id, ced.url, ced.secret_sealed, ced.kek_version,
+    cedl.provider_headers_until, ced.customer_id, ced.connector_id, ced.url, ced.secret_sealed, ced.kek_version,
     ced.previous_secret_sealed, ced.previous_kek_version, ced.previous_until`,
-		now.UTC(), limit, leaseUntil.UTC()).Scan(ctx, &claimed)
+		pgdialect.Array(busy), pgdialect.Array(counts), now.UTC(), perDestination, limit, leaseUntil.UTC()).Scan(ctx, &claimed)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: claim event deliveries: %w", err))
 	}
 	return claimed, nil
+}
+
+// NextEventDeliveryAt is when the delivery due first is due, any router's, leased ones at the
+// end of their lease. found is false when no delivery is queued at all.
+func (s *Store) NextEventDeliveryAt(ctx context.Context) (next time.Time, found bool, err error) {
+	var at sql.NullTime
+	if err := s.db.NewRaw("SELECT min(next_attempt_at) FROM connector_event_deliveries").Scan(ctx, &at); err != nil {
+		return time.Time{}, false, stack.Wrap(fmt.Errorf("store: next event delivery: %w", err))
+	}
+	return at.Time, at.Valid, nil
 }
 
 // FinishEventDelivery removes a delivery the destination took, refused, or that ran out of
