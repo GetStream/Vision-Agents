@@ -355,6 +355,17 @@ func oauthClientAAD(customerID, connectorID string) []byte {
 		len(customerID), customerID, len(connectorID), connectorID)
 }
 
+// SealConnectorOAuthClientSecret seals a client secret for the customer's record of the
+// connector as a put through the API does, under the keyring's current version, so a record
+// router plugins migrate writes opens where the API's do.
+func SealConnectorOAuthClientSecret(secrets *auth.Sealer, customerID, connectorID, secret string) ([]byte, int, error) {
+	sealed, err := secrets.SealWithAAD(secret, oauthClientAAD(customerID, connectorID))
+	if err != nil {
+		return nil, 0, err
+	}
+	return sealed, secrets.CurrentVersion(), nil
+}
+
 func oauthClientOf(record store.ConnectorOAuthClient) ConnectorOAuthClient {
 	return ConnectorOAuthClient{
 		ConnectorID:  record.ConnectorID,
