@@ -186,6 +186,11 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if request.Body.Connectors == nil {
 		config.Connectors = existing.Connectors
 	}
+	// Kept for the same reason: a client that does not know the setting must not turn the
+	// cards off by saving.
+	if request.Body.EpisodeCards == nil {
+		config.EpisodeCards = existing.EpisodeCards
+	}
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -1130,6 +1135,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		config.VideoMaxFrames = value(request.Video.MaxFrames)
 	}
 	applyDispatch(&config, request.Dispatch)
+	config.EpisodeCards = value(request.EpisodeCards)
 	return config
 }
 
@@ -1187,6 +1193,8 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	}
 	rendered.Harness = &named
 	rendered.Dispatch = dispatchOf(config)
+	episodeCards := config.EpisodeCards
+	rendered.EpisodeCards = &episodeCards
 	if len(config.Skills) > 0 {
 		skills := config.Skills
 		rendered.Skills = &skills
@@ -1422,6 +1430,7 @@ type deleteAgentConfigRequest struct {
 // AgentConfigRequest is the AgentConfigRequest schema.
 type AgentConfigRequest struct {
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
+	EpisodeCards       *bool                    `json:"episode_cards,omitempty" doc:"Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. Off by default, and then a call runs as it always did. Left out on an update, the stored setting stays."`
 	Greeting           *string                  `json:"greeting,omitempty"`
 	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered."`
 	Harness            *Harness                 `json:"harness,omitempty"`
@@ -1456,6 +1465,7 @@ type AgentConfigRequest struct {
 type AgentConfig struct {
 	CreatedAt          time.Time                `json:"created_at"`
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
+	EpisodeCards       *bool                    `json:"episode_cards,omitempty" doc:"Whether each phone call under this agent writes an episode card into the caller's omni-channel."`
 	Greeting           *string                  `json:"greeting,omitempty"`
 	Guardrail          *string                  `json:"guardrail,omitempty"`
 	Harness            *Harness                 `json:"harness,omitempty"`
