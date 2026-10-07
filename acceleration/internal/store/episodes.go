@@ -11,7 +11,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
-// What an episode came in on, the source field of its card (20261007040100_episodes.sql).
+// What an episode came in on, the source field of its card (20261007042100_episodes.sql).
 // The table also takes sms, whatsapp and imessage, which T53, T51 and T36 name here when they
 // put those channels on the bridge.
 const (
@@ -24,7 +24,7 @@ const (
 const episodeInProgress = "in_progress"
 
 // Episode is one call, or one run of messages on one external thread, and its card in the
-// person's omni-channel (20261007040100_episodes.sql).
+// person's omni-channel (20261007042100_episodes.sql).
 type Episode struct {
 	bun.BaseModel `bun:"table:episodes,alias:ep"`
 

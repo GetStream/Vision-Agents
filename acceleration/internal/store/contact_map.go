@@ -11,7 +11,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
-// How a person is known to the contact map (20261007040000_contact_map.sql).
+// How a person is known to the contact map (20261007042000_contact_map.sql).
 const (
 	// ContactPhone is an E.164 number: a call, an SMS, a WhatsApp message or an iMessage.
 	ContactPhone = "phone"
@@ -20,7 +20,7 @@ const (
 )
 
 // ContactMapEntry is one address a person is reached at, for one agent of a customer, and the
-// omni-channel their episode cards go to (20261007040000_contact_map.sql).
+// omni-channel their episode cards go to (20261007042000_contact_map.sql).
 type ContactMapEntry struct {
 	bun.BaseModel `bun:"table:contact_map,alias:cm"`
 
