@@ -217,6 +217,21 @@ type heldReply struct {
 	noted bool
 }
 
+// unansweredWords are the caller's words that a reply nobody heard any of was given up for, left
+// as the last entry of the history. If what the caller says next is the same utterance restated
+// or grown, it takes their place instead of following them, so the conversation holds one turn
+// for what was said once.
+type unansweredWords struct {
+	// asked is how long the history was with these words as its last entry. Zero when there are
+	// no such words.
+	asked int
+	// text is the words, which the entry must still hold for them to be replaced.
+	text string
+	// noted says they spent the note that an earlier reply may not have been heard in full,
+	// which replacing them gives back.
+	noted bool
+}
+
 // heldTurn is the audio of a reply that is waiting for the caller to have been quiet, which is its
 // first audio or, once some of it has been let out, the first of a sentence that follows a pause,
 // with the events of its synthesis that arrived after it, which are only acted on once it has been

@@ -2652,7 +2652,10 @@ func (s *AgentSuite) TestAnAcknowledgementInProgressDoesNotStopTheAgent() {
 
 func (s *AgentSuite) TestTheControllerIsToldWhatTheAgentIsSaying() {
 	// A ruling on partial words overlapping the reply has to see the reply, or it cannot
-	// tell a correction from the caller's line echoing the agent back.
+	// tell a correction from the caller's line echoing the agent back. The reply is not held to
+	// the caller's silence, so it is being heard: a reply that is still held has said nothing.
+	noHold := time.Duration(0)
+	s.replySilence = &noHold
 	s.join(true)
 	participant := stt.Participant{ID: "alice"}
 	s.model.reply = nil

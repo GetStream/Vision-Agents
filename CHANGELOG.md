@@ -1852,6 +1852,16 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
   murmur now take the floor from a reply none of which was heard, whatever the controller made of
   it, and the reply is cancelled unheard. A murmur still lets the reply be heard first.
 
+- A reply that is still held is no longer taken for something the caller has heard. A caller who
+  went on with words the held reply happened to contain, "for two at seven" to a reply that asked
+  "...for two at seven, under what name?", was taken for an echo of an agent they had not heard,
+  and the answer to their words waited behind the reply. The flow controller was likewise shown
+  the held reply as what the agent had so far said. It is now told that none of the reply has
+  reached the caller yet, and is shown neither the reply nor its entry in the conversation. When
+  the caller's next words restate or grow the ones a held reply was cancelled for ("find a
+  table", then "find a table for four"), the conversation keeps one turn for them and not two.
+  Different words still follow the earlier ones as a turn of their own.
+
 - Interrupted voice replies retain their unfinished generated text as conversation
   context, so the next caller turn can be answered naturally and explicit continuation
   requests can pick up the explanation. Repeated transcription updates no longer cancel

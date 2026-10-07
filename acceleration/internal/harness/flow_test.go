@@ -111,6 +111,27 @@ func (s *FlowSuite) TestAnOverlappingReplyIsQuotedSoTheControllerCanHold() {
 	s.Contains(question, `is speaking right now and has so far said "party of four at 7:30"`)
 }
 
+func (s *FlowSuite) TestAReplyNobodyHasHeardIsNotQuotedAsWhatTheAgentHasSaid() {
+	for name, turn := range map[string]FlowTurn{
+		"settled":     {Text: "for two at seven"},
+		"in progress": {Text: "for two at", Unfinished: true},
+	} {
+		s.Run(name, func() {
+			s.SetupTest()
+			turn.ID, turn.Participant, turn.Speaking, turn.Unheard = "candidate-1", "Alex", true, true
+			// The reply is passed to show that it is the flag that keeps it out of the question.
+			turn.Reply = "a table for two at seven, under what name?"
+
+			s.Require().NoError(s.flow.Decide(turn))
+
+			question := s.waitAsked(1)[0].Input[0].Content
+			s.Contains(question, "The agent is speaking right now, though none of its reply has reached the caller yet.")
+			s.NotContains(question, "under what name")
+			s.NotContains(question, "speaking right now and has so far said")
+		})
+	}
+}
+
 func (s *FlowSuite) TestOnlyTheRecentConversationIsShown() {
 	var history []llm.Message
 	for turn := range flowHistory {

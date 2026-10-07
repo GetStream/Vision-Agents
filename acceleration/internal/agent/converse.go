@@ -126,11 +126,13 @@ type floor struct {
 	Quiet bool
 	// Speaking is the reply currently allowed to make audio, empty when there is none.
 	Speaking string
-	// Reply is what the caller has heard the agent say on its current or draining turn.
+	// Reply is what the caller has heard the agent say on its current or draining turn. It is
+	// empty while Unheard, because nothing of that reply has been heard.
 	Reply string
 	// Unheard says the reply being spoken has let none of itself out yet, because its first
 	// audio is held until the caller has been quiet. The caller has been told nothing of it,
-	// so there is nothing for them to hear finished, and what they say meanwhile replaces it.
+	// so there is nothing for them to hear finished or to echo, and what they say meanwhile
+	// replaces it.
 	Unheard bool
 	// Delegating reports whether the subagent is still working on something.
 	Delegating bool

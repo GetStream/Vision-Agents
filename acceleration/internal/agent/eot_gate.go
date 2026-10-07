@@ -8,7 +8,6 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -457,18 +456,16 @@ func (a *Agent) eotPrimaryStateLocked(gate *eotGate) bool {
 func (a *Agent) refreshedPrimaryFlowTurnLocked(gate *eotGate, speechPending bool) harness.FlowTurn {
 	turn := gate.turn
 	turn.Instructions = a.instructions()
-	turn.History = llm.OmitImages(append([]llm.Message(nil), a.history...))
+	turn.History = a.heardHistoryLocked()
 	turn.Speaking = a.generating || a.utterances > 0 || a.pendingTools > 0
-	turn.Reply = a.saying
-	if turn.Reply == "" {
-		turn.Reply = lastAssistantSaid(turn.History)
-	}
+	turn.Reply = a.saidLocked(turn.History)
 	ready, current := a.eotCandidateSnapshotLocked(gate)
 	if !current {
 		ready = gate.ready
 	}
 	turn.AnotherVoice = a.anotherVoiceLocked(ready)
 	turn.Speaking = turn.Speaking || speechPending
+	turn.Unheard = turn.Speaking && a.unheardLocked()
 	return turn
 }
 

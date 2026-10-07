@@ -49,8 +49,11 @@ type FlowTurn struct {
 	Text         string
 	Speaking     bool
 	// Reply is what the agent is currently saying, so the controller can tell a cough
-	// overlapping a read-back from a caller who is correcting it.
+	// overlapping a read-back from a caller who is correcting it. It is empty while Unheard.
 	Reply string
+	// Unheard says the reply the agent is about to speak has let none of itself out yet, so
+	// the caller has heard nothing of it and there is nothing for their words to echo.
+	Unheard bool
 	// Unfinished says the words are what has been heard so far of an utterance still in
 	// progress, so the only question is who keeps the floor rather than what to answer.
 	Unfinished bool
@@ -303,7 +306,9 @@ func flowQuestion(turn FlowTurn) string {
 	state := "is not speaking"
 	if turn.Speaking {
 		state = "is speaking right now"
-		if reply := strings.TrimSpace(turn.Reply); reply != "" {
+		if turn.Unheard {
+			state = "is speaking right now, though none of its reply has reached the caller yet"
+		} else if reply := strings.TrimSpace(turn.Reply); reply != "" {
 			state = fmt.Sprintf("is speaking right now and has so far said %q", reply)
 		}
 	}

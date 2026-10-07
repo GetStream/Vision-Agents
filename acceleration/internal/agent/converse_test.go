@@ -544,8 +544,11 @@ func (s *ConverseSuite) TestWhatIsDecidedAboutATurnWhileTheReplyIsStillUnheard()
 	// more than a murmur replace it rather than queueing behind it: the caller would otherwise
 	// hear an answer to what they have already gone on from, and then the answer to what they
 	// said after it.
-	unheard := floor{Speaking: "turn-1", Unheard: true, Reply: "What name is on the reservation?",
-		LastParticipant: caller}
+	//
+	// Nothing of it has been heard, so there is no reply for the caller's words to be an echo of:
+	// the floor carries none, and words the held reply happens to contain still replace it.
+	unheard := floor{Speaking: "turn-1", Unheard: true, LastParticipant: caller}
+	heard := floor{Speaking: "turn-1", Reply: "What name is on the reservation?", LastParticipant: caller}
 	cases := []struct {
 		name     string
 		text     string
@@ -559,6 +562,10 @@ func (s *ConverseSuite) TestWhatIsDecidedAboutATurnWhileTheReplyIsStillUnheard()
 			[]ActionKind{ActInterrupt, ActAnswer}},
 		{"words the controller let it keep the floor over still replace it", "my last name is Gonzalez",
 			harness.Continue, unheard, []ActionKind{ActInterrupt, ActAnswer}},
+		{"words the held reply happens to contain still replace it", "on the reservation",
+			harness.Continue, unheard, []ActionKind{ActInterrupt, ActAnswer}},
+		{"the same words are an echo of a reply that is being heard", "on the reservation",
+			harness.Continue, heard, []ActionKind{ActQueue}},
 		{"a murmur lets it be heard first", "mm hmm", harness.Continue, unheard, []ActionKind{ActQueue}},
 		{"the same addition to a reply that is being heard cuts it short", "my last name is Gonzalez",
 			harness.Shorten, s.talking(), []ActionKind{ActQueue, ActShorten}},

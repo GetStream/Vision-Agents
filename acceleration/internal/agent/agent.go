@@ -413,6 +413,9 @@ type Agent struct {
 	// gated is the reply to a caller's words that has not let out any of its audio yet, which
 	// makes it one the caller has heard nothing of.
 	gated heldReply
+	// unanswered is the caller's last words once the reply to them was given up unheard, while
+	// they are still the last entry of the history.
+	unanswered unansweredWords
 	// saying is the filtered generated text available for the current reply. It may be ahead
 	// of playout, so it gives overlap judgments and interruption context without claiming
 	// that every generated word reached the caller.
@@ -1513,23 +1516,60 @@ func (a *Agent) floor() floor {
 	state := floor{
 		Quiet:           !active,
 		Speaking:        a.speakingTurn,
-		Unheard:         active && a.speakingTurn != "" && a.gated.turn == a.speakingTurn && a.pendingTools == 0,
+		Unheard:         active && a.unheardLocked(),
 		Reply:           "",
 		LastSpokeAt:     a.lastSpokeAt,
 		LastHeardAt:     a.lastHeardAt,
 		LastParticipant: a.lastParticipant,
 	}
 	if active {
-		state.Reply = a.saying
-		if state.Reply == "" {
-			state.Reply = lastAssistantSaid(a.history)
-		}
+		state.Reply = a.saidLocked(a.history)
 	}
 	current := a.harness
 	a.mu.Unlock()
 
 	state.Delegating = current != nil && current.Delegating()
 	return state
+}
+
+// unheardLocked reports whether the reply the agent is on has let none of itself out, because its
+// first audio is held to the caller's silence. The caller holds the lock.
+func (a *Agent) unheardLocked() bool {
+	return a.speakingTurn != "" && a.gated.turn == a.speakingTurn && a.pendingTools == 0
+}
+
+// saidLocked is what the caller has heard the agent say, which is what their words are compared
+// with to tell an echo of the agent from something new. It is nothing while the reply is still
+// held: words the caller has been told none of cannot be the ones they are repeating. The caller
+// holds the lock.
+func (a *Agent) saidLocked(history []llm.Message) string {
+	if a.unheardLocked() {
+		return ""
+	}
+	if a.saying != "" {
+		return a.saying
+	}
+	return lastAssistantSaid(history)
+}
+
+// heardHistoryLocked is a copy of the conversation as the caller has lived it, which is what the
+// flow controller is shown: without the entry of a reply that is still held, because the caller
+// has been told none of it. The caller holds the lock.
+func (a *Agent) heardHistoryLocked() []llm.Message {
+	history := a.history
+	if a.unheardLocked() && heldEntry(history, a.gated.committed) {
+		history = history[:len(history)-1]
+	}
+	return llm.OmitImages(append([]llm.Message(nil), history...))
+}
+
+// heldEntry reports whether the last entry of the history is the one a reply that is still held
+// added to it, which is a reply that asked for no tools: committed is how long the history was
+// once the entry was added.
+func heldEntry(history []llm.Message, committed int) bool {
+	last := len(history) - 1
+	return committed > 0 && last == committed-1 &&
+		history[last].Role == llm.Assistant && len(history[last].ToolCalls) == 0
 }
 
 // act carries out what the conversation decided, in the order it decided it.
@@ -1753,15 +1793,13 @@ func (a *Agent) ask(ready candidate) {
 		a.mu.Unlock()
 		return
 	}
-	history := llm.OmitImages(append([]llm.Message(nil), a.history...))
+	history := a.heardHistoryLocked()
 	instructions := a.instructions()
 	// Pending tools still own the turn even after its spoken acknowledgement ends.
 	// The flow controller must be able to stop that work on a caller's correction.
 	speaking := a.generating || a.utterances > 0 || a.pendingTools > 0
-	reply := a.saying
-	if reply == "" {
-		reply = lastAssistantSaid(history)
-	}
+	reply := a.saidLocked(history)
+	unheard := a.unheardLocked()
 	anotherVoice := a.anotherVoiceLocked(ready)
 	a.mu.Unlock()
 
@@ -1797,6 +1835,7 @@ func (a *Agent) ask(ready candidate) {
 		Text:         ready.Text,
 		Speaking:     speaking,
 		Reply:        reply,
+		Unheard:      speaking && unheard,
 		Unfinished:   ready.Unfinished,
 		AnotherVoice: anotherVoice,
 	}
@@ -1859,10 +1898,19 @@ func (a *Agent) preview(ready candidate, current *harness.Harness, instructions 
 		a.mu.Unlock()
 		return
 	}
-	history := append(a.replayLocked(), a.userTurnLocked(ready.Text, nil))
+	history, interruptionNote := a.replayLocked(), a.pendingInterruptionNoteLocked()
+	// The reply is written for the history the turn will have, which is the same one
+	// respondTurn makes of these words, or the preview could not be taken over.
+	if a.restatesUnansweredLocked(ready.Text) {
+		history = history[:a.unanswered.asked-1]
+		if a.unanswered.noted {
+			interruptionNote = interruptedReplyNote
+		}
+	}
+	history = append(history, a.userTurnLocked(ready.Text, nil))
 	ctx, cancel := context.WithCancel(a.ctx)
 	turn := harness.Turn{ID: ready.ID, Instructions: instructions, History: history,
-		Note: joinNotes(a.pendingInterruptionNoteLocked(), a.duplex.Note(ready.Confidence))}
+		Note: joinNotes(interruptionNote, a.duplex.Note(ready.Confidence))}
 	p := &replyPreview{model: model, turn: turn, ready: make(chan previewResult, 1),
 		events: make(chan llm.Event, replyBuffer), ctx: ctx, cancel: cancel,
 		startedAt: time.Now()}
@@ -2303,6 +2351,7 @@ func (a *Agent) respondTurn(
 		a.mu.Unlock()
 		return stack.Wrap(errors.New("agent: not joined"))
 	}
+	a.replaceUnansweredLocked(text)
 	// Only an actual caller response consumes this note. A speculative preview sees the
 	// same context, but cannot spend it before the settled turn is accepted.
 	interruptionNote := a.pendingInterruptionNoteLocked()
@@ -2342,6 +2391,30 @@ func (a *Agent) respondTurn(
 		History:      history,
 		Note:         joinNotes(note, interruptionNote, a.duplex.Note(listened.confidence)),
 	}, text)
+}
+
+// restatesUnansweredLocked reports whether the words about to be added to the history are the
+// caller's earlier words restated or grown, which a reply was given up unheard for and which are
+// still the last entry. They then take the place of those words, so the history holds one turn
+// for what was said once; words that are something else follow them as a turn of their own. The
+// caller holds the lock.
+func (a *Agent) restatesUnansweredLocked(text string) bool {
+	earlier := a.unanswered
+	return earlier.asked > 0 && earlier.asked == len(a.history) &&
+		a.history[earlier.asked-1].Role == llm.User && a.history[earlier.asked-1].Content == earlier.text &&
+		words(earlier.text) != "" && words(text) != "" &&
+		revisesTranscript(strings.ToLower(earlier.text), strings.ToLower(text))
+}
+
+// replaceUnansweredLocked takes the caller's earlier words out of the history if the words about
+// to be added restate them, and gives back the note about an earlier reply that they spent. Either
+// way the earlier words are no longer waiting to be replaced. The caller holds the lock.
+func (a *Agent) replaceUnansweredLocked(text string) {
+	if a.restatesUnansweredLocked(text) {
+		a.history = a.history[:a.unanswered.asked-1]
+		a.interruptedReplyPending = a.interruptedReplyPending || a.unanswered.noted
+	}
+	a.unanswered = unansweredWords{}
 }
 
 // pendingInterruptionNoteLocked returns the private context note for the next caller
@@ -3767,6 +3840,7 @@ func (a *Agent) stopTurn(
 	a.utterances = 0
 	a.dropSpeech()
 	localStopAt := time.Now()
+	a.unanswered = unansweredWords{}
 	// Native replies already record their partial response in replyComplete. For a cascade,
 	// save an unfinished generated prefix once; a normal completed history entry is already
 	// present when the model won the race, but its audio may still have been interrupted.
@@ -3785,11 +3859,15 @@ func (a *Agent) stopTurn(
 			// finished reply added is taken back if nothing has been added since; one that
 			// asked for tools stays, because their results answer it, and the next turn is
 			// told it may not have been heard.
-			if last := len(a.history) - 1; committed > 0 && last == committed-1 &&
-				a.history[last].Role == llm.Assistant && len(a.history[last].ToolCalls) == 0 {
-				a.history = a.history[:last]
+			if heldEntry(a.history, committed) {
+				a.history = a.history[:len(a.history)-1]
 			} else if committed > 0 {
 				a.interruptedReplyPending = true
+			}
+			// The words it answered are still the last thing said in the conversation. If the
+			// next ones turn out to be the same utterance grown, they replace these.
+			if asked := held.asked; asked > 0 && asked == len(a.history) && a.history[asked-1].Role == llm.User {
+				a.unanswered = unansweredWords{asked: asked, text: a.history[asked-1].Content, noted: held.noted}
 			}
 		default:
 			if wasGenerating {

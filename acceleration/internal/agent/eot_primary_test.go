@@ -232,6 +232,48 @@ func (s *AgentSuite) primaryLateFloorChange(score float64) {
 		"the refreshed semantic fallback did not resolve the caller turn")
 }
 
+func (s *AgentSuite) TestPrimaryEOTLateScoreDoesNotQuoteAReplyThatIsStillHeld() {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseEOT := func() { releaseOnce.Do(func() { close(release) }) }
+	s.T().Cleanup(releaseEOT)
+	s.primaryEOTServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pcm, err := io.ReadAll(r.Body)
+		if err != nil {
+			s.T().Errorf("read EOT audio: %v", err)
+			return
+		}
+		close(started)
+		<-release
+		writeEOTResponse(s.T(), w, r.Header.Get("X-Request-ID"), len(pcm)/2, 0.9)
+	}))
+	s.join(false)
+	participant := stt.Participant{ID: "caller", UserID: "caller", Name: "Caller"}
+	s.primaryCandidate(participant, "please find a table")
+	select {
+	case <-started:
+	case <-time.After(settleFor):
+		s.FailNow("the primary EOT request did not start")
+	}
+
+	s.agent.mu.Lock()
+	s.agent.speakingTurn = "turn-held"
+	s.agent.generating = true
+	s.agent.saying = "the held reply"
+	s.agent.history = append(s.agent.history, llm.Message{Role: llm.Assistant, Content: "the held reply"})
+	s.agent.gated = heldReply{turn: "turn-held", committed: len(s.agent.history)}
+	s.agent.mu.Unlock()
+	releaseEOT()
+	s.eventually(func() bool { return len(s.flow.requests()) == 1 },
+		"a score received after the floor changed did not use semantic fallback")
+	question := s.flow.requests()[0].Input[0].Content
+	s.Contains(question, "The agent is speaking right now, though none of its reply has reached the caller yet.")
+	s.NotContains(question, "the held reply")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 },
+		"the refreshed semantic fallback did not resolve the caller turn")
+}
+
 func (s *AgentSuite) TestPrimaryEOTLateHighScoreUsesRefreshedSemanticFloorState() {
 	s.primaryLateFloorChange(0.9)
 }

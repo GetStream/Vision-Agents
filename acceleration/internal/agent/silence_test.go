@@ -734,6 +734,115 @@ func (s *AgentSuite) TestWordsAddedWhileTheReplyIsHeldReplaceItWhateverTheContro
 	}
 }
 
+// holdsThenHears has a caller say first and the reply to it be held for as long as the test lasts,
+// then say more, with the flow controller ruling the floor on the words that follow as given. It
+// returns the turn that was held once the words that came after it have been answered, which they
+// only are if the held reply was given up for them.
+func (s *AgentSuite) holdsThenHears(reply, first, floor, words string) (held string) {
+	window, longest := time.Minute, time.Minute
+	s.replySilence = &window
+	s.replySilenceMax = &longest
+	s.join(true)
+	s.flow.reply = []string{`{"disposition":"respond","floor":"continue"}`}
+	s.flow.then = []string{`{"disposition":"respond","floor":"` + floor + `"}`}
+	s.model.reply = []string{reply}
+	s.model.then = []string{"Noted."}
+	alice := stt.Participant{ID: "alice"}
+	s.speakAloud(alice)
+	s.says(alice, first)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+	s.replyIsHeld()
+	responding, _ := firstOf[Responding](s.reported())
+
+	s.says(alice, words)
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 },
+		"the new words were not answered in place of the held reply")
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 },
+		"the reply nobody had heard was not given up")
+	interrupted, _ := firstOf[Interrupted](s.reported())
+	s.Equal(responding.TurnID, interrupted.TurnID)
+	return responding.TurnID
+}
+
+func (s *AgentSuite) TestWordsTheHeldReplyContainsAreNotTakenForAnEchoOfIt() {
+	// The caller adds to what they asked with words the reply happens to repeat. They have heard
+	// none of it, so it is them speaking and not the line coming back, and the reply is replaced
+	// rather than left to be spoken before the answer to what they have just said.
+	for _, floor := range []string{"continue", "shorten", "stop"} {
+		s.Run(floor, func() {
+			s.SetupTest()
+			s.holdsThenHears("A table for two at seven, under what name?", "please find a table",
+				floor, "for two at seven")
+		})
+	}
+}
+
+func (s *AgentSuite) TestTheFlowControllerIsToldThatNothingOfAHeldReplyHasBeenHeard() {
+	s.holdsThenHears("A table for two at seven, under what name?", "please find a table",
+		"stop", "for two at seven")
+
+	asked := s.flow.requests()
+	s.Require().Len(asked, 2)
+	question := asked[1].Input[0].Content
+	s.Contains(question, "The agent is speaking right now, though none of its reply has reached the caller yet.")
+	s.NotContains(question, "under what name", "the held reply was quoted as what the agent has said")
+	s.NotContains(question, "speaking right now and has so far said")
+}
+
+func (s *AgentSuite) TestTheWordsAHeldReplyWasGivenUpForAreOneTurnWhenTheCallerWentOnWithThem() {
+	s.holdsThenHears("A table for two, under what name?", "please find a table",
+		"stop", "please find a table for four")
+
+	var said []string
+	for _, message := range s.agent.History() {
+		said = append(said, string(message.Role)+": "+message.Content)
+	}
+	s.Equal([]string{"user: please find a table for four", "assistant: Noted."}, said,
+		"the words the caller grew into were kept beside the shorter ones they started with")
+	var asked []string
+	for _, message := range s.model.requests()[1].Input {
+		if message.Role == llm.User {
+			asked = append(asked, message.Content)
+		}
+	}
+	s.Equal([]string{"please find a table for four"}, asked, "the model was shown the same words twice")
+}
+
+func (s *AgentSuite) TestTheWordsAHeldReplyWasGivenUpForAreKeptWhenTheCallerSaidSomethingElse() {
+	s.holdsThenHears("A table for two, under what name?", "please find a table",
+		"stop", "actually make it for four")
+
+	var said []string
+	for _, message := range s.agent.History() {
+		said = append(said, string(message.Role)+": "+message.Content)
+	}
+	s.Equal([]string{"user: please find a table", "user: actually make it for four", "assistant: Noted."}, said)
+}
+
+func (s *AgentSuite) TestAHeldReplyIsNotWhatTheCallerHasHeardTheAgentSay() {
+	s.join(true)
+	s.agent.mu.Lock()
+	s.agent.speakingTurn = "turn-1"
+	s.agent.generating = true
+	s.agent.saying = "A table for two at seven, under what name?"
+	s.agent.gated = heldReply{turn: "turn-1"}
+	s.agent.mu.Unlock()
+
+	held := s.agent.floor()
+	s.True(held.Unheard)
+	s.Equal("turn-1", held.Speaking)
+	s.Empty(held.Reply, "the caller was told none of what is held")
+
+	s.agent.mu.Lock()
+	s.agent.gated = heldReply{}
+	s.agent.mu.Unlock()
+
+	heard := s.agent.floor()
+	s.False(heard.Unheard)
+	s.Equal("A table for two at seven, under what name?", heard.Reply)
+}
+
 func (s *AgentSuite) TestAMurmurWhileTheReplyIsHeldLeavesItToBeHeardBeforeTheAnswerToTheMurmur() {
 	first, second := s.saysWhileTheReplyIsHeld("continue", "mm hmm")
 
@@ -1438,4 +1547,93 @@ func (s *AgentSuite) TestNewWordsWhileASentenceAfterAPauseIsHeldCancelItAndTheRe
 	s.Equal("actually make it for four", history[len(history)-1].Content)
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the new words were never answered")
 	s.Contains(s.model.requests()[1].Instructions, interruptedReplyNote)
+}
+
+func TestWordsThatRestateOnesTheirReplyWasGivenUpForTakeTheirPlace(t *testing.T) {
+	earlier := "Please find a table."
+	history := []llm.Message{
+		{Role: llm.Assistant, Content: "Welcome."},
+		{Role: llm.User, Content: earlier},
+	}
+	cases := []struct {
+		name     string
+		text     string
+		history  []llm.Message
+		replaced bool
+	}{
+		{"words grown from them", "please find a table for four", history, true},
+		{"the same words written differently", "Please, find a table", history, true},
+		{"the first of them again", "please find", history, true},
+		{"something else", "actually make it for four", history, false},
+		{"nothing", "  ", history, false},
+		{"after the conversation has moved on", "please find a table for four",
+			append(append([]llm.Message(nil), history...), llm.Message{Role: llm.Assistant, Content: "Noted."}), false},
+		{"after the words were changed", "please find a table for four",
+			[]llm.Message{history[0], {Role: llm.User, Content: "Please find a seat."}}, false},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			a := &Agent{
+				history:    append([]llm.Message(nil), test.history...),
+				unanswered: unansweredWords{asked: 2, text: earlier, noted: true},
+			}
+
+			require.Equal(t, test.replaced, a.restatesUnansweredLocked(test.text))
+			a.replaceUnansweredLocked(test.text)
+
+			require.Zero(t, a.unanswered, "words are only ever replaced by the next ones")
+			if test.replaced {
+				require.Equal(t, test.history[:1], a.history)
+				require.True(t, a.interruptedReplyPending, "the note those words spent was not given back")
+			} else {
+				require.Equal(t, test.history, a.history)
+				require.False(t, a.interruptedReplyPending)
+			}
+		})
+	}
+}
+
+func (s *AgentSuite) TestAPreviewOfWordsThatTakeThePlaceOfUnansweredOnesIsTheReplyTheTurnUses() {
+	s.join(true)
+	s.model.mu.Lock()
+	s.model.reply = []string{"For four, under what name?"}
+	s.model.mu.Unlock()
+
+	// The caller was answered once and the reply to their last words was given up unheard, after
+	// those words had spent the note that the answer before may not have been heard in full.
+	s.agent.mu.Lock()
+	s.agent.history = []llm.Message{
+		{Role: llm.Assistant, Content: "Welcome."},
+		{Role: llm.User, Content: "please find a table"},
+	}
+	s.agent.unanswered = unansweredWords{asked: 2, text: "please find a table", noted: true}
+	current := s.agent.harness
+	instructions := s.agent.instructions()
+	s.agent.mu.Unlock()
+
+	ready := candidate{
+		ID:          replyPrefix + "grown-test",
+		Participant: stt.Participant{ID: "alice"},
+		Text:        "please find a table for four",
+		ReadyAt:     time.Now(),
+		Confidence:  1,
+	}
+	s.agent.preview(ready, current, instructions)
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the preview was not sent")
+	preview := s.model.requests()[0]
+	s.Contains(preview.Instructions, interruptedReplyNote)
+	s.agent.mu.Lock()
+	waiting := s.agent.restatesUnansweredLocked(ready.Text)
+	s.agent.mu.Unlock()
+	s.True(waiting, "a preview must not spend the words it would replace")
+
+	s.Require().NoError(s.agent.respondCandidate(ready, ""))
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 },
+		"the preview did not become the reply")
+	s.Len(s.model.requests(), 1, "the preview was written for another history than the turn has, and was not taken over")
+	s.Equal([]llm.Message{
+		{Role: llm.Assistant, Content: "Welcome."},
+		{Role: llm.User, Content: "please find a table for four"},
+		{Role: llm.Assistant, Content: "For four, under what name?"},
+	}, s.agent.History())
 }
