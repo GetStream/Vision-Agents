@@ -146,6 +146,8 @@ from .harness import Harness
 from .health_status import HealthStatus
 from .health_status_dependencies import HealthStatusDependencies
 from .health_status_status import HealthStatusStatus
+from .history_message import HistoryMessage
+from .history_role import HistoryRole
 from .i_message_profile import IMessageProfile
 from .image_content_part import ImageContentPart
 from .image_content_part_type import ImageContentPartType
@@ -508,6 +510,8 @@ __all__ = (
     "HealthStatus",
     "HealthStatusDependencies",
     "HealthStatusStatus",
+    "HistoryMessage",
+    "HistoryRole",
     "IMessageProfile",
     "ImageContentPart",
     "ImageContentPartType",

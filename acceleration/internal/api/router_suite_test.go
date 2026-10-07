@@ -516,6 +516,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.vision = &scriptedLLM{reply: "Two roses.", sees: true}
 	reasoning.Register("vision", func(routing.Spec) (llmrouter.Provider, error) { return s.vision, nil })
 	reasoning.Register("echo", func(routing.Spec) (llmrouter.Provider, error) { return &scriptedLLM{echoes: true}, nil })
+	reasoning.Register("recites", func(routing.Spec) (llmrouter.Provider, error) { return &scriptedLLM{recites: true}, nil })
 	reasoning.Register("noted", func(routing.Spec) (llmrouter.Provider, error) { return &scriptedLLM{reply: "Noted."}, nil })
 
 	// A model that is a while in the writing, for a command that has to still be running
