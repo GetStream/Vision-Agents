@@ -2202,9 +2202,12 @@ type AgentConfig struct {
 	CreatedAt  time.Time                `json:"created_at"`
 
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
-	Dispatch  *AgentDispatch `json:"dispatch,omitempty"`
-	Greeting  *string        `json:"greeting,omitempty"`
-	Guardrail *string        `json:"guardrail,omitempty"`
+	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
+
+	// EpisodeCards Whether each phone call under this agent writes an episode card into the caller's omni-channel.
+	EpisodeCards *bool   `json:"episode_cards,omitempty"`
+	Greeting     *string `json:"greeting,omitempty"`
+	Guardrail    *string `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
 	Harness            *Harness     `json:"harness,omitempty"`
@@ -2256,8 +2259,9 @@ type AgentConfigPatch struct {
 	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
 
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
-	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
-	Greeting *string        `json:"greeting,omitempty"`
+	Dispatch     *AgentDispatch `json:"dispatch,omitempty"`
+	EpisodeCards *bool          `json:"episode_cards,omitempty"`
+	Greeting     *string        `json:"greeting,omitempty"`
 
 	// Guardrail A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail.
 	Guardrail *string `json:"guardrail,omitempty"`
@@ -2315,7 +2319,10 @@ type AgentConfigRequest struct {
 
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
-	Greeting *string        `json:"greeting,omitempty"`
+
+	// EpisodeCards Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. Off by default, and then a call runs as it always did. Left out on an update, the stored setting stays.
+	EpisodeCards *bool   `json:"episode_cards,omitempty"`
+	Greeting     *string `json:"greeting,omitempty"`
 
 	// Guardrail A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
 	Guardrail *string `json:"guardrail,omitempty"`

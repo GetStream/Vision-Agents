@@ -152,6 +152,28 @@ func (s *ConfigsSuite) TestAConfigLeavesNothingToDispatchUnlessItSaysSo() {
 	s.Equal(Disabled, value(value(patched.Dispatch).IncomingCall), "a setting left out keeps what is stored")
 }
 
+// Episode cards are off unless a config turns them on, and an update that leaves the setting
+// out keeps it, so a client that does not know it cannot turn the cards off by saving.
+func (s *ConfigsSuite) TestAConfigWritesNoEpisodeCardsUnlessItSaysSo() {
+	unnamed := s.createConfig(map[string]any{"name": "support"})
+	s.False(value(unnamed.EpisodeCards))
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch,
+		"/v1/agents/configs/"+unnamed.Id, map[string]any{"episode_cards": true}, &patched))
+	s.True(value(patched.EpisodeCards))
+
+	var saved AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut,
+		"/v1/agents/configs/"+unnamed.Id, map[string]any{"name": "support"}, &saved))
+	s.True(value(saved.EpisodeCards), "a setting left out on an update stays")
+
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+unnamed.Id, nil, &read))
+	s.True(value(read.EpisodeCards))
+}
+
 func (s *ConfigsSuite) TestADispatchSettingThatIsNeitherOnNorOffIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
 		map[string]any{"name": "support", "dispatch": map[string]any{"text": "sometimes"}})
