@@ -359,7 +359,7 @@ func (s *SyncSuite) TestASyncAddingAPluginABindingIsCalledIsRefused() {
 	s.sync(map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("slack")}})
 
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
-		map[string]any{"name": "support", "hash": "v2", "plugins": []string{"slack"}})
+		map[string]any{"name": "support", "hash": "v2", "agent_plugins": []string{"slack"}})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "plugin")
