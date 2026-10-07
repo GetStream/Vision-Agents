@@ -228,11 +228,14 @@ func (s *Server) putConnectionCredentials(ctx context.Context, request *putConne
 		return nil, invalidRequest("the credentials were refused: " + err.Error())
 	}
 	stale := false
+	var committed *core.CredentialState
 	err = s.credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
 		if state.Revision != sent.ExpectedRevision {
 			stale = true
 			return false, nil
 		}
+		// The credential store leaves the revision it committed here (core.CredentialStore).
+		committed = state
 		state.Credentials = credentials
 		state.Status = store.ConnectionConnected
 		state.LastError = ""
@@ -258,6 +261,8 @@ func (s *Server) putConnectionCredentials(ctx context.Context, request *putConne
 	if stale {
 		return nil, errStaleRevision
 	}
+	s.auditGrant(ctx, connection.CustomerID, connection.ID, connection.ConnectorID, connection.OwnerType,
+		store.AuditGrantCreated, store.AuditReasonCredentials, committed.Revision, "")
 	return s.getConnection(ctx, &connectionRequest{ID: connection.ID})
 }
 
