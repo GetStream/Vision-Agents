@@ -649,7 +649,7 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 			a.confident[gate.candidateID] = struct{}{}
 			a.mu.Unlock()
 		}
-		a.rule(decision)
+		a.ruleByScore(decision)
 		return
 	}
 	gate.approved = true
@@ -722,6 +722,9 @@ func canPassWithoutEOT(decision harness.Decided, floorQuiet bool) bool {
 }
 
 func (a *Agent) decideFromHarness(p *pipeline, current *harness.Harness, decision harness.Decided) {
+	if a.addresseeRuled(decision) {
+		return
+	}
 	floorQuiet := a.floor().Quiet
 	a.mu.Lock()
 	gate := a.eotGates[decision.CandidateID]

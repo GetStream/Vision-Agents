@@ -1807,6 +1807,19 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- In `primary` mode the agent no longer answers words that were not meant for it. The acoustic
+  score hears that an utterance ended, not who it was said to, and it decided the turn without
+  the flow controller, which used to be the one to set aside somebody else talking in the room
+  or a sound the transcriber wrote words for. A transcript with no words in it, only a note
+  about a sound or only hesitations, is now never put to the score or the controller and starts
+  no reply, nor does it stop one. For every other turn the score decides, the flow controller is
+  asked beside the reply, once per turn, and is never waited for: if it rules the words were not
+  meant for the agent before any of the reply has been let out, the reply is cancelled unheard
+  and the words are left out of the conversation. A ruling that is slow, fails or arrives after
+  the reply has begun to be heard changes nothing. Words in another voice were already never
+  decided by the score alone, and still go to the flow controller, which is told the voice
+  differs.
+
 - A voice agent with tools acts on a request once it has what the tools require. The model that
   answers a caller was given the tools and nothing about using them, so it kept collecting
   optional details, asked for a first name when a surname was given, asked whether to do what the

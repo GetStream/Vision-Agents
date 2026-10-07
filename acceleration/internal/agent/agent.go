@@ -333,6 +333,11 @@ type Agent struct {
 	// confident are the candidates whose turn such a score decided, until the ruling has been
 	// carried out.
 	confident map[string]struct{}
+	// addressed are the turns an acoustic score decided, by candidate, whose flow controller
+	// ruling on who the words were for is still to come. At most one is kept for a
+	// participant. The ruling is advisory: it can take back a reply nobody has heard, and
+	// does nothing once any of the reply is out.
+	addressed map[string]candidate
 	// generatingCancel abandons a conversation Create that has not returned a stream yet.
 	// Interrupt used to Close only an existing stream, so a reply waiting on headers kept
 	// the event loop and the floor until Cerebras answered.
@@ -675,6 +680,7 @@ func New(options Options) (*Agent, error) {
 		replyConfidentScore:   replyConfidentScore,
 		replyResumeGap:        replyResumeGap,
 		confident:             map[string]struct{}{},
+		addressed:             map[string]candidate{},
 	}
 	settling.previewing = agent.previewsEarly
 	// Only a call has a caller's audio to tell silence from, and it is listened to for the hold a
@@ -1545,11 +1551,143 @@ func (a *Agent) rule(ruling harness.Decided) {
 	a.mu.Unlock()
 }
 
-// rulePrimaryEOTLow is rule for the Wait an acoustic score below its threshold makes, which
-// the same words are put to again sooner than they are after the flow controller's.
-func (a *Agent) rulePrimaryEOTLow(ruling harness.Decided) {
-	a.act(a.converse.ruledPrimaryEOTLow(ruling, a.floor()))
+// ruleByScore is rule for a turn that an acoustic score decided, which no flow controller has
+// ruled on: a reply it starts is checked as checkAddressee describes.
+func (a *Agent) ruleByScore(ruling harness.Decided) {
+	a.actChecked(a.converse.Ruled(ruling, a.floor()))
 	a.releasePreview(ruling.CandidateID)
+	a.mu.Lock()
+	delete(a.confident, ruling.CandidateID)
+	a.mu.Unlock()
+}
+
+// rulePrimaryEOTLow is rule for the Wait an acoustic score below its threshold makes, which
+// the same words are put to again sooner than they are after the flow controller's. Words it
+// keeps waiting on are answered with a question once the patience for them runs out, and that
+// reply, like one a high score starts, has not been through the flow controller.
+func (a *Agent) rulePrimaryEOTLow(ruling harness.Decided) {
+	a.actChecked(a.converse.ruledPrimaryEOTLow(ruling, a.floor()))
+	a.releasePreview(ruling.CandidateID)
+}
+
+// actChecked carries out what the conversation decided about words that only an acoustic score
+// has ruled on, and checks the replies it started.
+func (a *Agent) actChecked(actions []Action) {
+	a.act(actions)
+	for _, action := range actions {
+		if action.Kind == ActAnswer {
+			a.checkAddressee(action.Candidate)
+		}
+	}
+}
+
+// checkAddressee asks the flow controller, beside a reply that only an acoustic score has cleared,
+// whether the words it answers were meant for the agent.
+//
+// The score hears that an utterance ended, not who it was said to, so in primary mode somebody
+// else talking in the room, or a sound the transcriber wrote words for, ends a turn as cleanly as
+// the caller does. The flow controller is what tells them apart, and it used to be asked about
+// every turn. It is asked about these ones too, but never waited for: the reply is already on its
+// way, a ruling that is slow or fails leaves it as it was, and a ruling only counts while none of
+// the reply has been let out. The hold of its first audio to the caller's silence is the time it
+// has to arrive, and a ruling after that is of no use to anybody: some of the reply has been
+// heard, and what it said is not taken back. Nothing is asked when no reply is being held.
+func (a *Agent) checkAddressee(ready candidate) {
+	a.mu.Lock()
+	current := a.harness
+	asked := a.gated.asked
+	if a.closed || current == nil || a.switching.Load() || a.gated.turn != ready.ID ||
+		asked < 1 || asked-1 > len(a.history) {
+		a.mu.Unlock()
+		return
+	}
+	// The words are put to the controller as they were before the turn was answered, after the
+	// conversation that came before them.
+	history := llm.OmitImages(append([]llm.Message(nil), a.history[:asked-1]...))
+	turn := harness.FlowTurn{
+		ID:           ready.ID,
+		Instructions: a.instructions(),
+		History:      history,
+		Participant:  participantName(ready.Participant),
+		Text:         ready.Text,
+		Reply:        lastAssistantSaid(history),
+		AnotherVoice: a.anotherVoiceLocked(ready),
+	}
+	var stale []string
+	for id, old := range a.addressed {
+		if old.Participant.ID == ready.Participant.ID {
+			delete(a.addressed, id)
+			stale = append(stale, id)
+		}
+	}
+	a.addressed[ready.ID] = ready
+	a.mu.Unlock()
+
+	// A ruling about earlier words of the same participant could not take back anything now.
+	for _, id := range stale {
+		_ = current.CancelDecision(id)
+	}
+	if err := current.Decide(turn); err != nil {
+		a.mu.Lock()
+		delete(a.addressed, ready.ID)
+		a.mu.Unlock()
+		a.logger.Debug("could not ask whom the words were meant for, the reply stands",
+			"candidate", ready.ID, "error", err)
+	}
+}
+
+// forgetAddressee lets go of the flow controller's ruling on whom a turn's words were meant for,
+// because the reply it could have taken back has begun to be heard or has been abandoned, and a
+// ruling that arrives now can change nothing. The controller is also told, so that a slow answer
+// is not still occupying it when the caller next needs it.
+func (a *Agent) forgetAddressee(turnID string) {
+	a.mu.Lock()
+	_, checking := a.addressed[turnID]
+	delete(a.addressed, turnID)
+	current := a.harness
+	a.mu.Unlock()
+	if checking && current != nil {
+		_ = current.CancelDecision(turnID)
+	}
+}
+
+// addresseeRuled takes the flow controller's ruling on whom a turn's words were meant for, if
+// that is what it is, and reports whether it was. Only an explicit ignore counts against the
+// reply: words that are background speech or addressed to somebody else. Anything else, a wait,
+// a clarification, a response, or a ruling that could not be made, leaves the reply as it is.
+func (a *Agent) addresseeRuled(ruling harness.Decided) bool {
+	a.mu.Lock()
+	ready, checking := a.addressed[ruling.CandidateID]
+	delete(a.addressed, ruling.CandidateID)
+	a.mu.Unlock()
+	if !checking {
+		return false
+	}
+	if ruling.Err != nil || !ruling.Valid() {
+		a.logger.Debug("the flow controller could not say whom the words were meant for, the reply stands",
+			"candidate", ready.ID, "error", ruling.Error())
+		return true
+	}
+	if ruling.Disposition != harness.Ignore {
+		return true
+	}
+	stopped, withdrawn := a.stopTurn(ready.Participant, ready.ID, time.Time{}, "addressee", "flow", true)
+	if !withdrawn {
+		a.logger.Debug("the words were ruled not meant for the agent after the reply had begun, so it stands",
+			"candidate", ready.ID)
+		return true
+	}
+	a.converse.decide(Action{
+		Kind:        ActIgnore,
+		Reason:      "the flow controller ruled the words were not meant for the agent, so the reply nobody had heard was withdrawn",
+		Candidate:   ready,
+		Participant: ready.Participant,
+		Text:        ready.Text,
+		TurnID:      ready.ID,
+		LatencyMs:   ruling.TookMs,
+	})
+	a.finishInterruptedTurn(stopped)
+	return true
 }
 
 // perform carries out one decision. Every branch here is mechanical: which provider to
@@ -1671,10 +1809,10 @@ func (a *Agent) ask(ready candidate) {
 
 // previewEligible reports whether a reply may be started for a candidate's words before they
 // are ruled on: the agent is not speaking, the words are a settled turn rather than a
-// provisional one, they are the caller's own, there is a voice to speak the reply, and no
-// policy has to clear them first.
+// provisional one, they are words and the caller's own, there is a voice to speak the reply,
+// and no policy has to clear them first.
 func (a *Agent) previewEligible(ready candidate, speaking, anotherVoice bool) bool {
-	return !speaking && !ready.Unfinished && !anotherVoice && !a.options.Text &&
+	return !speaking && !ready.Unfinished && !anotherVoice && !speechless(ready.Text) && !a.options.Text &&
 		(a.options.Guardrail == nil || a.options.Guardrail.Policy().Mode != guardrail.ModeBlocking)
 }
 
@@ -2172,6 +2310,12 @@ func (a *Agent) respondTurn(
 		a.interruptedReplyPending = false
 	}
 	a.history = append(a.history, a.userTurnLocked(text, images))
+	if a.gated.turn == turnID {
+		// Where the history stands now and whether these words spent the note, so that a
+		// reply nobody has heard can be taken back along with them.
+		a.gated.asked = len(a.history)
+		a.gated.noted = interruptionNote != ""
+	}
 	history := a.replayLocked()
 
 	a.speakingTurn = turnID
@@ -3003,6 +3147,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			}
 			a.mu.Lock()
 			stillActive := a.synthesisCtx[typed.SynthesisID] == publishCtx && publishCtx.Err() == nil
+			letOut := ""
 			if stillActive {
 				a.lastSpokeAt = time.Now()
 				// This records local edge admission after its backpressure wait, not when
@@ -3010,10 +3155,15 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				a.turns.firstAudio(turnOf(typed.SynthesisID), time.Now())
 				// Some of the reply is out, so it is no longer one nobody has heard.
 				if a.gated.turn == turnOf(typed.SynthesisID) {
+					letOut = a.gated.turn
 					a.gated = heldReply{}
 				}
 			}
 			a.mu.Unlock()
+			if letOut != "" {
+				// A ruling on whom the words were for can no longer take the reply back.
+				a.forgetAddressee(letOut)
+			}
 			if !stillActive {
 				a.turns.dropped(turnOf(typed.SynthesisID), typed.Audio.DurationMs())
 				return
@@ -3551,6 +3701,21 @@ func (a *Agent) stopPlayback(
 	path string,
 	source string,
 ) (interruption, bool) {
+	return a.stopTurn(participant, expectedTurn, receivedAt, path, source, false)
+}
+
+// stopTurn is stopPlayback, and with withdraw set it only abandons a reply none of which has been
+// let out, and takes the words it answered out of the conversation with it, as if they had not
+// been said. A reply that has begun to be heard, one that asked for tools, or a history that has
+// moved on since is left as it is, and nothing is stopped.
+func (a *Agent) stopTurn(
+	participant stt.Participant,
+	expectedTurn string,
+	receivedAt time.Time,
+	path string,
+	source string,
+	withdraw bool,
+) (interruption, bool) {
 	a.mu.Lock()
 	turnID := a.speakingTurn
 	if turnID == "" || expectedTurn == "" || turnID != expectedTurn || a.interruptDone != nil {
@@ -3563,14 +3728,22 @@ func (a *Agent) stopPlayback(
 		a.mu.Unlock()
 		return interruption{}, false
 	}
+	rewind := -1
+	if withdraw {
+		if rewind = a.withdrawableLocked(turnID); rewind < 0 {
+			a.mu.Unlock()
+			return interruption{}, false
+		}
+	}
 	wasGenerating := a.generating
 	partial := a.saying // Keep only the string header on the local-stop path.
 	// A reply still held to the caller's silence has let none of itself out, so the caller was
 	// told nothing of it and it goes into the history as nothing heard.
-	unheard := a.gated.turn == turnID
+	held := a.gated
+	unheard := held.turn == turnID
 	committed := 0
 	if unheard {
-		committed = a.gated.committed
+		committed = held.committed
 		a.gated = heldReply{}
 	}
 	a.abandoned[turnID] = struct{}{}
@@ -3599,6 +3772,14 @@ func (a *Agent) stopPlayback(
 	// present when the model won the race, but its audio may still have been interrupted.
 	if !a.nativeMode.Load() {
 		switch {
+		case withdraw:
+			// The words were not meant for the agent, so nothing of the exchange was ever part
+			// of the conversation. If these words spent the note that an earlier reply may
+			// not have been heard in full, the next ones are owed it.
+			a.history = a.history[:rewind]
+			if held.noted {
+				a.interruptedReplyPending = true
+			}
 		case unheard:
 			// What was generated was never said, so none of it is kept as said. The entry a
 			// finished reply added is taken back if nothing has been added since; one that
@@ -3633,6 +3814,29 @@ func (a *Agent) stopPlayback(
 	return stopped, true
 }
 
+// withdrawableLocked is how long the history was before the words a reply answered were added to
+// it, which is what taking the exchange back cuts it to, or -1 when the exchange cannot be taken
+// back: some of the reply has been let out, it asked for tools whose effects stand, or what is in
+// the history is not just the words and what the reply made of them. The caller holds the lock.
+func (a *Agent) withdrawableLocked(turnID string) int {
+	held := a.gated
+	if held.turn != turnID || held.asked < 1 || held.asked > len(a.history) ||
+		a.pendingTools > 0 || a.nativeMode.Load() || a.history[held.asked-1].Role != llm.User {
+		return -1
+	}
+	switch len(a.history) - held.asked {
+	case 0:
+		// The reply is still being written.
+		return held.asked - 1
+	case 1:
+		reply := a.history[held.asked]
+		if held.committed == len(a.history) && reply.Role == llm.Assistant && len(reply.ToolCalls) == 0 {
+			return held.asked - 1
+		}
+	}
+	return -1
+}
+
 func (a *Agent) finishInterruptedTurn(stopped interruption) {
 	a.abandon(stopped.turnID)
 	a.finishInterrupt(stopped)
@@ -3640,6 +3844,7 @@ func (a *Agent) finishInterruptedTurn(stopped interruption) {
 
 // finishInterrupt cancels provider work after local playback has stopped.
 func (a *Agent) finishInterrupt(stopped interruption) {
+	a.forgetAddressee(stopped.turnID)
 	a.finishGenerate(stopped.turnID)
 	a.logger.Debug("stopping mid-reply, the caller took the floor",
 		"turn", stopped.turnID, "participant", stopped.participant.ID)

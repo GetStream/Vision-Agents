@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -327,7 +328,7 @@ func (c *converse) overlap(transcript stt.Transcript, saying string, state floor
 	if strings.HasPrefix(state.Speaking, backchannelPrefix) {
 		return nil
 	}
-	if overlapNoise(saying) {
+	if overlapNoise(saying) || speechless(saying) {
 		return nil
 	}
 
@@ -397,7 +398,22 @@ func (c *converse) supersede(participant stt.Participant, candidateID string) Ac
 }
 
 // Settled registers a turn whose words have stopped changing and asks for a ruling on it.
+//
+// Words that are not words, a cough or a breath the transcriber wrote down, are not put to
+// anybody: neither the acoustic score nor the flow controller is asked, because whatever they
+// made of them there would be nothing to answer. They are let go of without being counted as
+// answered, so a transcriber that revises them into what was said next is still heard.
 func (c *converse) Settled(ready candidate, state floor) Action {
+	if speechless(ready.Text) {
+		c.cadence.Discard(ready.ID)
+		return c.decide(Action{
+			Kind:        ActIgnore,
+			Reason:      "the transcript holds no words, only a sound or a hesitation, so there is nothing to answer",
+			Candidate:   ready,
+			Participant: ready.Participant,
+			Text:        ready.Text,
+		})
+	}
 	c.mu.Lock()
 	if !state.Quiet {
 		if seen, ok := c.overlapping[ready.Participant.ID]; ok && seen.inflight != "" {
@@ -1121,11 +1137,69 @@ func overlapNoise(text string) bool {
 	return false
 }
 
+// markerWords is the longest a bracketed stretch of a transcript can be and still be taken for
+// a transcriber's note about a sound, "(clears throat)" or "[people talking in the
+// background]", rather than for words somebody said.
+const markerWords = 6
+
+// markerPairs are what a transcriber puts a note about a sound between.
+var markerPairs = map[rune]rune{'(': ')', '[': ']', '{': '}', '<': '>', '*': '*'}
+
+// withoutMarkers is the text with the transcriber's notes about sounds taken out. A note that
+// is never closed is words, because the transcript may have been cut off part way through
+// them, and so is a bracketed stretch too long to be a note.
+func withoutMarkers(text string) string {
+	var kept strings.Builder
+	rest := text
+	for len(rest) > 0 {
+		symbol, size := utf8.DecodeRuneInString(rest)
+		if closing, opens := markerPairs[symbol]; opens {
+			if end := strings.IndexRune(rest[size:], closing); end >= 0 &&
+				len(strings.Fields(rest[size:size+end])) <= markerWords {
+				rest = rest[size+end+utf8.RuneLen(closing):]
+				kept.WriteByte(' ')
+				continue
+			}
+		}
+		kept.WriteString(rest[:size])
+		rest = rest[size:]
+	}
+	return kept.String()
+}
+
+// speechless reports whether a settled transcript carries nothing anybody said: it is empty,
+// only punctuation, only the transcriber's notes about sounds, or only the hesitations a
+// transcriber writes down for a throat being cleared or a breath being taken. Whatever the
+// acoustic model made of the ending, there are no words for the agent to answer, so no reply
+// is started for them.
+//
+// A hesitation that can also be an answer is only taken for noise on its own. "Mm hmm" is a
+// yes, and so is a bare "cough" to somebody asked what their symptoms are, so neither is
+// here.
+func speechless(text string) bool {
+	heard := strings.Fields(strings.ToLower(words(withoutMarkers(text))))
+	if len(heard) == 1 {
+		switch heard[0] {
+		case "hm", "hmm", "hmmm", "mm", "mmm":
+			return true
+		}
+	}
+	for _, word := range heard {
+		switch word {
+		case "uh", "uhm", "um", "umm", "er", "erm", "eh", "ah", "ahem":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // substantiveBargeIn distinguishes a caller taking the floor from a brief acknowledgement
 // or a transcript that is simply echoing what the agent just said.
 func substantiveBargeIn(text, reply string) bool {
 	normalized := strings.ToLower(words(text))
-	if normalized == "" || shortBackchannel(normalized) || wordSequenceEcho(reply, normalized) {
+	if normalized == "" || speechless(text) || shortBackchannel(normalized) ||
+		wordSequenceEcho(reply, normalized) {
 		return false
 	}
 

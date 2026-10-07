@@ -728,6 +728,17 @@ Four decisions are worth knowing about:
   words; the flow controller's waits keep the 700 ms retry. Ineligible or active-floor
   candidates, explicit `gate` mode, and unavailable scores use the semantic flow controller.
   New words cancel stale decisions, and the reply kept for them, in both paths.
+  A score hears that an utterance ended, not who it was said to, so a reply it starts is
+  checked: the flow controller is asked whether the words were meant for the agent beside the
+  reply and never before it, once per decided turn. If it rules `ignore` before any of the
+  reply has been let out, which the hold to the caller's silence gives it the time for, the
+  reply is cancelled unheard and the words leave no trace in the conversation. A ruling that
+  is slow, fails, says anything else, or arrives once the reply has begun to be heard changes
+  nothing, and nothing is asked when no reply is held. Words in another voice never go to the
+  score: the flow controller rules on them, told the voice differs. A transcript with no words
+  in it, a note about a sound (`(coughs)`, `[BLANK_AUDIO]`) or only hesitations (`uh`, `um`,
+  `hmm`) is never put to the score or the controller and starts no reply, nor does it take the
+  floor from one.
 - **Words that stop mid-thought are waited on longer.** A transcript that ends on a comma, on
   `and`, `or`, `but` or `because`, or on a filled hesitation (`um`, `uh`, `er`) is a caller
   part way through a list or a clause far more often than one who has finished. It waits the

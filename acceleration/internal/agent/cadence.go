@@ -284,6 +284,18 @@ func (c *cadence) Resolve(candidateID string, wait bool) bool {
 // resolveAfter is Resolve with the pause before a Wait retries the same words chosen by the
 // caller. Zero leaves it at the configured retry.
 func (c *cadence) resolveAfter(candidateID string, wait bool, retryAfter time.Duration) bool {
+	return c.resolve(candidateID, wait, retryAfter, true)
+}
+
+// Discard lets go of a candidate whose words were not words, the way Resolve does a turn that
+// was dealt with, except that they are not remembered as an answer. A transcriber that
+// revises a hesitation into what was said after it would otherwise be taken for restating
+// something the agent had already answered, and the caller's turn would be lost to it.
+func (c *cadence) Discard(candidateID string) bool {
+	return c.resolve(candidateID, false, 0, false)
+}
+
+func (c *cadence) resolve(candidateID string, wait bool, retryAfter time.Duration, commit bool) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if retryAfter <= 0 {
@@ -300,9 +312,11 @@ func (c *cadence) resolveAfter(candidateID string, wait bool, retryAfter time.Du
 				"participant", current.participant.ID, "candidate", candidateID, "retry", retryAfter)
 			c.scheduleLocked(current, retryAfter)
 		} else {
-			current.committed = current.text
-			current.committedUtterance = current.utterance
-			current.committedAt = time.Now()
+			if commit {
+				current.committed = current.text
+				current.committedUtterance = current.utterance
+				current.committedAt = time.Now()
+			}
 			current.previews = 0
 			current.previewID = ""
 			current.text = ""

@@ -290,6 +290,8 @@ func (s *AgentSuite) TestPrimaryPartialGuardRejectsNoiseEchoOtherSpeakerAndBackc
 	}{
 		{name: "acknowledgement", transcript: partial("okay", "caller-voice", stt.ModeReplacement), state: state, mode: EOTModePrimary, eot: true},
 		{name: "noise", transcript: partial("cough", "caller-voice", stt.ModeReplacement), state: state, mode: EOTModePrimary, eot: true},
+		{name: "marked noise", transcript: partial("(background noise)", "caller-voice", stt.ModeReplacement), state: state, mode: EOTModePrimary, eot: true},
+		{name: "hesitations", transcript: partial("um um", "caller-voice", stt.ModeReplacement), state: state, mode: EOTModePrimary, eot: true},
 		{name: "exact word-boundary echo", transcript: partial("menu has three", "caller-voice", stt.ModeReplacement), state: state, mode: EOTModePrimary, eot: true},
 		{name: "different speaker", transcript: partial("actually stop the answer", "another-voice", stt.ModeReplacement), state: state, mode: EOTModePrimary, eot: true},
 		{name: "backchannel", transcript: partial("actually stop the answer", "caller-voice", stt.ModeReplacement), state: floor{Speaking: backchannelPrefix + "murmur", Reply: state.Reply}, mode: EOTModePrimary, eot: true},

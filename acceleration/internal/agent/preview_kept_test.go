@@ -251,7 +251,7 @@ func (s *AgentSuite) TestAWaitFromALowAcousticScoreKeepsThePreviewForTheNextScor
 		"the second score did not release the caller turn")
 	s.EqualValues(2, requests.Load(), "the words were scored twice")
 	s.Len(s.model.requests(), 1, "the reply started before the low score is the one that was spoken")
-	s.Empty(s.flow.requests(), "a valid score bypasses the semantic flow model")
+	s.flowOnlyBesideTheReply("a valid score does not wait for the semantic flow model")
 	s.Zero(s.previewsHeld())
 	s.Zero(s.keptPreviews())
 }

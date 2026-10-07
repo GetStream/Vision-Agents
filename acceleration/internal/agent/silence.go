@@ -204,6 +204,12 @@ type heldReply struct {
 	// committed is how long the history was once the reply's own entry had been added to it, so
 	// that a reply nobody heard any of can take that entry back. Zero until it was added.
 	committed int
+	// asked is how long the history was once the words the reply answers had been added to it,
+	// so that those words can be taken back with the reply. Zero until they were added.
+	asked int
+	// noted says those words spent the note that an earlier reply may not have been heard in
+	// full, which taking them back gives back.
+	noted bool
 }
 
 // heldTurn is the audio of a reply that is waiting for the caller to have been quiet, which is its

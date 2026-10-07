@@ -52,7 +52,7 @@ func (s *AgentSuite) TestPrimaryEOTHighAnswersWithoutCallingSemanticController()
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 },
 		"a high primary EOT score did not release the caller turn")
 	s.EqualValues(1, requests.Load())
-	s.Empty(s.flow.requests(), "a valid high EOT score must bypass the semantic flow model")
+	s.flowOnlyBesideTheReply("a valid high EOT score must not wait for the semantic flow model")
 	s.Contains(said(s.voice.spoken()), "Hello there.")
 }
 
@@ -97,7 +97,7 @@ func (s *AgentSuite) TestPrimaryEOTRetriesTransientFailureThenUsesHighScore() {
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 },
 		"a successful retry did not resolve the caller turn")
 	s.EqualValues(2, requests.Load())
-	s.Empty(s.flow.requests(), "a successful high score after a retry must not use semantic flow")
+	s.flowOnlyBesideTheReply("a successful high score after a retry must not wait for semantic flow")
 }
 
 func (s *AgentSuite) TestPrimaryEOTRetriesTwiceThenTreatsLowScoreAsWait() {
@@ -296,7 +296,7 @@ func (s *AgentSuite) TestPrimaryEOTRevisionCancelsOldCandidateAndDoesNotCallSema
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 },
 		"the revised candidate did not resolve from its high EOT score")
 	s.EqualValues(2, requests.Load(), "the revision should replace rather than duplicate the candidate")
-	s.Empty(s.flow.requests(), "primary high scores must not invoke the semantic controller")
+	s.flowOnlyBesideTheReply("primary high scores must not wait for the semantic controller")
 }
 
 func (s *AgentSuite) TestPrimaryEOTLateDiarizationUsesCurrentSpeakerForFallback() {

@@ -588,7 +588,7 @@ func (s *AgentSuite) answersAfterAScoreOf(score float64) time.Duration {
 	s.primaryCandidate(alice, "please find a table")
 
 	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply was never let out")
-	s.Empty(s.flow.requests(), "the acoustic score decided the turn")
+	s.flowOnlyBesideTheReply("the acoustic score decided the turn")
 	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
 	turn, _ := firstOf[Turn](s.reported())
 	queuedAt := turn.StartedAt.Add(time.Duration(turn.FirstFrameQueuedMs * float64(time.Millisecond)))

@@ -309,7 +309,7 @@ func (s *AgentSuite) TestAcceptedGrowthStopsTheOpeningReplyAndAnswersTheNewCandi
 		"accepted growth did not stop the stale opening reply")
 	s.False(s.agent.speaking(oldTurn))
 	s.Zero(countOf[Responded](s.reported()), "the held model reply has not produced a completed answer")
-	s.Empty(s.flow.requests(), "primary cadence growth bypasses semantic overlap asks")
+	s.Zero(s.overlapAsks(), "primary cadence growth bypasses semantic overlap asks")
 
 	s.ears.emitter.Send(stt.Transcript{
 		Participant: participant,
