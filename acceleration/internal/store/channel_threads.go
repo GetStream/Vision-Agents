@@ -23,7 +23,7 @@ var ErrNoChannelThread = errors.New("store: no external thread is linked to this
 const channelMessageKeep = 24 * time.Hour
 
 // ChannelThread links one external thread, such as a Slack thread, to the thread channel the
-// channel bridge writes it into (20261006235100_channel_threads.sql).
+// channel bridge writes it into (20261007003100_channel_threads.sql).
 type ChannelThread struct {
 	bun.BaseModel `bun:"table:channel_threads,alias:ct"`
 
@@ -88,7 +88,7 @@ func (s *Store) ChannelThread(ctx context.Context, channelID string) (ChannelThr
 }
 
 // What a claimed message of a thread channel is, each with its own ids
-// (20261006235100_channel_threads.sql).
+// (20261007003100_channel_threads.sql).
 const (
 	// ClaimInbound is a provider's message the channel bridge took, by the provider's id.
 	ClaimInbound = "inbound"
