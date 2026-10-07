@@ -412,13 +412,10 @@ func (a *Agent) holdAfterPause(out *outgoing, publishCtx context.Context, turnID
 // now is the time a reply's audio is let out at, which is the wall clock's unless a test moves
 // it.
 func (a *Agent) now() time.Time {
-	a.mu.Lock()
-	clock := a.clock
-	a.mu.Unlock()
-	if clock == nil {
-		return time.Now()
+	if clock := a.clock.Load(); clock != nil {
+		return (*clock)()
 	}
-	return clock()
+	return time.Now()
 }
 
 // holdsLaterSentences says whether the sentences of a reply that follow a pause are held to the

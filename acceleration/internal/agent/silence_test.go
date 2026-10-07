@@ -1390,9 +1390,8 @@ func (s *AgentSuite) pausesMidReply(pause time.Duration) (clock *movableClock, c
 	}
 	clock = newMovableClock()
 	s.join(true)
-	s.agent.mu.Lock()
-	s.agent.clock = clock.now
-	s.agent.mu.Unlock()
+	moved := clock.now
+	s.agent.clock.Store(&moved)
 	s.voice.mu.Lock()
 	s.voice.silent = true
 	s.voice.mu.Unlock()

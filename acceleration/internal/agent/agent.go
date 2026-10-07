@@ -327,9 +327,10 @@ type Agent struct {
 	// replyResumeGap is how long a reply must have been silent for the sound that follows to be
 	// held to the caller's silence as the first one is.
 	replyResumeGap time.Duration
-	// clock is where the time comes from for letting a reply's audio out, which is the wall clock
-	// unless a test moves it. It is read under mu.
-	clock func() time.Time
+	// clock is where the time comes from for letting a reply's audio out and for telling when
+	// the caller was last heard, which is the wall clock unless a test moves it. It is read
+	// without mu, because the cadence asks for it while holding its own lock.
+	clock atomic.Pointer[func() time.Time]
 	// confident are the candidates whose turn such a score decided, until the ruling has been
 	// carried out.
 	confident map[string]struct{}
@@ -691,7 +692,7 @@ func New(options Options) (*Agent, error) {
 	if !options.Text && (replySilence > 0 || (previewQuiet > 0 && previewDebounce > 0 && agent.previewsReplies())) {
 		agent.voiced = newVoiceActivity()
 		settling.quietFor = func(participantID string) time.Duration {
-			return agent.voiced.quietFor(participantID, time.Now())
+			return agent.voiced.quietFor(participantID, agent.now())
 		}
 	}
 
@@ -1259,7 +1260,7 @@ func (a *Agent) consumeEdge() {
 		a.retainEOTAudioTimed(inbound.Participant.ID, inbound.Audio.SampleRate, inbound.Audio.Channels,
 			inbound.Audio.Samples, inbound.Timing)
 		if a.voiced != nil {
-			a.voiced.observe(inbound.Participant.ID, inbound.Audio, time.Now())
+			a.voiced.observe(inbound.Participant.ID, inbound.Audio, a.now())
 		}
 		listener, err := a.listen(inbound.Participant)
 		if err != nil {
