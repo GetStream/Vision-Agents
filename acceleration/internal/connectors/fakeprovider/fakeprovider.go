@@ -122,6 +122,13 @@ const (
 	// «Claims challenges, claims requests and client capabilities») until the token came
 	// from a consent that passed those claims.
 	ClaimsChallenge Personality = "claims_challenge"
+	// BareChallenge answers an MCP request whose token it does not take with 401 and a Bearer
+	// challenge that holds resource_metadata alone, with no error code, as MCP servers do:
+	// «Invalid or expired tokens MUST receive a HTTP 401 response», and the spec's 401 names
+	// the resource metadata, not an error (MCP 2026-07-28, Authorization, «Token Handling»
+	// and the example under «Scope Selection Strategy»). Without it the fake answers
+	// error="invalid_token" (RFC 6750 §3.1).
+	BareChallenge Personality = "bare_challenge"
 	// RateLimited answers MCP requests and refresh grants with 429 (RFC 6585 §4) and
 	// Retry-After (RFC 9110 §10.2.3) of RetryAfter. A refresh it refuses changes nothing.
 	RateLimited Personality = "rate_limited"

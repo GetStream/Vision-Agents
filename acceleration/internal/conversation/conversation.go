@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -159,8 +160,10 @@ type Service struct {
 	pins   Pins
 	all    map[known]*Conversation
 	logger *slog.Logger
-	// finished is told of every reply finished in a thread channel (OnFinishedReply).
-	finished func(FinishedReply)
+	// finished is told of every reply finished in a thread channel (OnFinishedReply). It is
+	// apart from mu, which OpenInApp holds across Stream Chat calls of up to its 20 s budget,
+	// so a finished reply in one conversation never waits on another opening.
+	finished atomic.Pointer[func(FinishedReply)]
 }
 
 // known is how the service finds a conversation it holds: by its customer and its channel
@@ -222,6 +225,32 @@ const ThreadChannelPrefix = "thread-"
 // command channel, or a thread channel.
 var conversationID = regexp.MustCompile(`^(support|thread)-[a-f0-9-]{36}$`)
 
+// threadOpen is the context key RouterOpensThread keeps its channel under.
+type threadOpen struct{}
+
+// RouterOpensThread is ctx carrying the Router's word that it opens the conversation on the
+// thread channel cid itself, having found the channel's channel_threads row
+// (internal/api/threadhooks.go). A conversation id a request names is a session command
+// channel, as it always was: only a ctx from here opens one on a thread channel, and only on
+// the one channel it names.
+func RouterOpensThread(ctx context.Context, cid string) context.Context {
+	return context.WithValue(ctx, threadOpen{}, cid)
+}
+
+// Openable is whether a conversation may be opened on cid: a session command channel, or the
+// thread channel ctx says the Router opens (RouterOpensThread).
+func Openable(ctx context.Context, cid string) bool {
+	id := strings.TrimPrefix(cid, "agent:")
+	if cid != "agent:"+id {
+		return false
+	}
+	if validID.MatchString(id) {
+		return true
+	}
+	vouched, _ := ctx.Value(threadOpen{}).(string)
+	return vouched == cid && strings.HasPrefix(id, ThreadChannelPrefix) && conversationID.MatchString(id)
+}
+
 // FinishedReply is an agent's reply in a thread channel, once its final text is stored in
 // Stream Chat: what the channel bridge sends on to the external thread.
 type FinishedReply struct {
@@ -237,16 +266,7 @@ type FinishedReply struct {
 // such as one a login later marks, is told again, so fn drops one it has seen. Set it before
 // any conversation is opened.
 func (s *Service) OnFinishedReply(fn func(FinishedReply)) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.finished = fn
-}
-
-// finishedReplies is OnFinishedReply's fn, or nil.
-func (s *Service) finishedReplies() func(FinishedReply) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.finished
+	s.finished.Store(&fn)
 }
 
 // SessionCommandChannel reserves the persistent conversation namespace for the
@@ -352,7 +372,7 @@ func (s *Service) OpenInApp(ctx context.Context, app int64, customer, agentID, c
 		cid = "agent:support-" + uuid.NewString()
 	}
 	id := strings.TrimPrefix(cid, "agent:")
-	if cid != "agent:"+id || !conversationID.MatchString(id) {
+	if !Openable(ctx, cid) {
 		return nil, nil, false, stack.Wrap(errors.New("invalid conversation channel"))
 	}
 	if c := s.all[known{customer, cid}]; c != nil {
@@ -519,6 +539,8 @@ func channelCustom(custom map[string]any) map[string]any {
 // An empty field is left as it was rather than cleared.
 func (s *Service) Describe(ctx context.Context, customer, cid, title, description string) error {
 	id := strings.TrimPrefix(cid, "agent:")
+	// A thread channel is named too: Describe is told only the channel of a conversation a
+	// session holds (internal/session), which OpenInApp already let through (Openable).
 	if cid != "agent:"+id || !conversationID.MatchString(id) {
 		return stack.Wrap(errors.New("invalid conversation channel"))
 	}
@@ -577,7 +599,7 @@ func ownedBy(custom map[string]any, customer, agentID, caller string) error {
 // session left to reach reconciles the same command id instead of reopening one to ask.
 func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, caller, commandID string) (CommandReceipt, error) {
 	id := strings.TrimPrefix(cid, "agent:")
-	if cid != "agent:"+id || !conversationID.MatchString(id) || !validCommandID.MatchString(commandID) {
+	if cid != "agent:"+id || !validID.MatchString(id) || !validCommandID.MatchString(commandID) {
 		return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
 	}
 	s.mu.Lock()
@@ -688,7 +710,7 @@ func (s *Service) historyIn(ctx context.Context, client *getstream.Stream, custo
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	id := strings.TrimPrefix(cid, "agent:")
-	if cid != "agent:"+id || !conversationID.MatchString(id) {
+	if !Openable(ctx, cid) {
 		return Page{}, stack.Wrap(errors.New("invalid conversation channel"))
 	}
 	limit := 100
@@ -1668,8 +1690,10 @@ func (c *Conversation) flush() bool {
 		}
 		finished, isFinished := c.finishedReply(op)
 		c.mu.Unlock()
-		if fn := c.service.finishedReplies(); isFinished && fn != nil {
-			fn(finished)
+		// The hook is read without the service's lock, so a write never waits on another
+		// conversation opening.
+		if fn := c.service.finished.Load(); isFinished && fn != nil {
+			(*fn)(finished)
 		}
 	}
 }

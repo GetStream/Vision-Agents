@@ -288,6 +288,9 @@ func (a *Agent) Tools() []string {
 	return names
 }
 
+// ToolDefinitions is what the model is offered on this call, as it is sent.
+func (a *Agent) ToolDefinitions() []llm.Tool { return a.availableTools().Requests() }
+
 // transfer hands the caller to a human and leaves.
 //
 // A warm transfer waits for the human to be on the call before saying anything, because a

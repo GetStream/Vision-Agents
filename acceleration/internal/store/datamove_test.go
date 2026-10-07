@@ -685,3 +685,54 @@ func (s *DataMoveSuite) seedConnectorConnection(store *Store, customerID string)
 	s.Require().NoError(err)
 	return id
 }
+
+func (s *DataMoveSuite) TestAMovedSIPTrunkArrivesWithoutItsPassword() {
+	trunk := &SIPTrunk{
+		ID: newID(), CustomerID: "acme", Name: "main", Host: "trunk.example.com", Port: 5060,
+		Transport: "tcp", Username: "agent", PasswordSealed: []byte("sealed here"),
+		PasswordKEKVersion: 1, Codecs: []string{"PCMU"},
+	}
+	s.Require().NoError(s.source.CreateSIPTrunk(s.ctx, trunk))
+
+	trunks := s.export("acme").of("sip_trunks")
+	s.Require().Len(trunks, 1)
+	s.NotContains(trunks[0], "password_sealed", "a sealed password is not part of a customer's data")
+
+	s.move("acme", "acme")
+
+	moved, err := s.destination.SIPTrunk(s.ctx, "acme", trunk.ID)
+	s.Require().NoError(err)
+	s.Empty(moved.PasswordSealed)
+	s.Equal(0, moved.PasswordKEKVersion)
+	s.Equal("trunk.example.com", moved.Host)
+}
+
+func (s *DataMoveSuite) TestAnImportedNumberCannotPointAtAnotherCustomersTrunk() {
+	trunk := &SIPTrunk{
+		ID: newID(), CustomerID: "other", Name: "main", Host: "trunk.example.com", Port: 5060,
+		Transport: "tcp", Username: "agent", PasswordSealed: []byte{}, Codecs: []string{"PCMU"},
+	}
+	s.Require().NoError(s.destination.CreateSIPTrunk(s.ctx, trunk))
+
+	own := s.trunkOf(s.source, "acme")
+	s.Require().NoError(s.source.AddTrunkNumber(s.ctx, &PhoneNumber{
+		E164: "+15550000109", Country: "US", CustomerID: "acme", SIPTrunkID: own.ID,
+	}))
+	numbers := s.export("acme").of("phone_numbers")
+	s.Require().Len(numbers, 1)
+	numbers[0]["sip_trunk_id"] = trunk.ID
+	row, err := json.Marshal(numbers[0])
+	s.Require().NoError(err)
+
+	err = s.destination.ImportRow(s.ctx, "acme", "phone_numbers", row)
+	s.True(isViolation(err, foreignKeyViolation), "a number on somebody else's trunk is refused: %v", err)
+}
+
+func (s *DataMoveSuite) trunkOf(store *Store, customerID string) *SIPTrunk {
+	trunk := &SIPTrunk{
+		ID: newID(), CustomerID: customerID, Name: "main", Host: "trunk.example.com", Port: 5060,
+		Transport: "tcp", Username: "agent", PasswordSealed: []byte{},
+	}
+	s.Require().NoError(store.CreateSIPTrunk(s.ctx, trunk))
+	return trunk
+}

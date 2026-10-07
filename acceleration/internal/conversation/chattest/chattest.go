@@ -26,6 +26,8 @@ type store struct {
 	messages map[string]map[string]any
 	users    map[string]map[string]any
 	trunks   map[string]map[string]any
+	// calls are the participant ids in each call's session, by "<type>:<id>".
+	calls    map[string][]string
 	rules    map[string]map[string]any
 	order    []string
 	now      func() time.Time
@@ -35,6 +37,18 @@ type store struct {
 	keyed map[string]App
 	// asked is every request served, with the key it was made with.
 	asked []Request
+	// held is the request Hold keeps waiting, under a lock of its own: mu is taken only once
+	// a request is served, so a held request leaves every other one to be answered.
+	holdMu sync.Mutex
+	held   *held
+}
+
+// held is one request Hold keeps waiting: the path it ends in, a channel closed once it
+// waits, and one closed to let it go on.
+type held struct {
+	suffix         string
+	waiting, letGo chan struct{}
+	once           sync.Once
 }
 
 // Request is one request the server was sent, and the api key it was made with.
@@ -76,6 +90,7 @@ type Server struct {
 	// URL is where it is served, for a client of one's own to be pointed at.
 	URL string
 	db  *store
+	t   *testing.T
 }
 
 // NewServer serves Chat from memory for the life of the test.
@@ -84,7 +99,7 @@ func NewServer(t *testing.T) *Server {
 	db := &store{
 		channels: map[string]map[string]any{}, messages: map[string]map[string]any{},
 		users: map[string]map[string]any{}, trunks: map[string]map[string]any{},
-		rules: map[string]map[string]any{}, now: time.Now,
+		rules: map[string]map[string]any{}, calls: map[string][]string{}, now: time.Now,
 		app: App{ID: 1, ChannelTypes: map[string]map[string][]string{"agent": safeGrants}, CallTypes: []string{"agent"}},
 	}
 	server := httptest.NewServer(http.HandlerFunc(db.serve))
@@ -93,7 +108,7 @@ func NewServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("chattest: %v", err)
 	}
-	return &Server{Client: client, URL: server.URL, db: db}
+	return &Server{Client: client, URL: server.URL, db: db, t: t}
 }
 
 // Client serves Chat from memory for the life of the test.
@@ -189,6 +204,14 @@ func (s *Server) Members(id string) []string {
 	return ids
 }
 
+// PutCall puts a call in session with the participants named, for a reader of the call's
+// session to find: a SIP caller is sip-<number>.
+func (s *Server) PutCall(callType, id string, participants ...string) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.db.calls[callType+":"+id] = participants
+}
+
 // Trunks are the ids of the SIP trunks the app holds now.
 func (s *Server) Trunks() []string {
 	s.db.mu.Lock()
@@ -201,6 +224,34 @@ func (s *Server) Rules() []string {
 	s.db.mu.Lock()
 	defer s.db.mu.Unlock()
 	return slices.Sorted(maps.Keys(s.db.rules))
+}
+
+// Hold keeps the next request whose path ends in suffix waiting, before it is served, until
+// release is called: a Stream Chat call that takes as long as the test needs. waiting is
+// closed once that request waits. Every other request is answered as before. The request is
+// let go at the end of the test at the latest, so the server can close.
+func (s *Server) Hold(suffix string) (waiting <-chan struct{}, release func()) {
+	h := &held{suffix: suffix, waiting: make(chan struct{}), letGo: make(chan struct{})}
+	release = func() { h.once.Do(func() { close(h.letGo) }) }
+	s.t.Cleanup(release)
+	s.db.holdMu.Lock()
+	defer s.db.holdMu.Unlock()
+	s.db.held = h
+	return h.waiting, release
+}
+
+// wait keeps the request Hold asked for waiting until it is let go.
+func (db *store) wait(path string) {
+	db.holdMu.Lock()
+	h := db.held
+	if h == nil || !strings.HasSuffix(path, h.suffix) {
+		db.holdMu.Unlock()
+		return
+	}
+	db.held = nil
+	db.holdMu.Unlock()
+	close(h.waiting)
+	<-h.letGo
 }
 
 // unique is an id nothing else has.
@@ -260,6 +311,7 @@ func (db *store) messagesIn(id string) []map[string]any {
 }
 
 func (db *store) serve(w http.ResponseWriter, r *http.Request) {
+	db.wait(r.URL.Path)
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
@@ -299,6 +351,19 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result["name"], result["grants"] = name, grants
+	case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/video/call/"):
+		// A call nobody put is answered as one with nobody in session, which is what a call
+		// whose session has not started reads as.
+		cid := parts[len(parts)-2] + ":" + parts[len(parts)-1]
+		call := map[string]any{"cid": cid, "type": parts[len(parts)-2], "id": parts[len(parts)-1]}
+		if ids, ok := db.calls[cid]; ok {
+			participants := []map[string]any{}
+			for _, id := range ids {
+				participants = append(participants, map[string]any{"user": map[string]any{"id": id}, "role": "user"})
+			}
+			call["session"] = map[string]any{"id": "session-" + cid, "participants": participants}
+		}
+		result["call"] = call
 	case strings.HasSuffix(r.URL.Path, "/sip/inbound_trunks") && r.Method == http.MethodPost:
 		// Stream's ids are unique across every app, which is what lets a test tell one app's
 		// trunk from another's.

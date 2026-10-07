@@ -76,6 +76,16 @@ const (
 // types declared in this package are the session's own.
 type Event any
 
+// ConnectorUnavailable is an optional connector binding the session opened without, and why:
+// a stable code, never a credential or another person's connection id. A watcher is sent
+// every one when it attaches, since they say what the session can do for as long as it runs.
+type ConnectorUnavailable struct {
+	// Name is the binding's alias.
+	Name        string
+	ConnectorID string
+	Reason      string
+}
+
 // CommandStopped is how one named command ended after somebody asked for it to stop. It
 // is separate from the receipt a submission returns, because a watcher has to tell a
 // command it asked to stop from a command that was just accepted.
@@ -134,6 +144,9 @@ type Session struct {
 	unwatched     *time.Timer
 	state         State
 	modality      string
+	// connectorsUnavailable are the optional connector bindings the session opened without,
+	// fixed when it was created.
+	connectorsUnavailable []ConnectorUnavailable
 
 	// said is the conversation as it happens, kept so a finished call can be reviewed
 	// without reading back what was written to chat. It has a lock of its own so
@@ -141,8 +154,8 @@ type Session struct {
 	saidMu sync.Mutex
 	said   []spoken
 
-	// naming is how an unnamed persistent conversation gets its title. Nil when the caller
-	// named it, or when there is no channel to name.
+	// naming is how a persistent conversation gets its title from what was said. Nil when
+	// there is no channel to name.
 	naming *naming
 	// labelMu guards title and description, which are what naming last called the
 	// conversation, over the spec's own. It also guards the spec's labels, which Describe
@@ -355,6 +368,9 @@ func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
 	if s.unwatched != nil {
 		s.unwatched.Stop()
 		s.unwatched = nil
+	}
+	for _, unavailable := range s.connectorsUnavailable {
+		attached.send(unavailable)
 	}
 	if replayVoiceTools && !s.spec.Text && s.persisted == nil && s.tools != nil {
 		for _, pending := range s.tools.Pending() {
@@ -687,6 +703,9 @@ func (s *Session) Busy() bool { return s.voiceAgent.Busy() }
 
 // Tools names what the agent may do rather than say.
 func (s *Session) Tools() []string { return s.voiceAgent.Tools() }
+
+// ToolDefinitions is what the conversation model is offered, as it is sent.
+func (s *Session) ToolDefinitions() []llm.Tool { return s.voiceAgent.ToolDefinitions() }
 
 // SetInstructions changes what the agent is told to be from the next turn on.
 func (s *Session) SetInstructions(text string) {

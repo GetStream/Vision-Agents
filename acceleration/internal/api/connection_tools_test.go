@@ -252,6 +252,26 @@ func (s *ConnectionToolsSuite) TestATokenTheProviderRefusesMovesTheConnectionToN
 	s.Equal(ConnectionStatus(store.ConnectionNeedsReauthorization), s.get(id).Status)
 }
 
+// TestABare401WhoseRefreshIsRefusedValidatesAsNeedsReauthorization: the MCP server refuses an
+// oauth2_code token with a bare 401 (resource_metadata, no error), as MCP servers do. The
+// transport refreshes, the refresh is refused with invalid_grant, and the validate reports
+// what the connection now needs instead of failed.
+func (s *ConnectionToolsSuite) TestABare401WhoseRefreshIsRefusedValidatesAsNeedsReauthorization() {
+	s.provider.Use(fakeprovider.ClientCredentials, fakeprovider.BareChallenge, fakeprovider.InvalidGrant)
+	s.T().Cleanup(func() { s.provider.Use(fakeprovider.ClientCredentials) })
+	id := s.connection(oauth2code.Name)
+	grant := s.importedGrant("not-a-token-the-fake-issued", "chat:write")
+	grant["values"].(map[string]string)[oauth2code.SuppliedRefreshToken] = "nor-a-refresh-token-it-issued"
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", grant, nil))
+	refreshes := s.provider.Refreshes()
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Equal(ConnectionStatus(store.ConnectionNeedsReauthorization), s.get(id).Status)
+	s.Equal(refreshes+1, s.provider.Refreshes(), "the bare 401 was renewed first")
+}
+
 // TestAGrantLackingAScopeAToolNeedsValidatesAsNeedsScopesAndNamesIt is T31's acceptance: a
 // Slack-shaped connection granted chat:write only, with a tool that needs channels:read.
 func (s *ConnectionToolsSuite) TestAGrantLackingAScopeAToolNeedsValidatesAsNeedsScopesAndNamesIt() {
@@ -383,15 +403,20 @@ func (s *ConnectionToolsSuite) get(id string) Connection {
 	return connection
 }
 
-// issue is an access token from the fake's client credentials grant (RFC 6749 section 4.4),
-// which its MCP endpoint takes.
+// issue is an access token from the fake's client credentials grant.
 func (s *ConnectionToolsSuite) issue() string {
+	return issuedToken(&s.RouterSuite, s.provider)
+}
+
+// issuedToken is an access token from provider's client credentials grant (RFC 6749 section
+// 4.4), which its MCP endpoint takes.
+func issuedToken(s *RouterSuite, provider *fakeprovider.Server) string {
 	form := url.Values{"grant_type": {"client_credentials"}}
-	request, err := http.NewRequest(http.MethodPost, s.provider.URL+fakeprovider.PathToken, strings.NewReader(form.Encode()))
+	request, err := http.NewRequest(http.MethodPost, provider.URL+fakeprovider.PathToken, strings.NewReader(form.Encode()))
 	s.Require().NoError(err)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	request.SetBasicAuth(s.provider.ClientID, s.provider.ClientSecret)
-	response, err := s.provider.Client().Do(request)
+	request.SetBasicAuth(provider.ClientID, provider.ClientSecret)
+	response, err := provider.Client().Do(request)
 	s.Require().NoError(err)
 	defer response.Body.Close()
 	var token struct {

@@ -40,6 +40,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/slackapps"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -247,6 +248,10 @@ type Options struct {
 	// ChannelBridge takes the messages a verified provider event carries
 	// (internal/channelbridge). Absent, they are logged and dropped.
 	ChannelBridge ChannelBridge
+	// EventForwarder forwards a provider app's verified deliveries to the customer's event
+	// destinations, and serves the endpoints that manage them (internal/eventforward). Absent,
+	// nothing is forwarded and the destination endpoints say forwarding is not enabled.
+	EventForwarder *eventforward.Forwarder
 	// SlackApps creates, updates and deletes the Slack app the router keeps for a customer
 	// (managed, T54). Absent, the provider app paths say connectors are not enabled.
 	SlackApps *slackapps.Client
@@ -315,6 +320,7 @@ type Server struct {
 	connectorResolver core.Resolver
 	eventSecrets      EventSecretLookup
 	channelBridge     ChannelBridge
+	eventForwarder    *eventforward.Forwarder
 	// slackApps and operatorApps serve the provider app paths.
 	slackApps    *slackapps.Client
 	operatorApps OperatorAppLookup
@@ -435,6 +441,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		connectorResolver: options.ConnectorResolver,
 		eventSecrets:      options.ConnectorEventSecrets,
 		channelBridge:     options.ChannelBridge,
+		eventForwarder:    options.EventForwarder,
 		slackApps:         options.SlackApps,
 		operatorApps:      options.OperatorProviderApps,
 		trusted:           options.TrustedProxies,

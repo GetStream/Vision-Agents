@@ -13,6 +13,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -361,6 +362,11 @@ func (s *Server) deleteConnection(ctx context.Context, request *deleteConnection
 	}
 	if err != nil {
 		return nil, err
+	}
+	// Its outbound client goes too. A session holding a copy is refused by the resolver, and
+	// by its dispatcher's check before every call.
+	if s.connectorTransports != nil {
+		s.connectorTransports.Close(core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID})
 	}
 	return nil, nil
 }

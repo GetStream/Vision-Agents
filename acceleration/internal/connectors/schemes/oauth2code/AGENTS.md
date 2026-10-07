@@ -67,7 +67,9 @@ Classify(resp, body, err)
              server_error, internal_error, fatal_error -> Uncertain; insufficient_scope -> ScopeRequired;
              invalid_client, unauthorized_client, unsupported_grant_type, invalid_scope -> Transient; any other
              code is a resource's own error and falls through
-  status     503 Transient; other 5xx Uncertain; anything else OK
+  status     503 Transient; other 5xx Uncertain; a 401 to a request that carried a bearer token
+             (resp.Request) InvalidGrant, as an MCP server's bare challenge; anything else OK, a token
+             endpoint's bare 401 among it (its request authenticates the client, never with Bearer)
 
 ClassifyStatic(resp, body, err)  Classify, then a 401 it found nothing in -> InvalidGrant; the Classify of
                                  api_key, bearer and none, whose credential nothing renews

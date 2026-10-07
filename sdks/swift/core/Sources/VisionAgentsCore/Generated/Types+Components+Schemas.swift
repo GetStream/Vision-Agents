@@ -338,6 +338,10 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/greeting`.
             internal var greeting: Swift.String?
+            /// The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/history`.
+            internal var history: [Components.Schemas.HistoryMessage]?
             /// The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/id`.
@@ -420,7 +424,7 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/text`.
             internal var text: Swift.Bool?
-            /// What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is called is a label on it rather than part of it.
+            /// What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/title`.
             internal var title: Swift.String?
@@ -460,6 +464,7 @@ extension Components {
             ///   - custom: Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing.
             ///   - description: A longer note about the conversation, searched alongside the title.
             ///   - greeting: Said on joining without going through the model. Empty means the agent waits to be spoken to.
+            ///   - history: The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
             ///   - id: The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7.
             ///   - incognito: Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
             ///   - instructions:
@@ -478,7 +483,7 @@ extension Components {
             ///   - stt: Omit it and the config decides, or en-low-latency when there is no config.
             ///   - tags: Cost labels, carried onto every request the session makes.
             ///   - text: Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
-            ///   - title: What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is called is a label on it rather than part of it.
+            ///   - title: What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
             ///   - toolTimeoutMs: How long the model waits for a tool result. Zero is the default.
             ///   - tools:
             ///   - tts: Omit it and the config decides, or en-low-latency when there is no config.
@@ -498,6 +503,7 @@ extension Components {
                 custom: Components.Schemas.CreateSessionRequest.CustomPayload? = nil,
                 description: Swift.String? = nil,
                 greeting: Swift.String? = nil,
+                history: [Components.Schemas.HistoryMessage]? = nil,
                 id: Swift.String? = nil,
                 incognito: Swift.Bool? = nil,
                 instructions: Swift.String? = nil,
@@ -536,6 +542,7 @@ extension Components {
                 self.custom = custom
                 self.description = description
                 self.greeting = greeting
+                self.history = history
                 self.id = id
                 self.incognito = incognito
                 self.instructions = instructions
@@ -575,6 +582,7 @@ extension Components {
                 case custom
                 case description
                 case greeting
+                case history
                 case id
                 case incognito
                 case instructions
@@ -851,6 +859,52 @@ extension Components {
                 case responseId = "response_id"
                 case title
             }
+        }
+        /// - Remark: Generated from `#/components/schemas/HistoryMessage`.
+        internal struct HistoryMessage: Codable, Hashable, Sendable {
+            /// When it was said. The model is shown it beside a person's message, so it can tell an hour ago from just now.
+            ///
+            /// - Remark: Generated from `#/components/schemas/HistoryMessage/created_at`.
+            internal var createdAt: Foundation.Date?
+            /// Who said it, when several people share the thread. The model is shown it as a label, never as who is asking now.
+            ///
+            /// - Remark: Generated from `#/components/schemas/HistoryMessage/name`.
+            internal var name: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/HistoryMessage/role`.
+            internal var role: Components.Schemas.HistoryRole
+            /// - Remark: Generated from `#/components/schemas/HistoryMessage/text`.
+            internal var text: Swift.String
+            /// Creates a new `HistoryMessage`.
+            ///
+            /// - Parameters:
+            ///   - createdAt: When it was said. The model is shown it beside a person's message, so it can tell an hour ago from just now.
+            ///   - name: Who said it, when several people share the thread. The model is shown it as a label, never as who is asking now.
+            ///   - role:
+            ///   - text:
+            internal init(
+                createdAt: Foundation.Date? = nil,
+                name: Swift.String? = nil,
+                role: Components.Schemas.HistoryRole,
+                text: Swift.String
+            ) {
+                self.createdAt = createdAt
+                self.name = name
+                self.role = role
+                self.text = text
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case createdAt = "created_at"
+                case name
+                case role
+                case text
+            }
+        }
+        /// user is what a person said, assistant what the agent answered. These are the only turns a resumed conversation hands the model; instructions say anything a system message would.
+        ///
+        /// - Remark: Generated from `#/components/schemas/HistoryRole`.
+        internal enum HistoryRole: String, Codable, Hashable, Sendable, CaseIterable {
+            case user = "user"
+            case assistant = "assistant"
         }
         /// - Remark: Generated from `#/components/schemas/ImageSource`.
         internal struct ImageSource: Codable, Hashable, Sendable {

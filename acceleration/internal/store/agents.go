@@ -56,7 +56,7 @@ var configColumns = []string{
 	"name", "mode", "stt", "tts", "sts", "voice", "speed", "llm", "subagent",
 	"video_source", "video_max_frames", "search", "instructions", "greeting", "guardrail",
 	"skills", "agent_plugins", "connectors", "user_plugins", "plugin_events", "mcp_servers", "channels", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "sandbox_options", "harness", "tags",
-	"dispatch_incoming_call", "dispatch_text", "sync_hash", "updated_at",
+	"dispatch_incoming_call", "dispatch_text", "episode_cards", "sync_hash", "updated_at",
 }
 
 // UpdateAgentConfig replaces a config a customer holds. Every field is written, so an
@@ -466,8 +466,13 @@ func normalizeConfig(config *AgentConfig) {
 	}
 }
 
+// ErrNoAgentConfig is a config id the customer holds no live config by. A sentinel, so a
+// caller can tell a deleted config from the database failing. The text is the one these
+// errors always had.
+var ErrNoAgentConfig = errors.New("store: there is no agent config")
+
 func unknownAgentConfig(id string) error {
-	return stack.Wrap(fmt.Errorf("store: there is no agent config %s", id))
+	return stack.Wrap(fmt.Errorf("%w %s", ErrNoAgentConfig, id))
 }
 
 func unknownSkill(id string) error {

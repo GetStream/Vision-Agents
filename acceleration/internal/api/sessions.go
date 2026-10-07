@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
@@ -91,6 +92,23 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
+	// The connector bindings are the config's as it is now, not as the parent was opened
+	// with. The session re-resolves the parent's selections against them and against the
+	// caller asking for the fork, and drops the ones the config no longer declares. A config
+	// deleted since binds nothing, and its fork goes ahead as a fork did before bindings
+	// existed; a config that cannot be read fails the fork rather than dropping its bindings.
+	if config == nil {
+		spec.ConnectorBindings = nil
+		if s.store != nil && spec.ConfigID != "" {
+			current, err := s.store.AgentConfig(ctx, customerID, spec.ConfigID)
+			switch {
+			case err == nil:
+				spec.ConnectorBindings = current.Connectors
+			case !errors.Is(err, store.ErrNoAgentConfig):
+				return nil, err
+			}
+		}
+	}
 	recalled, err := s.recordedHistory(ctx, parent, body, spec.Recall)
 	switch {
 	case errors.Is(err, store.ErrUnknownResponse):
@@ -144,10 +162,11 @@ func (s *Server) saySession(ctx context.Context, request *saySessionRequest) (*s
 
 // respondSession answers a piece of text through the model.
 func (s *Server) respondSession(ctx context.Context, request *respondSessionRequest) (*respondSessionResponse, error) {
-	found, failure := s.session(ctx, request.Id)
+	found, sent, failure := s.sessionToAnswer(ctx, request.Id)
 	if failure != nil {
 		return nil, failure
 	}
+	defer sent()
 	if request.Body == nil || request.Body.Text == "" {
 		return nil, invalidRequest("there is nothing to answer")
 	}
@@ -363,6 +382,127 @@ func (s *Server) storedOrLiveSession(ctx context.Context, id string) (session.Fo
 	return session.Found{Stored: &row}, nil
 }
 
+// reopenSettleGap is how long a reopened conversation's agent stays quiet, with nothing left
+// to do, before the message that reopened it is taken as answered.
+const reopenSettleGap = 2 * time.Second
+
+// reopenHoldMost bounds how long a reopened conversation is held open for its message.
+const reopenHoldMost = 10 * time.Minute
+
+// sessionToAnswer finds the session a message is put to, along with what to call once the
+// message is in.
+//
+// A chat is never over for the person writing in it. Its session ends when the last watcher
+// leaves, which says nothing about whether they are done, so one that ended is carried on
+// under the same id, on the config it was opened with. It is held open until the agent has
+// answered, so a message sent with no socket attached still gets its reply, and then ends
+// the way any conversation does once nobody is watching.
+func (s *Server) sessionToAnswer(ctx context.Context, id string) (*session.Session, func(), error) {
+	found, failure := s.session(ctx, id)
+	var spec session.Spec
+	switch {
+	case failure == nil && (found.State() != session.Ended || !found.Spec().PersistConversation):
+		return found, func() {}, nil
+	case failure == nil:
+		// Ended here, so the spec it ran on is still at hand, tools and instructions included.
+		spec = found.Spec()
+		spec.Reopened = found.CreatedAt()
+	case errors.Is(failure, errUnknownSession):
+		if spec, failure = s.reopenedFromRow(ctx, id); failure != nil {
+			return nil, nil, failure
+		}
+	default:
+		return nil, nil, failure
+	}
+	spec.Greeting = ""
+	spec.Caller = CallerFrom(ctx)
+	spec.CallerKind = KindFrom(ctx)
+
+	reopened, err := s.sessions.Create(ctx, spec)
+	if errors.Is(err, session.ErrSessionExists) {
+		// Another message reopened it first.
+		found, failure := s.session(ctx, id)
+		return found, func() {}, failure
+	}
+	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
+		return nil, nil, err
+	}
+	if err != nil {
+		return nil, nil, invalidRequest(err.Error())
+	}
+	events, detach := reopened.Watch()
+	return reopened, func() { go holdUntilAnswered(reopened, events, detach) }, nil
+}
+
+// reopenedFromRow is the spec a text session that ended in another process is carried on
+// with: the config it was opened with, and what its row remembers about it.
+func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, error) {
+	stored, failure := s.storedOrLiveSession(ctx, id)
+	if failure != nil {
+		return session.Spec{}, failure
+	}
+	row := stored.Stored
+	if row == nil || row.CallID != "" || row.ConversationID == "" || row.UserID != CallerFrom(ctx).UserID {
+		return session.Spec{}, errUnknownSession
+	}
+	var spec session.Spec
+	if row.ConfigID != "" {
+		config, failure := s.configFor(ctx, row.CustomerID, &row.ConfigID, nil)
+		if failure != nil {
+			return session.Spec{}, failure
+		}
+		spec = session.FromConfig(*config)
+	}
+	spec.ID = row.ID
+	spec.Reopened = row.CreatedAt
+	spec.CustomerID = row.CustomerID
+	spec.Text = true
+	spec.STSTarget = ""
+	spec.PersistConversation = true
+	spec.ConversationID = row.ConversationID
+	spec.Title, spec.Description, spec.Project = row.Title, row.Description, row.Project
+	spec.Custom = row.Custom
+	spec.ModelOverwrites = row.ModelOverwrites
+	spec.ForkedFrom = row.ForkedFrom
+	// The caller's connections go on with the chat; the session checks each against the
+	// config as it is now and the caller asking, as it did when the chat opened.
+	spec.ConnectorSelections = selectionsOf(*row)
+	return spec, nil
+}
+
+// selectionsOf are the connections a stored session's caller chose for its session bindings.
+func selectionsOf(row store.AgentSession) []session.ConnectorSelection {
+	var chosen []session.ConnectorSelection
+	for _, selection := range row.ConnectorSelections {
+		chosen = append(chosen, session.ConnectorSelection{Name: selection.Name, ConnectionID: selection.ConnectionID})
+	}
+	return chosen
+}
+
+// holdUntilAnswered keeps a watcher on a reopened conversation until its agent settles.
+func holdUntilAnswered(reopened *session.Session, events <-chan session.Event, detach func()) {
+	defer detach()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	most := time.After(reopenHoldMost)
+	last := time.Now()
+	for {
+		select {
+		case _, open := <-events:
+			if !open {
+				return
+			}
+			last = time.Now()
+		case <-most:
+			return
+		case <-ticker.C:
+			if time.Since(last) >= reopenSettleGap && !reopened.Busy() {
+				return
+			}
+		}
+	}
+}
+
 // sessionsOf renders a query's results, taking the live half where there is one: a session
 // in flight knows what routing resolved its models to, which the row does not carry.
 func sessionsOf(found []session.Found) []Session {
@@ -449,6 +589,10 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	}
 	if request.Keyterms != nil {
 		spec.Keyterms = *request.Keyterms
+	}
+	for _, chosen := range value(request.ConnectorBindings) {
+		spec.ConnectorSelections = append(spec.ConnectorSelections,
+			session.ConnectorSelection{Name: chosen.Name, ConnectionID: chosen.ConnectionId})
 	}
 	// Cost labels are merged rather than replaced: a config labels which agent the spend
 	// belongs to and a call labels which conversation, and both are worth billing on.
@@ -727,6 +871,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 			Custom: row.Custom, ModelOverwrites: row.ModelOverwrites,
 			CallType: row.CallType,
 		}
+		spec.ConnectorSelections = selectionsOf(*row)
 		parentID = row.ID
 		wasText = row.CallID == ""
 		spec.Text = wasText
@@ -746,6 +891,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 		fresh.Title, fresh.Description = spec.Title, spec.Description
 		fresh.Project, fresh.Custom = spec.Project, spec.Custom
 		fresh.CallType = spec.CallType
+		fresh.ConnectorSelections = spec.ConnectorSelections
 		spec = fresh
 	}
 
@@ -925,6 +1071,9 @@ func (s *Server) registerSessions(api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/v1/agents/sessions/{id}/respond",
 		Summary:     "Answer a piece of text through the model, as though it had been said",
+		Description: "A text session that ended is reopened under the same id, on the config it was " +
+			"opened with: a chat is never over for the person writing in it. A call that ended is " +
+			"not found.",
 		Responses: map[string]*huma.Response{
 			"200": {Description: "Durable command accepted or replayed; only a new command starts inference"},
 			"409": errorResponse("The command ID was already accepted with different content"),

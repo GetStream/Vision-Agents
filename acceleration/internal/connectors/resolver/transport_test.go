@@ -89,6 +89,59 @@ func (s *TransportSuite) TestARefusedRefreshMovesTheConnectionToNeedsReauthoriza
 	s.Equal(2, s.f.srv.Hits(fakeprovider.PathMCP))
 }
 
+// TestATokenTheMCPServerRefusesWithABare401IsRefreshedAndTheCallRetried: as
+// TestATokenTheProviderEndedEarlyIsRefreshedAndTheCallRetried, with the 401 MCP servers
+// answer, whose challenge names the resource metadata and no error.
+func (s *TransportSuite) TestATokenTheMCPServerRefusesWithABare401IsRefreshedAndTheCallRetried() {
+	ref := s.f.connected()
+	s.f.srv.Use(fakeprovider.BareChallenge)
+	client := s.transports(s.f.srv.Client().Transport).Client(ref, s.f.scheme(s.f.srv.Client()))
+	s.Equal(http.StatusOK, s.call(client))
+	revision, refreshes := s.f.stored(ref).Revision, s.f.srv.Refreshes()
+
+	s.f.srv.Advance(fakeprovider.AccessTTL + time.Second)
+
+	s.Equal(http.StatusOK, s.call(client))
+	connection := s.f.stored(ref)
+	s.Equal(store.ConnectionConnected, connection.Status)
+	s.Equal(revision+1, connection.Revision)
+	s.Equal(refreshes+1, s.f.srv.Refreshes())
+	s.Equal(3, s.f.srv.Hits(fakeprovider.PathMCP), "the first call, the refused one and its retry")
+}
+
+// TestARefreshRefusedAfterABare401MovesTheConnectionToNeedsReauthorization: the MCP server
+// refuses the token with a bare 401, and the refresh is refused with invalid_grant.
+func (s *TransportSuite) TestARefreshRefusedAfterABare401MovesTheConnectionToNeedsReauthorization() {
+	ref := s.f.connected()
+	client := s.transports(s.f.srv.Client().Transport).Client(ref, s.f.scheme(s.f.srv.Client()))
+	s.Equal(http.StatusOK, s.call(client))
+	s.f.srv.Use(fakeprovider.BareChallenge, fakeprovider.InvalidGrant)
+	refreshes := s.f.srv.Refreshes()
+
+	s.f.srv.Advance(fakeprovider.AccessTTL + time.Second)
+
+	s.Equal(http.StatusUnauthorized, s.call(client))
+	s.Equal(store.ConnectionNeedsReauthorization, s.f.stored(ref).Status)
+	s.Equal(refreshes+1, s.f.srv.Refreshes())
+	s.Equal(2, s.f.srv.Hits(fakeprovider.PathMCP))
+}
+
+// TestABare401AfterTheRefreshIsNotSentAThirdTime: the MCP server refuses every token it gets,
+// the refreshed one too, since its clock moves past each one's expiry before the call reaches
+// it. The call is refreshed once and sent twice, and the 401 is the answer.
+func (s *TransportSuite) TestABare401AfterTheRefreshIsNotSentAThirdTime() {
+	ref := s.f.connected()
+	s.f.srv.Use(fakeprovider.BareChallenge)
+	base := &beforeMCP{base: s.f.srv.Client().Transport, run: func() { s.f.srv.Advance(fakeprovider.AccessTTL + time.Second) }}
+	client := s.transports(base).Client(ref, s.f.scheme(s.f.srv.Client()))
+	refreshes := s.f.srv.Refreshes()
+
+	s.Equal(http.StatusUnauthorized, s.call(client))
+
+	s.Equal(refreshes+1, s.f.srv.Refreshes())
+	s.Equal(2, s.f.srv.Hits(fakeprovider.PathMCP), "the refused call and its one retry")
+}
+
 // TestATokenAnotherRouterRenewedIsRetriedWithTheRenewedOne: while the call is on its way,
 // another router renews the token and the fake stops taking the old one. The refusal names a
 // revision the stored credentials have moved past, so the connection stays connected, and

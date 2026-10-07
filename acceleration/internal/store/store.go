@@ -889,6 +889,7 @@ func (s *Store) ReleaseNumber(ctx context.Context, customerID, e164 string, at t
 
 	result, err := s.db.NewUpdate().Model((*PhoneNumber)(nil)).
 		Set("released_at = ?", at).
+		Set("sip_trunk_id = NULL").
 		Where("customer_id = ?", customerID).
 		Where("e164 = ?", e164).
 		Where("released_at IS NULL").
@@ -996,7 +997,7 @@ func (s *Store) Number(ctx context.Context, customerID, e164 string) (PhoneNumbe
 		Limit(1).
 		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return PhoneNumber{}, stack.Wrap(fmt.Errorf("store: %s is not a number %s holds", e164, customerID))
+		return PhoneNumber{}, stack.Wrap(numberNotHeld{fmt.Sprintf("store: %s is not a number %s holds", e164, customerID)})
 	}
 	if err != nil {
 		return PhoneNumber{}, stack.Wrap(fmt.Errorf("store: number: %w", err))

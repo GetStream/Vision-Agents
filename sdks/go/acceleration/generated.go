@@ -557,6 +557,24 @@ func (e ConnectorClientRegistrationMethod) Valid() bool {
 	}
 }
 
+// Defines values for ConnectorEventForward.
+const (
+	ConnectorEventForwardAll       ConnectorEventForward = "all"
+	ConnectorEventForwardUnhandled ConnectorEventForward = "unhandled"
+)
+
+// Valid indicates whether the value is a known member of the ConnectorEventForward enum.
+func (e ConnectorEventForward) Valid() bool {
+	switch e {
+	case ConnectorEventForwardAll:
+		return true
+	case ConnectorEventForwardUnhandled:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectorOAuthClientAuthMethod.
 const (
 	ConnectorOAuthClientAuthMethodClientSecretBasic ConnectorOAuthClientAuthMethod = "client_secret_basic"
@@ -1730,6 +1748,27 @@ func (e SimulationRunState) Valid() bool {
 	}
 }
 
+// Defines values for SipTrunkTransport.
+const (
+	Tcp SipTrunkTransport = "tcp"
+	Tls SipTrunkTransport = "tls"
+	Udp SipTrunkTransport = "udp"
+)
+
+// Valid indicates whether the value is a known member of the SipTrunkTransport enum.
+func (e SipTrunkTransport) Valid() bool {
+	switch e {
+	case Tcp:
+		return true
+	case Tls:
+		return true
+	case Udp:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for StreamAppState.
 const (
 	StreamAppStateBlocked      StreamAppState = "blocked"
@@ -2163,6 +2202,18 @@ type ActivityBucket struct {
 // ActivityGranularity Separate from Granularity, and coarser, because distinct users cannot be summed: a month of them is who came back rather than the sum of its days.
 type ActivityGranularity string
 
+// AddTrunkNumberRequest defines model for AddTrunkNumberRequest.
+type AddTrunkNumberRequest struct {
+	// Country Required. ISO 3166-1 alpha-2 country code.
+	Country *string `json:"country,omitempty"`
+
+	// E164 Required. The number in +15551234567 form.
+	E164 *string `json:"e164,omitempty"`
+
+	// Tags The customer's own cost labels.
+	Tags *map[string]string `json:"tags,omitempty"`
+}
+
 // AgentChannels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 type AgentChannels struct {
 	// Identity How a sender becomes an end user. phone makes each number an end user of its own, phone:+15551234567, so anybody who writes is answered. link answers only a number somebody tied to an end user with a code from POST /v1/agents/channels/links, which is what an agent reading a person's own calendar or orders needs. Omitted is phone.
@@ -2184,9 +2235,12 @@ type AgentConfig struct {
 	CreatedAt  time.Time                `json:"created_at"`
 
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
-	Dispatch  *AgentDispatch `json:"dispatch,omitempty"`
-	Greeting  *string        `json:"greeting,omitempty"`
-	Guardrail *string        `json:"guardrail,omitempty"`
+	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
+
+	// EpisodeCards Whether each phone call under this agent writes an episode card into the caller's omni-channel.
+	EpisodeCards *bool   `json:"episode_cards,omitempty"`
+	Greeting     *string `json:"greeting,omitempty"`
+	Guardrail    *string `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
 	Harness            *Harness     `json:"harness,omitempty"`
@@ -2238,8 +2292,9 @@ type AgentConfigPatch struct {
 	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
 
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
-	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
-	Greeting *string        `json:"greeting,omitempty"`
+	Dispatch     *AgentDispatch `json:"dispatch,omitempty"`
+	EpisodeCards *bool          `json:"episode_cards,omitempty"`
+	Greeting     *string        `json:"greeting,omitempty"`
 
 	// Guardrail A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail.
 	Guardrail *string `json:"guardrail,omitempty"`
@@ -2297,7 +2352,10 @@ type AgentConfigRequest struct {
 
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
-	Greeting *string        `json:"greeting,omitempty"`
+
+	// EpisodeCards Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. Off by default, and then a call runs as it always did. Left out on an update, the stored setting stays.
+	EpisodeCards *bool   `json:"episode_cards,omitempty"`
+	Greeting     *string `json:"greeting,omitempty"`
 
 	// Guardrail A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
 	Guardrail *string `json:"guardrail,omitempty"`
@@ -2850,6 +2908,33 @@ type CallTokenRequest struct {
 	UserName *string `json:"user_name,omitempty"`
 }
 
+// CallTokens What a call's models read and wrote, summed over every request, with what their prompts were made of.
+type CallTokens struct {
+	// CachedInputTokens The part of the prompts a provider served from its own cache.
+	CachedInputTokens int64 `json:"cached_input_tokens"`
+
+	// CostMicros Millionths of a dollar, priced from the providers' configured rates.
+	CostMicros int64 `json:"cost_micros"`
+
+	// CostSources Where the cost came from, the costliest first. Sources that cost nothing are left out.
+	CostSources []CostSource `json:"cost_sources"`
+
+	// InputParts What prompts were made of, in tokens. Estimated from each request and scaled to what the provider counted, so the parts sum to the input tokens and only the split between them is a guess. Requests recorded before the split was kept read zero throughout.
+	InputParts InputParts `json:"input_parts"`
+
+	// InputTokens Every prompt the models read, the cached part included.
+	InputTokens int64 `json:"input_tokens"`
+
+	// Models Each model the call used, the busiest first. One billed by audio or characters reads zero tokens.
+	Models []ModelTokens `json:"models"`
+
+	// OutputTokens Everything the models generated, reasoning included.
+	OutputTokens int64 `json:"output_tokens"`
+
+	// Requests How many calls to those models it took.
+	Requests int64 `json:"requests"`
+}
+
 // CallUsage What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it.
 type CallUsage struct {
 	// CachedInputTokens The part of those prompts a provider served from its own cache.
@@ -3308,6 +3393,53 @@ type ConnectorClientAuthMethod string
 // ConnectorClientRegistrationMethod operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
 type ConnectorClientRegistrationMethod string
 
+// ConnectorEventDestination A URL of the app's own that a connector's raw provider events are forwarded to, such as Slack's block_actions or reaction_added. Each forward is a POST of the provider's body as it came, with the provider's own Content-Type, signature and timestamp headers, signed on top in the Standard Webhooks shape (webhook-id, webhook-timestamp, webhook-signature) with the destination's own secret. A 2xx answer is taken; a 5xx, a 429 or no answer is sent again after 5 s, 5 min, 30 min and 2 h; any other answer is not sent again. The provider's signature headers come only while the provider's own check would pass them: for Slack, until X-Slack-Request-Timestamp is 5 minutes old, the age Slack Bolt refuses after. A forward sent later, such as the retries after 5 min, 30 min and 2 h, carries Content-Type alone of them: verify it with webhook-signature. webhook-id is the same for every delivery of one provider event (Slack's event_id, or trigger_id for an interaction), and a digest of the body for one that names no id.
+type ConnectorEventDestination struct {
+	ConnectorId *string    `json:"connector_id,omitempty"`
+	CreatedAt   *time.Time `json:"created_at,omitempty"`
+
+	// Forward Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there.
+	Forward ConnectorEventForward `json:"forward"`
+	Id      *string               `json:"id,omitempty"`
+
+	// PreviousSecretUntil Until when the secret the last rotation replaced still signs beside the current one. Absent when only one secret signs.
+	PreviousSecretUntil *time.Time `json:"previous_secret_until,omitempty"`
+
+	// UpdatedAt When the secret was last rotated, or the destination made.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	Url       string     `json:"url"`
+}
+
+// ConnectorEventDestinationPage defines model for ConnectorEventDestinationPage.
+type ConnectorEventDestinationPage struct {
+	HasMore bool                         `json:"has_more"`
+	Items   *[]ConnectorEventDestination `json:"items"`
+
+	// NextCursor Pass as cursor for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// ConnectorEventDestinationRequest An event destination to create. An unknown field is refused rather than ignored.
+type ConnectorEventDestinationRequest struct {
+	// Forward Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there.
+	Forward ConnectorEventForward `json:"forward"`
+
+	// Url A public https URL. One that is or resolves to a private, loopback or link-local address is refused.
+	Url string `json:"url"`
+}
+
+// ConnectorEventDestinationSecret An event destination and the secret its forwards are signed with, which no other response carries.
+type ConnectorEventDestinationSecret struct {
+	// Destination A URL of the app's own that a connector's raw provider events are forwarded to, such as Slack's block_actions or reaction_added. Each forward is a POST of the provider's body as it came, with the provider's own Content-Type, signature and timestamp headers, signed on top in the Standard Webhooks shape (webhook-id, webhook-timestamp, webhook-signature) with the destination's own secret. A 2xx answer is taken; a 5xx, a 429 or no answer is sent again after 5 s, 5 min, 30 min and 2 h; any other answer is not sent again. The provider's signature headers come only while the provider's own check would pass them: for Slack, until X-Slack-Request-Timestamp is 5 minutes old, the age Slack Bolt refuses after. A forward sent later, such as the retries after 5 min, 30 min and 2 h, carries Content-Type alone of them: verify it with webhook-signature. webhook-id is the same for every delivery of one provider event (Slack's event_id, or trigger_id for an interaction), and a digest of the body for one that names no id.
+	Destination ConnectorEventDestination `json:"destination"`
+
+	// Secret The Standard Webhooks signing secret, whsec_ and 32 random bytes in base64. Shown this once: keep it, no later response carries it.
+	Secret string `json:"secret"`
+}
+
+// ConnectorEventForward Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there.
+type ConnectorEventForward string
+
 // ConnectorInput defines model for ConnectorInput.
 type ConnectorInput struct {
 	// Default Used when the connection gives no value. An input without one is required.
@@ -3427,6 +3559,15 @@ type ContentPart struct {
 	union json.RawMessage
 }
 
+// CostSource One place a call's cost came from.
+type CostSource struct {
+	// CostMicros Millionths of a dollar. A part of the prompt is given its share of what the prompt cost, by tokens.
+	CostMicros int64 `json:"cost_micros"`
+
+	// Source For a model billed by tokens, the part of its prompt (instructions, messages, tool_definitions, tool_use, images or video), output for what it wrote, or input for prompt tokens recorded without a breakdown. For any other model, its modality: stt, tts, search and the rest.
+	Source string `json:"source"`
+}
+
 // CreateOptOutRequest defines model for CreateOptOutRequest.
 type CreateOptOutRequest struct {
 	// Channel The channel a recipient opted out of, or all of them.
@@ -3472,6 +3613,9 @@ type CreateSessionRequest struct {
 
 	// ConfigId An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
 	ConfigId *string `json:"config_id,omitempty"`
+
+	// ConnectorBindings The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A required binding left without one fails the session; an optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.
+	ConnectorBindings *[]SessionConnectorBinding `json:"connector_bindings,omitempty"`
 
 	// ContextTruncated Older history was omitted from the model context.
 	ContextTruncated *bool `json:"context_truncated,omitempty"`
@@ -3542,7 +3686,7 @@ type CreateSessionRequest struct {
 	// Text Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
 	Text *bool `json:"text,omitempty"`
 
-	// Title What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is called is a label on it rather than part of it.
+	// Title What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
 	Title *string `json:"title,omitempty"`
 
 	// ToolTimeoutMs How long the model waits for a tool result. Zero is the default.
@@ -3559,6 +3703,33 @@ type CreateSessionRequest struct {
 
 	// Voice Provider-specific voice id.
 	Voice *string `json:"voice,omitempty"`
+}
+
+// CreateSipTrunkRequest defines model for CreateSipTrunkRequest.
+type CreateSipTrunkRequest struct {
+	// Codecs PCMU, PCMA or G722, in order of preference. Omit for PCMU then PCMA.
+	Codecs *[]string `json:"codecs,omitempty"`
+
+	// Host Required. The trunk's hostname, without sip: or a port, e.g. example.pstn.twilio.com.
+	Host *string `json:"host,omitempty"`
+
+	// LateOffer The trunk accepts an INVITE without SDP. Omit for false.
+	LateOffer *bool `json:"late_offer,omitempty"`
+
+	// Name Required.
+	Name *string `json:"name,omitempty"`
+
+	// Password Required. Stored sealed and never returned.
+	Password *string `json:"password,omitempty"`
+
+	// Port Omit for 5060.
+	Port *int64 `json:"port,omitempty"`
+
+	// Transport udp, tcp or tls. Omit for tcp.
+	Transport *string `json:"transport,omitempty"`
+
+	// Username Required.
+	Username *string `json:"username,omitempty"`
 }
 
 // CustomConnectorRequest A custom MCP server for the app's agents to connect to. An unknown field is refused rather than ignored.
@@ -3946,6 +4117,27 @@ type IngestedKnowledge struct {
 	Passages int `json:"passages"`
 }
 
+// InputParts What prompts were made of, in tokens. Estimated from each request and scaled to what the provider counted, so the parts sum to the input tokens and only the split between them is a guess. Requests recorded before the split was kept read zero throughout.
+type InputParts struct {
+	// Images Pictures, attached or returned by a tool.
+	Images int64 `json:"images"`
+
+	// Instructions The system prompt: the agent's instructions, skills and plugin guidance.
+	Instructions int64 `json:"instructions"`
+
+	// Messages The conversation's words, from either side.
+	Messages int64 `json:"messages"`
+
+	// ToolDefinitions The tools the model was offered: their names, descriptions and schemas.
+	ToolDefinitions int64 `json:"tool_definitions"`
+
+	// ToolUse The tools the model called, and what they returned.
+	ToolUse int64 `json:"tool_use"`
+
+	// Video Frames of a video, from the call's camera or an attached clip.
+	Video int64 `json:"video"`
+}
+
 // InstructionsRequest defines model for InstructionsRequest.
 type InstructionsRequest struct {
 	Instructions string `json:"instructions"`
@@ -4231,6 +4423,23 @@ type ModelOverwritesThinking string
 // ModelOverwritesVerbosity How much detail to give. Dropped for models that do not take it.
 type ModelOverwritesVerbosity string
 
+// ModelTokens What one model read and wrote over a call.
+type ModelTokens struct {
+	CachedInputTokens int64 `json:"cached_input_tokens"`
+	CostMicros        int64 `json:"cost_micros"`
+
+	// InputParts What prompts were made of, in tokens. Estimated from each request and scaled to what the provider counted, so the parts sum to the input tokens and only the split between them is a guess. Requests recorded before the split was kept read zero throughout.
+	InputParts  InputParts `json:"input_parts"`
+	InputTokens int64      `json:"input_tokens"`
+
+	// Modality What the model does: llm for a language model, sts for speech-to-speech, and so on.
+	Modality     string `json:"modality"`
+	Model        string `json:"model"`
+	OutputTokens int64  `json:"output_tokens"`
+	Provider     string `json:"provider"`
+	Requests     int64  `json:"requests"`
+}
+
 // NumberSearchResult defines model for NumberSearchResult.
 type NumberSearchResult struct {
 	// Numbers What the vendors are offering, cheapest first.
@@ -4238,6 +4447,30 @@ type NumberSearchResult struct {
 
 	// Skipped Vendors that were not part of the answer. A search that reached two of eight vendors found what two vendors had, and deciding whether to buy needs to know which.
 	Skipped []SkippedVendor `json:"skipped"`
+}
+
+// OfferedTool One tool as the model sees it.
+type OfferedTool struct {
+	// Description What the model is told the tool does.
+	Description string `json:"description"`
+
+	// Name How the model asks for it.
+	Name string `json:"name"`
+
+	// Parameters The JSON Schema of its arguments.
+	Parameters *map[string]interface{} `json:"parameters,omitempty"`
+
+	// Tokens Roughly what offering it costs on every request, in tokens: its name, description and schema at four characters a token.
+	Tokens int64 `json:"tokens"`
+}
+
+// OfferedTools The tools a session's conversation model is offered, as they are sent to it.
+type OfferedTools struct {
+	// Tokens Roughly what offering them all costs on every request, in tokens.
+	Tokens int64 `json:"tokens"`
+
+	// Tools Every tool, in the order the model is offered them.
+	Tools *[]OfferedTool `json:"tools"`
 }
 
 // OptOut Somebody who asked not to be reached. Nothing is texted or dialled to them on the channel, or on any for all, until the opt-out is revoked or they text START.
@@ -4277,6 +4510,9 @@ type PhoneNumber struct {
 	MonthlyCostMicros int64             `json:"monthly_cost_micros"`
 	PurchasedAt       time.Time         `json:"purchased_at"`
 	ReleasedAt        *time.Time        `json:"released_at,omitempty"`
+
+	// SipTrunkId The customer's own SIP trunk calls from this number are dialled through. Present only for vendor sip_trunk.
+	SipTrunkId *string `json:"sip_trunk_id,omitempty"`
 
 	// StreamTrunkId The SIP trunk calls to this number arrive on. Absent until attached.
 	StreamTrunkId *string `json:"stream_trunk_id,omitempty"`
@@ -4998,6 +5234,15 @@ type Session struct {
 	Voice *string `json:"voice,omitempty"`
 }
 
+// SessionConnectorBinding The connection a session uses for one of its agent config's connector bindings chosen per session. Only a reference: the credential stays sealed on the connection.
+type SessionConnectorBinding struct {
+	// ConnectionId The caller's own connection to the binding's connector.
+	ConnectionId string `json:"connection_id"`
+
+	// Name The binding's alias in the agent config.
+	Name string `json:"name"`
+}
+
 // SessionFilter Which sessions to list. A field not listed here is refused rather than ignored.
 type SessionFilter struct {
 	// Agent Matches one value exactly: "value" is short for {"$eq": "value"}.
@@ -5378,6 +5623,31 @@ type SimulationRunMode string
 
 // SimulationRunState A run passed only if every one of its conversations did. A conversation that never got as far as a ruling leaves the run errored rather than failed.
 type SimulationRunState string
+
+// SipTrunk defines model for SipTrunk.
+type SipTrunk struct {
+	// Codecs Audio codecs offered to the trunk, in order of preference.
+	Codecs    []string  `json:"codecs"`
+	CreatedAt time.Time `json:"created_at"`
+
+	// HasPassword Whether a password is stored. The password itself is never returned. False for a trunk that arrived from another deployment, which needs one set before it can be called through.
+	HasPassword bool `json:"has_password"`
+
+	// Host The trunk's hostname, without sip: or a port.
+	Host string `json:"host"`
+	Id   string `json:"id"`
+
+	// LateOffer The trunk accepts an INVITE without SDP.
+	LateOffer bool              `json:"late_offer"`
+	Name      string            `json:"name"`
+	Port      int64             `json:"port"`
+	Transport SipTrunkTransport `json:"transport"`
+	UpdatedAt time.Time         `json:"updated_at"`
+	Username  string            `json:"username"`
+}
+
+// SipTrunkTransport defines model for SipTrunk.Transport.
+type SipTrunkTransport string
 
 // Skill defines model for Skill.
 type Skill struct {
@@ -6243,6 +6513,22 @@ type UpdateSessionRequestThinking string
 // UpdateSessionRequestVerbosity defines model for UpdateSessionRequest.Verbosity.
 type UpdateSessionRequestVerbosity string
 
+// UpdateSipTrunkRequest defines model for UpdateSipTrunkRequest.
+type UpdateSipTrunkRequest struct {
+	Codecs    *[]string `json:"codecs,omitempty"`
+	Host      *string   `json:"host,omitempty"`
+	LateOffer *bool     `json:"late_offer,omitempty"`
+	Name      *string   `json:"name,omitempty"`
+
+	// Password Omit to keep the stored password.
+	Password *string `json:"password,omitempty"`
+	Port     *int64  `json:"port,omitempty"`
+
+	// Transport udp, tcp or tls.
+	Transport *string `json:"transport,omitempty"`
+	Username  *string `json:"username,omitempty"`
+}
+
 // UseCase A 10DLC use case: what an app sends, reviewed by Stream and then registered as a campaign with the vendor its numbers come from.
 type UseCase struct {
 	AgeGated   *bool            `json:"age_gated,omitempty"`
@@ -6660,6 +6946,15 @@ type FinishConnectorConsentParams struct {
 	Error *string `form:"error,omitempty" json:"error,omitempty"`
 }
 
+// ListConnectorEventDestinationsParams defines parameters for ListConnectorEventDestinations.
+type ListConnectorEventDestinationsParams struct {
+	// Limit Up to 200. Omitted is 25.
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // GetConversationCommandParams defines parameters for GetConversationCommand.
 type GetConversationCommandParams struct {
 	AgentId string `form:"agent_id" json:"agent_id"`
@@ -6990,6 +7285,9 @@ type ValidateConnectionJSONRequestBody = ConnectionValidationRequest
 // CreateConnectorJSONRequestBody defines body for CreateConnector for application/json ContentType.
 type CreateConnectorJSONRequestBody = CustomConnectorRequest
 
+// CreateConnectorEventDestinationJSONRequestBody defines body for CreateConnectorEventDestination for application/json ContentType.
+type CreateConnectorEventDestinationJSONRequestBody = ConnectorEventDestinationRequest
+
 // SetConnectorOAuthClientJSONRequestBody defines body for SetConnectorOAuthClient for application/json ContentType.
 type SetConnectorOAuthClientJSONRequestBody = ConnectorOAuthClientRequest
 
@@ -7100,6 +7398,15 @@ type CreateOptOutJSONRequestBody = CreateOptOutRequest
 
 // SetSandboxRecipientsJSONRequestBody defines body for SetSandboxRecipients for application/json ContentType.
 type SetSandboxRecipientsJSONRequestBody = SetSandboxRecipientsRequest
+
+// CreateSipTrunkJSONRequestBody defines body for CreateSipTrunk for application/json ContentType.
+type CreateSipTrunkJSONRequestBody = CreateSipTrunkRequest
+
+// UpdateSipTrunkJSONRequestBody defines body for UpdateSipTrunk for application/json ContentType.
+type UpdateSipTrunkJSONRequestBody = UpdateSipTrunkRequest
+
+// AddTrunkNumberJSONRequestBody defines body for AddTrunkNumber for application/json ContentType.
+type AddTrunkNumberJSONRequestBody = AddTrunkNumberRequest
 
 // CreateUseCaseJSONRequestBody defines body for CreateUseCase for application/json ContentType.
 type CreateUseCaseJSONRequestBody = UseCaseRequest
@@ -7511,6 +7818,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
 	CreateCallToken(ctx context.Context, id string, body CreateCallTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCallTokens What a call's models read and wrote, and what their prompts were made of
+	//
+	// Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+	//
+	// Corresponds with GET /v1/agents/calls/{id}/tokens (the `GetCallTokens` operationId).
+	GetCallTokens(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCallTranscript What was said on a call
 	//
@@ -8013,6 +8327,55 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/agents/connectors/{id} (the `GetConnector` operationId).
 	GetConnector(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListConnectorEventDestinations List a connector's event destinations
+	//
+	// The connector's event destinations, newest first, without their secrets.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/connectors/{id}/event-destinations (the `ListConnectorEventDestinations` operationId).
+	ListConnectorEventDestinations(ctx context.Context, id string, params *ListConnectorEventDestinationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateConnectorEventDestinationWithBody Forward a connector's provider events to a URL
+	//
+	// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/connectors/{id}/event-destinations (the `CreateConnectorEventDestination` operationId).
+	CreateConnectorEventDestinationWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateConnectorEventDestination Forward a connector's provider events to a URL
+	//
+	// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/connectors/{id}/event-destinations (the `CreateConnectorEventDestination` operationId).
+	CreateConnectorEventDestination(ctx context.Context, id string, body CreateConnectorEventDestinationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteConnectorEventDestination Stop forwarding to an event destination
+	//
+	// Removes the destination, and every forward to it not yet sent.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/agents/connectors/{id}/event-destinations/{destination_id} (the `DeleteConnectorEventDestination` operationId).
+	DeleteConnectorEventDestination(ctx context.Context, id string, destinationId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RotateConnectorEventDestinationSecret Rotate an event destination's signing secret
+	//
+	// Makes a new signing secret for the destination and returns it, once. For the next 24 hours every forward is signed with both the new and the old secret, space-separated in webhook-signature, so the receiver can move to the new one without a forward failing its check. A rotation during another drops the oldest secret.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with POST /v1/agents/connectors/{id}/event-destinations/{destination_id}/rotate-secret (the `RotateConnectorEventDestinationSecret` operationId).
+	RotateConnectorEventDestinationSecret(ctx context.Context, id string, destinationId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DeleteConnectorOAuthClient Remove the app's own OAuth client for a connector
 	//
 	// Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
@@ -8457,12 +8820,16 @@ type ClientInterface interface {
 
 	// RespondSessionWithBody Answer a piece of text through the model, as though it had been said
 	//
+	// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/respond (the `RespondSession` operationId).
 	RespondSessionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RespondSession Answer a piece of text through the model, as though it had been said
+	//
+	// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -8571,6 +8938,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/stop (the `StopSession` operationId).
 	StopSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSessionTools List the tools a session's model is offered
+	//
+	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
+	ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSimulationRuns What the simulations have come to, newest first
 	//
@@ -9241,6 +9615,75 @@ type ClientInterface interface {
 	// Corresponds with PUT /v1/phone/sandbox/recipients (the `SetSandboxRecipients` operationId).
 	SetSandboxRecipients(ctx context.Context, body SetSandboxRecipientsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListSipTrunks The calling customer's own SIP trunks
+	//
+	// Trunks outbound calls from the customer's own numbers are dialled through. Passwords are never returned. Answers not_configured on a deployment with no key to seal them with.
+	//
+	// Corresponds with GET /v1/phone/trunks (the `ListSipTrunks` operationId).
+	ListSipTrunks(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateSipTrunkWithBody Add one of the customer's own SIP trunks
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/phone/trunks (the `CreateSipTrunk` operationId).
+	CreateSipTrunkWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateSipTrunk Add one of the customer's own SIP trunks
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/phone/trunks (the `CreateSipTrunk` operationId).
+	CreateSipTrunk(ctx context.Context, body CreateSipTrunkJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteSipTrunk Remove a SIP trunk with no numbers on it
+	//
+	// Answers 409 while numbers are on the trunk. Release them first.
+	//
+	// Corresponds with DELETE /v1/phone/trunks/{id} (the `DeleteSipTrunk` operationId).
+	DeleteSipTrunk(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSipTrunk One of the customer's own SIP trunks
+	//
+	// Corresponds with GET /v1/phone/trunks/{id} (the `GetSipTrunk` operationId).
+	GetSipTrunk(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateSipTrunkWithBody Change a SIP trunk
+	//
+	// Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /v1/phone/trunks/{id} (the `UpdateSipTrunk` operationId).
+	UpdateSipTrunkWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateSipTrunk Change a SIP trunk
+	//
+	// Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /v1/phone/trunks/{id} (the `UpdateSipTrunk` operationId).
+	UpdateSipTrunk(ctx context.Context, id string, body UpdateSipTrunkJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddTrunkNumberWithBody Add a number that is on this SIP trunk
+	//
+	// Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/phone/trunks/{id}/numbers (the `AddTrunkNumber` operationId).
+	AddTrunkNumberWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddTrunkNumber Add a number that is on this SIP trunk
+	//
+	// Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/phone/trunks/{id}/numbers (the `AddTrunkNumber` operationId).
+	AddTrunkNumber(ctx context.Context, id string, body AddTrunkNumberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListUseCases List 10DLC use cases
 	//
 	// The app's use cases, newest first.
@@ -9761,6 +10204,23 @@ func (c *Client) CreateCallTokenWithBody(ctx context.Context, id string, content
 // Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
 func (c *Client) CreateCallToken(ctx context.Context, id string, body CreateCallTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateCallTokenRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCallTokens What a call's models read and wrote, and what their prompts were made of
+//
+// Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+//
+// Corresponds with GET /v1/agents/calls/{id}/tokens (the `GetCallTokens` operationId).
+func (c *Client) GetCallTokens(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCallTokensRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -10822,6 +11282,105 @@ func (c *Client) GetConnector(ctx context.Context, id string, reqEditors ...Requ
 	return c.Client.Do(req)
 }
 
+// ListConnectorEventDestinations List a connector's event destinations
+//
+// The connector's event destinations, newest first, without their secrets.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/connectors/{id}/event-destinations (the `ListConnectorEventDestinations` operationId).
+func (c *Client) ListConnectorEventDestinations(ctx context.Context, id string, params *ListConnectorEventDestinationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListConnectorEventDestinationsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateConnectorEventDestinationWithBody Forward a connector's provider events to a URL
+//
+// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/connectors/{id}/event-destinations (the `CreateConnectorEventDestination` operationId).
+func (c *Client) CreateConnectorEventDestinationWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateConnectorEventDestinationRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateConnectorEventDestination Forward a connector's provider events to a URL
+//
+// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/connectors/{id}/event-destinations (the `CreateConnectorEventDestination` operationId).
+func (c *Client) CreateConnectorEventDestination(ctx context.Context, id string, body CreateConnectorEventDestinationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateConnectorEventDestinationRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteConnectorEventDestination Stop forwarding to an event destination
+//
+// Removes the destination, and every forward to it not yet sent.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/agents/connectors/{id}/event-destinations/{destination_id} (the `DeleteConnectorEventDestination` operationId).
+func (c *Client) DeleteConnectorEventDestination(ctx context.Context, id string, destinationId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteConnectorEventDestinationRequest(c.Server, id, destinationId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RotateConnectorEventDestinationSecret Rotate an event destination's signing secret
+//
+// Makes a new signing secret for the destination and returns it, once. For the next 24 hours every forward is signed with both the new and the old secret, space-separated in webhook-signature, so the receiver can move to the new one without a forward failing its check. A rotation during another drops the oldest secret.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with POST /v1/agents/connectors/{id}/event-destinations/{destination_id}/rotate-secret (the `RotateConnectorEventDestinationSecret` operationId).
+func (c *Client) RotateConnectorEventDestinationSecret(ctx context.Context, id string, destinationId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRotateConnectorEventDestinationSecretRequest(c.Server, id, destinationId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // DeleteConnectorOAuthClient Remove the app's own OAuth client for a connector
 //
 // Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
@@ -11746,6 +12305,8 @@ func (c *Client) DeleteSessionMemories(ctx context.Context, id string, reqEditor
 
 // RespondSessionWithBody Answer a piece of text through the model, as though it had been said
 //
+// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/agents/sessions/{id}/respond (the `RespondSession` operationId).
@@ -11762,6 +12323,8 @@ func (c *Client) RespondSessionWithBody(ctx context.Context, id string, contentT
 }
 
 // RespondSession Answer a piece of text through the model, as though it had been said
+//
+// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -11981,6 +12544,23 @@ func (c *Client) SetSessionSettings(ctx context.Context, id string, body SetSess
 // Corresponds with POST /v1/agents/sessions/{id}/stop (the `StopSession` operationId).
 func (c *Client) StopSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewStopSessionRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListSessionTools List the tools a session's model is offered
+//
+// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+//
+// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
+func (c *Client) ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSessionToolsRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -13410,6 +13990,165 @@ func (c *Client) SetSandboxRecipients(ctx context.Context, body SetSandboxRecipi
 	return c.Client.Do(req)
 }
 
+// ListSipTrunks The calling customer's own SIP trunks
+//
+// Trunks outbound calls from the customer's own numbers are dialled through. Passwords are never returned. Answers not_configured on a deployment with no key to seal them with.
+//
+// Corresponds with GET /v1/phone/trunks (the `ListSipTrunks` operationId).
+func (c *Client) ListSipTrunks(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSipTrunksRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateSipTrunkWithBody Add one of the customer's own SIP trunks
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/phone/trunks (the `CreateSipTrunk` operationId).
+func (c *Client) CreateSipTrunkWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateSipTrunkRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateSipTrunk Add one of the customer's own SIP trunks
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/phone/trunks (the `CreateSipTrunk` operationId).
+func (c *Client) CreateSipTrunk(ctx context.Context, body CreateSipTrunkJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateSipTrunkRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteSipTrunk Remove a SIP trunk with no numbers on it
+//
+// Answers 409 while numbers are on the trunk. Release them first.
+//
+// Corresponds with DELETE /v1/phone/trunks/{id} (the `DeleteSipTrunk` operationId).
+func (c *Client) DeleteSipTrunk(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteSipTrunkRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetSipTrunk One of the customer's own SIP trunks
+//
+// Corresponds with GET /v1/phone/trunks/{id} (the `GetSipTrunk` operationId).
+func (c *Client) GetSipTrunk(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSipTrunkRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateSipTrunkWithBody Change a SIP trunk
+//
+// Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /v1/phone/trunks/{id} (the `UpdateSipTrunk` operationId).
+func (c *Client) UpdateSipTrunkWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateSipTrunkRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateSipTrunk Change a SIP trunk
+//
+// Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /v1/phone/trunks/{id} (the `UpdateSipTrunk` operationId).
+func (c *Client) UpdateSipTrunk(ctx context.Context, id string, body UpdateSipTrunkJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateSipTrunkRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AddTrunkNumberWithBody Add a number that is on this SIP trunk
+//
+// Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/phone/trunks/{id}/numbers (the `AddTrunkNumber` operationId).
+func (c *Client) AddTrunkNumberWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddTrunkNumberRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AddTrunkNumber Add a number that is on this SIP trunk
+//
+// Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/phone/trunks/{id}/numbers (the `AddTrunkNumber` operationId).
+func (c *Client) AddTrunkNumber(ctx context.Context, id string, body AddTrunkNumberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddTrunkNumberRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListUseCases List 10DLC use cases
 //
 // The app's use cases, newest first.
@@ -14603,6 +15342,40 @@ func NewCreateCallTokenRequestWithBody(server string, id string, contentType str
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetCallTokensRequest constructs an http.Request for the GetCallTokens method
+func NewGetCallTokensRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/calls/%s/tokens", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -16391,6 +17164,208 @@ func NewGetConnectorRequest(server string, id string) (*http.Request, error) {
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListConnectorEventDestinationsRequest constructs an http.Request for the ListConnectorEventDestinations method
+func NewListConnectorEventDestinationsRequest(server string, id string, params *ListConnectorEventDestinationsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/%s/event-destinations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateConnectorEventDestinationRequest calls the generic CreateConnectorEventDestination builder with application/json body
+func NewCreateConnectorEventDestinationRequest(server string, id string, body CreateConnectorEventDestinationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateConnectorEventDestinationRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewCreateConnectorEventDestinationRequestWithBody constructs an http.Request for the CreateConnectorEventDestination method, with any body, and a specified content type
+func NewCreateConnectorEventDestinationRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/%s/event-destinations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteConnectorEventDestinationRequest constructs an http.Request for the DeleteConnectorEventDestination method
+func NewDeleteConnectorEventDestinationRequest(server string, id string, destinationId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "destination_id", destinationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/%s/event-destinations/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRotateConnectorEventDestinationSecretRequest constructs an http.Request for the RotateConnectorEventDestinationSecret method
+func NewRotateConnectorEventDestinationSecretRequest(server string, id string, destinationId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "destination_id", destinationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/%s/event-destinations/%s/rotate-secret", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -18619,6 +19594,40 @@ func NewStopSessionRequest(server string, id string) (*http.Request, error) {
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListSessionToolsRequest constructs an http.Request for the ListSessionTools method
+func NewListSessionToolsRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/tools", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -20961,6 +21970,235 @@ func NewSetSandboxRecipientsRequestWithBody(server string, contentType string, b
 	return req, nil
 }
 
+// NewListSipTrunksRequest constructs an http.Request for the ListSipTrunks method
+func NewListSipTrunksRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/trunks")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateSipTrunkRequest calls the generic CreateSipTrunk builder with application/json body
+func NewCreateSipTrunkRequest(server string, body CreateSipTrunkJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateSipTrunkRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateSipTrunkRequestWithBody constructs an http.Request for the CreateSipTrunk method, with any body, and a specified content type
+func NewCreateSipTrunkRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/trunks")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteSipTrunkRequest constructs an http.Request for the DeleteSipTrunk method
+func NewDeleteSipTrunkRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/trunks/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetSipTrunkRequest constructs an http.Request for the GetSipTrunk method
+func NewGetSipTrunkRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/trunks/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateSipTrunkRequest calls the generic UpdateSipTrunk builder with application/json body
+func NewUpdateSipTrunkRequest(server string, id string, body UpdateSipTrunkJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateSipTrunkRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewUpdateSipTrunkRequestWithBody constructs an http.Request for the UpdateSipTrunk method, with any body, and a specified content type
+func NewUpdateSipTrunkRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/trunks/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAddTrunkNumberRequest calls the generic AddTrunkNumber builder with application/json body
+func NewAddTrunkNumberRequest(server string, id string, body AddTrunkNumberJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAddTrunkNumberRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewAddTrunkNumberRequestWithBody constructs an http.Request for the AddTrunkNumber method, with any body, and a specified content type
+func NewAddTrunkNumberRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/trunks/%s/numbers", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListUseCasesRequest constructs an http.Request for the ListUseCases method
 func NewListUseCasesRequest(server string, params *ListUseCasesParams) (*http.Request, error) {
 	var err error
@@ -22704,6 +23942,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
 	CreateCallTokenWithResponse(ctx context.Context, id string, body CreateCallTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCallTokenResponse, error)
 
+	// GetCallTokensWithResponse What a call's models read and wrote, and what their prompts were made of
+	//
+	// Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/calls/{id}/tokens (the `GetCallTokens` operationId).
+	GetCallTokensWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCallTokensResponse, error)
+
 	// GetCallTranscriptWithResponse What was said on a call
 	//
 	// Read back from the chat channel the conversation was written to as it happened, rather than copied into a second place that could disagree with it.
@@ -23259,6 +24506,61 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/connectors/{id} (the `GetConnector` operationId).
 	GetConnectorWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectorResponse, error)
 
+	// ListConnectorEventDestinationsWithResponse List a connector's event destinations
+	//
+	// The connector's event destinations, newest first, without their secrets.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/connectors/{id}/event-destinations (the `ListConnectorEventDestinations` operationId).
+	ListConnectorEventDestinationsWithResponse(ctx context.Context, id string, params *ListConnectorEventDestinationsParams, reqEditors ...RequestEditorFn) (*ListConnectorEventDestinationsResponse, error)
+
+	// CreateConnectorEventDestinationWithBodyWithResponse Forward a connector's provider events to a URL
+	//
+	// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/connectors/{id}/event-destinations (the `CreateConnectorEventDestination` operationId).
+	CreateConnectorEventDestinationWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateConnectorEventDestinationResponse, error)
+
+	// CreateConnectorEventDestinationWithResponse Forward a connector's provider events to a URL
+	//
+	// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/connectors/{id}/event-destinations (the `CreateConnectorEventDestination` operationId).
+	CreateConnectorEventDestinationWithResponse(ctx context.Context, id string, body CreateConnectorEventDestinationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateConnectorEventDestinationResponse, error)
+
+	// DeleteConnectorEventDestinationWithResponse Stop forwarding to an event destination
+	//
+	// Removes the destination, and every forward to it not yet sent.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/connectors/{id}/event-destinations/{destination_id} (the `DeleteConnectorEventDestination` operationId).
+	DeleteConnectorEventDestinationWithResponse(ctx context.Context, id string, destinationId string, reqEditors ...RequestEditorFn) (*DeleteConnectorEventDestinationResponse, error)
+
+	// RotateConnectorEventDestinationSecretWithResponse Rotate an event destination's signing secret
+	//
+	// Makes a new signing secret for the destination and returns it, once. For the next 24 hours every forward is signed with both the new and the old secret, space-separated in webhook-signature, so the receiver can move to the new one without a forward failing its check. A rotation during another drops the oldest secret.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/connectors/{id}/event-destinations/{destination_id}/rotate-secret (the `RotateConnectorEventDestinationSecret` operationId).
+	RotateConnectorEventDestinationSecretWithResponse(ctx context.Context, id string, destinationId string, reqEditors ...RequestEditorFn) (*RotateConnectorEventDestinationSecretResponse, error)
+
 	// DeleteConnectorOAuthClientWithResponse Remove the app's own OAuth client for a connector
 	//
 	// Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
@@ -23755,12 +25057,16 @@ type ClientWithResponsesInterface interface {
 
 	// RespondSessionWithBodyWithResponse Answer a piece of text through the model, as though it had been said
 	//
+	// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/respond (the `RespondSession` operationId).
 	RespondSessionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RespondSessionResponse, error)
 
 	// RespondSessionWithResponse Answer a piece of text through the model, as though it had been said
+	//
+	// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -23875,6 +25181,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/stop (the `StopSession` operationId).
 	StopSessionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StopSessionResponse, error)
+
+	// ListSessionToolsWithResponse List the tools a session's model is offered
+	//
+	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
+	ListSessionToolsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListSessionToolsResponse, error)
 
 	// ListSimulationRunsWithResponse What the simulations have come to, newest first
 	//
@@ -24608,6 +25923,81 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /v1/phone/sandbox/recipients (the `SetSandboxRecipients` operationId).
 	SetSandboxRecipientsWithResponse(ctx context.Context, body SetSandboxRecipientsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSandboxRecipientsResponse, error)
+
+	// ListSipTrunksWithResponse The calling customer's own SIP trunks
+	//
+	// Trunks outbound calls from the customer's own numbers are dialled through. Passwords are never returned. Answers not_configured on a deployment with no key to seal them with.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/phone/trunks (the `ListSipTrunks` operationId).
+	ListSipTrunksWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSipTrunksResponse, error)
+
+	// CreateSipTrunkWithBodyWithResponse Add one of the customer's own SIP trunks
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/trunks (the `CreateSipTrunk` operationId).
+	CreateSipTrunkWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSipTrunkResponse, error)
+
+	// CreateSipTrunkWithResponse Add one of the customer's own SIP trunks
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/trunks (the `CreateSipTrunk` operationId).
+	CreateSipTrunkWithResponse(ctx context.Context, body CreateSipTrunkJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSipTrunkResponse, error)
+
+	// DeleteSipTrunkWithResponse Remove a SIP trunk with no numbers on it
+	//
+	// Answers 409 while numbers are on the trunk. Release them first.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/phone/trunks/{id} (the `DeleteSipTrunk` operationId).
+	DeleteSipTrunkWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteSipTrunkResponse, error)
+
+	// GetSipTrunkWithResponse One of the customer's own SIP trunks
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/phone/trunks/{id} (the `GetSipTrunk` operationId).
+	GetSipTrunkWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSipTrunkResponse, error)
+
+	// UpdateSipTrunkWithBodyWithResponse Change a SIP trunk
+	//
+	// Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/phone/trunks/{id} (the `UpdateSipTrunk` operationId).
+	UpdateSipTrunkWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSipTrunkResponse, error)
+
+	// UpdateSipTrunkWithResponse Change a SIP trunk
+	//
+	// Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/phone/trunks/{id} (the `UpdateSipTrunk` operationId).
+	UpdateSipTrunkWithResponse(ctx context.Context, id string, body UpdateSipTrunkJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSipTrunkResponse, error)
+
+	// AddTrunkNumberWithBodyWithResponse Add a number that is on this SIP trunk
+	//
+	// Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/trunks/{id}/numbers (the `AddTrunkNumber` operationId).
+	AddTrunkNumberWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddTrunkNumberResponse, error)
+
+	// AddTrunkNumberWithResponse Add a number that is on this SIP trunk
+	//
+	// Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/trunks/{id}/numbers (the `AddTrunkNumber` operationId).
+	AddTrunkNumberWithResponse(ctx context.Context, id string, body AddTrunkNumberJSONRequestBody, reqEditors ...RequestEditorFn) (*AddTrunkNumberResponse, error)
 
 	// ListUseCasesWithResponse List 10DLC use cases
 	//
@@ -25528,6 +26918,82 @@ func (r CreateCallTokenResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateCallTokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetCallTokensResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CallTokens
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCallTokensResponse) GetJSON200() *CallTokens {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetCallTokensResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetCallTokensResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetCallTokensResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetCallTokensResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetCallTokensResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCallTokensResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCallTokensResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCallTokensResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCallTokensResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -28357,6 +29823,303 @@ func (r GetConnectorResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetConnectorResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListConnectorEventDestinationsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorEventDestinationPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListConnectorEventDestinationsResponse) GetJSON200() *ConnectorEventDestinationPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListConnectorEventDestinationsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListConnectorEventDestinationsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListConnectorEventDestinationsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListConnectorEventDestinationsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListConnectorEventDestinationsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListConnectorEventDestinationsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListConnectorEventDestinationsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListConnectorEventDestinationsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateConnectorEventDestinationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *ConnectorEventDestinationSecret
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateConnectorEventDestinationResponse) GetJSON201() *ConnectorEventDestinationSecret {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateConnectorEventDestinationResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateConnectorEventDestinationResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateConnectorEventDestinationResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateConnectorEventDestinationResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateConnectorEventDestinationResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateConnectorEventDestinationResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateConnectorEventDestinationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateConnectorEventDestinationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateConnectorEventDestinationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateConnectorEventDestinationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteConnectorEventDestinationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteConnectorEventDestinationResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteConnectorEventDestinationResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteConnectorEventDestinationResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteConnectorEventDestinationResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteConnectorEventDestinationResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteConnectorEventDestinationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteConnectorEventDestinationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteConnectorEventDestinationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteConnectorEventDestinationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RotateConnectorEventDestinationSecretResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorEventDestinationSecret
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RotateConnectorEventDestinationSecretResponse) GetJSON200() *ConnectorEventDestinationSecret {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r RotateConnectorEventDestinationSecretResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RotateConnectorEventDestinationSecretResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RotateConnectorEventDestinationSecretResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RotateConnectorEventDestinationSecretResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r RotateConnectorEventDestinationSecretResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r RotateConnectorEventDestinationSecretResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RotateConnectorEventDestinationSecretResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RotateConnectorEventDestinationSecretResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RotateConnectorEventDestinationSecretResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -31595,6 +33358,75 @@ func (r StopSessionResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r StopSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListSessionToolsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OfferedTools
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListSessionToolsResponse) GetJSON200() *OfferedTools {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListSessionToolsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListSessionToolsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListSessionToolsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListSessionToolsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListSessionToolsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSessionToolsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSessionToolsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListSessionToolsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -35488,6 +37320,497 @@ func (r SetSandboxRecipientsResponse) ContentType() string {
 	return ""
 }
 
+type ListSipTrunksResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]SipTrunk
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListSipTrunksResponse) GetJSON200() *[]SipTrunk {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListSipTrunksResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListSipTrunksResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListSipTrunksResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListSipTrunksResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ListSipTrunksResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListSipTrunksResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListSipTrunksResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSipTrunksResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSipTrunksResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListSipTrunksResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateSipTrunkResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *SipTrunk
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateSipTrunkResponse) GetJSON201() *SipTrunk {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateSipTrunkResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateSipTrunkResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateSipTrunkResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateSipTrunkResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateSipTrunkResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateSipTrunkResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateSipTrunkResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateSipTrunkResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateSipTrunkResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateSipTrunkResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteSipTrunkResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteSipTrunkResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteSipTrunkResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteSipTrunkResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteSipTrunkResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DeleteSipTrunkResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteSipTrunkResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteSipTrunkResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteSipTrunkResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteSipTrunkResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteSipTrunkResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetSipTrunkResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SipTrunk
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetSipTrunkResponse) GetJSON200() *SipTrunk {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetSipTrunkResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetSipTrunkResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetSipTrunkResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetSipTrunkResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r GetSipTrunkResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetSipTrunkResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetSipTrunkResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetSipTrunkResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetSipTrunkResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetSipTrunkResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateSipTrunkResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SipTrunk
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateSipTrunkResponse) GetJSON200() *SipTrunk {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateSipTrunkResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UpdateSipTrunkResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UpdateSipTrunkResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r UpdateSipTrunkResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r UpdateSipTrunkResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateSipTrunkResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateSipTrunkResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateSipTrunkResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateSipTrunkResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateSipTrunkResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AddTrunkNumberResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *PhoneNumber
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r AddTrunkNumberResponse) GetJSON201() *PhoneNumber {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AddTrunkNumberResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AddTrunkNumberResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r AddTrunkNumberResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r AddTrunkNumberResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r AddTrunkNumberResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AddTrunkNumberResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r AddTrunkNumberResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AddTrunkNumberResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AddTrunkNumberResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AddTrunkNumberResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListUseCasesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -38166,6 +40489,21 @@ func (c *ClientWithResponses) CreateCallTokenWithResponse(ctx context.Context, i
 	return ParseCreateCallTokenResponse(rsp)
 }
 
+// GetCallTokensWithResponse What a call's models read and wrote, and what their prompts were made of
+//
+// Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/calls/{id}/tokens (the `GetCallTokens` operationId).
+func (c *ClientWithResponses) GetCallTokensWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCallTokensResponse, error) {
+	rsp, err := c.GetCallTokens(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCallTokensResponse(rsp)
+}
+
 // GetCallTranscriptWithResponse What was said on a call
 //
 // Read back from the chat channel the conversation was written to as it happened, rather than copied into a second place that could disagree with it.
@@ -39051,6 +41389,91 @@ func (c *ClientWithResponses) GetConnectorWithResponse(ctx context.Context, id s
 	return ParseGetConnectorResponse(rsp)
 }
 
+// ListConnectorEventDestinationsWithResponse List a connector's event destinations
+//
+// The connector's event destinations, newest first, without their secrets.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/connectors/{id}/event-destinations (the `ListConnectorEventDestinations` operationId).
+func (c *ClientWithResponses) ListConnectorEventDestinationsWithResponse(ctx context.Context, id string, params *ListConnectorEventDestinationsParams, reqEditors ...RequestEditorFn) (*ListConnectorEventDestinationsResponse, error) {
+	rsp, err := c.ListConnectorEventDestinations(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListConnectorEventDestinationsResponse(rsp)
+}
+
+// CreateConnectorEventDestinationWithBodyWithResponse Forward a connector's provider events to a URL
+//
+// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/connectors/{id}/event-destinations (the `CreateConnectorEventDestination` operationId).
+func (c *ClientWithResponses) CreateConnectorEventDestinationWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateConnectorEventDestinationResponse, error) {
+	rsp, err := c.CreateConnectorEventDestinationWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateConnectorEventDestinationResponse(rsp)
+}
+
+// CreateConnectorEventDestinationWithResponse Forward a connector's provider events to a URL
+//
+// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/connectors/{id}/event-destinations (the `CreateConnectorEventDestination` operationId).
+func (c *ClientWithResponses) CreateConnectorEventDestinationWithResponse(ctx context.Context, id string, body CreateConnectorEventDestinationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateConnectorEventDestinationResponse, error) {
+	rsp, err := c.CreateConnectorEventDestination(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateConnectorEventDestinationResponse(rsp)
+}
+
+// DeleteConnectorEventDestinationWithResponse Stop forwarding to an event destination
+//
+// Removes the destination, and every forward to it not yet sent.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/connectors/{id}/event-destinations/{destination_id} (the `DeleteConnectorEventDestination` operationId).
+func (c *ClientWithResponses) DeleteConnectorEventDestinationWithResponse(ctx context.Context, id string, destinationId string, reqEditors ...RequestEditorFn) (*DeleteConnectorEventDestinationResponse, error) {
+	rsp, err := c.DeleteConnectorEventDestination(ctx, id, destinationId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteConnectorEventDestinationResponse(rsp)
+}
+
+// RotateConnectorEventDestinationSecretWithResponse Rotate an event destination's signing secret
+//
+// Makes a new signing secret for the destination and returns it, once. For the next 24 hours every forward is signed with both the new and the old secret, space-separated in webhook-signature, so the receiver can move to the new one without a forward failing its check. A rotation during another drops the oldest secret.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/connectors/{id}/event-destinations/{destination_id}/rotate-secret (the `RotateConnectorEventDestinationSecret` operationId).
+func (c *ClientWithResponses) RotateConnectorEventDestinationSecretWithResponse(ctx context.Context, id string, destinationId string, reqEditors ...RequestEditorFn) (*RotateConnectorEventDestinationSecretResponse, error) {
+	rsp, err := c.RotateConnectorEventDestinationSecret(ctx, id, destinationId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRotateConnectorEventDestinationSecretResponse(rsp)
+}
+
 // DeleteConnectorOAuthClientWithResponse Remove the app's own OAuth client for a connector
 //
 // Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
@@ -39835,6 +42258,8 @@ func (c *ClientWithResponses) DeleteSessionMemoriesWithResponse(ctx context.Cont
 
 // RespondSessionWithBodyWithResponse Answer a piece of text through the model, as though it had been said
 //
+// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/sessions/{id}/respond (the `RespondSession` operationId).
@@ -39847,6 +42272,8 @@ func (c *ClientWithResponses) RespondSessionWithBodyWithResponse(ctx context.Con
 }
 
 // RespondSessionWithResponse Answer a piece of text through the model, as though it had been said
+//
+// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -40032,6 +42459,21 @@ func (c *ClientWithResponses) StopSessionWithResponse(ctx context.Context, id st
 		return nil, err
 	}
 	return ParseStopSessionResponse(rsp)
+}
+
+// ListSessionToolsWithResponse List the tools a session's model is offered
+//
+// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
+func (c *ClientWithResponses) ListSessionToolsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListSessionToolsResponse, error) {
+	rsp, err := c.ListSessionTools(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSessionToolsResponse(rsp)
 }
 
 // ListSimulationRunsWithResponse What the simulations have come to, newest first
@@ -41217,6 +43659,135 @@ func (c *ClientWithResponses) SetSandboxRecipientsWithResponse(ctx context.Conte
 	return ParseSetSandboxRecipientsResponse(rsp)
 }
 
+// ListSipTrunksWithResponse The calling customer's own SIP trunks
+//
+// Trunks outbound calls from the customer's own numbers are dialled through. Passwords are never returned. Answers not_configured on a deployment with no key to seal them with.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/phone/trunks (the `ListSipTrunks` operationId).
+func (c *ClientWithResponses) ListSipTrunksWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSipTrunksResponse, error) {
+	rsp, err := c.ListSipTrunks(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSipTrunksResponse(rsp)
+}
+
+// CreateSipTrunkWithBodyWithResponse Add one of the customer's own SIP trunks
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/trunks (the `CreateSipTrunk` operationId).
+func (c *ClientWithResponses) CreateSipTrunkWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSipTrunkResponse, error) {
+	rsp, err := c.CreateSipTrunkWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateSipTrunkResponse(rsp)
+}
+
+// CreateSipTrunkWithResponse Add one of the customer's own SIP trunks
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/trunks (the `CreateSipTrunk` operationId).
+func (c *ClientWithResponses) CreateSipTrunkWithResponse(ctx context.Context, body CreateSipTrunkJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSipTrunkResponse, error) {
+	rsp, err := c.CreateSipTrunk(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateSipTrunkResponse(rsp)
+}
+
+// DeleteSipTrunkWithResponse Remove a SIP trunk with no numbers on it
+//
+// Answers 409 while numbers are on the trunk. Release them first.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/phone/trunks/{id} (the `DeleteSipTrunk` operationId).
+func (c *ClientWithResponses) DeleteSipTrunkWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteSipTrunkResponse, error) {
+	rsp, err := c.DeleteSipTrunk(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteSipTrunkResponse(rsp)
+}
+
+// GetSipTrunkWithResponse One of the customer's own SIP trunks
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/phone/trunks/{id} (the `GetSipTrunk` operationId).
+func (c *ClientWithResponses) GetSipTrunkWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSipTrunkResponse, error) {
+	rsp, err := c.GetSipTrunk(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSipTrunkResponse(rsp)
+}
+
+// UpdateSipTrunkWithBodyWithResponse Change a SIP trunk
+//
+// Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/phone/trunks/{id} (the `UpdateSipTrunk` operationId).
+func (c *ClientWithResponses) UpdateSipTrunkWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSipTrunkResponse, error) {
+	rsp, err := c.UpdateSipTrunkWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateSipTrunkResponse(rsp)
+}
+
+// UpdateSipTrunkWithResponse Change a SIP trunk
+//
+// Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/phone/trunks/{id} (the `UpdateSipTrunk` operationId).
+func (c *ClientWithResponses) UpdateSipTrunkWithResponse(ctx context.Context, id string, body UpdateSipTrunkJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSipTrunkResponse, error) {
+	rsp, err := c.UpdateSipTrunk(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateSipTrunkResponse(rsp)
+}
+
+// AddTrunkNumberWithBodyWithResponse Add a number that is on this SIP trunk
+//
+// Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/trunks/{id}/numbers (the `AddTrunkNumber` operationId).
+func (c *ClientWithResponses) AddTrunkNumberWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddTrunkNumberResponse, error) {
+	rsp, err := c.AddTrunkNumberWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddTrunkNumberResponse(rsp)
+}
+
+// AddTrunkNumberWithResponse Add a number that is on this SIP trunk
+//
+// Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/trunks/{id}/numbers (the `AddTrunkNumber` operationId).
+func (c *ClientWithResponses) AddTrunkNumberWithResponse(ctx context.Context, id string, body AddTrunkNumberJSONRequestBody, reqEditors ...RequestEditorFn) (*AddTrunkNumberResponse, error) {
+	rsp, err := c.AddTrunkNumber(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddTrunkNumberResponse(rsp)
+}
+
 // ListUseCasesWithResponse List 10DLC use cases
 //
 // The app's use cases, newest first.
@@ -42267,6 +44838,67 @@ func ParseCreateCallTokenResponse(rsp *http.Response) (*CreateCallTokenResponse,
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest CallToken
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCallTokensResponse parses an HTTP response from a GetCallTokensWithResponse call
+func ParseGetCallTokensResponse(rsp *http.Response) (*GetCallTokensResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCallTokensResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CallTokens
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -44538,6 +47170,246 @@ func ParseGetConnectorResponse(rsp *http.Response) (*GetConnectorResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest Connector
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListConnectorEventDestinationsResponse parses an HTTP response from a ListConnectorEventDestinationsWithResponse call
+func ParseListConnectorEventDestinationsResponse(rsp *http.Response) (*ListConnectorEventDestinationsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListConnectorEventDestinationsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorEventDestinationPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateConnectorEventDestinationResponse parses an HTTP response from a CreateConnectorEventDestinationWithResponse call
+func ParseCreateConnectorEventDestinationResponse(rsp *http.Response) (*CreateConnectorEventDestinationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateConnectorEventDestinationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest ConnectorEventDestinationSecret
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteConnectorEventDestinationResponse parses an HTTP response from a DeleteConnectorEventDestinationWithResponse call
+func ParseDeleteConnectorEventDestinationResponse(rsp *http.Response) (*DeleteConnectorEventDestinationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteConnectorEventDestinationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRotateConnectorEventDestinationSecretResponse parses an HTTP response from a RotateConnectorEventDestinationSecretWithResponse call
+func ParseRotateConnectorEventDestinationSecretResponse(rsp *http.Response) (*RotateConnectorEventDestinationSecretResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RotateConnectorEventDestinationSecretResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorEventDestinationSecret
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -47166,6 +50038,60 @@ func ParseStopSessionResponse(rsp *http.Response) (*StopSessionResponse, error) 
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListSessionToolsResponse parses an HTTP response from a ListSessionToolsWithResponse call
+func ParseListSessionToolsResponse(rsp *http.Response) (*ListSessionToolsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSessionToolsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OfferedTools
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest BadRequest
@@ -50309,6 +53235,410 @@ func ParseSetSandboxRecipientsResponse(rsp *http.Response) (*SetSandboxRecipient
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListSipTrunksResponse parses an HTTP response from a ListSipTrunksWithResponse call
+func ParseListSipTrunksResponse(rsp *http.Response) (*ListSipTrunksResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSipTrunksResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []SipTrunk
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateSipTrunkResponse parses an HTTP response from a CreateSipTrunkWithResponse call
+func ParseCreateSipTrunkResponse(rsp *http.Response) (*CreateSipTrunkResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateSipTrunkResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest SipTrunk
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteSipTrunkResponse parses an HTTP response from a DeleteSipTrunkWithResponse call
+func ParseDeleteSipTrunkResponse(rsp *http.Response) (*DeleteSipTrunkResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteSipTrunkResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetSipTrunkResponse parses an HTTP response from a GetSipTrunkWithResponse call
+func ParseGetSipTrunkResponse(rsp *http.Response) (*GetSipTrunkResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetSipTrunkResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SipTrunk
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateSipTrunkResponse parses an HTTP response from a UpdateSipTrunkWithResponse call
+func ParseUpdateSipTrunkResponse(rsp *http.Response) (*UpdateSipTrunkResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateSipTrunkResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SipTrunk
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAddTrunkNumberResponse parses an HTTP response from a AddTrunkNumberWithResponse call
+func ParseAddTrunkNumberResponse(rsp *http.Response) (*AddTrunkNumberResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AddTrunkNumberResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest PhoneNumber
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError

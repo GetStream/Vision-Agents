@@ -151,6 +151,43 @@ func (s *UserPluginsSuite) TestTheAppsLoginToAPluginEachUserConnectsIsNotHandedT
 	s.Empty(unconnected)
 }
 
+// TestTheAppsLoginToAnAgentPluginIsOpenedUnlessABindingNamesItsProvider: without a connector
+// binding, an app's login to a plugin the config names is opened as before. A binding to the
+// same provider (its connector_id is the plugin's id) wins, and the login is left alone.
+// Shopify is the catalog plugin whose host is the login's own, so the test's server can be it.
+func (s *UserPluginsSuite) TestTheAppsLoginToAnAgentPluginIsOpenedUnlessABindingNamesItsProvider() {
+	shop := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.URL.Path = "/mcp"
+		s.serveMCP(w, r)
+	}))
+	defer shop.Close()
+	shopify, found := plugins.Lookup("shopify")
+	s.Require().True(found)
+	s.login("", shopify, strings.TrimPrefix(shop.URL, "https://"), "good-token")
+	spec := Spec{
+		CustomerID:   s.runner.customerID,
+		ConfigID:     s.runner.configID,
+		AgentPlugins: []store.PluginEntry{{Name: "shopify"}},
+	}
+	open := func(spec Spec) (*plugins.Runtime, []harness.Tool) {
+		runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: shop.Client()}, slog.New(slog.DiscardHandler))
+		if runtime != nil {
+			s.T().Cleanup(runtime.Close)
+		}
+		return runtime, tools
+	}
+
+	runtime, tools := open(spec)
+	spec.ConnectorBindings = []store.ConnectorBinding{{Name: "shop", ConnectorID: "shopify",
+		Connection: store.ConnectionBinding{Type: selectionFixed, ConnectionID: "c1"}}}
+	bound, boundTools := open(spec)
+
+	s.NotNil(runtime)
+	s.Equal([]string{"shopify__list_events"}, toolNames(tools))
+	s.Nil(bound)
+	s.Empty(boundTools)
+}
+
 func (s *UserPluginsSuite) TestAConnectedUserReachesTheirAccount() {
 	s.connect("good-token")
 

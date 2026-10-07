@@ -69,12 +69,13 @@ func (s *StoreSuite) SetupTest() {
 	_, err := s.store.DB().ExecContext(
 		s.ctx,
 		"TRUNCATE requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily,"+
-			" turns, turn_stats_hourly, turn_stats_daily, calls, call_events, phone_numbers,"+
+			" turns, turn_stats_hourly, turn_stats_daily, calls, call_events, phone_numbers, sip_trunks,"+
 			" voices, agent_sessions, agent_responses, agent_response_items, users,"+
 			" policies, app_organizations, call_resources, organizations, agent_configs,"+
 			" agent_plugin_connections, agent_plugin_clients, data_changes, data_change_capture, stream_apps, connector_definitions,"+
 			" connector_connections, connector_authorization_attempts, connector_oauth_clients,"+
-			" connector_config_tokens, channel_threads, channel_thread_messages CASCADE",
+			" connector_config_tokens, channel_threads, channel_thread_messages,"+
+			" connector_event_destinations, connector_event_deliveries, contact_map, episodes CASCADE",
 	)
 	s.Require().NoError(err)
 }

@@ -46,6 +46,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
@@ -55,6 +56,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -220,6 +222,14 @@ type RouterSuite struct {
 	// it returns at the time, whatever host a manifest's reply names: the test's own fake
 	// provider. Nil leaves bridge as the suite set it.
 	channelProvider func() string
+	// forwardHTTP, set by a suite about event forwarding before it starts the harness, gives
+	// the router an event forwarder (internal/eventforward) whose sends go through it, to the
+	// test's own destinations on loopback, which egress refuses; a destination URL on loopback
+	// is let through at create, any other is checked by egress. Nil leaves forwarding off, as
+	// a deployment without connectors has, and runs no forwarder worker beside the other
+	// suites'.
+	forwardHTTP *http.Client
+	forwarder   *eventforward.Forwarder
 	// resolver is the router's connector resolver over the suite's store and sealer, with
 	// connectors' schemes, set by SetupSuite.
 	resolver *resolver.Resolver
@@ -343,7 +353,16 @@ func (s *RouterSuite) SetupSuite() {
 	// anything to say it is running.
 	listener := httptest.NewUnstartedServer(nil)
 	directory := s.nodeDirectory(listener, logger)
-	sessions := s.sessionManager(streams, directory, logger)
+	// Before the sessions, whose dispatcher shares the transports with the validate
+	// endpoint, as cmd/router builds them.
+	credentials, err := pgsealed.New(pgStore, s.sealer)
+	s.Require().NoError(err)
+	s.resolver, err = resolver.New(resolver.Config{Store: pgStore, Credentials: credentials, Schemes: s.connectors.Schemes})
+	s.Require().NoError(err)
+	transports, err := core.NewTransports(core.TransportsConfig{Resolver: s.resolver, Timeout: suiteConnectorTimeout,
+		NewClient: loopbackClients(s.connectorHTTP)})
+	s.Require().NoError(err)
+	sessions := s.sessionManager(streams, directory, session.Connectors{Registry: s.connectors, Transports: transports}, logger)
 	// A nil client reaches public hosts alone, and every auth server here is a local one.
 	public := &plugins.Auth{HTTP: http.DefaultClient}
 	s.events = s.pluginEvents(sessions, public, logger)
@@ -361,15 +380,18 @@ func (s *RouterSuite) SetupSuite() {
 		routing.Image:  streams.Image,
 	}
 
-	credentials, err := pgsealed.New(pgStore, s.sealer)
-	s.Require().NoError(err)
-	s.resolver, err = resolver.New(resolver.Config{Store: pgStore, Credentials: credentials, Schemes: s.connectors.Schemes})
-	s.Require().NoError(err)
-	transports, err := core.NewTransports(core.TransportsConfig{Resolver: s.resolver, Timeout: suiteConnectorTimeout,
-		NewClient: loopbackClients(s.connectorHTTP)})
-	s.Require().NoError(err)
 	if s.channelProvider != nil {
 		s.bridge = s.channelBridge(logger)
+	}
+	if s.forwardHTTP != nil {
+		s.forwarder, err = eventforward.New(eventforward.Options{
+			Store: pgStore, Secrets: s.sealer, HTTP: s.forwardHTTP, PublicURL: loopbackOrPublic, Logger: logger,
+			// A forward sent again waits milliseconds here, not the production seconds.
+			Retries: []time.Duration{10 * time.Millisecond, 10 * time.Millisecond}, Poll: 10 * time.Millisecond,
+		})
+		s.Require().NoError(err)
+		s.forwarder.Start()
+		s.T().Cleanup(s.forwarder.Close)
 	}
 
 	server, err := NewServer(Options{
@@ -416,6 +438,7 @@ func (s *RouterSuite) SetupSuite() {
 		ConnectorTransports:   transports,
 		ConnectorEventSecrets: s.eventSecrets,
 		ChannelBridge:         s.bridge,
+		EventForwarder:        s.forwarder,
 		SlackApps:             s.slackApps,
 		OperatorProviderApps:  s.operatorApps,
 	})
@@ -574,6 +597,12 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 		s.noted = append(s.noted, opened)
 		return opened, nil
 	})
+	reasoning.Register("summarising", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: "Noted.", summarises: true}, nil
+	})
+	reasoning.Register("counted", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: "Counted.", usage: llm.Usage{InputTokens: 1000, InputTokensDetails: llm.InputTokensDetails{CachedTokens: 400}, OutputTokens: 20}}, nil
+	})
 
 	// A model that is a while in the writing, for a command that has to still be running
 	// when the test asks it to stop.
@@ -586,6 +615,13 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	reasoning.Register("tooling", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: "Let me check.", calls: []llm.ToolCall{{
 			ID: store.NewID(), Name: lookupOrder, Arguments: `{"order":"12"}`,
+		}}}, nil
+	})
+	// A model that reaches for a connector's tool on its first turn: echo of the binding
+	// called crm, which says back what it is given.
+	reasoning.Register("connecting", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: "Let me ask.", calls: []llm.ToolCall{{
+			ID: store.NewID(), Name: connectorEcho, Arguments: `{"text":"` + connectorEchoText + `"}`,
 		}}}, nil
 	})
 	reasoner, err := llmrouter.New(llmrouter.Options{
@@ -660,6 +696,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 func (s *RouterSuite) sessionManager(
 	streams *Streams,
 	directory *node.Directory,
+	connectors session.Connectors,
 	logger *slog.Logger,
 ) *session.Manager {
 	conversations := conversation.NewForChats(conversation.StreamApps(s.stream))
@@ -681,6 +718,7 @@ func (s *RouterSuite) sessionManager(
 		Store:         s.store,
 		Configs:       s.configs,
 		Directory:     directory,
+		Connectors:    connectors,
 		Logger:        logger,
 		Edge: func(context.Context, session.Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
 			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
@@ -709,12 +747,17 @@ func (s *RouterSuite) telephony(logger *slog.Logger) *phone.Service {
 	config, err := phone.DefaultConfig()
 	s.Require().NoError(err)
 
+	sealer, err := auth.NewSealer("router suite sip trunks")
+	s.Require().NoError(err)
+
 	service, err := phone.NewService(phone.ServiceOptions{
-		Registry: vendors.Registry(config),
-		Store:    s.store,
-		Recorder: routing.NewRecorder(routing.Phone, s.store, s.live, logger),
-		Gate:     s.gate,
-		Logger:   logger,
+		Registry:  vendors.Registry(config),
+		Store:     s.store,
+		Recorder:  routing.NewRecorder(routing.Phone, s.store, s.live, logger),
+		Gate:      s.gate,
+		Sealer:    sealer,
+		SIPTrunks: siptrunk.New(siptrunk.Options{Logger: logger}),
+		Logger:    logger,
 	})
 	s.Require().NoError(err)
 	return service

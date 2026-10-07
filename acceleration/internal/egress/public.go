@@ -304,6 +304,10 @@ func (p policy) publicAddresses(ctx context.Context, host string) error {
 	return nil
 }
 
+// IsPublic says whether traffic to a tenant-supplied host may go to ip. It is the check
+// NewClient makes at dial, for callers that open their own connections.
+func IsPublic(ip netip.Addr) bool { return isPublic(ip) }
+
 func isPublic(ip netip.Addr) bool {
 	// A zoned address never matches a netip.Prefix, so it would skip the list below.
 	if !ip.IsValid() || ip.Zone() != "" {

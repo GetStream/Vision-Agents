@@ -249,49 +249,66 @@ func (t *ContentPart) UnmarshalJSON(b []byte) error {
 
 // CreateSessionRequest is the CreateSessionRequest schema.
 type CreateSessionRequest struct {
-	Agent            *string                 `json:"agent,omitempty" doc:"The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: \"docs\" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree."`
-	AgentId          *string                 `json:"agent_id,omitempty" doc:"Keys transcripts and statistics. Empty means the call id."`
-	Backchannel      *bool                   `json:"backchannel,omitempty" doc:"Murmur while a participant is still talking, the way a person does." default:"false"`
-	CallId           *string                 `json:"call_id,omitempty" doc:"The call to join. Required unless the session is text."`
-	CallType         *string                 `json:"call_type,omitempty" default:"default"`
-	ConfigId         *string                 `json:"config_id,omitempty" doc:"An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call."`
-	ContextTruncated *bool                   `json:"context_truncated,omitempty" doc:"Older history was omitted from the model context."`
-	ConversationId   *string                 `json:"conversation_id,omitempty" doc:"Stream Chat CID to resume; returned for persistent text sessions."`
-	Custom           *map[string]interface{} `json:"custom,omitempty" doc:"Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing."`
-	Description      *string                 `json:"description,omitempty" doc:"A longer note about the conversation, searched alongside the title."`
-	Greeting         *string                 `json:"greeting,omitempty" doc:"Said on joining without going through the model. Empty means the agent waits to be spoken to."`
-	History          *[]HistoryMessage       `json:"history,omitempty" doc:"The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth." maxItems:"100"`
-	Id               *string                 `json:"id,omitempty" doc:"The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7."`
-	Incognito        *bool                   `json:"incognito,omitempty" doc:"Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from." default:"false"`
-	Instructions     *string                 `json:"instructions,omitempty"`
-	Keyterms         *[]string               `json:"keyterms,omitempty" doc:"Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them."`
-	Languages        *[]string               `json:"languages,omitempty" doc:"Language hints, which narrow the candidates in every modality."`
-	Llm              *string                 `json:"llm,omitempty" doc:"A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured."`
-	MaxTokens        *int                    `json:"max_tokens,omitempty"`
-	Memory           *SessionMemory          `json:"memory,omitempty"`
-	MinConfidence    *float64                `json:"min_confidence,omitempty" doc:"How sure the transcriber must be before the agent answers rather than checks what was meant."`
-	ModelOverwrites  *ModelOverwrites        `json:"model_overwrites,omitempty"`
-	Navigating       *bool                   `json:"navigating,omitempty" doc:"The agent placed this call, so let recordings finish and answer their menus." default:"false"`
-	Phone            *SessionPhone           `json:"phone,omitempty"`
-	ProjectId        *string                 `json:"project_id,omitempty" doc:"What the conversation belongs to. Also recorded as the \"project\" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins."`
-	Search           *string                 `json:"search,omitempty" doc:"Omit it and the config decides, or search-fast when there is no config."`
-	Sts              *string                 `json:"sts,omitempty" doc:"A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides."`
-	Stt              *string                 `json:"stt,omitempty" doc:"Omit it and the config decides, or en-low-latency when there is no config."`
-	Tags             *map[string]string      `json:"tags,omitempty" doc:"Cost labels, carried onto every request the session makes."`
-	Text             *bool                   `json:"text,omitempty" doc:"Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket." default:"false"`
-	Title            *string                 `json:"title,omitempty" doc:"What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is called is a label on it rather than part of it."`
-	ToolTimeoutMs    *int                    `json:"tool_timeout_ms,omitempty" doc:"How long the model waits for a tool result. Zero is the default."`
-	Tools            *[]SessionTool          `json:"tools,omitempty"`
-	Tts              *string                 `json:"tts,omitempty" doc:"Omit it and the config decides, or en-low-latency when there is no config."`
-	UserId           *string                 `json:"user_id,omitempty" doc:"Who the agent joins the call as." default:"vision-agent"`
-	UserName         *string                 `json:"user_name,omitempty" default:"Vision Agent"`
-	Video            *SessionVideo           `json:"video,omitempty"`
-	Voice            *string                 `json:"voice,omitempty" doc:"Provider-specific voice id."`
+	Agent             *string                    `json:"agent,omitempty" doc:"The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: \"docs\" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree."`
+	AgentId           *string                    `json:"agent_id,omitempty" doc:"Keys transcripts and statistics. Empty means the call id."`
+	Backchannel       *bool                      `json:"backchannel,omitempty" doc:"Murmur while a participant is still talking, the way a person does." default:"false"`
+	CallId            *string                    `json:"call_id,omitempty" doc:"The call to join. Required unless the session is text."`
+	CallType          *string                    `json:"call_type,omitempty" default:"default"`
+	ConnectorBindings *[]SessionConnectorBinding `json:"connector_bindings,omitempty" maxItems:"64" doc:"The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A required binding left without one fails the session; an optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections again, against the config as it is then and the caller asking for the fork."`
+	ConfigId          *string                    `json:"config_id,omitempty" doc:"An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call."`
+	ContextTruncated  *bool                      `json:"context_truncated,omitempty" doc:"Older history was omitted from the model context."`
+	ConversationId    *string                    `json:"conversation_id,omitempty" doc:"Stream Chat CID to resume; returned for persistent text sessions."`
+	Custom            *map[string]interface{}    `json:"custom,omitempty" doc:"Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing."`
+	Description       *string                    `json:"description,omitempty" doc:"A longer note about the conversation, searched alongside the title."`
+	Greeting          *string                    `json:"greeting,omitempty" doc:"Said on joining without going through the model. Empty means the agent waits to be spoken to."`
+	History           *[]HistoryMessage          `json:"history,omitempty" doc:"The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth." maxItems:"100"`
+	Id                *string                    `json:"id,omitempty" doc:"The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7."`
+	Incognito         *bool                      `json:"incognito,omitempty" doc:"Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from." default:"false"`
+	Instructions      *string                    `json:"instructions,omitempty"`
+	Keyterms          *[]string                  `json:"keyterms,omitempty" doc:"Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them."`
+	Languages         *[]string                  `json:"languages,omitempty" doc:"Language hints, which narrow the candidates in every modality."`
+	Llm               *string                    `json:"llm,omitempty" doc:"A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured."`
+	MaxTokens         *int                       `json:"max_tokens,omitempty"`
+	Memory            *SessionMemory             `json:"memory,omitempty"`
+	MinConfidence     *float64                   `json:"min_confidence,omitempty" doc:"How sure the transcriber must be before the agent answers rather than checks what was meant."`
+	ModelOverwrites   *ModelOverwrites           `json:"model_overwrites,omitempty"`
+	Navigating        *bool                      `json:"navigating,omitempty" doc:"The agent placed this call, so let recordings finish and answer their menus." default:"false"`
+	Phone             *SessionPhone              `json:"phone,omitempty"`
+	ProjectId         *string                    `json:"project_id,omitempty" doc:"What the conversation belongs to. Also recorded as the \"project\" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins."`
+	Search            *string                    `json:"search,omitempty" doc:"Omit it and the config decides, or search-fast when there is no config."`
+	Sts               *string                    `json:"sts,omitempty" doc:"A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides."`
+	Stt               *string                    `json:"stt,omitempty" doc:"Omit it and the config decides, or en-low-latency when there is no config."`
+	Tags              *map[string]string         `json:"tags,omitempty" doc:"Cost labels, carried onto every request the session makes."`
+	Text              *bool                      `json:"text,omitempty" doc:"Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket." default:"false"`
+	Title             *string                    `json:"title,omitempty" doc:"What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it."`
+	ToolTimeoutMs     *int                       `json:"tool_timeout_ms,omitempty" doc:"How long the model waits for a tool result. Zero is the default."`
+	Tools             *[]SessionTool             `json:"tools,omitempty"`
+	Tts               *string                    `json:"tts,omitempty" doc:"Omit it and the config decides, or en-low-latency when there is no config."`
+	UserId            *string                    `json:"user_id,omitempty" doc:"Who the agent joins the call as." default:"vision-agent"`
+	UserName          *string                    `json:"user_name,omitempty" default:"Vision Agent"`
+	Video             *SessionVideo              `json:"video,omitempty"`
+	Voice             *string                    `json:"voice,omitempty" doc:"Provider-specific voice id."`
 }
 
 func (*CreateSessionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Properties["max_tokens"].Format = ""
 	schema.Properties["tool_timeout_ms"].Format = ""
+	return schema
+}
+
+// SessionConnectorBinding is the connection a session uses for one of its config's connector
+// bindings. The alias pattern is AgentConnectorBinding's, so a name no binding could have is
+// refused before the session looks for it. 64 is the most bindings a config holds
+// (AgentConnectorBinding), so the most a session can choose for.
+type SessionConnectorBinding struct {
+	Name         string `json:"name" pattern:"^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$" doc:"The binding's alias in the agent config."`
+	ConnectionId string `json:"connection_id" minLength:"1" doc:"The caller's own connection to the binding's connector."`
+}
+
+func (*SessionConnectorBinding) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "The connection a session uses for one of its agent config's connector bindings " +
+		"chosen per session. Only a reference: the credential stays sealed on the connection."
+	schema.AdditionalProperties = false
 	return schema
 }
 

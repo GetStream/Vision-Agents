@@ -50,7 +50,8 @@ func clampLimit(asked, fallback, most int) int {
 //
 // Written when the session starts rather than when it ends, so a session that is still
 // running is findable and one the process died during is not simply lost. Saving the same
-// session twice updates the row: a retried write must not become a second conversation.
+// session twice updates the row: a retried write must not become a second conversation. It
+// also opens a text session that ended again, which is how one is carried on under its id.
 //
 // Incognito sessions never get here. The manager does not call this for one, which is what
 // the flag means -- not a row that is hidden, but no row at all.
@@ -78,6 +79,10 @@ func (s *Store) SaveSession(ctx context.Context, session *AgentSession) error {
 	if session.Custom == nil {
 		session.Custom = map[string]any{}
 	}
+	// The column's own default, which a nil slice would write as JSON null.
+	if session.ConnectorSelections == nil {
+		session.ConnectorSelections = []SessionConnectorSelection{}
+	}
 
 	_, err := s.db.NewInsert().Model(session).
 		On("CONFLICT (id) DO UPDATE").
@@ -86,12 +91,67 @@ func (s *Store) SaveSession(ctx context.Context, session *AgentSession) error {
 		Set("custom = EXCLUDED.custom").
 		Set("conversation_id = EXCLUDED.conversation_id").
 		Set("state = EXCLUDED.state").
+		Set("closed_at = NULL").
 		Set("updated_at = EXCLUDED.updated_at").
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("store: save session: %w", err)
 	}
 	return nil
+}
+
+// ErrNoSessionTools is a session that recorded no tools.
+var ErrNoSessionTools = errors.New("store: the session recorded no tools")
+
+// ToolDefinition is one tool as a session's model was offered it.
+type ToolDefinition struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+}
+
+// agentSessionTools is the tools a session was offered, kept apart from its row.
+type agentSessionTools struct {
+	bun.BaseModel `bun:"table:agent_session_tools"`
+
+	SessionID string           `bun:"session_id,pk"`
+	Tools     []ToolDefinition `bun:"tools,type:jsonb,notnull"`
+	UpdatedAt time.Time        `bun:"updated_at,notnull"`
+}
+
+// SaveSessionTools records what a session's model is offered, replacing what it was offered
+// before: a reopened session is offered what it has now.
+func (s *Store) SaveSessionTools(ctx context.Context, sessionID string, tools []ToolDefinition) error {
+	if sessionID == "" {
+		return errors.New("store: a session id is required")
+	}
+	if tools == nil {
+		tools = []ToolDefinition{}
+	}
+	_, err := s.db.NewInsert().
+		Model(&agentSessionTools{SessionID: sessionID, Tools: tools, UpdatedAt: time.Now().UTC()}).
+		On("CONFLICT (session_id) DO UPDATE").
+		Set("tools = EXCLUDED.tools").
+		Set("updated_at = EXCLUDED.updated_at").
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: save session tools: %w", err)
+	}
+	return nil
+}
+
+// SessionTools is what a session's model was last offered. A session that recorded none is
+// ErrNoSessionTools.
+func (s *Store) SessionTools(ctx context.Context, sessionID string) ([]ToolDefinition, error) {
+	var stored agentSessionTools
+	err := s.db.NewSelect().Model(&stored).Where("session_id = ?", sessionID).Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNoSessionTools
+	}
+	if err != nil {
+		return nil, fmt.Errorf("store: session tools: %w", err)
+	}
+	return stored.Tools, nil
 }
 
 // CloseSession records that a session ended. One that already ended keeps the first time: a

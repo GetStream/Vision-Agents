@@ -77,6 +77,20 @@ components:
         - daily
         - monthly
       type: string
+    AddTrunkNumberRequest:
+      properties:
+        country:
+          description: Required. ISO 3166-1 alpha-2 country code.
+          type: string
+        e164:
+          description: Required. The number in +15551234567 form.
+          type: string
+        tags:
+          additionalProperties:
+            type: string
+          description: The customer's own cost labels.
+          type: object
+      type: object
     AgentChannels:
       description: The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
       properties:
@@ -107,6 +121,9 @@ components:
           type: string
         dispatch:
           $ref: '#/components/schemas/AgentDispatch'
+        episode_cards:
+          description: Whether each phone call under this agent writes an episode card into the caller's omni-channel.
+          type: boolean
         greeting:
           type: string
         guardrail:
@@ -206,6 +223,8 @@ components:
           type: array
         dispatch:
           $ref: '#/components/schemas/AgentDispatch'
+        episode_cards:
+          type: boolean
         greeting:
           type: string
         guardrail:
@@ -300,6 +319,9 @@ components:
           type: array
         dispatch:
           $ref: '#/components/schemas/AgentDispatch'
+        episode_cards:
+          description: 'Whether each phone call under this agent writes an episode card into the caller''s omni-channel: an agent channel for each caller number and agent, keyed by the caller''s E.164 number. Off by default, and then a call runs as it always did. Left out on an update, the stored setting stays.'
+          type: boolean
         greeting:
           type: string
         guardrail:
@@ -1142,6 +1164,51 @@ components:
           description: The name the other participants see. Defaults to the user id.
           type: string
       type: object
+    CallTokens:
+      description: What a call's models read and wrote, summed over every request, with what their prompts were made of.
+      properties:
+        cached_input_tokens:
+          description: The part of the prompts a provider served from its own cache.
+          format: int64
+          type: integer
+        cost_micros:
+          description: Millionths of a dollar, priced from the providers' configured rates.
+          format: int64
+          type: integer
+        cost_sources:
+          description: Where the cost came from, the costliest first. Sources that cost nothing are left out.
+          items:
+            $ref: '#/components/schemas/CostSource'
+          type: array
+        input_parts:
+          $ref: '#/components/schemas/InputParts'
+        input_tokens:
+          description: Every prompt the models read, the cached part included.
+          format: int64
+          type: integer
+        models:
+          description: Each model the call used, the busiest first. One billed by audio or characters reads zero tokens.
+          items:
+            $ref: '#/components/schemas/ModelTokens'
+          type: array
+        output_tokens:
+          description: Everything the models generated, reasoning included.
+          format: int64
+          type: integer
+        requests:
+          description: How many calls to those models it took.
+          format: int64
+          type: integer
+      required:
+        - cached_input_tokens
+        - cost_micros
+        - cost_sources
+        - input_parts
+        - input_tokens
+        - models
+        - output_tokens
+        - requests
+      type: object
     CallUsage:
       description: 'What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it.'
       properties:
@@ -1914,6 +1981,90 @@ components:
         - dcr
         - cimd
       type: string
+    ConnectorEventDestination:
+      description: 'A URL of the app''s own that a connector''s raw provider events are forwarded to, such as Slack''s block_actions or reaction_added. Each forward is a POST of the provider''s body as it came, with the provider''s own Content-Type, signature and timestamp headers, signed on top in the Standard Webhooks shape (webhook-id, webhook-timestamp, webhook-signature) with the destination''s own secret. A 2xx answer is taken; a 5xx, a 429 or no answer is sent again after 5 s, 5 min, 30 min and 2 h; any other answer is not sent again. The provider''s signature headers come only while the provider''s own check would pass them: for Slack, until X-Slack-Request-Timestamp is 5 minutes old, the age Slack Bolt refuses after. A forward sent later, such as the retries after 5 min, 30 min and 2 h, carries Content-Type alone of them: verify it with webhook-signature. webhook-id is the same for every delivery of one provider event (Slack''s event_id, or trigger_id for an interaction), and a digest of the body for one that names no id.'
+      properties:
+        connector_id:
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        forward:
+          $ref: '#/components/schemas/ConnectorEventForward'
+        id:
+          readOnly: true
+          type: string
+        previous_secret_until:
+          description: Until when the secret the last rotation replaced still signs beside the current one. Absent when only one secret signs.
+          format: date-time
+          readOnly: true
+          type: string
+        updated_at:
+          description: When the secret was last rotated, or the destination made.
+          format: date-time
+          readOnly: true
+          type: string
+        url:
+          type: string
+      required:
+        - id
+        - connector_id
+        - url
+        - forward
+        - created_at
+        - updated_at
+      type: object
+    ConnectorEventDestinationPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/ConnectorEventDestination'
+          nullable: true
+          type: array
+        next_cursor:
+          description: Pass as cursor for the next page. Absent on the last one.
+          type: string
+      required:
+        - items
+        - has_more
+      type: object
+    ConnectorEventDestinationRequest:
+      additionalProperties: false
+      description: An event destination to create. An unknown field is refused rather than ignored.
+      properties:
+        forward:
+          $ref: '#/components/schemas/ConnectorEventForward'
+        url:
+          description: A public https URL. One that is or resolves to a private, loopback or link-local address is refused.
+          maxLength: 2048
+          minLength: 1
+          type: string
+      required:
+        - url
+        - forward
+      type: object
+    ConnectorEventDestinationSecret:
+      description: An event destination and the secret its forwards are signed with, which no other response carries.
+      properties:
+        destination:
+          $ref: '#/components/schemas/ConnectorEventDestination'
+        secret:
+          description: 'The Standard Webhooks signing secret, whsec_ and 32 random bytes in base64. Shown this once: keep it, no later response carries it.'
+          type: string
+      required:
+        - destination
+        - secret
+      type: object
+    ConnectorEventForward:
+      description: 'Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app''s own code next to the router''s agent. all: every verified delivery, messages and grant events included, but the provider''s URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there.'
+      enum:
+        - unhandled
+        - all
+      type: string
     ConnectorInput:
       properties:
         default:
@@ -2133,6 +2284,20 @@ components:
       oneOf:
         - $ref: '#/components/schemas/TextContentPart'
         - $ref: '#/components/schemas/ImageContentPart'
+    CostSource:
+      description: One place a call's cost came from.
+      properties:
+        cost_micros:
+          description: Millionths of a dollar. A part of the prompt is given its share of what the prompt cost, by tokens.
+          format: int64
+          type: integer
+        source:
+          description: 'For a model billed by tokens, the part of its prompt (instructions, messages, tool_definitions, tool_use, images or video), output for what it wrote, or input for prompt tokens recorded without a breakdown. For any other model, its modality: stt, tts, search and the rest.'
+          type: string
+      required:
+        - source
+        - cost_micros
+      type: object
     CreateOptOutRequest:
       properties:
         channel:
@@ -2195,6 +2360,12 @@ components:
         config_id:
           description: An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
           type: string
+        connector_bindings:
+          description: 'The connection to use for each of the agent config''s connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller''s own connection to the binding''s connector: an end user''s, or the one a backend names with X-Stream-User-Id, never an anonymous caller''s or a guest''s. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A required binding left without one fails the session; an optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.'
+          items:
+            $ref: '#/components/schemas/SessionConnectorBinding'
+          maxItems: 64
+          type: array
         context_truncated:
           description: Older history was omitted from the model context.
           type: boolean
@@ -2277,7 +2448,7 @@ components:
           description: 'Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session''s socket.'
           type: boolean
         title:
-          description: 'What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is called is a label on it rather than part of it.'
+          description: 'What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.'
           type: string
         tool_timeout_ms:
           description: How long the model waits for a tool result. Zero is the default.
@@ -2300,6 +2471,36 @@ components:
           $ref: '#/components/schemas/SessionVideo'
         voice:
           description: Provider-specific voice id.
+          type: string
+      type: object
+    CreateSipTrunkRequest:
+      properties:
+        codecs:
+          description: PCMU, PCMA or G722, in order of preference. Omit for PCMU then PCMA.
+          items:
+            type: string
+          type: array
+        host:
+          description: 'Required. The trunk''s hostname, without sip: or a port, e.g. example.pstn.twilio.com.'
+          type: string
+        late_offer:
+          description: The trunk accepts an INVITE without SDP. Omit for false.
+          type: boolean
+        name:
+          description: Required.
+          type: string
+        password:
+          description: Required. Stored sealed and never returned.
+          type: string
+        port:
+          description: Omit for 5060.
+          format: int64
+          type: integer
+        transport:
+          description: udp, tcp or tls. Omit for tcp.
+          type: string
+        username:
+          description: Required.
           type: string
       type: object
     CustomConnectorRequest:
@@ -2882,6 +3083,41 @@ components:
         - namespace
         - passages
       type: object
+    InputParts:
+      description: What prompts were made of, in tokens. Estimated from each request and scaled to what the provider counted, so the parts sum to the input tokens and only the split between them is a guess. Requests recorded before the split was kept read zero throughout.
+      properties:
+        images:
+          description: Pictures, attached or returned by a tool.
+          format: int64
+          type: integer
+        instructions:
+          description: 'The system prompt: the agent''s instructions, skills and plugin guidance.'
+          format: int64
+          type: integer
+        messages:
+          description: The conversation's words, from either side.
+          format: int64
+          type: integer
+        tool_definitions:
+          description: 'The tools the model was offered: their names, descriptions and schemas.'
+          format: int64
+          type: integer
+        tool_use:
+          description: The tools the model called, and what they returned.
+          format: int64
+          type: integer
+        video:
+          description: Frames of a video, from the call's camera or an attached clip.
+          format: int64
+          type: integer
+      required:
+        - images
+        - instructions
+        - messages
+        - tool_definitions
+        - tool_use
+        - video
+      type: object
     InstructionsRequest:
       properties:
         instructions:
@@ -3289,6 +3525,44 @@ components:
             - high
           type: string
       type: object
+    ModelTokens:
+      description: What one model read and wrote over a call.
+      properties:
+        cached_input_tokens:
+          format: int64
+          type: integer
+        cost_micros:
+          format: int64
+          type: integer
+        input_parts:
+          $ref: '#/components/schemas/InputParts'
+        input_tokens:
+          format: int64
+          type: integer
+        modality:
+          description: 'What the model does: llm for a language model, sts for speech-to-speech, and so on.'
+          type: string
+        model:
+          type: string
+        output_tokens:
+          format: int64
+          type: integer
+        provider:
+          type: string
+        requests:
+          format: int64
+          type: integer
+      required:
+        - cached_input_tokens
+        - cost_micros
+        - input_parts
+        - input_tokens
+        - modality
+        - model
+        - output_tokens
+        - provider
+        - requests
+      type: object
     NumberSearchResult:
       properties:
         numbers:
@@ -3304,6 +3578,45 @@ components:
       required:
         - numbers
         - skipped
+      type: object
+    OfferedTool:
+      description: One tool as the model sees it.
+      properties:
+        description:
+          description: What the model is told the tool does.
+          type: string
+        name:
+          description: How the model asks for it.
+          type: string
+        parameters:
+          additionalProperties: {}
+          description: The JSON Schema of its arguments.
+          type: object
+        tokens:
+          description: 'Roughly what offering it costs on every request, in tokens: its name, description and schema at four characters a token.'
+          format: int64
+          type: integer
+      required:
+        - name
+        - description
+        - tokens
+      type: object
+    OfferedTools:
+      description: The tools a session's conversation model is offered, as they are sent to it.
+      properties:
+        tokens:
+          description: Roughly what offering them all costs on every request, in tokens.
+          format: int64
+          type: integer
+        tools:
+          description: Every tool, in the order the model is offered them.
+          items:
+            $ref: '#/components/schemas/OfferedTool'
+          nullable: true
+          type: array
+      required:
+        - tools
+        - tokens
       type: object
     OptOut:
       description: Somebody who asked not to be reached. Nothing is texted or dialled to them on the channel, or on any for all, until the opt-out is revoked or they text START.
@@ -3383,6 +3696,9 @@ components:
         released_at:
           format: date-time
           nullable: true
+          type: string
+        sip_trunk_id:
+          description: The customer's own SIP trunk calls from this number are dialled through. Present only for vendor sip_trunk.
           type: string
         stream_trunk_id:
           description: The SIP trunk calls to this number arrive on. Absent until attached.
@@ -4426,6 +4742,22 @@ components:
         - state
         - user_id
       type: object
+    SessionConnectorBinding:
+      additionalProperties: false
+      description: 'The connection a session uses for one of its agent config''s connector bindings chosen per session. Only a reference: the credential stays sealed on the connection.'
+      properties:
+        connection_id:
+          description: The caller's own connection to the binding's connector.
+          minLength: 1
+          type: string
+        name:
+          description: The binding's alias in the agent config.
+          pattern: ^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$
+          type: string
+      required:
+        - name
+        - connection_id
+      type: object
     SessionFilter:
       additionalProperties: false
       description: Which sessions to list. A field not listed here is refused rather than ignored.
@@ -5014,6 +5346,56 @@ components:
         - simulation_id
         - started_at
         - state
+      type: object
+    SipTrunk:
+      properties:
+        codecs:
+          description: Audio codecs offered to the trunk, in order of preference.
+          items:
+            type: string
+          type: array
+        created_at:
+          format: date-time
+          type: string
+        has_password:
+          description: Whether a password is stored. The password itself is never returned. False for a trunk that arrived from another deployment, which needs one set before it can be called through.
+          type: boolean
+        host:
+          description: 'The trunk''s hostname, without sip: or a port.'
+          type: string
+        id:
+          type: string
+        late_offer:
+          description: The trunk accepts an INVITE without SDP.
+          type: boolean
+        name:
+          type: string
+        port:
+          format: int64
+          type: integer
+        transport:
+          enum:
+            - udp
+            - tcp
+            - tls
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        username:
+          type: string
+      required:
+        - codecs
+        - created_at
+        - has_password
+        - host
+        - id
+        - late_offer
+        - name
+        - port
+        - transport
+        - updated_at
+        - username
       type: object
     Skill:
       properties:
@@ -6332,6 +6714,30 @@ components:
           description: The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
           type: string
       type: object
+    UpdateSipTrunkRequest:
+      properties:
+        codecs:
+          items:
+            type: string
+          type: array
+        host:
+          type: string
+        late_offer:
+          type: boolean
+        name:
+          type: string
+        password:
+          description: Omit to keep the stored password.
+          type: string
+        port:
+          format: int64
+          type: integer
+        transport:
+          description: udp, tcp or tls.
+          type: string
+        username:
+          type: string
+      type: object
     UseCase:
       description: 'A 10DLC use case: what an app sends, reviewed by Stream and then registered as a campaign with the vendor its numbers come from.'
       properties:
@@ -7399,6 +7805,36 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: What a browser needs to join this call
+  /v1/agents/calls/{id}/tokens:
+    get:
+      description: 'Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt''s parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.'
+      operationId: getCallTokens
+      parameters:
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallTokens'
+          description: The call's tokens
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: What a call's models read and wrote, and what their prompts were made of
   /v1/agents/calls/{id}/transcript:
     get:
       description: Read back from the chat channel the conversation was written to as it happened, rather than copied into a second place that could disagree with it.
@@ -8640,6 +9076,174 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Read a connector
+  /v1/agents/connectors/{id}/event-destinations:
+    get:
+      description: |-
+        The connector's event destinations, newest first, without their secrets.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: listConnectorEventDestinations
+      parameters:
+        - description: The connector, such as slack_bot.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connector, such as slack_bot.
+            type: string
+        - description: Up to 200. Omitted is 25.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 25.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page. Omitted is the first page.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page. Omitted is the first page.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorEventDestinationPage'
+          description: A page of destinations
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: List a connector's event destinations
+    post:
+      description: |-
+        Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: createConnectorEventDestination
+      parameters:
+        - description: The connector, such as slack_bot.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connector, such as slack_bot.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectorEventDestinationRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorEventDestinationSecret'
+          description: The destination and its secret
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Forward a connector's provider events to a URL
+  /v1/agents/connectors/{id}/event-destinations/{destination_id}:
+    delete:
+      description: |-
+        Removes the destination, and every forward to it not yet sent.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: deleteConnectorEventDestination
+      parameters:
+        - description: The connector, such as slack_bot.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connector, such as slack_bot.
+            type: string
+        - description: The destination, as returned when it was created.
+          in: path
+          name: destination_id
+          required: true
+          schema:
+            description: The destination, as returned when it was created.
+            type: string
+      responses:
+        "204":
+          description: The destination is removed
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Stop forwarding to an event destination
+  /v1/agents/connectors/{id}/event-destinations/{destination_id}/rotate-secret:
+    post:
+      description: |-
+        Makes a new signing secret for the destination and returns it, once. For the next 24 hours every forward is signed with both the new and the old secret, space-separated in webhook-signature, so the receiver can move to the new one without a forward failing its check. A rotation during another drops the oldest secret.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: rotateConnectorEventDestinationSecret
+      parameters:
+        - description: The connector, such as slack_bot.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connector, such as slack_bot.
+            type: string
+        - description: The destination, as returned when it was created.
+          in: path
+          name: destination_id
+          required: true
+          schema:
+            description: The destination, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorEventDestinationSecret'
+          description: The destination and its new secret
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Rotate an event destination's signing secret
   /v1/agents/connectors/{id}/oauth-client:
     delete:
       description: |-
@@ -9914,6 +10518,7 @@ paths:
       description: |-
         A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a `type` and the fields of that event.
         The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
+        `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
         Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
         A respond command carrying command_id emits command_accepted with a nested command receipt (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text returns the existing IDs without invoking the model again; reuse with different text emits an error. Commands with IDs currently accept text only. After restart an interrupted command is reported, not rerun.
         An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `command_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
@@ -10092,6 +10697,7 @@ paths:
       summary: Delete what one session remembered
   /v1/agents/sessions/{id}/respond:
     post:
+      description: 'A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.'
       operationId: respondSession
       parameters:
         - description: The session, as returned when it was created.
@@ -10414,6 +11020,34 @@ paths:
           $ref: '#/components/responses/InternalError'
       summary: Stop a running session
       x-client-accessible: true
+  /v1/agents/sessions/{id}/tools:
+    get:
+      description: 'The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent''s own, its plugins'' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.'
+      operationId: listSessionTools
+      parameters:
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfferedTools'
+          description: The tools
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: List the tools a session's model is offered
   /v1/agents/sessions/query:
     post:
       description: |-
@@ -12268,6 +12902,209 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Set the sandbox recipients
+  /v1/phone/trunks:
+    get:
+      description: Trunks outbound calls from the customer's own numbers are dialled through. Passwords are never returned. Answers not_configured on a deployment with no key to seal them with.
+      operationId: listSipTrunks
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/SipTrunk'
+                type: array
+          description: The customer's trunks, newest first
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: The calling customer's own SIP trunks
+    post:
+      operationId: createSipTrunk
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSipTrunkRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SipTrunk'
+          description: The trunk is stored, its password sealed
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Add one of the customer's own SIP trunks
+  /v1/phone/trunks/{id}:
+    delete:
+      description: Answers 409 while numbers are on the trunk. Release them first.
+      operationId: deleteSipTrunk
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The trunk was removed
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Remove a SIP trunk with no numbers on it
+    get:
+      operationId: getSipTrunk
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SipTrunk'
+          description: The trunk
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: One of the customer's own SIP trunks
+    patch:
+      description: Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+      operationId: updateSipTrunk
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSipTrunkRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SipTrunk'
+          description: The trunk as it now is
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Change a SIP trunk
+  /v1/phone/trunks/{id}/numbers:
+    post:
+      description: Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+      operationId: addTrunkNumber
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddTrunkNumberRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneNumber'
+          description: The number is on the trunk
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Add a number that is on this SIP trunk
   /v1/phone/use-cases:
     get:
       description: |-

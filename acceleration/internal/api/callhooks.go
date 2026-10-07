@@ -9,14 +9,10 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
-
-// callerPrefix is what the inbound routing rule names a SIP caller, so the number they are
-// calling from can be read back off the participant. It has to match the template the rule
-// is created with.
-const callerPrefix = "sip-"
 
 // signatureHeader carries the HMAC Stream signs a delivery with.
 const signatureHeader = "X-Signature"
@@ -192,7 +188,7 @@ func callerOf(event callEvent) string {
 		return ""
 	}
 	for _, participant := range event.Call.Session.Participants {
-		if caller, ok := strings.CutPrefix(participant.User.ID, callerPrefix); ok {
+		if caller, ok := phone.CallerNumber(participant.User.ID); ok {
 			return caller
 		}
 	}

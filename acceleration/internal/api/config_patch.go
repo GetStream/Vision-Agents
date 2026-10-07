@@ -37,6 +37,7 @@ type AgentConfigPatch struct {
 	SandboxOptions     *SandboxOptions          `json:"sandbox_options,omitempty"`
 	Harness            *Harness                 `json:"harness,omitempty"`
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
+	EpisodeCards       *bool                    `json:"episode_cards,omitempty"`
 	Tags               *map[string]string       `json:"tags,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
 }
@@ -186,6 +187,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		config.Harness, _ = harnessOf(patch.Harness)
 	}
 	applyDispatch(&config, patch.Dispatch)
+	config.EpisodeCards = override(config.EpisodeCards, patch.EpisodeCards)
 	config.Tags = override(config.Tags, patch.Tags)
 	if patch.Video != nil {
 		config.VideoSource = override(config.VideoSource, patch.Video.Source)

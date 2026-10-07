@@ -444,6 +444,188 @@ func (s *Server) pressPhoneDigits(ctx context.Context, request *pressPhoneDigits
 	return nil, nil
 }
 
+// sipTrunk renders a stored trunk. The sealed password stays behind; whether there is one
+// is all a caller needs.
+func sipTrunk(trunk store.SIPTrunk) SipTrunk {
+	return SipTrunk{
+		Id: trunk.ID, Name: trunk.Name, Host: trunk.Host, Port: trunk.Port,
+		Transport: trunk.Transport, Username: trunk.Username, LateOffer: trunk.LateOffer,
+		Codecs: trunk.Codecs, HasPassword: trunk.HasPassword(),
+		CreatedAt: trunk.CreatedAt, UpdatedAt: trunk.UpdatedAt,
+	}
+}
+
+// sipTrunkFailure turns what the phone service said into the status a caller can act on.
+func sipTrunkFailure(err error) error {
+	switch {
+	case errors.Is(err, phone.ErrSIPTrunksDisabled):
+		return notConfigured(err.Error())
+	case errors.Is(err, store.ErrNoSIPTrunk):
+		return notFound(err.Error())
+	case errors.Is(err, store.ErrSIPTrunkInUse), errors.Is(err, store.ErrNumberHeld):
+		return conflict(err.Error())
+	case errors.Is(err, phone.ErrInvalidSIPTrunk):
+		return invalidRequest(err.Error())
+	default:
+		// Anything else is this deployment's failure, not the caller's: Huma answers it 500.
+		return err
+	}
+}
+
+// listSipTrunks returns the calling customer's own SIP trunks.
+func (s *Server) listSipTrunks(ctx context.Context, _ *listSipTrunksRequest) (*listSipTrunksResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.phone == nil {
+		return nil, errNoTelephony
+	}
+	trunks, err := s.phone.SIPTrunks(ctx, customerID)
+	if err != nil {
+		return nil, sipTrunkFailure(err)
+	}
+	rendered := make([]SipTrunk, 0, len(trunks))
+	for _, trunk := range trunks {
+		rendered = append(rendered, sipTrunk(trunk))
+	}
+	return &listSipTrunksResponse{Body: rendered}, nil
+}
+
+// createSipTrunk stores one of the calling customer's own SIP trunks.
+func (s *Server) createSipTrunk(ctx context.Context, request *createSipTrunkRequest) (*sipTrunkResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.phone == nil {
+		return nil, errNoTelephony
+	}
+	body := request.Body
+	settings := phone.SIPTrunkSettings{
+		Name: body.Name, Host: body.Host, Username: body.Username,
+	}
+	// Left out, the password is nil, which the service answers "password is required".
+	if body.Password != "" {
+		settings.Password = &body.Password
+	}
+	if body.Port != nil {
+		settings.Port = *body.Port
+	}
+	if body.Transport != nil {
+		settings.Transport = *body.Transport
+	}
+	if body.LateOffer != nil {
+		settings.LateOffer = *body.LateOffer
+	}
+	if body.Codecs != nil {
+		settings.Codecs = *body.Codecs
+	}
+	trunk, err := s.phone.CreateSIPTrunk(ctx, customerID, settings)
+	if err != nil {
+		return nil, sipTrunkFailure(err)
+	}
+	return &sipTrunkResponse{Body: sipTrunk(trunk)}, nil
+}
+
+// getSipTrunk returns one of the calling customer's own SIP trunks.
+func (s *Server) getSipTrunk(ctx context.Context, request *sipTrunkRequest) (*sipTrunkResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.phone == nil {
+		return nil, errNoTelephony
+	}
+	trunk, err := s.phone.SIPTrunk(ctx, customerID, request.Id)
+	if err != nil {
+		return nil, sipTrunkFailure(err)
+	}
+	return &sipTrunkResponse{Body: sipTrunk(trunk)}, nil
+}
+
+// updateSipTrunk changes what was sent and keeps the rest, the password included.
+func (s *Server) updateSipTrunk(ctx context.Context, request *updateSipTrunkRequest) (*sipTrunkResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.phone == nil {
+		return nil, errNoTelephony
+	}
+	existing, err := s.phone.SIPTrunk(ctx, customerID, request.Id)
+	if err != nil {
+		return nil, sipTrunkFailure(err)
+	}
+	settings := phone.SettingsOf(existing)
+	body := request.Body
+	if body.Name != nil {
+		settings.Name = *body.Name
+	}
+	if body.Host != nil {
+		settings.Host = *body.Host
+	}
+	if body.Port != nil {
+		settings.Port = *body.Port
+	}
+	if body.Transport != nil {
+		settings.Transport = *body.Transport
+	}
+	if body.Username != nil {
+		settings.Username = *body.Username
+	}
+	if body.LateOffer != nil {
+		settings.LateOffer = *body.LateOffer
+	}
+	if body.Codecs != nil {
+		settings.Codecs = *body.Codecs
+	}
+	settings.Password = body.Password
+	trunk, err := s.phone.UpdateSIPTrunk(ctx, customerID, request.Id, settings)
+	if err != nil {
+		return nil, sipTrunkFailure(err)
+	}
+	return &sipTrunkResponse{Body: sipTrunk(trunk)}, nil
+}
+
+// deleteSipTrunk removes a trunk with no numbers left on it.
+func (s *Server) deleteSipTrunk(ctx context.Context, request *sipTrunkRequest) (*struct{}, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.phone == nil {
+		return nil, errNoTelephony
+	}
+	if err := s.phone.DeleteSIPTrunk(ctx, customerID, request.Id); err != nil {
+		return nil, sipTrunkFailure(err)
+	}
+	return nil, nil
+}
+
+// addTrunkNumber records a number on one of the calling customer's own SIP trunks.
+func (s *Server) addTrunkNumber(ctx context.Context, request *addTrunkNumberRequest) (*addTrunkNumberResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.phone == nil {
+		return nil, errNoTelephony
+	}
+	// Tags are checked by the service with the number, so a bad one is answered
+	// "sip_trunk: invalid: <reason>" like the rest.
+	number, err := s.phone.AddTrunkNumber(ctx, phone.TrunkNumber{
+		Owner:   routing.Owner{CustomerID: customerID, Tags: phoneTags(request.Body.Tags)},
+		TrunkID: request.Id,
+		E164:    request.Body.E164,
+		Country: request.Body.Country,
+	})
+	if err != nil {
+		return nil, sipTrunkFailure(err)
+	}
+	return &addTrunkNumberResponse{Body: phoneNumber(number)}, nil
+}
+
 func phoneNumber(held store.PhoneNumber) PhoneNumber {
 	number := PhoneNumber{
 		E164:              held.E164,
@@ -464,6 +646,10 @@ func phoneNumber(held store.PhoneNumber) PhoneNumber {
 	if held.StreamTrunkID != "" {
 		trunk := held.StreamTrunkID
 		number.StreamTrunkId = &trunk
+	}
+	if held.SIPTrunkID != "" {
+		trunk := held.SIPTrunkID
+		number.SipTrunkId = &trunk
 	}
 	return number
 }
@@ -644,6 +830,66 @@ func (s *Server) registerPhone(api huma.API) {
 		},
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.pressPhoneDigits)
+	sipTrunkErrors := []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
+		http.StatusNotFound, http.StatusConflict}
+	huma.Register(api, huma.Operation{
+		OperationID: "listSipTrunks",
+		Method:      http.MethodGet,
+		Path:        "/v1/phone/trunks",
+		Summary:     "The calling customer's own SIP trunks",
+		Description: "Trunks outbound calls from the customer's own numbers are dialled through. " +
+			"Passwords are never returned. Answers not_configured on a deployment with no key to seal them with.",
+		Responses: map[string]*huma.Response{"200": {Description: "The customer's trunks, newest first"}},
+		Errors:    sipTrunkErrors,
+	}, s.listSipTrunks)
+	huma.Register(api, huma.Operation{
+		OperationID:   "createSipTrunk",
+		Method:        http.MethodPost,
+		Path:          "/v1/phone/trunks",
+		Summary:       "Add one of the customer's own SIP trunks",
+		DefaultStatus: http.StatusCreated,
+		Responses:     map[string]*huma.Response{"201": {Description: "The trunk is stored, its password sealed"}},
+		Errors:        sipTrunkErrors,
+	}, s.createSipTrunk)
+	huma.Register(api, huma.Operation{
+		OperationID: "getSipTrunk",
+		Method:      http.MethodGet,
+		Path:        "/v1/phone/trunks/{id}",
+		Summary:     "One of the customer's own SIP trunks",
+		Responses:   map[string]*huma.Response{"200": {Description: "The trunk"}},
+		Errors:      sipTrunkErrors,
+	}, s.getSipTrunk)
+	huma.Register(api, huma.Operation{
+		OperationID: "updateSipTrunk",
+		Method:      http.MethodPatch,
+		Path:        "/v1/phone/trunks/{id}",
+		Summary:     "Change a SIP trunk",
+		Description: "Fields left out keep what the trunk has. Leaving out the password keeps the stored one.",
+		Responses:   map[string]*huma.Response{"200": {Description: "The trunk as it now is"}},
+		Errors:      sipTrunkErrors,
+	}, s.updateSipTrunk)
+	huma.Register(api, huma.Operation{
+		OperationID:   "deleteSipTrunk",
+		Method:        http.MethodDelete,
+		Path:          "/v1/phone/trunks/{id}",
+		Summary:       "Remove a SIP trunk with no numbers on it",
+		Description:   "Answers 409 while numbers are on the trunk. Release them first.",
+		DefaultStatus: http.StatusNoContent,
+		Responses:     map[string]*huma.Response{"204": {Description: "The trunk was removed"}},
+		Errors:        sipTrunkErrors,
+	}, s.deleteSipTrunk)
+	huma.Register(api, huma.Operation{
+		OperationID: "addTrunkNumber",
+		Method:      http.MethodPost,
+		Path:        "/v1/phone/trunks/{id}/numbers",
+		Summary:     "Add a number that is on this SIP trunk",
+		Description: "Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it " +
+			"are dialled through this trunk. Whether the number is really the customer's is for the " +
+			"trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.",
+		DefaultStatus: http.StatusCreated,
+		Responses:     map[string]*huma.Response{"201": {Description: "The number is on the trunk"}},
+		Errors:        sipTrunkErrors,
+	}, s.addTrunkNumber)
 }
 
 type listPhoneVendorsRequest struct{}
@@ -719,6 +965,45 @@ type pressPhoneDigitsRequest struct {
 	Body         *PressDigitsRequest `required:"true"`
 }
 
+type listSipTrunksRequest struct{}
+
+type listSipTrunksResponse struct {
+	Body []SipTrunk `nullable:"false"`
+}
+
+type createSipTrunkRequest struct {
+	Body *CreateSipTrunkRequest `required:"true"`
+}
+
+type sipTrunkRequest struct {
+	Id string `path:"id"`
+}
+
+type updateSipTrunkRequest struct {
+	Id   string                 `path:"id"`
+	Body *UpdateSipTrunkRequest `required:"true"`
+}
+
+type sipTrunkResponse struct {
+	Body SipTrunk
+}
+
+type addTrunkNumberRequest struct {
+	Id   string                 `path:"id"`
+	Body *AddTrunkNumberRequest `required:"true"`
+}
+
+type addTrunkNumberResponse struct {
+	Body PhoneNumber
+}
+
+// AddTrunkNumberRequest is the AddTrunkNumberRequest schema.
+type AddTrunkNumberRequest struct {
+	Country string             `json:"country,omitempty" doc:"Required. ISO 3166-1 alpha-2 country code."`
+	E164    string             `json:"e164,omitempty" doc:"Required. The number in +15551234567 form."`
+	Tags    *map[string]string `json:"tags,omitempty" doc:"The customer's own cost labels."`
+}
+
 // AttachNumberRequest is the AttachNumberRequest schema.
 type AttachNumberRequest struct {
 	AllowedIps *[]string `json:"allowed_ips,omitempty" doc:"The vendor's signalling addresses, as IPs or CIDR blocks."`
@@ -751,6 +1036,22 @@ type BuyNumberRequest struct {
 	E164    string             `json:"e164" example:"+15125551234"`
 	Tags    *map[string]string `json:"tags,omitempty" doc:"Cost labels carried onto the purchase's request row."`
 	Vendor  string             `json:"vendor" example:"twilio"`
+}
+
+// The trunk request fields are optional in the schema and checked by the phone service
+// instead, so a missing or wrong field is answered "sip_trunk: invalid: <reason>" like every
+// other problem with a trunk, rather than by the schema validator in its own words.
+
+// CreateSipTrunkRequest is the CreateSipTrunkRequest schema.
+type CreateSipTrunkRequest struct {
+	Codecs    *[]string `json:"codecs,omitempty" doc:"PCMU, PCMA or G722, in order of preference. Omit for PCMU then PCMA."`
+	Host      string    `json:"host,omitempty" doc:"Required. The trunk's hostname, without sip: or a port, e.g. example.pstn.twilio.com."`
+	LateOffer *bool     `json:"late_offer,omitempty" doc:"The trunk accepts an INVITE without SDP. Omit for false."`
+	Name      string    `json:"name,omitempty" doc:"Required."`
+	Password  string    `json:"password,omitempty" doc:"Required. Stored sealed and never returned."`
+	Port      *int      `json:"port,omitempty" doc:"Omit for 5060."`
+	Transport *string   `json:"transport,omitempty" doc:"udp, tcp or tls. Omit for tcp."`
+	Username  string    `json:"username,omitempty" doc:"Required."`
 }
 
 // NumberSearchResult is the NumberSearchResult schema.
@@ -810,6 +1111,7 @@ type PhoneNumber struct {
 	MonthlyCostMicros int64              `json:"monthly_cost_micros"`
 	PurchasedAt       time.Time          `json:"purchased_at"`
 	ReleasedAt        *time.Time         `json:"released_at,omitempty" nullable:"true"`
+	SipTrunkId        *string            `json:"sip_trunk_id,omitempty" doc:"The customer's own SIP trunk calls from this number are dialled through. Present only for vendor sip_trunk."`
 	StreamTrunkId     *string            `json:"stream_trunk_id,omitempty" doc:"The SIP trunk calls to this number arrive on. Absent until attached."`
 	Tags              *map[string]string `json:"tags,omitempty" doc:"The customer's own cost labels."`
 	Vendor            string             `json:"vendor"`
@@ -925,6 +1227,21 @@ type PressDigitsRequest struct {
 	Vendor string `json:"vendor" doc:"Who is carrying the call, e.g. \"telnyx\"."`
 }
 
+// SipTrunk is the SipTrunk schema.
+type SipTrunk struct {
+	Codecs      []string  `json:"codecs" nullable:"false" doc:"Audio codecs offered to the trunk, in order of preference."`
+	CreatedAt   time.Time `json:"created_at"`
+	HasPassword bool      `json:"has_password" doc:"Whether a password is stored. The password itself is never returned. False for a trunk that arrived from another deployment, which needs one set before it can be called through."`
+	Host        string    `json:"host" doc:"The trunk's hostname, without sip: or a port."`
+	Id          string    `json:"id"`
+	LateOffer   bool      `json:"late_offer" doc:"The trunk accepts an INVITE without SDP."`
+	Name        string    `json:"name"`
+	Port        int       `json:"port"`
+	Transport   string    `json:"transport" enum:"udp,tcp,tls"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Username    string    `json:"username"`
+}
+
 // SkippedVendor is the SkippedVendor schema.
 type SkippedVendor struct {
 	Reason string `json:"reason" example:"cannot search by administrative_area"`
@@ -938,4 +1255,17 @@ type TransferCallRequest struct {
 	From     string             `json:"from" doc:"The customer's number the human is dialled from, which is what they see."`
 	Tags     *map[string]string `json:"tags,omitempty"`
 	To       string             `json:"to" doc:"The human being brought onto the call."`
+}
+
+// UpdateSipTrunkRequest is the UpdateSipTrunkRequest schema. Every field left out keeps
+// what the trunk has.
+type UpdateSipTrunkRequest struct {
+	Codecs    *[]string `json:"codecs,omitempty"`
+	Host      *string   `json:"host,omitempty"`
+	LateOffer *bool     `json:"late_offer,omitempty"`
+	Name      *string   `json:"name,omitempty"`
+	Password  *string   `json:"password,omitempty" doc:"Omit to keep the stored password."`
+	Port      *int      `json:"port,omitempty"`
+	Transport *string   `json:"transport,omitempty" doc:"udp, tcp or tls."`
+	Username  *string   `json:"username,omitempty"`
 }

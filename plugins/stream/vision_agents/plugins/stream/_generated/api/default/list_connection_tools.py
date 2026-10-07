@@ -1,0 +1,205 @@
+from http import HTTPStatus
+from typing import Any
+from urllib.parse import quote
+
+import httpx
+
+from ... import errors
+from ...client import AuthenticatedClient, Client
+from ...models.connection_tools import ConnectionTools
+from ...models.error_response import ErrorResponse
+from ...types import Response
+
+
+def _get_kwargs(
+    id: str,
+) -> dict[str, Any]:
+
+    _kwargs: dict[str, Any] = {
+        "method": "get",
+        "url": "/v1/agents/connections/{id}/tools".format(
+            id=quote(str(id), safe=""),
+        ),
+    }
+
+    return _kwargs
+
+
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> ConnectionTools | ErrorResponse | None:
+    if response.status_code == 200:
+        response_200 = ConnectionTools.from_dict(response.json())
+
+        return response_200
+
+    if response.status_code == 400:
+        response_400 = ErrorResponse.from_dict(response.json())
+
+        return response_400
+
+    if response.status_code == 401:
+        response_401 = ErrorResponse.from_dict(response.json())
+
+        return response_401
+
+    if response.status_code == 403:
+        response_403 = ErrorResponse.from_dict(response.json())
+
+        return response_403
+
+    if response.status_code == 404:
+        response_404 = ErrorResponse.from_dict(response.json())
+
+        return response_404
+
+    if response.status_code == 500:
+        response_500 = ErrorResponse.from_dict(response.json())
+
+        return response_500
+
+    if client.raise_on_unexpected_status:
+        raise errors.UnexpectedStatus(response.status_code, response.content)
+    else:
+        return None
+
+
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[ConnectionTools | ErrorResponse]:
+    return Response(
+        status_code=HTTPStatus(response.status_code),
+        content=response.content,
+        headers=response.headers,
+        parsed=_parse_response(client=client, response=response),
+    )
+
+
+def sync_detailed(
+    id: str,
+    *,
+    client: AuthenticatedClient | Client,
+) -> Response[ConnectionTools | ErrorResponse]:
+    """List a connection's tools
+
+     The tools the connection offered when it was last validated, each with the schema digest an agent
+    config's grant pins. Empty until a validate listed them. Who may read them is who may read the
+    connection.
+
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+
+    Args:
+        id (str): The connection, as returned when it was created.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[ConnectionTools | ErrorResponse]
+    """
+
+    kwargs = _get_kwargs(
+        id=id,
+    )
+
+    response = client.get_httpx_client().request(
+        **kwargs,
+    )
+
+    return _build_response(client=client, response=response)
+
+
+def sync(
+    id: str,
+    *,
+    client: AuthenticatedClient | Client,
+) -> ConnectionTools | ErrorResponse | None:
+    """List a connection's tools
+
+     The tools the connection offered when it was last validated, each with the schema digest an agent
+    config's grant pins. Empty until a validate listed them. Who may read them is who may read the
+    connection.
+
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+
+    Args:
+        id (str): The connection, as returned when it was created.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        ConnectionTools | ErrorResponse
+    """
+
+    return sync_detailed(
+        id=id,
+        client=client,
+    ).parsed
+
+
+async def asyncio_detailed(
+    id: str,
+    *,
+    client: AuthenticatedClient | Client,
+) -> Response[ConnectionTools | ErrorResponse]:
+    """List a connection's tools
+
+     The tools the connection offered when it was last validated, each with the schema digest an agent
+    config's grant pins. Empty until a validate listed them. Who may read them is who may read the
+    connection.
+
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+
+    Args:
+        id (str): The connection, as returned when it was created.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[ConnectionTools | ErrorResponse]
+    """
+
+    kwargs = _get_kwargs(
+        id=id,
+    )
+
+    response = await client.get_async_httpx_client().request(**kwargs)
+
+    return _build_response(client=client, response=response)
+
+
+async def asyncio(
+    id: str,
+    *,
+    client: AuthenticatedClient | Client,
+) -> ConnectionTools | ErrorResponse | None:
+    """List a connection's tools
+
+     The tools the connection offered when it was last validated, each with the schema digest an agent
+    config's grant pins. Empty until a validate listed them. Who may read them is who may read the
+    connection.
+
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+
+    Args:
+        id (str): The connection, as returned when it was created.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        ConnectionTools | ErrorResponse
+    """
+
+    return (
+        await asyncio_detailed(
+            id=id,
+            client=client,
+        )
+    ).parsed
