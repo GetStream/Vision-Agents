@@ -46,12 +46,14 @@ func newCallCards(pgStore *store.Store, stream *streamapp.Clients, logger *slog.
 	return &callCards{cards: cards, logger: logger, ctx: ctx, cancel: cancel}
 }
 
-// started writes the card of a call session that has just joined. A session in writing, an
-// incognito one, which records nothing, and one with no agent config, whose omni-channel the
-// contact map cannot key, get none.
+// started writes the card of a call session that has just joined, when its agent config
+// turned the cards on (store.AgentConfig.EpisodeCards). Off, which every config is unless it
+// says otherwise, nothing runs: no call read, no contact map row, no card, as before the
+// cards existed. A session in writing, an incognito one, which records nothing, and one with
+// no agent config, whose omni-channel the contact map cannot key, get none either.
 func (c *callCards) started(created *Session, stream streamapp.Bound) {
 	spec := created.spec
-	if c == nil || spec.Text || spec.CallID == "" || spec.Incognito || spec.ConfigID == "" || stream.Client == nil {
+	if c == nil || !spec.EpisodeCards || spec.Text || spec.CallID == "" || spec.Incognito || spec.ConfigID == "" || stream.Client == nil {
 		return
 	}
 	c.running.Add(1)

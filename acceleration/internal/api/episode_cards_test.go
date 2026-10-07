@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,8 @@ import (
 // T43): a session that joins a phone call writes one card into the caller's omni-channel,
 // found by the caller's number. The caller is the call's SIP participant, which the suite's
 // Stream holds as the routing rule names it, sip-<number>. The bridge's cards are in
-// SlackChannelSuite.
+// SlackChannelSuite. A config writes call cards only once it turns episode_cards on; the
+// suite's agent does, and TestACallUnderAConfigThatDidNotTurnCardsOnIsAsBefore's does not.
 type EpisodeCardsSuite struct {
 	RouterSuite
 
@@ -31,8 +33,19 @@ func TestEpisodeCardsSuite(t *testing.T) {
 
 func (s *EpisodeCardsSuite) SetupTest() {
 	s.useApp(s.data.createApp())
-	s.config = s.data.createAgentConfig()
+	s.config = s.agentConfig(true)
 	s.number = s.utils.number()
+}
+
+// Before this PR a call under an agent config read nothing of its call and wrote no contact
+// and no card. A config that did not turn the cards on keeps it so.
+func (s *EpisodeCardsSuite) TestACallUnderAConfigThatDidNotTurnCardsOnIsAsBefore() {
+	s.config = s.agentConfig(false)
+
+	call := s.called("sip-" + s.number)
+
+	s.Never(func() bool { return s.readCall(call) || s.contacts() > 0 }, dropped, 20*time.Millisecond,
+		"the call was read, or a contact was made")
 }
 
 func (s *EpisodeCardsSuite) TestACallMakesOneCardWithSourceCallLinkedToItsCallChannel() {
@@ -47,6 +60,7 @@ func (s *EpisodeCardsSuite) TestACallMakesOneCardWithSourceCallLinkedToItsCallCh
 	s.Equal("agent:"+call, custom["thread_channel"], "the call channel the transcript is in")
 	s.Equal("in_progress", custom["status"])
 	s.Equal(1, s.contacts(), "a new number makes one row")
+	s.True(s.readCall(call), "the caller is read off the call, which is what a config that did not opt in never does")
 }
 
 // Channel ids are seen by every member and every client of the app, so the omni-channel's
@@ -88,6 +102,20 @@ func (s *EpisodeCardsSuite) TestTheSameNumberFromAnSMSAndACallIsOneOmniChannel()
 	s.Equal(1, s.contacts(), "one person, one row")
 }
 
+// A caller number that does not say it is international is not guessed at: no row, no card,
+// and the call goes on as the session it is.
+func (s *EpisodeCardsSuite) TestACallFromANumberWithoutItsPlusMakesNoCard() {
+	call := s.utils.callID()
+	s.chat.PutCall("agent", call, "sip-5550100100")
+	created := s.serverClient.createSession(CreateSessionRequest{CallId: &call, CallType: pointerTo("agent"), ConfigId: &s.config.Id})
+
+	s.Eventually(func() bool { return s.readCall(call) }, settleFor, 10*time.Millisecond)
+	s.Never(func() bool { return s.contacts() > 0 }, dropped, 20*time.Millisecond)
+	var running Session
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+created.Id, nil, &running))
+	s.Equal(Live, running.State, "the call's session runs on")
+}
+
 // A call no phone is on, such as one from a browser, has nobody the contact map keys.
 func (s *EpisodeCardsSuite) TestACallWithNoPhoneOnItMakesNoCard() {
 	s.called("someone-in-a-browser")
@@ -102,6 +130,26 @@ func (s *EpisodeCardsSuite) called(participants ...string) string {
 	s.chat.PutCall("agent", call, participants...)
 	s.serverClient.createSession(CreateSessionRequest{CallId: &call, CallType: pointerTo("agent"), ConfigId: &s.config.Id})
 	return call
+}
+
+// agentConfig is an agent of the test's app, with episode cards on or off.
+func (s *EpisodeCardsSuite) agentConfig(cards bool) AgentConfig {
+	var created AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
+		Name: "agent-" + s.utils.uuid(), Llm: pointerTo("llm-flow"), Instructions: pointerTo("be brief"),
+		EpisodeCards: pointerTo(cards),
+	}, &created))
+	return created
+}
+
+// readCall is whether the router asked Stream for a call, as a card's caller lookup does.
+func (s *EpisodeCardsSuite) readCall(call string) bool {
+	for _, request := range s.chat.Requests(suiteStreamKey) {
+		if request.Method == http.MethodGet && strings.HasSuffix(request.Path, "/video/call/agent/"+call) {
+			return true
+		}
+	}
+	return false
 }
 
 // omniChannel is the id of the omni-channel the contact map gives a number for the test's
