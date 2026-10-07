@@ -436,6 +436,19 @@ type ConnectorBinding struct {
 	Required    bool              `json:"required"`
 	// TimeoutMs is how long one tool call may take. Zero leaves the session's default.
 	TimeoutMs int `json:"timeout_ms,omitempty"`
+	// Events are the MCP events the binding's fixed connection is subscribed to, each opening
+	// a conversation of its own when it arrives (internal/mcpevents). Empty subscribes to none.
+	Events []BindingEvent `json:"events,omitempty"`
+}
+
+// BindingEvent is one MCP event a binding subscribes to on its connection's server.
+type BindingEvent struct {
+	// Event is the event's name, as the server's events/list gives it.
+	Event string `json:"event"`
+	// Arguments are the event's filters, as its inputSchema describes them.
+	Arguments map[string]any `json:"arguments,omitempty"`
+	// Instructions say what the agent does with the event when it arrives.
+	Instructions string `json:"instructions,omitempty"`
 }
 
 // ConnectionBinding selects the connection a binding's tools are called through: "fixed",
