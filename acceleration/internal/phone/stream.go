@@ -20,6 +20,16 @@ const defaultCallType = "agent"
 // known before they say a word.
 const callerTemplate = "sip-{{caller_number}}"
 
+// callerPrefix is callerTemplate up to the number.
+const callerPrefix = "sip-"
+
+// CallerNumber reads the calling number off the id of the participant callerTemplate named,
+// and false for any other participant.
+func CallerNumber(participantID string) (string, bool) {
+	number, ok := strings.CutPrefix(participantID, callerPrefix)
+	return number, ok && number != ""
+}
+
 // StreamOptions configures the Stream side of a phone number.
 type StreamOptions struct {
 	APIKey    string
