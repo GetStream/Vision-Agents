@@ -466,8 +466,13 @@ func normalizeConfig(config *AgentConfig) {
 	}
 }
 
+// ErrNoAgentConfig is a config id the customer holds no live config by. A sentinel, so a
+// caller can tell a deleted config from the database failing. The text is the one these
+// errors always had.
+var ErrNoAgentConfig = errors.New("store: there is no agent config")
+
 func unknownAgentConfig(id string) error {
-	return stack.Wrap(fmt.Errorf("store: there is no agent config %s", id))
+	return stack.Wrap(fmt.Errorf("%w %s", ErrNoAgentConfig, id))
 }
 
 func unknownSkill(id string) error {

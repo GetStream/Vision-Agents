@@ -1493,7 +1493,10 @@ type AgentSession struct {
 	CallType        string          `bun:"call_type,nullzero"`
 	// ForkedFrom is the session this one continued from, empty for one opened fresh.
 	ForkedFrom string `bun:"forked_from,nullzero"`
-	State      string `bun:"state,notnull"`
+	// ConnectorSelections are the connections the caller picked for the config's session
+	// bindings, which a fork re-resolves. References only, never a credential.
+	ConnectorSelections []SessionConnectorSelection `bun:"connector_selections,type:jsonb,notnull"`
+	State               string                      `bun:"state,notnull"`
 	// Modality is ModalityText, ModalityVoice or ModalityVideo.
 	Modality  string    `bun:"modality,notnull"`
 	CreatedAt time.Time `bun:"created_at,notnull"`
@@ -1503,6 +1506,13 @@ type AgentSession struct {
 	LastResponseAt *time.Time `bun:"last_response_at"`
 	// Rank is how well a search matched, zero outside a search.
 	Rank float32 `bun:"rank,scanonly"`
+}
+
+// SessionConnectorSelection is the connection a session's caller picked for one session
+// binding of its config, by the binding's alias.
+type SessionConnectorSelection struct {
+	Name         string `json:"name"`
+	ConnectionID string `json:"connection_id"`
 }
 
 // SessionPosition is the last session of a page, by every key the list is sorted on.

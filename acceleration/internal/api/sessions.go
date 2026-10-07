@@ -92,6 +92,23 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
+	// The connector bindings are the config's as it is now, not as the parent was opened
+	// with. The session re-resolves the parent's selections against them and against the
+	// caller asking for the fork, and drops the ones the config no longer declares. A config
+	// deleted since binds nothing, and its fork goes ahead as a fork did before bindings
+	// existed; a config that cannot be read fails the fork rather than dropping its bindings.
+	if config == nil {
+		spec.ConnectorBindings = nil
+		if s.store != nil && spec.ConfigID != "" {
+			current, err := s.store.AgentConfig(ctx, customerID, spec.ConfigID)
+			switch {
+			case err == nil:
+				spec.ConnectorBindings = current.Connectors
+			case !errors.Is(err, store.ErrNoAgentConfig):
+				return nil, err
+			}
+		}
+	}
 	recalled, err := s.recordedHistory(ctx, parent, body, spec.Recall)
 	switch {
 	case errors.Is(err, store.ErrUnknownResponse):
@@ -447,7 +464,19 @@ func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, 
 	spec.Custom = row.Custom
 	spec.ModelOverwrites = row.ModelOverwrites
 	spec.ForkedFrom = row.ForkedFrom
+	// The caller's connections go on with the chat; the session checks each against the
+	// config as it is now and the caller asking, as it did when the chat opened.
+	spec.ConnectorSelections = selectionsOf(*row)
 	return spec, nil
+}
+
+// selectionsOf are the connections a stored session's caller chose for its session bindings.
+func selectionsOf(row store.AgentSession) []session.ConnectorSelection {
+	var chosen []session.ConnectorSelection
+	for _, selection := range row.ConnectorSelections {
+		chosen = append(chosen, session.ConnectorSelection{Name: selection.Name, ConnectionID: selection.ConnectionID})
+	}
+	return chosen
 }
 
 // holdUntilAnswered keeps a watcher on a reopened conversation until its agent settles.
@@ -560,6 +589,10 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	}
 	if request.Keyterms != nil {
 		spec.Keyterms = *request.Keyterms
+	}
+	for _, chosen := range value(request.ConnectorBindings) {
+		spec.ConnectorSelections = append(spec.ConnectorSelections,
+			session.ConnectorSelection{Name: chosen.Name, ConnectionID: chosen.ConnectionId})
 	}
 	// Cost labels are merged rather than replaced: a config labels which agent the spend
 	// belongs to and a call labels which conversation, and both are worth billing on.
@@ -838,6 +871,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 			Custom: row.Custom, ModelOverwrites: row.ModelOverwrites,
 			CallType: row.CallType,
 		}
+		spec.ConnectorSelections = selectionsOf(*row)
 		parentID = row.ID
 		wasText = row.CallID == ""
 		spec.Text = wasText
@@ -857,6 +891,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 		fresh.Title, fresh.Description = spec.Title, spec.Description
 		fresh.Project, fresh.Custom = spec.Project, spec.Custom
 		fresh.CallType = spec.CallType
+		fresh.ConnectorSelections = spec.ConnectorSelections
 		spec = fresh
 	}
 

@@ -76,6 +76,16 @@ const (
 // types declared in this package are the session's own.
 type Event any
 
+// ConnectorUnavailable is an optional connector binding the session opened without, and why:
+// a stable code, never a credential or another person's connection id. A watcher is sent
+// every one when it attaches, since they say what the session can do for as long as it runs.
+type ConnectorUnavailable struct {
+	// Name is the binding's alias.
+	Name        string
+	ConnectorID string
+	Reason      string
+}
+
 // CommandStopped is how one named command ended after somebody asked for it to stop. It
 // is separate from the receipt a submission returns, because a watcher has to tell a
 // command it asked to stop from a command that was just accepted.
@@ -134,6 +144,9 @@ type Session struct {
 	unwatched     *time.Timer
 	state         State
 	modality      string
+	// connectorsUnavailable are the optional connector bindings the session opened without,
+	// fixed when it was created.
+	connectorsUnavailable []ConnectorUnavailable
 
 	// said is the conversation as it happens, kept so a finished call can be reviewed
 	// without reading back what was written to chat. It has a lock of its own so
@@ -355,6 +368,9 @@ func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
 	if s.unwatched != nil {
 		s.unwatched.Stop()
 		s.unwatched = nil
+	}
+	for _, unavailable := range s.connectorsUnavailable {
+		attached.send(unavailable)
 	}
 	if replayVoiceTools && !s.spec.Text && s.persisted == nil && s.tools != nil {
 		for _, pending := range s.tools.Pending() {

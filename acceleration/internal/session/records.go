@@ -320,6 +320,12 @@ func sessionRow(created *Session) store.AgentSession {
 	// would make every session look like it belonged to the agent.
 	row.UserID = spec.Caller.UserID
 	row.CallerKind = string(spec.CallerKind)
+	// Only the alias and the connection's id, so a fork can choose them again: a selection
+	// is a reference, and the credential stays sealed on the connection.
+	for _, selection := range spec.ConnectorSelections {
+		row.ConnectorSelections = append(row.ConnectorSelections,
+			store.SessionConnectorSelection{Name: selection.Name, ConnectionID: selection.ConnectionID})
+	}
 	return row
 }
 

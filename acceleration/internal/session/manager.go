@@ -118,6 +118,10 @@ type ManagerOptions struct {
 	// PluginAuth signs an end user into the plugins an agent names per user, sending the
 	// provider back to this deployment's public URL. Nil sends it to localhost.
 	PluginAuth *plugins.Auth
+	// Connectors is what a session opens its agent config's connector bindings with. Zero,
+	// as on a deployment with connectors off, opens none: a required binding fails the
+	// session, and an optional one is reported unavailable.
+	Connectors Connectors
 	// DetachedGrace is how long a persistent text session outlives its last watcher.
 	// Zero is defaultDetachedGrace.
 	DetachedGrace time.Duration
@@ -382,6 +386,18 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	m.supersede(spec)
 	m.think(ctx, &spec)
 
+	// Before the call is joined, so a required connector that cannot be used refuses the
+	// session rather than leaving it without the tools it was configured to need.
+	connectors, connectorTools, connectorsUnavailable, err := m.attachConnectors(ctx, &spec)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if !opened && connectors != nil {
+			connectors.Close()
+		}
+	}()
+
 	skills, err := m.skills(ctx, spec)
 	if err != nil {
 		return nil, stack.Wrap(err)
@@ -469,6 +485,18 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		runner = own
 		created.closers = append(created.closers, own.Close)
 	}
+	// The dispatcher goes in front, so the names it opened are its own whatever else the
+	// session offers. The plugins stay beside it until they move onto connectors (T23).
+	if connectors != nil {
+		if err := connectorCollision(connectorTools, tools); err != nil {
+			return nil, err
+		}
+		tools = append(tools, connectorTools...)
+		connectors.next = runner
+		runner = connectors
+		created.closers = append(created.closers, connectors.Close)
+	}
+	created.connectorsUnavailable = connectorsUnavailable
 
 	var toolStarted func(agent.ToolStarted)
 	if conv != nil {

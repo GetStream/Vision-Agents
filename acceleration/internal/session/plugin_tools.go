@@ -46,6 +46,10 @@ func attachPlugins(ctx context.Context, spec Spec, db *store.Store, pluginAuth *
 			if store.NamesPlugin(spec.UserPlugins, conn.PluginID) && !store.NamesPlugin(spec.AgentPlugins, conn.PluginID) {
 				continue
 			}
+			// A connector binding for the same provider wins (Spec.Normalize).
+			if spec.boundProvider(conn.PluginID) {
+				continue
+			}
 			plugin, err := ConfiguredPlugin(EntryFor(conn.PluginID, spec.AgentPlugins, spec.UserPlugins))
 			if err != nil {
 				logger.Warn("plugin is not usable", "plugin", conn.PluginID, "error", err)

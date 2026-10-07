@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -115,20 +114,7 @@ func resultText(result *mcp.CallToolResult) (string, error) {
 	if text == "" && len(result.Content) > 0 {
 		text = nonText
 	}
-	return cut(text), nil
-}
-
-// cut is text when it fits core.MaxResultBytes, and otherwise as much of it as fits with
-// core.TruncatedMarker after it, never splitting a UTF-8 sequence.
-func cut(text string) string {
-	if len(text) <= core.MaxResultBytes {
-		return text
-	}
-	kept := text[:core.MaxResultBytes-len(core.TruncatedMarker)]
-	for !utf8.ValidString(kept) {
-		kept = kept[:len(kept)-1]
-	}
-	return kept + core.TruncatedMarker
+	return core.CutResult(text), nil
 }
 
 // offered is a tool as the model is shown it.

@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -200,6 +201,14 @@ type Spec struct {
 	// MCPServers are MCP servers outside the catalog, opened by their URL with no login, the
 	// app's, or each caller's own.
 	MCPServers []store.MCPServer
+	// ConnectorBindings are the agent config's connector bindings: which connector's tools
+	// the session may call, through which connection, and exactly which tools. A binding
+	// wins over a plugin entry for the same provider (withoutBoundPlugins).
+	ConnectorBindings []store.ConnectorBinding
+	// ConnectorSelections are the connections the caller picked for the config's session
+	// bindings, one per alias. Only references: the session checks each against the
+	// binding and the verified Caller when it opens, and again on every call.
+	ConnectorSelections []ConnectorSelection
 	// ServerInstructions are what those servers said at initialize about using their
 	// tools, added after Instructions. The session fills it in once they are open.
 	ServerInstructions string
@@ -238,6 +247,13 @@ type Spec struct {
 	// scheduled.
 	CampaignID string
 	ContactID  string
+}
+
+// ConnectorSelection is the connection a caller picked for one session binding, by the
+// binding's alias. It never carries a credential.
+type ConnectorSelection struct {
+	Name         string
+	ConnectionID string
 }
 
 // MemorySpec is the caller's memory filter: who the memories are about, and what narrows
@@ -291,6 +307,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		AgentPlugins:       config.AgentPlugins,
 		UserPlugins:        config.UserPlugins,
 		MCPServers:         config.MCPServers,
+		ConnectorBindings:  config.Connectors,
 		Keyterms:           config.Keyterms,
 		VisibleTools:       config.VisibleTools,
 		KnowledgeNamespace: config.KnowledgeNamespace,
@@ -418,6 +435,11 @@ func (s *Spec) Normalize() error {
 		}
 	}
 
+	// A connector binding wins over a plugin entry for the same provider, so the session
+	// does not reach one account by two paths, the second with the plugin's own login.
+	s.AgentPlugins = s.withoutBoundPlugins(s.AgentPlugins)
+	s.UserPlugins = s.withoutBoundPlugins(s.UserPlugins)
+
 	s.Keyterms = stt.CleanKeyterms(s.Keyterms)
 	if len(s.Keyterms) > stt.MaxKeyterms {
 		return stack.Wrap(fmt.Errorf("session: at most %d keyterms may be named, and this asks for %d",
@@ -470,6 +492,42 @@ func checkHistory(lines []persistent.HistoryLine, conversationID string) error {
 			size, persistent.MaxHistoryRunes))
 	}
 	return nil
+}
+
+// Shared reports whether more than one verified person writes in the conversation: a thread
+// channel (persistent.ThreadChannelPrefix), where everyone in the external thread does, such
+// as a thread in a Slack channel. Such a session uses the app's connections only, never one
+// person's: the multi-person rule (architecture doc on connectors/planning, «One-way doors»
+// row 7).
+func (s Spec) Shared() bool {
+	return strings.HasPrefix(s.ConversationID, streamapp.AgentChannelType+":"+persistent.ThreadChannelPrefix)
+}
+
+// boundProvider reports whether a connector binding names the provider id. A connector id
+// is the provider's id: the built-in connectors share theirs with the plugin catalog (slack
+// is in both internal/plugins/plugins.yaml and internal/connectors/providers/slack.yaml).
+func (s Spec) boundProvider(id string) bool {
+	for _, binding := range s.ConnectorBindings {
+		if binding.ConnectorID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// withoutBoundPlugins is entries less those for a provider a connector binding names.
+func (s Spec) withoutBoundPlugins(entries []store.PluginEntry) []store.PluginEntry {
+	// Without a binding the entries are left exactly as they were, the same slice.
+	if len(s.ConnectorBindings) == 0 {
+		return entries
+	}
+	var kept []store.PluginEntry
+	for _, entry := range entries {
+		if !s.boundProvider(entry.Name) {
+			kept = append(kept, entry)
+		}
+	}
+	return kept
 }
 
 // Native reports whether this session is held by one speech-to-speech model rather than

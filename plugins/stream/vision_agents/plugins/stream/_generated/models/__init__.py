@@ -273,6 +273,7 @@ from .search_request import SearchRequest
 from .search_request_tags import SearchRequestTags
 from .search_result import SearchResult
 from .session import Session
+from .session_connector_binding import SessionConnectorBinding
 from .session_custom import SessionCustom
 from .session_filter import SessionFilter
 from .session_filter_custom import SessionFilterCustom
@@ -665,6 +666,7 @@ __all__ = (
     "SearchRequestTags",
     "SearchResult",
     "Session",
+    "SessionConnectorBinding",
     "SessionCustom",
     "SessionFilter",
     "SessionFilterCustom",

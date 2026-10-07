@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
@@ -44,6 +45,21 @@ const MaxResultBytes = 32 << 10
 // TruncatedMarker ends a result that was cut at MaxResultBytes, so the model knows it read
 // part of it. The prototype's truncatedToolResultNotice (internal/mcp/mcp.go:27 at cf62af0d).
 const TruncatedMarker = "\n[connector result truncated]"
+
+// CutResult is text when it fits MaxResultBytes, and otherwise as much of it as fits with
+// TruncatedMarker after it, never splitting a UTF-8 sequence. A Toolset cuts its results with
+// it, and the session's dispatcher cuts again whatever a Toolset hands back, so the cap holds
+// for every source.
+func CutResult(text string) string {
+	if len(text) <= MaxResultBytes {
+		return text
+	}
+	kept := text[:MaxResultBytes-len(TruncatedMarker)]
+	for !utf8.ValidString(kept) {
+		kept = kept[:len(kept)-1]
+	}
+	return kept + TruncatedMarker
+}
 
 // ToolError is a tool that ran and reported its own failure, such as an MCP result with
 // isError. Its Message is the tool's, for the model to read and act on; any other error from

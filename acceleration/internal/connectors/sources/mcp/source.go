@@ -37,6 +37,16 @@ const Separator = "__"
 // subtasks T14 keeps («startupTimeout of 10 s bounds Discover»). Unverified, not measured.
 const defaultStartupTimeout = 10 * time.Second
 
+// defaultCallTimeout bounds each request the client of an opened Toolset sends, the most a
+// tools/call may take before the client cuts it: longer than the longest call a binding may
+// ask for, so the caller's deadline always ends a call first and the session reads a cut call
+// as outcome_unknown, even from a server that sent its SSE headers first. 30 s is the
+// binding's maximum timeout_ms (api.AgentConnectorBinding.TimeoutMs), and the 5 s above it is
+// a margin, a choice: unverified. It is still a bound, so a reply the SDK posts with no
+// deadline of its own (its answer to a server's ping, go-sdk v1.8.0 internal/jsonrpc2/conn.go)
+// cannot hold Toolset.Close forever.
+const defaultCallTimeout = 35 * time.Second
+
 // maxResponseBytes caps the body of one HTTP response from the MCP server, so a server that
 // answers without end cannot exhaust the router's memory. 4 MiB is the prototype's
 // maxMCPResponseBytes (internal/mcp/mcp.go:25 at cf62af0d), which subtasks T14 keeps.
@@ -54,13 +64,14 @@ var implementation = &mcp.Implementation{Name: "vision-agents", Version: "0"}
 // Source is the mcp core.ToolSource. It holds no state, so one serves every connection.
 type Source struct {
 	startupTimeout time.Duration
+	callTimeout    time.Duration
 }
 
 var _ core.ToolSource = (*Source)(nil)
 
 // New is the mcp source.
 func New() *Source {
-	return &Source{startupTimeout: defaultStartupTimeout}
+	return &Source{startupTimeout: defaultStartupTimeout, callTimeout: defaultCallTimeout}
 }
 
 // Kind is Kind.
@@ -71,7 +82,8 @@ func (*Source) Kind() string {
 // Discover lists every tool the connection's MCP server offers, reading every tools/list page,
 // each with its schema digest and the scopes the manifest says it needs.
 func (s *Source) Discover(ctx context.Context, b core.ResolvedBinding) ([]core.ToolSpec, error) {
-	session, listed, err := s.open(ctx, b)
+	// The connection's client as it is: validate's requests keep its timeout.
+	session, listed, err := s.open(ctx, b, b.HTTP)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +122,7 @@ func (s *Source) Open(ctx context.Context, b core.ResolvedBinding, grants []core
 	if alias == "" || strings.Contains(alias, Separator) {
 		return nil, stack.Wrap(fmt.Errorf("mcp: binding name %q must be set and must not hold %q", alias, Separator))
 	}
-	session, listed, err := s.open(ctx, b)
+	session, listed, err := s.open(ctx, b, s.callClient(b.HTTP))
 	if err != nil {
 		return nil, err
 	}
@@ -160,10 +172,25 @@ func ToolSchemaDigest(tool *mcp.Tool) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
-// open connects to the connection's MCP endpoint and reads every tools/list page, both within
-// the startup timeout. The session is the caller's to close.
-func (s *Source) open(ctx context.Context, b core.ResolvedBinding) (*mcp.ClientSession, []*mcp.Tool, error) {
-	if b.HTTP == nil {
+// callClient is the connection's client for an opened Toolset: the same client, with a
+// timeout no shorter than callTimeout, so it never cuts a tools/call before the caller's
+// deadline. A nil client stays nil, for open to refuse.
+func (s *Source) callClient(client *http.Client) *http.Client {
+	if client == nil {
+		return nil
+	}
+	copied := *client
+	if copied.Timeout < s.callTimeout {
+		copied.Timeout = s.callTimeout
+	}
+	return &copied
+}
+
+// open connects to the connection's MCP endpoint with client, a copy of the binding's, and
+// reads every tools/list page, both within the startup timeout. The session is the caller's
+// to close.
+func (s *Source) open(ctx context.Context, b core.ResolvedBinding, client *http.Client) (*mcp.ClientSession, []*mcp.Tool, error) {
+	if b.HTTP == nil || client == nil {
 		return nil, nil, stack.Wrap(errors.New("mcp: the binding has no client: build it with core.Transports"))
 	}
 	rule := sourceRule(b.Manifest)
@@ -183,7 +210,7 @@ func (s *Source) open(ctx context.Context, b core.ResolvedBinding) (*mcp.ClientS
 	}
 	done := make(chan opened, 1)
 	go func() {
-		session, listed, err := connect(startup, b, endpoint)
+		session, listed, err := connect(startup, b, client, endpoint)
 		done <- opened{session, listed, err}
 	}()
 	select {
@@ -191,8 +218,9 @@ func (s *Source) open(ctx context.Context, b core.ResolvedBinding) (*mcp.ClientS
 		return got.session, got.listed, got.err
 	case <-startup.Done():
 		// The SDK's Connect can outlast its context: against a server that never answers it
-		// returned only at the client's Timeout (TestTheStartupTimeoutBoundsDiscover, go-sdk
-		// v1.8.0), so the caller does not wait for it. A session it opens late is closed.
+		// returns only when the client's Timeout cuts the request (go-sdk v1.8.0), 10 s for
+		// Discover and callTimeout for Open, so the caller does not wait for it
+		// (TestTheStartupTimeoutBoundsDiscover). A session it opens late is closed.
 		go func() {
 			if got := <-done; got.session != nil {
 				_ = got.session.Close()
@@ -203,13 +231,14 @@ func (s *Source) open(ctx context.Context, b core.ResolvedBinding) (*mcp.ClientS
 	}
 }
 
-// connect opens a session with the MCP server at endpoint and reads every tools/list page.
-func connect(ctx context.Context, b core.ResolvedBinding, endpoint string) (*mcp.ClientSession, []*mcp.Tool, error) {
+// connect opens a session with the MCP server at endpoint through base, and reads every
+// tools/list page.
+func connect(ctx context.Context, b core.ResolvedBinding, base *http.Client, endpoint string) (*mcp.ClientSession, []*mcp.Tool, error) {
 	// A copy whose transport caps each response and then hands the request to the
 	// connection's own transport, unchanged: the credential, the 401 renewal and the egress
-	// checks all still run. The redirect policy stays the egress client's.
-	client := *b.HTTP
-	client.Transport = capped{base: b.HTTP.Transport}
+	// checks all still run. The redirect policy and the timeout stay base's.
+	client := *base
+	client.Transport = capped{base: base.Transport}
 	session, err := mcp.NewClient(implementation, nil).Connect(ctx, &mcp.StreamableClientTransport{
 		Endpoint:   endpoint,
 		HTTPClient: &client,

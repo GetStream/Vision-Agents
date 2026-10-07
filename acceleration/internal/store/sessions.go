@@ -79,6 +79,10 @@ func (s *Store) SaveSession(ctx context.Context, session *AgentSession) error {
 	if session.Custom == nil {
 		session.Custom = map[string]any{}
 	}
+	// The column's own default, which a nil slice would write as JSON null.
+	if session.ConnectorSelections == nil {
+		session.ConnectorSelections = []SessionConnectorSelection{}
+	}
 
 	_, err := s.db.NewInsert().Model(session).
 		On("CONFLICT (id) DO UPDATE").
