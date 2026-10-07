@@ -73,6 +73,36 @@ func (s *StoreSuite) TestAnUpdateKeepsABindingAForcedDeleteLeftBehind() {
 	s.Equal([]ConnectorBinding{fixed(connection.ID)}, read.Connectors)
 }
 
+// TestAddingABindingWritesTheConnectorsColumnAlone: an edit of another column made after the
+// caller read the config is kept, a second binding of the same name adds nothing, and a fixed
+// binding to a connection that is not live is refused.
+func (s *StoreSuite) TestAddingABindingWritesTheConnectorsColumnAlone() {
+	config := s.boundConfig("acme-app")
+	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE agent_configs SET instructions = 'edited meanwhile' WHERE id = ?", config.ID)
+	s.Require().NoError(err)
+	binding := fixed(s.connection("acme-app", nil).ID)
+
+	after, added, err := s.store.AddConnectorBinding(s.ctx, "acme-app", config.ID, binding)
+	s.Require().NoError(err)
+	_, again, err := s.store.AddConnectorBinding(s.ctx, "acme-app", config.ID, binding)
+	s.Require().NoError(err)
+
+	s.True(added)
+	s.False(again)
+	s.Equal(config.Name, after.Name)
+	read, err := s.store.AgentConfig(s.ctx, "acme-app", config.ID)
+	s.Require().NoError(err)
+	s.Equal("edited meanwhile", read.Instructions)
+	s.Equal([]ConnectorBinding{binding}, read.Connectors)
+
+	deleted := s.connection("acme-app", nil)
+	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, "acme-app", deleted.ID))
+	gone := fixed(deleted.ID)
+	gone.Name = "gone"
+	_, _, err = s.store.AddConnectorBinding(s.ctx, "acme-app", config.ID, gone)
+	s.ErrorIs(err, ErrNoConnectorConnection)
+}
+
 func (s *StoreSuite) TestAConfigWithoutBindingsStoresAnEmptyList() {
 	created := s.boundConfig("acme-app")
 

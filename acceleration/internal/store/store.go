@@ -14,6 +14,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -76,6 +79,56 @@ func (s *Store) Migrate(ctx context.Context) error {
 	// Attached here rather than in a migration of their own, so that a table added later
 	// is covered by the deployment reaching it rather than by somebody remembering.
 	return s.WatchDataChanges(ctx)
+}
+
+// PendingMigrations lists, oldest first, the versions of the migrations this binary carries
+// that the database has not applied, and writes nothing: unlike goose, which creates its
+// version table when it is missing, it only reads. A database goose never touched has every
+// version pending. An applied version is the newest goose_db_version row of that version
+// with is_applied set, as goose reads its own table (Provider.ListMigrations, v3).
+func (s *Store) PendingMigrations(ctx context.Context) ([]int64, error) {
+	carried, err := fs.Glob(migrations.FS, "*.sql")
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, "SELECT to_regclass('goose_db_version') IS NOT NULL").Scan(&exists); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: pending migrations: %w", err))
+	}
+	applied := map[int64]bool{}
+	if exists {
+		rows, err := s.db.QueryContext(ctx, "SELECT version_id, is_applied FROM goose_db_version ORDER BY id DESC")
+		if err != nil {
+			return nil, stack.Wrap(fmt.Errorf("store: pending migrations: %w", err))
+		}
+		defer rows.Close()
+		seen := map[int64]bool{}
+		for rows.Next() {
+			var version int64
+			var isApplied bool
+			if err := rows.Scan(&version, &isApplied); err != nil {
+				return nil, stack.Wrap(fmt.Errorf("store: pending migrations: %w", err))
+			}
+			if !seen[version] {
+				seen[version], applied[version] = true, isApplied
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, stack.Wrap(fmt.Errorf("store: pending migrations: %w", err))
+		}
+	}
+	var pending []int64
+	for _, name := range carried {
+		prefix, _, _ := strings.Cut(name, "_")
+		version, err := strconv.ParseInt(prefix, 10, 64)
+		if err != nil {
+			return nil, stack.Wrap(fmt.Errorf("store: migration %s has no version: %w", name, err))
+		}
+		if !applied[version] {
+			pending = append(pending, version)
+		}
+	}
+	return pending, nil
 }
 
 // RecordRequest stores one request. Latency is optional because a request that failed
