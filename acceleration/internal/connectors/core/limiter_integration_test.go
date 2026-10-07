@@ -58,7 +58,7 @@ func (s *LimiterSuite) connect(address string) rueidis.Client {
 func (s *LimiterSuite) TestAKeyIsHeldUntilTheRetryAfterPasses() {
 	limiter := core.NewLimiter(s.redis, s.clock.Now)
 
-	s.True(limiter.Block(s.ctx, s.key, 30*time.Second))
+	s.Equal(30*time.Second, limiter.Block(s.ctx, s.key, 30*time.Second))
 
 	s.Equal(30*time.Second, limiter.Wait(s.ctx, s.key))
 	s.clock.Add(29 * time.Second)
@@ -70,7 +70,7 @@ func (s *LimiterSuite) TestAKeyIsHeldUntilTheRetryAfterPasses() {
 func (s *LimiterSuite) TestAnotherKeyIsNotHeld() {
 	limiter := core.NewLimiter(s.redis, s.clock.Now)
 
-	s.True(limiter.Block(s.ctx, s.key, 30*time.Second))
+	s.Equal(30*time.Second, limiter.Block(s.ctx, s.key, 30*time.Second))
 
 	s.Zero(limiter.Wait(s.ctx, s.key+":other"))
 }
@@ -81,7 +81,7 @@ func (s *LimiterSuite) TestTwoRoutersOnOneRedisHoldTheSameKey() {
 	first := core.NewLimiter(s.redis, s.clock.Now)
 	second := core.NewLimiter(s.connect(os.Getenv("ROUTER_REDIS_ADDR")), s.clock.Now)
 
-	s.True(first.Block(s.ctx, s.key, 30*time.Second))
+	s.Equal(30*time.Second, first.Block(s.ctx, s.key, 30*time.Second))
 
 	s.Equal(30*time.Second, second.Wait(s.ctx, s.key))
 }
@@ -91,8 +91,8 @@ func (s *LimiterSuite) TestTwoRoutersOnOneRedisHoldTheSameKey() {
 func (s *LimiterSuite) TestAShorterWaitNeverShortensABlock() {
 	limiter := core.NewLimiter(s.redis, s.clock.Now)
 
-	s.True(limiter.Block(s.ctx, s.key, 30*time.Second))
-	s.True(limiter.Block(s.ctx, s.key, 10*time.Second))
+	s.Equal(30*time.Second, limiter.Block(s.ctx, s.key, 30*time.Second))
+	s.Equal(10*time.Second, limiter.Block(s.ctx, s.key, 10*time.Second))
 
 	s.Equal(30*time.Second, limiter.Wait(s.ctx, s.key))
 }
@@ -100,8 +100,8 @@ func (s *LimiterSuite) TestAShorterWaitNeverShortensABlock() {
 func (s *LimiterSuite) TestALongerWaitLengthensABlock() {
 	limiter := core.NewLimiter(s.redis, s.clock.Now)
 
-	s.True(limiter.Block(s.ctx, s.key, 10*time.Second))
-	s.True(limiter.Block(s.ctx, s.key, 30*time.Second))
+	s.Equal(10*time.Second, limiter.Block(s.ctx, s.key, 10*time.Second))
+	s.Equal(30*time.Second, limiter.Block(s.ctx, s.key, 30*time.Second))
 
 	s.Equal(30*time.Second, limiter.Wait(s.ctx, s.key))
 }
@@ -110,17 +110,30 @@ func (s *LimiterSuite) TestALongerWaitLengthensABlock() {
 func (s *LimiterSuite) TestTheBlockLeavesRedisWhenItEnds() {
 	limiter := core.NewLimiter(s.redis, nil)
 
-	s.True(limiter.Block(s.ctx, s.key, 30*time.Second))
+	s.Equal(30*time.Second, limiter.Block(s.ctx, s.key, 30*time.Second))
 
 	ttl, err := s.redis.Do(s.ctx, s.redis.B().Pttl().Key(s.key).Build()).AsInt64()
 	s.Require().NoError(err)
 	s.InDelta(30000, ttl, 1000)
 }
 
+// TestAWaitPastMaxBlockIsHeldForMaxBlock: a Retry-After of 2^32-1 seconds, the most the schemes
+// parse, holds the key for MaxBlock, in the block and in Redis.
+func (s *LimiterSuite) TestAWaitPastMaxBlockIsHeldForMaxBlock() {
+	limiter := core.NewLimiter(s.redis, s.clock.Now)
+
+	s.Equal(core.MaxBlock, limiter.Block(s.ctx, s.key, (1<<32-1)*time.Second))
+
+	s.Equal(core.MaxBlock, limiter.Wait(s.ctx, s.key))
+	ttl, err := s.redis.Do(s.ctx, s.redis.B().Pttl().Key(s.key).Build()).AsInt64()
+	s.Require().NoError(err)
+	s.InDelta(core.MaxBlock.Milliseconds(), ttl, 1000)
+}
+
 func (s *LimiterSuite) TestNoWaitHoldsNothing() {
 	limiter := core.NewLimiter(s.redis, s.clock.Now)
 
-	s.False(limiter.Block(s.ctx, s.key, 0))
+	s.Zero(limiter.Block(s.ctx, s.key, 0))
 
 	s.Zero(limiter.Wait(s.ctx, s.key))
 }
@@ -128,7 +141,7 @@ func (s *LimiterSuite) TestNoWaitHoldsNothing() {
 func (s *LimiterSuite) TestAnEmptyKeyIsNeverHeld() {
 	limiter := core.NewLimiter(s.redis, s.clock.Now)
 
-	s.False(limiter.Block(s.ctx, "", 30*time.Second))
+	s.Zero(limiter.Block(s.ctx, "", 30*time.Second))
 
 	s.Zero(limiter.Wait(s.ctx, ""))
 }
@@ -136,7 +149,7 @@ func (s *LimiterSuite) TestAnEmptyKeyIsNeverHeld() {
 func (s *LimiterSuite) TestANilLimiterHoldsNothing() {
 	var limiter *core.Limiter
 
-	s.False(limiter.Block(s.ctx, s.key, 30*time.Second))
+	s.Zero(limiter.Block(s.ctx, s.key, 30*time.Second))
 
 	s.Zero(limiter.Wait(s.ctx, s.key))
 }
@@ -144,12 +157,12 @@ func (s *LimiterSuite) TestANilLimiterHoldsNothing() {
 // TestAnUnreachableRedisHoldsNothing: the limiter fails open, as the daily quota does.
 func (s *LimiterSuite) TestAnUnreachableRedisHoldsNothing() {
 	held := core.NewLimiter(s.redis, s.clock.Now)
-	s.Require().True(held.Block(s.ctx, s.key, 30*time.Second))
+	s.Require().Equal(30*time.Second, held.Block(s.ctx, s.key, 30*time.Second))
 	gone := s.connect(os.Getenv("ROUTER_REDIS_ADDR"))
 	gone.Close()
 	limiter := core.NewLimiter(gone, s.clock.Now)
 
-	s.False(limiter.Block(s.ctx, s.key, 30*time.Second))
+	s.Zero(limiter.Block(s.ctx, s.key, 30*time.Second))
 	s.Zero(limiter.Wait(s.ctx, s.key))
 }
 

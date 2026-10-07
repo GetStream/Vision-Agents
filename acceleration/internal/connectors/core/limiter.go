@@ -14,6 +14,14 @@ import (
 // users of the same Redis (quota, live health, the config cache).
 const limiterPrefix = "connectors:rate_limit:"
 
+// MaxBlock is the longest a Limiter holds a key, whatever the Retry-After asked for. No
+// provider doc sets it: it bounds what one bad Retry-After can do (a proxy's 429, an epoch
+// timestamp sent as seconds), which would otherwise refuse a connector's calls for years. A
+// provider still limiting after it answers 429 again and the key is held again, so the router
+// holds too little, never too much. The value is unverified: chosen for the wave, Kanat may
+// change it.
+const MaxBlock = time.Hour
+
 // blockScript sets KEYS[1] to ARGV[1], the end of a block in Unix milliseconds, for ARGV[2]
 // milliseconds, unless it already holds a later end. Two routers that see 429s at once keep
 // the longer wait, whichever writes last. One script, so the read and the write are atomic.
@@ -48,16 +56,20 @@ func NewLimiter(client rueidis.Client, now func() time.Time) *Limiter {
 	return &Limiter{redis: client, now: now}
 }
 
-// Block holds key for wait from now, and reports whether the block was written. A block
-// already held past then is kept.
-func (l *Limiter) Block(ctx context.Context, key string, wait time.Duration) bool {
+// Block holds key for wait from now, at most MaxBlock, and reports the wait it held: zero
+// when the block was not written. A block already held past then is kept.
+func (l *Limiter) Block(ctx context.Context, key string, wait time.Duration) time.Duration {
 	if l == nil || key == "" || wait <= 0 {
-		return false
+		return 0
 	}
+	wait = min(wait, MaxBlock)
 	until := l.now().Add(wait).UnixMilli()
 	err := blockScript.Exec(ctx, l.redis, []string{key},
 		[]string{strconv.FormatInt(until, 10), strconv.FormatInt(wait.Milliseconds(), 10)}).Error()
-	return err == nil
+	if err != nil {
+		return 0
+	}
+	return wait
 }
 
 // Wait is how long calls on key must still wait, zero when they may go.

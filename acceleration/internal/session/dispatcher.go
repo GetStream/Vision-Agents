@@ -145,8 +145,9 @@ func (d *dispatcher) Close() {
 //
 // A provider that answered a call on the same rate limit key with 429 and Retry-After is not
 // sent the call until that passes, on any router sharing the limiter's Redis: the model reads
-// connector_rate_limited instead, and so it does for the 429 itself. The router never sends
-// the call again by itself (Kanat, 2026-10-07, D8).
+// connector_rate_limited instead, and so it does for the 429 itself, with the wait the router
+// holds: the Retry-After, at most core.MaxBlock. The router never sends the call again by
+// itself (Kanat, 2026-10-07, D8).
 //
 // It also says how the call failed, for its row: empty when it answered, else one of the
 // store.Invocation* values.
@@ -162,8 +163,8 @@ func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]ll
 		if ctx.Err() == nil && errors.Is(bounded.Err(), context.DeadlineExceeded) {
 			return llm.TextParts(outcomeUnknown(call.Name)), store.InvocationOutcomeUnknown, nil
 		}
-		if wait := exchange.RetryAfter(); wait > 0 && d.limiter.Block(ctx, r.limit, wait) {
-			return llm.TextParts(rateLimited(call.Name, wait)), failed(ctx, exchange), nil
+		if held := d.limiter.Block(ctx, r.limit, exchange.RetryAfter()); held > 0 {
+			return llm.TextParts(rateLimited(call.Name, held)), failed(ctx, exchange), nil
 		}
 		return nil, failed(ctx, exchange), err
 	}
