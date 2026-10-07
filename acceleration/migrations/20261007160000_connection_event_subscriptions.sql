@@ -12,11 +12,13 @@
 --   - token is the callback's path segment, so a delivery names its subscription; the secret
 --     signs each delivery. secret_sealed is the subscription's own Standard Webhooks secret
 --     (whsec_...), sealed under kek_version with the customer, the connection and the
---     subscription id as AAD (mcpevents.secretAAD), never shown to anyone.
+--     token as AAD (mcpevents.secretAAD), never shown to anyone.
 --   - next_attempt_at is when a worker next asks the server for it: at once for a new one,
 --     ahead of refresh_before for an active one, later for a refused one. A worker that takes
 --     a row pushes it by its lease, so two routers never ask at once. NULL is never: a grant
 --     that does not expire.
+--   - failures counts the server's refusals in a row, which double the wait before the next
+--     ask, a day at most (mcpevents.retryWait); a grant sets it back to 0.
 --
 -- A data move does not carry these rows (store.dataTables): the secrets are sealed under this
 -- deployment's key, and the callback is this deployment's URL.
@@ -38,6 +40,7 @@ CREATE TABLE connection_event_subscriptions (
     status TEXT NOT NULL CHECK (status IN ('pending', 'active', 'failed')),
     error TEXT NOT NULL DEFAULT '',
     next_attempt_at TIMESTAMPTZ,
+    failures INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );

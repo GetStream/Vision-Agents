@@ -647,6 +647,18 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 	if switched {
 		return consentAccountMismatch
 	}
+	// A reconnect brings back the MCP event subscriptions its bindings declare, as a validate
+	// does: one a disconnect or a long wait dropped is made again. The consent itself is done,
+	// so a failure here is logged and the next validate tries again.
+	if s.mcpEvents != nil {
+		connected, err := s.store.ConnectorConnection(ctx, row.CustomerID, row.ConnectionID)
+		if err == nil {
+			err = s.mcpEvents.Reconcile(ctx, connected)
+		}
+		if err != nil {
+			s.logger.Error("could not subscribe a reconnected connection's MCP events", "connection", row.ConnectionID, "error", err)
+		}
+	}
 	return consentConnected
 }
 

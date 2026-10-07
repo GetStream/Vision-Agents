@@ -22,6 +22,14 @@ func (s *StoreSuite) eventSubscription(customerID, connectionID, configID, key s
 	return sub
 }
 
+// connectionEventSubscriptions are a customer's connection's subscriptions, oldest first.
+func (s *StoreSuite) connectionEventSubscriptions(customerID, connectionID string) ([]ConnectionEventSubscription, error) {
+	subs := []ConnectionEventSubscription{}
+	err := s.store.DB().NewSelect().Model(&subs).Where("customer_id = ?", customerID).
+		Where("connection_id = ?", connectionID).Order("created_at", "id").Scan(s.ctx)
+	return subs, err
+}
+
 func (s *StoreSuite) TestTheSameSubscriptionAddedTwiceIsStoredOnce() {
 	s.eventSubscription("acme-app", "conn-1", "config-1", "key-1")
 	again := ConnectionEventSubscription{
@@ -34,7 +42,7 @@ func (s *StoreSuite) TestTheSameSubscriptionAddedTwiceIsStoredOnce() {
 
 	s.Require().NoError(err)
 	s.False(added)
-	held, err := s.store.ConnectionEventSubscriptions(s.ctx, "acme-app", "conn-1")
+	held, err := s.connectionEventSubscriptions("acme-app", "conn-1")
 	s.Require().NoError(err)
 	s.Require().Len(held, 1)
 	s.Equal("token-conn-1-config-1-key-1", held[0].Token)
@@ -43,11 +51,11 @@ func (s *StoreSuite) TestTheSameSubscriptionAddedTwiceIsStoredOnce() {
 func (s *StoreSuite) TestAConnectionsSubscriptionsAreOnlyItsCustomers() {
 	s.eventSubscription("acme-app", "conn-1", "config-1", "key-1")
 
-	held, err := s.store.ConnectionEventSubscriptions(s.ctx, "other-app", "conn-1")
+	held, err := s.connectionEventSubscriptions("other-app", "conn-1")
 	s.Require().NoError(err)
 	s.Empty(held)
 	s.Require().NoError(s.store.DeleteConnectionEventSubscriptions(s.ctx, "other-app", "conn-1"))
-	held, err = s.store.ConnectionEventSubscriptions(s.ctx, "acme-app", "conn-1")
+	held, err = s.connectionEventSubscriptions("acme-app", "conn-1")
 	s.Require().NoError(err)
 	s.Len(held, 1, "another customer's delete leaves it")
 }

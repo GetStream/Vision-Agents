@@ -48,9 +48,15 @@ const MaxEventBytes = plugins.MaxEventBytes
 // events/subscribe ... before refreshBefore».
 const refreshAhead = 10 * time.Minute
 
-// retryAfter is how long a refused subscription waits before it is asked for again: the
-// plugin system's, a choice.
+// retryAfter is how long a refused subscription waits before it is asked for again the first
+// time, and how long one whose connection waits on a renewal or a reconnect waits each time:
+// the plugin system's, a choice. Each further refusal doubles it, up to maxRetryAfter.
 const retryAfter = 15 * time.Minute
+
+// maxRetryAfter is the longest a refused subscription waits: a day, the longest grant the
+// draft recommends («Recommended grants»: «from a few minutes up to about a day»), so a server
+// that offers no events is asked once a day rather than every 15 minutes forever. A choice.
+const maxRetryAfter = 24 * time.Hour
 
 // lease is how far a worker pushes a subscription's next attempt when it takes one, so no
 // other router asks the server for it meanwhile: longer than one attempt, which the MCP
@@ -146,10 +152,11 @@ func New(options Options) (*Service, error) {
 	}, nil
 }
 
-// Start runs the worker until Close. It looks once at start, for subscriptions a router made
-// before it stopped, then only when Reconcile or a delivery wakes it, or at the first
-// subscription due. With no subscription in the database it sets no timer: a router with no
-// connections sends Postgres no query after the look at start.
+// Start runs the worker until Close. It looks at start, for subscriptions a router made before
+// it stopped, when Reconcile wakes it, at the first subscription due, and at least once a
+// lease whatever is due: a subscription another router made, or left when it stopped, is
+// refreshed by an idle router within about a lease of its due time. A router with no
+// subscriptions sends Postgres 2 queries a lease (eventforward's rule, AI-926).
 func (s *Service) Start() {
 	s.working.Add(1)
 	go func() {
@@ -253,8 +260,8 @@ func (s *Service) wake() {
 }
 
 // attemptDue takes the due subscriptions a batch at a time and asks the server for each, then
-// says how long to wait before looking again: until the first one due, any router's, or not at
-// all (again false) when none is ever due.
+// says how long to wait before looking again: until the first one due, any router's, and a
+// lease at most, also when none is due, so a row another router adds or leaves is found.
 func (s *Service) attemptDue() (wait time.Duration, again bool) {
 	for {
 		if s.ctx.Err() != nil {
@@ -283,23 +290,35 @@ func (s *Service) attemptDue() (wait time.Duration, again bool) {
 		}
 		return s.lease, true
 	case !found:
-		return 0, false
+		return s.lease, true
 	}
-	return max(time.Until(next), 0), true
+	return min(max(time.Until(next), 0), s.lease), true
 }
 
-// attempt brings one claimed subscription in step: dropped when its connection is gone or not
-// connected, unsubscribed and dropped when no binding declares it any more, and otherwise
-// asked for, or asked for again, at the server.
+// attempt brings one claimed subscription in step: dropped when its connection is deleted or
+// disconnected, left for later while it waits on a renewal or a reconnect, unsubscribed and
+// dropped when no binding declares it any more, and otherwise asked for, or asked for again,
+// at the server.
 func (s *Service) attempt(sub store.ConnectionEventSubscription) {
 	ctx := s.ctx
 	connection, err := s.store.ConnectorConnection(ctx, sub.CustomerID, sub.ConnectionID)
-	if errors.Is(err, store.ErrNoConnectorConnection) || err == nil && connection.Status != store.ConnectionConnected {
-		s.drop(ctx, sub, "its connection is gone or not connected")
+	if gone(connection, err) {
+		s.drop(ctx, sub, "its connection is deleted or disconnected")
 		return
 	}
 	if err != nil {
 		s.logger.Warn("could not read an MCP event subscription's connection", "subscription", sub.ID, "error", err)
+		return
+	}
+	if connection.Status != store.ConnectionConnected {
+		// needs_reauthorization or pending: the resolver writes needs_reauthorization at its
+		// checkpoint before every OAuth refresh and connected after it (resolver.retrieve), and
+		// a consent connects it again, so the subscription waits rather than going.
+		next := time.Now().UTC().Add(retryAfter)
+		sub.NextAttemptAt = &next
+		if err := s.store.SaveConnectionEventSubscription(ctx, &sub); err != nil {
+			s.logger.Warn("could not store an MCP event subscription", "subscription", sub.ID, "error", err)
+		}
 		return
 	}
 	if _, _, declared, err := s.declaration(ctx, sub); err != nil {
@@ -316,15 +335,36 @@ func (s *Service) attempt(sub store.ConnectionEventSubscription) {
 	if err != nil {
 		s.logger.Warn("a connection's MCP server refused an event subscription", "connection", sub.ConnectionID,
 			"event", sub.Event, "config", sub.ConfigID, "error", err)
-		next := now.Add(retryAfter)
+		sub.Failures++
+		next := now.Add(retryWait(sub.Failures))
 		sub.Status, sub.Error, sub.NextAttemptAt = store.ConnectionEventFailed, err.Error(), &next
 	} else {
 		sub.Status, sub.Error, sub.RemoteID, sub.RefreshBefore = store.ConnectionEventActive, "", grant.ID, grant.RefreshBefore
+		sub.Failures = 0
 		sub.NextAttemptAt = refreshAt(now, grant.RefreshBefore)
 	}
 	if err := s.store.SaveConnectionEventSubscription(ctx, &sub); err != nil {
 		s.logger.Warn("could not store an MCP event subscription", "subscription", sub.ID, "error", err)
 	}
+}
+
+// retryWait is how long a subscription the server refused failures times in a row waits:
+// retryAfter, doubled for each refusal after the first, and maxRetryAfter at most.
+func retryWait(failures int) time.Duration {
+	wait := retryAfter
+	for range failures - 1 {
+		if wait >= maxRetryAfter {
+			break
+		}
+		wait *= 2
+	}
+	return min(wait, maxRetryAfter)
+}
+
+// gone reports whether a subscription's connection is deleted or disconnected, which ends the
+// subscription, as against waiting on a renewal or a reconnect, which does not.
+func gone(connection store.ConnectorConnection, err error) bool {
+	return errors.Is(err, store.ErrNoConnectorConnection) || err == nil && connection.Status == store.ConnectionDisconnected
 }
 
 // refreshAt is when a grant is asked for again: refreshAhead before it expires, or halfway
@@ -472,12 +512,17 @@ func (s *Service) Receive(ctx context.Context, token string, header http.Header,
 	}
 
 	connection, err := s.store.ConnectorConnection(ctx, sub.CustomerID, sub.ConnectionID)
-	if errors.Is(err, store.ErrNoConnectorConnection) || err == nil && connection.Status != store.ConnectionConnected {
-		s.drop(ctx, sub, "its connection is gone or not connected")
+	if gone(connection, err) {
+		s.drop(ctx, sub, "its connection is deleted or disconnected")
 		return Reply{Status: http.StatusGone, Body: failure("the connection is gone")}
 	}
 	if err != nil {
 		return Reply{Status: http.StatusInternalServerError, Body: failure("something went wrong")}
+	}
+	if connection.Status != store.ConnectionConnected {
+		// A renewal in flight or a reconnect to come: the draft has a receiver not yet ready
+		// answer «a retryable status (503 or 425 Too Early)», and the server sends it again.
+		return Reply{Status: http.StatusServiceUnavailable, Body: failure("the connection is waiting on a renewal or a reconnect")}
 	}
 	config, declared, ok, err := s.declaration(ctx, sub)
 	if err != nil {

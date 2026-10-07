@@ -62,6 +62,17 @@ func (s *UnitSuite) TestAGrantThatDoesNotExpireIsNeverAskedForAgain() {
 	s.Nil(refreshAt(s.now, nil))
 }
 
+// TestARefusedSubscriptionWaitsTwiceAsLongEachTimeUpToADay: 15 min, 30 min, 1 h ... and a
+// day at most, so a server that offers no events is not asked every 15 minutes forever.
+func (s *UnitSuite) TestARefusedSubscriptionWaitsTwiceAsLongEachTimeUpToADay() {
+	s.Equal(15*time.Minute, retryWait(1))
+	s.Equal(30*time.Minute, retryWait(2))
+	s.Equal(time.Hour, retryWait(3))
+	s.Equal(16*time.Hour, retryWait(7))
+	s.Equal(24*time.Hour, retryWait(8))
+	s.Equal(24*time.Hour, retryWait(1000))
+}
+
 // TestASecretIsBoundToItsOwnSubscription: no two subscriptions share additional data, so a
 // sealed secret copied onto another row does not open there, even when the parts run into
 // each other.

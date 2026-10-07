@@ -77,6 +77,8 @@ func (s *AuthorizationsSuite) SetupSuite() {
 		}},
 	}
 	s.publicURL, s.dashboardURL = consentPublicURL, consentDashboard
+	// So a reconnect's MCP events can be seen restored (TestAReconnectRestoresTheEventSubscriptionsItsBindingsDeclare).
+	s.mcpEventsOn = true
 	s.RouterSuite.SetupSuite()
 }
 
@@ -288,6 +290,32 @@ func (s *AuthorizationsSuite) TestAReconnectForTheSameAccountReplacesTheGrant() 
 	s.Equal(AuthorizationKind(store.AttemptReconnect), reconnect.Kind)
 	s.Equal(s.landing(id, consentConnected), finished.Header.Get("Location"))
 	s.Equal(3, s.get(id).Revision, "new credentials")
+}
+
+// TestAReconnectRestoresTheEventSubscriptionsItsBindingsDeclare: a connection whose
+// subscription went (dropped while it was disconnected) gets it back when a consent connects it
+// again, with no validate. The connector offers no events source here, so the subscription
+// fails at the server, which is not this test's concern: that the row is made again is.
+func (s *AuthorizationsSuite) TestAReconnectRestoresTheEventSubscriptionsItsBindingsDeclare() {
+	id := s.connection("")
+	s.connect(id)
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "watcher-" + s.utils.uuid(), "connectors": []map[string]any{{"name": "crm", "connector_id": s.get(id).ConnectorID,
+			"connection": map[string]any{"type": "fixed", "connection_id": id}, "tools": []map[string]any{},
+			"events": []map[string]any{{"event": "issue.created"}}}},
+	}, nil))
+	_, err := s.store.DB().ExecContext(context.Background(), "DELETE FROM connection_event_subscriptions WHERE connection_id = ?", id)
+	s.Require().NoError(err)
+
+	reconnect := s.start(id)
+	alice := s.browser()
+	finished := alice.finish(s.consent(alice.handOff(reconnect)))
+
+	s.Require().Equal(s.landing(id, consentConnected), finished.Header.Get("Location"))
+	var held int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM connection_event_subscriptions WHERE connection_id = ?", id).Scan(&held))
+	s.Equal(1, held)
 }
 
 func (s *AuthorizationsSuite) TestAReconnectForAnotherAccountKeepsTheOldGrantAndSaysSo() {

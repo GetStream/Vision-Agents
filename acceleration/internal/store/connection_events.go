@@ -54,8 +54,10 @@ type ConnectionEventSubscription struct {
 	Error         string     `bun:"error,notnull"`
 	// NextAttemptAt is when a worker next asks the server for it. Nil is never.
 	NextAttemptAt *time.Time `bun:"next_attempt_at"`
-	CreatedAt     time.Time  `bun:"created_at,notnull"`
-	UpdatedAt     time.Time  `bun:"updated_at,notnull"`
+	// Failures is how many times in a row the server refused it.
+	Failures  int       `bun:"failures,notnull"`
+	CreatedAt time.Time `bun:"created_at,notnull"`
+	UpdatedAt time.Time `bun:"updated_at,notnull"`
 }
 
 // AddConnectionEventSubscription stores a new subscription unless one for the same connection,
@@ -81,20 +83,6 @@ func (s *Store) AddConnectionEventSubscription(ctx context.Context, sub *Connect
 		return false, stack.Wrap(fmt.Errorf("store: add connection event subscription: %w", err))
 	}
 	return affected == 1, nil
-}
-
-// ConnectionEventSubscriptions are a connection's subscriptions, oldest first.
-func (s *Store) ConnectionEventSubscriptions(ctx context.Context, customerID, connectionID string) ([]ConnectionEventSubscription, error) {
-	subs := []ConnectionEventSubscription{}
-	err := s.db.NewSelect().Model(&subs).
-		Where("customer_id = ?", customerID).
-		Where("connection_id = ?", connectionID).
-		Order("created_at", "id").
-		Scan(ctx)
-	if err != nil {
-		return nil, stack.Wrap(fmt.Errorf("store: connection event subscriptions: %w", err))
-	}
-	return subs, nil
 }
 
 // ConnectionEventSubscriptionByToken is the subscription a callback's token names.
@@ -179,7 +167,7 @@ func (s *Store) NextConnectionEventSubscriptionAt(ctx context.Context) (next tim
 func (s *Store) SaveConnectionEventSubscription(ctx context.Context, sub *ConnectionEventSubscription) error {
 	sub.UpdatedAt = time.Now().UTC()
 	_, err := s.db.NewUpdate().Model(sub).
-		Column("remote_id", "refresh_before", "status", "error", "next_attempt_at", "updated_at").
+		Column("remote_id", "refresh_before", "status", "error", "next_attempt_at", "failures", "updated_at").
 		Where("id = ?", sub.ID).
 		Exec(ctx)
 	if err != nil {

@@ -125,13 +125,13 @@ func (s *ConnectionEventsSuite) TestADeletedConnectionStopsItsSubscription() {
 	s.Equal(http.StatusGone, s.provider.DeliverEvent(sub.URL, sub.Secret, sub.ID, "evt_"+s.utils.uuid(), issueCreated, map[string]any{}))
 }
 
-// TestADisconnectedConnectionStopsItsSubscription: the provider ended the grant (a revoke
-// signal, as Slack's tokens_revoked), so the next delivery opens nothing and drops it.
+// TestADisconnectedConnectionStopsItsSubscription: a connection whose status is
+// disconnected, as a delete writes it, ends the subscription: the delivery is a 410 and the row
+// goes.
 func (s *ConnectionEventsSuite) TestADisconnectedConnectionStopsItsSubscription() {
 	connection := s.subscribed(s.binding(s.connection(), issueCreated))
 	sub := s.atTheFake(connection)[0]
-	s.Require().NoError(s.resolver.Revoke(context.Background(),
-		core.ConnectionRef{CustomerID: s.customerID(), ConnectionID: connection}, core.SignalRevoked, time.Time{}))
+	s.setStatus(connection, store.ConnectionDisconnected)
 	marker := s.utils.uuid()
 
 	status := s.provider.DeliverEvent(sub.URL, sub.Secret, sub.ID, "evt_"+s.utils.uuid(), issueCreated, map[string]any{"title": marker})
@@ -139,6 +139,51 @@ func (s *ConnectionEventsSuite) TestADisconnectedConnectionStopsItsSubscription(
 	s.Equal(http.StatusGone, status)
 	s.Empty(s.held(connection))
 	s.Never(func() bool { return s.modelWasAsked(marker) }, time.Second, 50*time.Millisecond)
+}
+
+// TestARenewalInFlightKeepsTheSubscription: the resolver writes needs_reauthorization at its
+// checkpoint before every OAuth refresh and connected after it. A delivery in between is a
+// 503, which the server sends again, and opens nothing; the subscription stays, so the next
+// delivery after the refresh is taken.
+func (s *ConnectionEventsSuite) TestARenewalInFlightKeepsTheSubscription() {
+	connection := s.subscribed(s.binding(s.connection(), issueCreated))
+	sub := s.atTheFake(connection)[0]
+	s.setStatus(connection, store.ConnectionNeedsReauthorization)
+	during, after := s.utils.uuid(), s.utils.uuid()
+
+	waiting := s.provider.DeliverEvent(sub.URL, sub.Secret, sub.ID, "evt_"+s.utils.uuid(), issueCreated, map[string]any{"title": during})
+	s.setStatus(connection, store.ConnectionConnected)
+	taken := s.provider.DeliverEvent(sub.URL, sub.Secret, sub.ID, "evt_"+s.utils.uuid(), issueCreated, map[string]any{"title": after})
+
+	s.Equal(http.StatusServiceUnavailable, waiting)
+	s.Equal(http.StatusAccepted, taken)
+	s.Len(s.held(connection), 1)
+	s.Eventually(func() bool { return s.modelWasAsked(after) }, settleFor, 50*time.Millisecond)
+	s.False(s.modelWasAsked(during))
+}
+
+// TestARevokedGrantPausesItsSubscriptionUntilTheConnectionIsConnectedAgain: the provider ended
+// the grant (a revoke signal, as Slack's tokens_revoked). Nothing reaches the agent while the
+// connection waits for a reconnect, and new credentials bring the subscription back with no
+// validate.
+func (s *ConnectionEventsSuite) TestARevokedGrantPausesItsSubscriptionUntilTheConnectionIsConnectedAgain() {
+	connection := s.subscribed(s.binding(s.connection(), issueCreated))
+	sub := s.atTheFake(connection)[0]
+	s.Require().NoError(s.resolver.Revoke(context.Background(),
+		core.ConnectionRef{CustomerID: s.customerID(), ConnectionID: connection}, core.SignalRevoked, time.Time{}))
+	revoked, reconnected := s.utils.uuid(), s.utils.uuid()
+
+	paused := s.provider.DeliverEvent(sub.URL, sub.Secret, sub.ID, "evt_"+s.utils.uuid(), issueCreated, map[string]any{"title": revoked})
+	var read Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+connection, nil, &read))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+connection+"/credentials",
+		map[string]any{"expected_revision": read.Revision, "values": map[string]string{bearer.SuppliedToken: s.token}}, nil))
+	resumed := s.provider.DeliverEvent(sub.URL, sub.Secret, sub.ID, "evt_"+s.utils.uuid(), issueCreated, map[string]any{"title": reconnected})
+
+	s.Equal(http.StatusServiceUnavailable, paused)
+	s.Equal(http.StatusAccepted, resumed)
+	s.Eventually(func() bool { return s.modelWasAsked(reconnected) }, settleFor, 50*time.Millisecond)
+	s.False(s.modelWasAsked(revoked))
 }
 
 // TestAnEventNoLongerDeclaredIsUnsubscribedAndGone: the config drops the event, and the next
@@ -202,28 +247,69 @@ func (s *ConnectionEventsSuite) TestABindingsEventsAreReadBackAsWritten() {
 	s.Equal("Say what broke.", value(events[0].Instructions))
 }
 
-// TestWithNoSubscriptionsTheWorkerSendsNoQueryWhileIdle: a router with connectors on and no
-// connection looks once at start, a claim and when the next one is due, and then sends
-// Postgres nothing, even with a lease of 50 ms. Its own service over its own pool, so the
-// suite's router's queries are not counted; every subscription row is dropped first, as a
-// deployment with no connections has none.
-func (s *ConnectionEventsSuite) TestWithNoSubscriptionsTheWorkerSendsNoQueryWhileIdle() {
+// TestWithNoSubscriptionsAnIdleWorkerLooksTwiceALease: a router with connectors on and no
+// subscription looks at start and then once a lease, a claim and when the next one is due
+// each time: about 2 queries a lease, as eventforward's idle worker (#778), and never a busy
+// loop. Its own service over its own pool, so the suite's router's queries are not counted;
+// every subscription row is dropped first, as a deployment with no connections has none.
+func (s *ConnectionEventsSuite) TestWithNoSubscriptionsAnIdleWorkerLooksTwiceALease() {
 	_, err := s.store.DB().ExecContext(context.Background(), "DELETE FROM connection_event_subscriptions")
 	s.Require().NoError(err)
+	queries := s.idleWorker(idleLease)
+
+	s.Require().Eventually(func() bool { return queries.Load() >= 2 }, settleFor, 10*time.Millisecond)
+	time.Sleep(idleWindow)
+
+	looks := idleWindow / idleLease
+	s.GreaterOrEqual(queries.Load(), int64(2*looks-2), "it looked again once a lease")
+	s.LessOrEqual(queries.Load(), int64(2*looks+4), "and no more often")
+}
+
+// TestAnIdleRouterTakesARowAnotherRouterAddsWithinALease: router A adds a subscription due now
+// and stops before its worker asks for it; idle router B finds it at its next look, a lease
+// later, and acts on it. Its connection does not exist, so B drops it.
+func (s *ConnectionEventsSuite) TestAnIdleRouterTakesARowAnotherRouterAddsWithinALease() {
+	queries := s.idleWorker(idleLease)
+	s.Require().Eventually(func() bool { return queries.Load() >= 2 }, settleFor, 10*time.Millisecond)
+	due := time.Now().UTC()
+	left := store.ConnectionEventSubscription{CustomerID: s.customerID(), ConnectionID: "gone-" + s.utils.uuid(),
+		ConfigID: s.utils.uuid(), Binding: "crm", Event: issueCreated, Key: "key", Token: s.utils.uuid(),
+		SecretSealed: []byte("sealed"), KEKVersion: 1, Status: store.ConnectionEventPending, NextAttemptAt: &due}
+	added, err := s.store.AddConnectionEventSubscription(context.Background(), &left)
+	s.Require().NoError(err)
+	s.Require().True(added)
+
+	s.Eventually(func() bool { return len(s.held(left.ConnectionID)) == 0 }, 4*idleLease, 10*time.Millisecond)
+}
+
+// idleLease and idleWindow are the lease of an idle worker under test and how long it is
+// watched: short enough for a test, long enough for several looks.
+const (
+	idleLease  = 200 * time.Millisecond
+	idleWindow = time.Second
+)
+
+// idleWorker starts an MCP events service of its own over its own pool, with lease, and
+// counts the queries it sends.
+func (s *ConnectionEventsSuite) idleWorker(lease time.Duration) *countedQueries {
 	own, err := store.Open(s.dsn())
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { s.Require().NoError(own.Close()) })
 	queries := &countedQueries{}
 	own.DB().AddQueryHook(queries)
 	events, err := mcpevents.New(mcpevents.Options{Store: own, Sessions: s.manager, Registry: s.connectors,
-		Transports: s.transports, Secrets: s.sealer, PublicURL: s.server.URL, Lease: 50 * time.Millisecond})
+		Transports: s.transports, Secrets: s.sealer, PublicURL: s.server.URL, Lease: lease})
 	s.Require().NoError(err)
-
 	events.Start()
 	s.T().Cleanup(events.Close)
+	return queries
+}
 
-	s.Require().Eventually(func() bool { return queries.Load() == 2 }, settleFor, 10*time.Millisecond)
-	s.Never(func() bool { return queries.Load() > 2 }, 500*time.Millisecond, 10*time.Millisecond)
+// setStatus writes a connection's status as the resolver and the delete write it.
+func (s *ConnectionEventsSuite) setStatus(connection, status string) {
+	_, err := s.store.DB().ExecContext(context.Background(),
+		"UPDATE connector_connections SET status = ? WHERE id = ?", status, connection)
+	s.Require().NoError(err)
 }
 
 // subscribed stores a config with binding, validates the binding's connection, and waits for
@@ -307,8 +393,9 @@ func (s *ConnectionEventsSuite) config(binding map[string]any) string {
 
 // held are the router's subscriptions of a connection.
 func (s *ConnectionEventsSuite) held(connection string) []store.ConnectionEventSubscription {
-	held, err := s.store.ConnectionEventSubscriptions(context.Background(), s.customerID(), connection)
-	s.Require().NoError(err)
+	held := []store.ConnectionEventSubscription{}
+	s.Require().NoError(s.store.DB().NewSelect().Model(&held).Where("customer_id = ?", s.customerID()).
+		Where("connection_id = ?", connection).Order("created_at", "id").Scan(context.Background()))
 	return held
 }
 
