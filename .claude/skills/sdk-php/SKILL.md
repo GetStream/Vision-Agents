@@ -138,11 +138,16 @@ Docker VM disk was full; do not prune shared images or volumes to make room.
 
 ## After the spec changes
 
+The queue is `.claude/skills/sdk/changes/` (see "SDK updates" in the sdk skill). Diff
+`acceleration/api/openapi.yaml` against `sdks/php/.sdk_update_log/openapi.yaml`, and read
+`changes/backlog.md` while it exists plus every change file whose `pending` names `php`.
+
 1. `php bin/generate.php ../../acceleration/api/openapi.yaml` and review the diff.
 2. Hand-written resources only change for a new behaviour, not a new field.
 3. Unit tests, PHPStan, then the live suite once.
-4. Copy `.claude/skills/sdk/SKILL.md` and `acceleration/api/openapi.yaml` byte for byte into
-   `sdks/php/.sdk_update_log/`, so the next update can diff what changed since.
+4. Copy `acceleration/api/openapi.yaml` byte for byte into `sdks/php/.sdk_update_log/`.
+   Do not copy the sdk skill. Remove `php` from `pending`, and delete a file whose list
+   is empty.
 
 ## Review checklist
 

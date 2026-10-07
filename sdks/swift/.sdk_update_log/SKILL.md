@@ -61,8 +61,33 @@ This setup prevents duplicate syncs when they nothing changed.
 
 ## SDK updates
 
-For each sdk, have an .sdk_update_log folder which stores a copy of this skill, and the openAPI spec that was last used when updating the SDK
-this makes it easier to update an SDK and know that you just need to add a few fields etc. 
+A change to the API starts in Go. The note for the other SDKs is a new file in
+`.claude/skills/sdk/changes/`, not a paragraph added to this skill. One file per
+change:
+
+```markdown
+---
+pending: [js, python, dotnet, ruby, rust, php]
+---
+
+What changed, the name of the method, and which SDKs have already moved.
+```
+
+`pending` lists only the SDKs that still have work. Leave one off when the note
+says it needs nothing. A port removes its own name and deletes the file when the
+list is empty. Python's log is `plugins/stream/.sdk_update_log/`; the others are
+`sdks/<lang>/.sdk_update_log/`.
+
+`changes/backlog.md` is the queue that sat at the bottom of this file when the
+notes moved out. Read it while it exists, and do not append to it. Delete it once
+every server SDK's `openapi.yaml` snapshot is newer than that split.
+
+To bring one SDK up to date:
+
+1. Diff `acceleration/api/openapi.yaml` against that SDK's `.sdk_update_log/openapi.yaml`.
+2. Read `changes/backlog.md` while it exists, and every other file in `changes/` whose `pending` still names this SDK.
+3. Copy `openapi.yaml` into that `.sdk_update_log/`. Do not copy this skill.
+4. Remove the SDK from `pending`.
 
 ## Client side SDKs
 
@@ -249,76 +274,3 @@ Two rules for the router, in code, examples, READMEs and docs:
   `realtime()` takes only per-call overrides like `diarize`, `keyterms` or `voice`. Wrong:
   `router.stt.realtime(target="en-low-latency")`. Right: put `target: en-low-latency` under `stt:`
   in the config and call `router.stt.realtime()`.
-
-## Asking goes through responses.create
-
-The Go SDK has no `session.Respond`: every question is `session.Responses.Create(ctx, text, inputs...)`,
-which returns the response id, takes images and clips, and adds a `command_id` for a conversation kept in
-Stream Chat. The socket `respond` frame is left for the router, not wrapped by an SDK. Every SDK has
-moved: the `respond`, `RespondAsync` and `send` wrappers are gone.
-
-`listSessions`, `searchSessions`, `listResponses` and `listResponseItems` page by cursor now (see the
-`pagination` skill): `cursor` replaces `offset`, and each returns `{items, has_more, next_cursor}`
-instead of an array. Every SDK has moved.
-
-`createSession` takes an optional `id` (a UUID the caller chose) and answers 409 when a session already has it; generated ids are UUIDv7. Every SDK exposes it.
-
-A session is changed with `update`, backed by `updateSession` (`PATCH /v1/agents/sessions/{id}`): title, description, custom, instructions, models and voice in one call. `setSessionSettings` (`PATCH .../settings`) is deprecated. Every server SDK has moved (`session.update`, `Update` in Go, `UpdateAsync` in .NET). `updateSession` is now `x-client-accessible`: a device may change its own session's title, description and custom, and is refused with a 403 for instructions, models or voice. Go is regenerated. Swift, Kotlin and Dart need `session.update(title:description:custom:)` (and `sessions.update(id, ...)`), and the server SDKs only need regenerating, since `UpdateSessionRequest` is now rendered from Go.
-
-Credentials come from the environment. A client built with no arguments reads `STREAM_API_KEY` and `STREAM_API_SECRET` itself, so examples, READMEs and docs write `new Client()` (or the SDK's equivalent), never `new Client({ apiKey: process.env.STREAM_API_KEY, apiSecret: process.env.STREAM_API_SECRET })`. Pass them explicitly only when they come from somewhere other than those variables. Go, JavaScript, Python (`plugins/stream`), Ruby, PHP, .NET and Rust already fall back to them; any SDK that does not should, and snippets that pass them by hand should drop them.
-
-`listSessions` and `searchSessions` are replaced by `querySessions` (`POST /v1/agents/sessions/query`), which takes `{filter, sort, limit, cursor}` in the body (see the `query` skill). The filter allows `agent`, `user_id`, `project_id` and `modality` (a bare value or `{"$eq": ...}`) and `text: {"$q": ...}`. It sorts by `updated_at`, or by `relevance` for a text search, which cannot be combined with `project_id`. `project` is now `project_id` on `createSession`, `forkSession` and `Session`. `Session` gains a required `modality` (`text`, `voice` or `video`). Every SDK has moved (Go: `Query.ProjectID`, `Query.Modality`, `SessionOptions.ProjectID`, `ForkOptions.ProjectID`, `Call.ProjectID`). The old `custom`, `created_after`/`created_before` and `offset` filters are gone with them.
-
-Memory can be deleted. `truncateMemories` (`DELETE /v1/agents/users/{user_id}/memories`) deletes everything remembered about one user, from every session and agent; `deleteSessionMemories` (`DELETE /v1/agents/sessions/{id}/memories`) deletes what one session learned. Both answer 204 and are server-side only. Stopping a session (`stopSession`, what `close` calls) keeps its memories, so never wipe memory from `close`. Name them `memories.truncate(userId)`, `sessions.deleteMemories(id)` and `session.deleteMemories()`, spelled the way the language spells them. Every server SDK has moved (Go: `Client.Memories().Truncate`, `Sessions.DeleteMemories`, `Session.DeleteMemories`). Swift, Kotlin and Dart leave them out, being server-side only.
-
-`closeSession` (`DELETE /v1/agents/sessions/{id}`) is split in two. `stopSession` (`POST /v1/agents/sessions/{id}/stop`) is what ending a call does: the agent leaves and everything the session recorded and remembered is kept. `deleteSession` (`DELETE /v1/agents/sessions/{id}`) now deletes the session: it stops it if it is running, deletes its turns and items, and deletes what it taught memory. Both answer 204 and are client-accessible. A conversation in writing is normally left running, so `close` should only stop a call. Every SDK has moved: `close` stops (including when the socket failed to open) and `delete` deletes.
-
-An agent config can be changed in part. `patchAgentConfig` (`PATCH /v1/agents/configs/{id}`) takes an `AgentConfigPatch` and writes only the fields sent, so a guardrail or instructions can be set without restating everything else; `updateAgentConfig` (PUT) and `syncAgent` still replace instructions, guardrail, skills and knowledge. Server-side only. Name it `updateConfig` on the agent handle, spelled the way the language spells it: look the config up by the agent's name, then patch it. Every server SDK has moved (Go: `client.Agent.UpdateConfig`).
-
-Simulations need resource methods (see "Resource methods, never raw requests"): `simulations.create/get/list/update/delete/run` and `simulations.runs.get/list/cancel`. JavaScript, Python, .NET, Ruby, Rust and PHP have them (`client.simulations`, `client.simulations.runs`). Go still only has the generated `CreateSimulationWithResponse` and needs them. Swift, Kotlin and Dart leave them out, being server-side only.
-
-An agent folder can declare simulations in `simulations/*.yaml`. Each file is a list, so related simulations can share a file, and names must be unique across files. `syncAgent` (now declared in Go with Huma) takes them as `simulations: [SimulationDeclaration]`. When the field is sent, the router makes the config's simulations exactly that list: each is found by name and updated in place, so its runs stay attached, and one no longer declared is deleted. When the field is left out, the stored ones are left alone. So send `simulations` only when the folder has a `simulations/` directory, and send an empty list when that directory is empty. Refuse unknown keys, as with `agent.yaml`. The fingerprint appends `"\nsimulations:"` and then each simulation's JSON (field order as in the Go `agents.Simulation`), only when `simulations/` exists, so folders without one keep their current hash. Every server SDK has moved, with fingerprints checked against Go's (`agents.Folder.Simulations`, sent by `Agent.Sync`). `syncAgent` now validates its body, so a skill must carry `config_id` (every SDK already sends `""`).
-
-`Policy` (`getAppPolicy`, `updateAppPolicy`, `getOrganizationPolicy`, `updateOrganizationPolicy`) gains `allowed_models` and `tags`. `allowed_models` is a list of `provider/model` names the router may route to in every modality: left out allows every model, an empty list allows none, and an app is held to the models both it and its organization allow. `tags` are recorded on every usage row over the request's own, with the organization's winning over the app's. Keep the difference between an absent and an empty `allowed_models` when (de)serialising, since they mean opposite things. Every SDK has the fields in its regenerated client; none wraps the policy endpoints yet.
-An agent config has a `speed`: the voice's rate of delivery, 1 being its own, zero or absent leaving it there. It is on `AgentConfig`, `AgentConfigRequest`, `AgentConfigPatch` and `SyncAgentRequest`, and an agent folder's `agent.yaml` may declare `speed:` (send it only when the file names a non-zero one). Only voices that can change speed are routed to when it is set (ElevenLabs flash v2.5 and multilingual v2 today, 0.7–1.2). Every SDK has the field, and every server SDK's folder loader accepts `speed` (Go: `agents.Settings.Speed`).
-An agent config has `visible_tools` (on `AgentConfig`, `AgentConfigRequest` and `AgentConfigPatch`): tool names or `path.Match` patterns such as `athena_*` whose steps end users see on a persistent conversation's replies. Empty shows `search` and `web_search`. Every SDK has the field in its regenerated client.
-A session tool (`SessionTool` on `createSession`) gains `executor` (`server`, the default, or `client`: a person's device runs it) and `display_title` (at most 80 characters, shown on the reply's `ai_tool_call` attachment), and `RespondRequest` gains `client_id`, the install a command came from, which a client tool called while answering it is addressed to. A client tool is still answered over the events socket, once the device has reported. Every SDK has the fields in its regenerated client. Swift, Kotlin, Dart, Ruby, Rust and PHP expose `executor` and `display_title` where they declare tools; .NET exposes only `display_title`, and Python neither, since its tools come from the core `FunctionRegistry`. No SDK sends `client_id`: it is only on the socket `respond` frame, which SDKs no longer wrap, and `createResponse` has no such field, so a client tool can't yet be addressed through `responses.create`.
-`querySessions` takes two more filter fields, `state` (`live` or `ended`, as `Session.state` reports it) and `agent_id` (the id a session was created with), each a bare value or `{"$eq": ...}`, so a caller can list a user's live sessions without paging through every one that ended: `{"filter": {"user_id": "u1", "state": "live"}}`. Every SDK has moved (Go: `Query.State`, `Query.AgentID`). Kotlin leaves out `user_id`, which only a backend may set.
-
-The harness is agent config, never session config. `createSession` no longer takes `subagent`, `tasks`, `sandbox`, `skills` or `skill_names`, and `subagent` is gone from `model_overwrites` and `updateSession`; the router ignores them if sent. `tools` and `tool_timeout_ms` stay, which is how a client runs its own sandbox (artemis-impl's `investigate_sdk`). `AgentConfig`, `AgentConfigRequest`, `AgentConfigPatch` and `SyncAgentRequest` gain `harness` (an enum with one value, `default`; absent means `default`), next to the `subagent`, `sandbox` and `skills` they already had, and `agent.yaml` may declare `harness:`. Go has moved: `stream.Call` lost `Subagent`, `Tasks`, `Sandbox` and `Skills`, `stream.Config` lost `Subagent`, and `agents.Harness` (`Name`, `Subagents`, `VM`, `Skills`) is written by `Agent.Sync` onto the config rather than onto each session, so a session only gets it by running under that config. Every SDK has moved: the session-level options (and `use_skills`/`tasks` on the harness) are gone, and every server folder loader reads `harness:`.
-
-A knowledge page can be read again on a schedule. `KnowledgeUrlRequest` (`addKnowledgeUrl`), `KnowledgeUrlDeclaration` (in `syncAgent`) and `KnowledgeUrl` gain `refresh_hours`, how many hours between reads; absent means never, which is what it was before. Adding a page again replaces it, so a declaration without it turns the schedule off. In `knowledge/urls.yaml` a page written as a mapping may say `refresh_hours: 24` (at least 1; refuse 0, a non-integer and unknown keys as before). The fingerprint appends `"\nrefresh_hours:" + N` after a page's description only when it has one, so directories without it keep their current hash. Every server SDK has moved (Go: `agents.KnowledgeURL.RefreshHours`). JavaScript has no add-url method, so only its loader reads it.
-
-A dispatch worker can host tools for an agent: after every `ready` it sends `host_tools` (`agent_id`, `tools`, `timeout_ms`), runs each `tool_call` off the read loop and answers `tool_result` with `output` or `error`; `hosting_refused` ends the worker. The router offers them to a session whose `agent_id` or config name matches. Go, JavaScript (`dispatch.host`), Python (`stream.Dispatch.host`), Ruby, PHP, .NET (`Dispatch.Host`) and Rust all have it. Python and .NET also reconnect like Go; JavaScript, Ruby, PHP and Rust re-declare on each `ready` but do not reconnect.
-
-The router holds a dispatch worker to the capacity it declared. A worker connects with `capacity`,
-`active` (the calls and messages it is still handling, `0` on a first connection; hosted tool calls never
-count) and `handles` (`call`, `message`, both, or empty for a worker that only hosts tools). Every `call`
-and `message` frame carries a `work_id`, and the worker answers `{"type": "done", "work_id": ..., "error":
-...}` once it is finished, failure and missing handler included, which is what gives it its room back.
-There is no `accepted` or `rejected` any more. Go, Python (`plugins/stream`), JavaScript, .NET, Ruby, Rust
-and PHP all do this.
-
-An agent can leave text to its server. `agent.yaml` may say `dispatch: {incoming_call: enabled, text:
-enabled}` (each `enabled` or `disabled`), sent as `dispatch` (`AgentDispatch`) in `syncAgent`, and readable
-and patchable on the config. With `text` enabled, what an end user writes over the session socket or in
-Chat goes to a dispatch worker as a `message` frame instead of the model, carrying `session_id`, and
-`command_id` when it was a durable command, possibly with no channel. `incoming_call` is stored only, since
-every inbound call is already dispatched. Every server SDK reads `dispatch:`, exposes the session and
-command ids on its inbound message, refuses such a message in its get-or-create helper, and has `answer`
-(`Answer` in Go, `AnswerAsync` in .NET): responses.create on the message's session with its `command_id`,
-as the server acting for the writer. Acting for somebody needs its own backend setting, because a user id
-behind the proxy mints a user token, and the router hands a user's text back to the worker: Go
-`Backend.ActingFor`, Python `Backend.acting_for`, JavaScript `Backend.actingFor`, Ruby `Backend#acting_for`,
-Rust `Client::acting_for`, PHP `Backend::onBehalfOf` (its `actingFor` already meant a user token) and .NET
-`VisionAgentsClient.ActingFor`. They send the server credential plus `X-Stream-User-Id` in every mode.
-
-`SttOptions` gains `eager_end_of_turn` (boolean, live only): the router turns it into Deepgram Flux's
-`eager_eot_threshold` (0.6, never above `eot_threshold`), and every other model ignores it rather than
-refusing it. It is on by default for `en-low-latency` and `multilingual-low-latency`. Every SDK with STT has it.
-
-The router comes from the client and its target from the router config (see "Router for STT"). Every
-SDK with a router has moved: `client.Router` (Go, .NET), `client.router` (Python, Ruby, Rust, PHP) and
-`agents.router(config:)` (Swift, Kotlin, Dart). Constructing one directly is internal everywhere except
-Python, where `Router(...)` stays for the `url`/`customer_id` case. JavaScript has no router yet; when it
-gets one, start from `client.router(name)`.
