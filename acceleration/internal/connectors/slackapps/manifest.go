@@ -21,6 +21,9 @@ const (
 	maxDescriptionLength = 140
 	// maxAllowedIPAddressRanges: settings.allowed_ip_address_ranges, «Maximum 10 items».
 	maxAllowedIPAddressRanges = 10
+	// maxEvents: settings.event_subscriptions.bot_events and user_events, «A maximum of 100
+	// event types can be used».
+	maxEvents = 100
 )
 
 // slackHost is where Slack's OAuth endpoints are: https://slack.com/oauth/v2/authorize for a
@@ -34,16 +37,6 @@ const slackHost = "slack.com"
 // https://docs.slack.dev/ai/slack-mcp-server/). A connector that authorizes there asks for
 // user scopes; any other Slack authorize endpoint is the bot flow.
 const userAuthorizePath = "/oauth/v2_user/authorize"
-
-// eventTypePath is where a Slack Events API delivery names its event's type: the event
-// object's type, inside the envelope (https://docs.slack.dev/apis/events-api/). A channel
-// rule matching on it names an event the app subscribes to.
-const eventTypePath = "$.event.type"
-
-// automaticEvents are delivered without a subscription: app_uninstalled «is an
-// automatically-delivered event» (https://docs.slack.dev/reference/events/app_uninstalled),
-// so naming it in the manifest is not needed.
-var automaticEvents = []string{"app_uninstalled"}
 
 // Manifest is the part of a Slack app manifest the router writes, in the JSON shape
 // apps.manifest.create and .update take («A JSON app manifest encoded as a string»). Field
@@ -123,7 +116,7 @@ func Serves(connector core.Manifest) bool {
 
 // ManifestFor is the Slack app manifest of the customer's app for connector: the connector's
 // scopes as user scopes when it authorizes at the user-token endpoint and as bot scopes (with
-// a bot user) otherwise, the events its signal rules match on, token rotation on, and the
+// a bot user) otherwise, its channel.subscriptions as the events, token rotation on, and the
 // template's name, URLs and IP ranges.
 func ManifestFor(connector core.Manifest, template Template) (Manifest, error) {
 	if !Serves(connector) {
@@ -157,11 +150,20 @@ func ManifestFor(connector core.Manifest, template Template) (Manifest, error) {
 		manifest.Features = &Features{BotUser: &BotUser{DisplayName: template.Name}}
 	}
 	if template.RequestURL != "" {
+		// settings.event_subscriptions.bot_events and user_events: «event types the app
+		// subscribes to», at most 100 each (https://docs.slack.dev/reference/app-manifest).
+		var events []string
+		if connector.Channel != nil {
+			events = slices.Clone(connector.Channel.Subscriptions)
+		}
+		if len(events) > maxEvents {
+			return Manifest{}, stack.Wrap(fmt.Errorf("slackapps: %s subscribes to %d events, more than Slack's %d", connector.ID, len(events), maxEvents))
+		}
 		subscriptions := &EventSubscriptions{RequestURL: template.RequestURL}
 		if user {
-			subscriptions.UserEvents = eventTypes(connector)
+			subscriptions.UserEvents = events
 		} else {
-			subscriptions.BotEvents = eventTypes(connector)
+			subscriptions.BotEvents = events
 		}
 		manifest.Settings.EventSubscriptions = subscriptions
 	}
@@ -198,25 +200,4 @@ func checkTemplate(template Template) error {
 		}
 	}
 	return nil
-}
-
-// eventTypes are the event types the connector's signal rules match on, in their order, less
-// the ones Slack delivers without a subscription. A signal's event type is also its
-// subscription name (tokens_revoked, https://docs.slack.dev/reference/events/tokens_revoked).
-// A message rule's is not: a message arrives as event.type message, but an app subscribes to
-// message.channels, message.im and the rest, one per kind of conversation
-// (https://docs.slack.dev/reference/events/message.im), which the channel block does not say.
-// So messages are not subscribed to here.
-func eventTypes(connector core.Manifest) []string {
-	if connector.Channel == nil {
-		return nil
-	}
-	var types []string
-	for _, signal := range connector.Channel.Signals {
-		event, ok := signal.Match[eventTypePath]
-		if ok && !slices.Contains(types, event) && !slices.Contains(automaticEvents, event) {
-			types = append(types, event)
-		}
-	}
-	return types
 }

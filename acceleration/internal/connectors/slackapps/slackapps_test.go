@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +21,7 @@ import (
 // The router's callback and events URLs as a deployment at router.example would have them.
 const (
 	redirectURL = "https://router.example/v1/agents/connectors/oauth/callback"
-	requestURL  = "https://router.example/v1/connectors/events/slack/A0123456789"
+	requestURL  = "https://router.example/v1/connectors/events/slack_bot/A0123456789"
 )
 
 // SlackAppsSuite runs the client against the fake Slack and builds manifests from the
@@ -117,26 +116,26 @@ func (s *SlackAppsSuite) TestAnExpiredConfigTokenIsRefused() {
 	s.Empty(s.slack.SlackApps())
 }
 
-func (s *SlackAppsSuite) TestTheSlackConnectorsAppAsksForItsUserScopesAndSubscribesToItsSignals() {
+func (s *SlackAppsSuite) TestTheBotConnectorsAppAsksForItsBotScopesAndSubscribesToItsEvents() {
 	connector := s.connector()
 
 	manifest, err := slackapps.ManifestFor(connector, slackapps.Template{Name: "Acme agent", RedirectURL: redirectURL, RequestURL: requestURL})
 
 	s.Require().NoError(err)
 	s.Equal("Acme agent", manifest.DisplayInformation.Name)
-	s.Equal(connector.Scopes.List, manifest.OAuthConfig.Scopes.User)
-	s.Empty(manifest.OAuthConfig.Scopes.Bot)
-	s.Nil(manifest.Features, "a user-token app has no bot user")
+	s.Equal(connector.Scopes.List, manifest.OAuthConfig.Scopes.Bot)
+	s.Empty(manifest.OAuthConfig.Scopes.User)
+	s.Equal(&slackapps.Features{BotUser: &slackapps.BotUser{DisplayName: "Acme agent"}}, manifest.Features)
 	s.Equal([]string{redirectURL}, manifest.OAuthConfig.RedirectURLs)
-	s.Equal(&slackapps.EventSubscriptions{RequestURL: requestURL, UserEvents: []string{"tokens_revoked"}},
-		manifest.Settings.EventSubscriptions, "app_uninstalled comes without a subscription")
+	s.Equal(&slackapps.EventSubscriptions{RequestURL: requestURL, BotEvents: []string{"message.channels", "message.im", "tokens_revoked"}},
+		manifest.Settings.EventSubscriptions)
 	s.True(manifest.Settings.TokenRotationEnabled)
 	s.False(manifest.Settings.OrgDeployEnabled)
 	s.False(manifest.Settings.SocketModeEnabled)
 }
 
-func (s *SlackAppsSuite) TestABotConnectorsAppAsksForBotScopesAndHasABotUser() {
-	raw, err := os.ReadFile("../core/testdata/manifests/slack_bot.yaml")
+func (s *SlackAppsSuite) TestAUserTokenConnectorsAppAsksForUserScopesAndHasNoBotUser() {
+	raw, err := providers.FS.ReadFile("slack.yaml")
 	s.Require().NoError(err)
 	connector, err := core.ParseManifest(raw)
 	s.Require().NoError(err)
@@ -144,10 +143,10 @@ func (s *SlackAppsSuite) TestABotConnectorsAppAsksForBotScopesAndHasABotUser() {
 	manifest, err := slackapps.ManifestFor(connector, slackapps.Template{Name: "Acme agent", RedirectURL: redirectURL, RequestURL: requestURL})
 
 	s.Require().NoError(err)
-	s.Equal(connector.Scopes.List, manifest.OAuthConfig.Scopes.Bot)
-	s.Empty(manifest.OAuthConfig.Scopes.User)
-	s.Equal(&slackapps.Features{BotUser: &slackapps.BotUser{DisplayName: "Acme agent"}}, manifest.Features)
-	s.Equal([]string{"tokens_revoked"}, manifest.Settings.EventSubscriptions.BotEvents, "a message is not a subscription name")
+	s.Equal(connector.Scopes.List, manifest.OAuthConfig.Scopes.User)
+	s.Empty(manifest.OAuthConfig.Scopes.Bot)
+	s.Nil(manifest.Features)
+	s.Empty(manifest.Settings.EventSubscriptions.UserEvents, "slack.yaml lists no subscriptions")
 }
 
 func (s *SlackAppsSuite) TestWithoutARequestURLTheAppSubscribesToNothing() {
@@ -215,16 +214,17 @@ func (s *SlackAppsSuite) token() string {
 	return rotated.Token
 }
 
-// connector is the built-in Slack connector at its latest revision.
+// connector is the built-in Slack bot connector, the one a managed app is for, at its latest
+// revision.
 func (s *SlackAppsSuite) connector() core.Manifest {
-	raw, err := providers.FS.ReadFile("slack.yaml")
+	raw, err := providers.FS.ReadFile("slack_bot.yaml")
 	s.Require().NoError(err)
 	connector, err := core.ParseManifest(raw)
 	s.Require().NoError(err)
 	return connector
 }
 
-// manifest is the Slack connector's app manifest, with request as its events URL.
+// manifest is the Slack bot connector's app manifest, with request as its events URL.
 func (s *SlackAppsSuite) manifest(request string) slackapps.Manifest {
 	manifest, err := slackapps.ManifestFor(s.connector(), slackapps.Template{Name: "Acme agent", RedirectURL: redirectURL, RequestURL: request})
 	s.Require().NoError(err)

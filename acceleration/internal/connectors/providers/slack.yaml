@@ -17,9 +17,8 @@
 id: slack
 # A new revision for any change to what this file says; see AGENTS.md. 2 adds
 # endpoints.resource. 3 renames client.policy to client.registration. 4 adds the channel
-# block that reads tokens_revoked and app_uninstalled. 5 adds managed to
-# client.registration.
-revision: 5
+# block that reads tokens_revoked and app_uninstalled.
+revision: 4
 # [proto]:3-5
 name: Slack
 category: Communication
@@ -42,15 +41,8 @@ endpoints:
 # Authorization code: [proto]:7-8 (auth: oauth, oauth_mode: confidential).
 schemes: [oauth2_code]
 client:
-  # Slack MCP needs a registered app with a fixed app id, and «Only directory-published apps
-  # or internal apps may use MCP» ([mcp]). managed is the customer's own app, which the router
-  # creates in the customer's workspace with apps.manifest.create and does not distribute, so
-  # it is an internal app ([create], opened October 6, 2026:
-  # https://docs.slack.dev/reference/methods/apps.manifest.create). operator is Stream's app,
-  # for Stream's own agents. managed comes first: a customer with an app of its own consents
-  # with it (oauth2code's registrationOrder). That an app the router created counts as an
-  # internal app for MCP is not on [mcp]. # unverified
-  registration: [managed, operator]
+  # Slack MCP needs a registered app with a fixed app id ([mcp]), so the operator owns it.
+  registration: [operator]
   # [proto]:13. [user] prefers HTTP Basic (client_secret_basic); the post form is what the
   # prototype ran live.
   auth_method: client_secret_post

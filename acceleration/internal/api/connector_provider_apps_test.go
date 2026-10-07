@@ -30,7 +30,7 @@ const providerAppPublicURL = "https://router.example"
 // deletes, against one fake Slack for the whole suite, and Stream's own app set for a
 // customer by staff. The built-in slack connector (client.registration [managed, operator])
 // is seeded; each test has an app of its own. The operator's Slack app is in the router's
-// environment, as SLACK_MCP_*.
+// environment, as SLACK_BOT_MCP_*.
 type ConnectorProviderAppsSuite struct {
 	RouterSuite
 	slack *fakeprovider.Server
@@ -50,10 +50,10 @@ func TestConnectorProviderAppsSuite(t *testing.T) {
 func (s *ConnectorProviderAppsSuite) SetupSuite() {
 	s.slack = fakeprovider.New(s.T())
 	s.environment = map[string]string{
-		"SLACK_MCP_APP_ID":         "A" + strings.ToUpper(strings.ReplaceAll(s.utils.uuid(), "-", ""))[20:],
-		"SLACK_MCP_CLIENT_ID":      "operator-client-" + s.utils.uuid(),
-		"SLACK_MCP_CLIENT_SECRET":  "operator-secret-" + s.utils.uuid(),
-		"SLACK_MCP_SIGNING_SECRET": "operator-signing-" + s.utils.uuid(),
+		"SLACK_BOT_MCP_APP_ID":         "A" + strings.ToUpper(strings.ReplaceAll(s.utils.uuid(), "-", ""))[20:],
+		"SLACK_BOT_MCP_CLIENT_ID":      "operator-client-" + s.utils.uuid(),
+		"SLACK_BOT_MCP_CLIENT_SECRET":  "operator-secret-" + s.utils.uuid(),
+		"SLACK_BOT_MCP_SIGNING_SECRET": "operator-signing-" + s.utils.uuid(),
 	}
 	getenv := func(name string) string { return s.environment[name] }
 	scheme, err := oauth2code.New(oauth2code.Config{
@@ -81,7 +81,7 @@ func (s *ConnectorProviderAppsSuite) SetupTest() {
 
 func (s *ConnectorProviderAppsSuite) TestOnlyTheAppsBackendMayCreateTheProviderApp() {
 	s.assertPosture(serverOnly, func(as *testClient) int {
-		return as.do(http.MethodPut, providerAppPath("slack"), s.withToken("Acme"), nil)
+		return as.do(http.MethodPut, providerAppPath("slack_bot"), s.withToken("Acme"), nil)
 	})
 }
 
@@ -89,8 +89,8 @@ func (s *ConnectorProviderAppsSuite) TestOnlyTheAppsBackendMayDeleteTheProviderA
 	s.assertPosture(serverOnly, func(as *testClient) int {
 		// Created by the first call, kept by the ones a caller was refused.
 		s.Require().Contains([]int{http.StatusCreated, http.StatusOK},
-			s.serverClient.do(http.MethodPut, providerAppPath("slack"), s.withToken("Acme"), nil))
-		return as.do(http.MethodDelete, providerAppPath("slack"), nil, nil)
+			s.serverClient.do(http.MethodPut, providerAppPath("slack_bot"), s.withToken("Acme"), nil))
+		return as.do(http.MethodDelete, providerAppPath("slack_bot"), nil, nil)
 	})
 }
 
@@ -101,7 +101,7 @@ func (s *ConnectorProviderAppsSuite) TestConnectingSlackCreatesOneAppNamedForThe
 
 	app := s.slackApp(created.ProviderAppID)
 	s.Equal(ConnectorProviderApp{
-		ConnectorID: "slack", Registration: ConnectorClientRegistrationMethod(core.ClientManaged),
+		ConnectorID: "slack_bot", Registration: ConnectorClientRegistrationMethod(core.ClientManaged),
 		ProviderAppID: app.AppID, ClientID: app.ClientID, CreatedAt: created.CreatedAt, UpdatedAt: created.UpdatedAt,
 	}, created)
 	var manifest slackapps.Manifest
@@ -110,10 +110,12 @@ func (s *ConnectorProviderAppsSuite) TestConnectingSlackCreatesOneAppNamedForThe
 	s.True(manifest.Settings.TokenRotationEnabled)
 	s.Equal([]string{providerAppPublicURL + ConnectorCallbackPath}, manifest.OAuthConfig.RedirectURLs)
 	s.Require().NotNil(manifest.Settings.EventSubscriptions, "the events URL is set once the app id is known")
-	s.Equal(providerAppPublicURL+"/v1/connectors/events/slack/"+app.AppID, manifest.Settings.EventSubscriptions.RequestURL)
+	s.Equal(providerAppPublicURL+providerAppEventsPath+"slack_bot/"+app.AppID, manifest.Settings.EventSubscriptions.RequestURL)
+	s.Equal([]string{"message.channels", "message.im", "tokens_revoked"}, manifest.Settings.EventSubscriptions.BotEvents,
+		"slack_bot.yaml's channel.subscriptions")
 	s.Equal(1, app.Updates, "created without the URL, then updated with it")
 
-	record, signing, err := ProviderApp(context.Background(), s.store, s.sealer, "slack", app.AppID)
+	record, signing, err := ProviderApp(context.Background(), s.store, s.sealer, "slack_bot", app.AppID)
 	s.Require().NoError(err)
 	s.Equal(s.customerID(), record.CustomerID, "the app's events reach this customer")
 	s.Equal(app.SigningSecret, signing)
@@ -128,7 +130,7 @@ func (s *ConnectorProviderAppsSuite) TestASecondPutReturnsTheSameAppAndCreatesNo
 	before := len(s.slack.SlackApps())
 
 	var again ConnectorProviderApp
-	status := s.serverClient.do(http.MethodPut, providerAppPath("slack"), ConnectorProviderAppRequest{Name: "Acme renamed"}, &again)
+	status := s.serverClient.do(http.MethodPut, providerAppPath("slack_bot"), ConnectorProviderAppRequest{Name: "Acme renamed"}, &again)
 
 	s.Require().Equal(http.StatusOK, status)
 	s.Equal(created.ProviderAppID, again.ProviderAppID)
@@ -166,7 +168,7 @@ func (s *ConnectorProviderAppsSuite) TestAConfigTokenStillGoodIsNotRotated() {
 	s.create("Acme")
 	rotations := s.slack.ConfigTokenRotations()
 
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, providerAppPath("slack"), ConnectorProviderAppRequest{Name: "Acme"}, nil))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, providerAppPath("slack_bot"), ConnectorProviderAppRequest{Name: "Acme"}, nil))
 
 	s.Equal(rotations, s.slack.ConfigTokenRotations())
 }
@@ -174,8 +176,8 @@ func (s *ConnectorProviderAppsSuite) TestAConfigTokenStillGoodIsNotRotated() {
 func (s *ConnectorProviderAppsSuite) TestTheConfigTokenIsSealedAtRestAndNeverInAnAnswer() {
 	given := s.slack.NewConfigToken()
 
-	status, created := s.serverClient.call(http.MethodPut, providerAppPath("slack"), ConnectorProviderAppRequest{Name: "Acme", ConfigRefreshToken: given})
-	_, again := s.serverClient.call(http.MethodPut, providerAppPath("slack"), ConnectorProviderAppRequest{Name: "Acme"})
+	status, created := s.serverClient.call(http.MethodPut, providerAppPath("slack_bot"), ConnectorProviderAppRequest{Name: "Acme", ConfigRefreshToken: given})
+	_, again := s.serverClient.call(http.MethodPut, providerAppPath("slack_bot"), ConnectorProviderAppRequest{Name: "Acme"})
 
 	s.Require().Equal(http.StatusCreated, status, string(created))
 	for _, body := range [][]byte{created, again} {
@@ -191,26 +193,26 @@ func (s *ConnectorProviderAppsSuite) TestTheConfigTokenIsSealedAtRestAndNeverInA
 
 func (s *ConnectorProviderAppsSuite) TestTheConsentUsesTheAppsOwnClient() {
 	operators := s.authorizeURL(s.connection())
-	s.Equal(s.environment["SLACK_MCP_CLIENT_ID"], operators.Query().Get("client_id"), "without an app of its own, the operator's")
+	s.Equal(s.environment["SLACK_BOT_MCP_CLIENT_ID"], operators.Query().Get("client_id"), "without an app of its own, the operator's")
 
 	created := s.create("Acme")
 	own := s.authorizeURL(s.connection())
 
 	s.Equal(created.ClientID, own.Query().Get("client_id"))
-	s.Equal("https://slack.com/oauth/v2_user/authorize", own.Scheme+"://"+own.Host+own.Path)
+	s.Equal("https://slack.com/oauth/v2/authorize", own.Scheme+"://"+own.Host+own.Path)
 }
 
 func (s *ConnectorProviderAppsSuite) TestDeletingTheAppDeletesItAtSlackAndRemovesTheRecord() {
 	created := s.create("Acme")
 
-	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, providerAppPath("slack"), nil, nil))
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, providerAppPath("slack_bot"), nil, nil))
 
 	s.True(s.slackApp(created.ProviderAppID).Deleted)
-	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "slack")
+	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "slack_bot")
 	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
-	_, err = s.store.ConnectorConfigToken(context.Background(), s.customerID(), "slack")
+	_, err = s.store.ConnectorConfigToken(context.Background(), s.customerID(), "slack_bot")
 	s.ErrorIs(err, store.ErrNoConnectorConfigToken)
-	status, failure := s.serverClient.failure(http.MethodDelete, providerAppPath("slack"), nil)
+	status, failure := s.serverClient.failure(http.MethodDelete, providerAppPath("slack_bot"), nil)
 	s.Equal(http.StatusNotFound, status)
 	s.Equal(noManagedApp, failure)
 }
@@ -219,23 +221,52 @@ func (s *ConnectorProviderAppsSuite) TestAnAppAlreadyDeletedInSlackIsRemovedHere
 	created := s.create("Acme")
 	s.Require().NoError(s.slackApps.Delete(context.Background(), s.freshToken(), created.ProviderAppID))
 
-	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, providerAppPath("slack"), nil, nil))
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, providerAppPath("slack_bot"), nil, nil))
 
+	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "slack_bot")
+	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
+}
+
+func (s *ConnectorProviderAppsSuite) TestTheSlackToolConnectorListingOnlyTheOperatorRefusesAnAppTheRouterWouldCreate() {
+	before := len(s.slack.SlackApps())
+
+	status, failure := s.serverClient.failure(http.MethodPut, providerAppPath("slack"), s.withToken("Acme"))
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("slack takes no app the router creates: its client.registration is [operator], which does not list managed", failure)
+	s.Equal(before, len(s.slack.SlackApps()), "nothing created at Slack")
 	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "slack")
 	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
 }
 
-func (s *ConnectorProviderAppsSuite) TestAConnectorListingOnlyTheOperatorRefusesAnAppTheRouterWouldCreate() {
-	id := s.slackLikeConnector("operator")
+func (s *ConnectorProviderAppsSuite) TestAConnectorWhoseEventsTheAppsOwnRouteCannotVerifyGetsNoApp() {
+	id := s.slackConnectorVerifiedWith("operator")
 	before := len(s.slack.SlackApps())
 
 	status, failure := s.serverClient.failure(http.MethodPut, providerAppPath(id), s.withToken("Acme"))
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Equal(id+" takes no app the router creates: its client.registration is [operator], which does not list managed", failure)
+	s.Equal(id+" verifies its events with the operator secret, not the app's own (provider_app), so an app the router creates could not deliver them", failure)
 	s.Equal(before, len(s.slack.SlackApps()), "nothing created at Slack")
-	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), id)
-	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
+}
+
+func (s *ConnectorProviderAppsSuite) TestTheRequestURLIsTheRouteThatVerifiesTheAppsEvents() {
+	created := s.create("Acme")
+	app := s.slackApp(created.ProviderAppID)
+	var manifest slackapps.Manifest
+	s.Require().NoError(json.Unmarshal(app.Manifest, &manifest))
+	requestURL, found := strings.CutPrefix(manifest.Settings.EventSubscriptions.RequestURL, providerAppPublicURL)
+	s.Require().True(found)
+	challenge := "challenge-" + s.utils.uuid()
+
+	status, answer := s.slack.Deliver(s.server.URL+requestURL, app.SigningSecret,
+		[]byte(`{"type":"url_verification","challenge":"`+challenge+`"}`), 0)
+
+	s.Equal(http.StatusOK, status, answer)
+	s.Equal(challenge, answer, "Slack's handshake on the URL it was given is answered")
+	status, _ = s.slack.Deliver(s.server.URL+requestURL, "another-apps-secret",
+		[]byte(`{"type":"url_verification","challenge":"x"}`), 0)
+	s.Equal(http.StatusUnauthorized, status, "verified with this app's own signing secret")
 }
 
 func (s *ConnectorProviderAppsSuite) TestAConnectorThatDoesNotAuthorizeAtSlackGetsNoApp() {
@@ -246,7 +277,7 @@ func (s *ConnectorProviderAppsSuite) TestAConnectorThatDoesNotAuthorizeAtSlackGe
 }
 
 func (s *ConnectorProviderAppsSuite) TestTheFirstPutNeedsAConfigToken() {
-	status, failure := s.serverClient.failure(http.MethodPut, providerAppPath("slack"), ConnectorProviderAppRequest{Name: "Acme"})
+	status, failure := s.serverClient.failure(http.MethodPut, providerAppPath("slack_bot"), ConnectorProviderAppRequest{Name: "Acme"})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "send config_refresh_token")
@@ -255,7 +286,7 @@ func (s *ConnectorProviderAppsSuite) TestTheFirstPutNeedsAConfigToken() {
 func (s *ConnectorProviderAppsSuite) TestARefreshTokenSlackRefusesCreatesNothing() {
 	before := len(s.slack.SlackApps())
 
-	status, failure := s.serverClient.failure(http.MethodPut, providerAppPath("slack"), ConnectorProviderAppRequest{Name: "Acme", ConfigRefreshToken: "xoxe-not-one-slack-issued"})
+	status, failure := s.serverClient.failure(http.MethodPut, providerAppPath("slack_bot"), ConnectorProviderAppRequest{Name: "Acme", ConfigRefreshToken: "xoxe-not-one-slack-issued"})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "Slack refused config_refresh_token")
@@ -268,7 +299,7 @@ func (s *ConnectorProviderAppsSuite) TestMoreThanTenIPRangesAreRefused() {
 		sent.AllowedIPAddressRanges = append(sent.AllowedIPAddressRanges, fmt.Sprintf("203.0.113.%d", i))
 	}
 
-	s.Equal(http.StatusBadRequest, s.serverClient.do(http.MethodPut, providerAppPath("slack"), sent, nil))
+	s.Equal(http.StatusBadRequest, s.serverClient.do(http.MethodPut, providerAppPath("slack_bot"), sent, nil))
 }
 
 func (s *ConnectorProviderAppsSuite) TestStaffMakeStreamsOwnAppOneCustomersProviderApp() {
@@ -279,15 +310,15 @@ func (s *ConnectorProviderAppsSuite) TestStaffMakeStreamsOwnAppOneCustomersProvi
 	}()
 
 	s.Equal(ConnectorClientRegistrationMethod(core.ClientOperator), set.Registration)
-	s.Equal(s.environment["SLACK_MCP_APP_ID"], set.ProviderAppID)
-	record, signing, err := ProviderApp(context.Background(), s.store, s.sealer, "slack", set.ProviderAppID)
+	s.Equal(s.environment["SLACK_BOT_MCP_APP_ID"], set.ProviderAppID)
+	record, signing, err := ProviderApp(context.Background(), s.store, s.sealer, "slack_bot", set.ProviderAppID)
 	s.Require().NoError(err)
 	s.Equal(s.customerID(), record.CustomerID)
-	s.Equal(s.environment["SLACK_MCP_SIGNING_SECRET"], signing)
+	s.Equal(s.environment["SLACK_BOT_MCP_SIGNING_SECRET"], signing)
 	client, found, err := s.lookup(core.ClientOperator)
 	s.Require().NoError(err)
 	s.True(found)
-	s.Equal(s.environment["SLACK_MCP_CLIENT_SECRET"], client.Secret)
+	s.Equal(s.environment["SLACK_BOT_MCP_CLIENT_SECRET"], client.Secret)
 
 	other := s.data.createApp()
 	s.Equal(http.StatusConflict, s.staff.do(http.MethodPut, operatorAppPath(other.app.ID), nil, nil), "one customer per app")
@@ -295,14 +326,14 @@ func (s *ConnectorProviderAppsSuite) TestStaffMakeStreamsOwnAppOneCustomersProvi
 
 func (s *ConnectorProviderAppsSuite) TestOnlyStaffMaySetStreamsOwnApp() {
 	s.Equal(http.StatusUnauthorized, s.serverClient.do(http.MethodPut, operatorAppPath(s.customerID()), nil, nil))
-	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "slack")
+	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "slack_bot")
 	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
 }
 
 // create is the app's backend creating its Slack app with a fresh configuration token.
 func (s *ConnectorProviderAppsSuite) create(name string) ConnectorProviderApp {
 	var created ConnectorProviderApp
-	status, payload := s.serverClient.call(http.MethodPut, providerAppPath("slack"), s.withToken(name))
+	status, payload := s.serverClient.call(http.MethodPut, providerAppPath("slack_bot"), s.withToken(name))
 	s.Require().Equal(http.StatusCreated, status, string(payload))
 	s.Require().NoError(json.Unmarshal(payload, &created))
 	return created
@@ -370,7 +401,7 @@ func (s *ConnectorProviderAppsSuite) put(sent ConnectorProviderAppRequest) (int,
 	if err != nil {
 		return 0, err
 	}
-	request, err := http.NewRequest(http.MethodPut, s.server.URL+providerAppPath("slack"), bytes.NewReader(encoded))
+	request, err := http.NewRequest(http.MethodPut, s.server.URL+providerAppPath("slack_bot"), bytes.NewReader(encoded))
 	if err != nil {
 		return 0, err
 	}
@@ -388,7 +419,7 @@ func (s *ConnectorProviderAppsSuite) put(sent ConnectorProviderAppRequest) (int,
 // connection is a new app-owned connection of the test's app to the built-in slack.
 func (s *ConnectorProviderAppsSuite) connection() string {
 	var created Connection
-	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned("slack"), &created))
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned("slack_bot"), &created))
 	return created.ID
 }
 
@@ -422,30 +453,43 @@ func (s *ConnectorProviderAppsSuite) authorizeURL(connection string) *url.URL {
 func (s *ConnectorProviderAppsSuite) lookup(registration core.ClientRegistrationMethod) (oauth2code.Client, bool, error) {
 	return ConnectorClients(s.store, s.sealer, func(string) string { return "" })(context.Background(),
 		core.ConnectionRef{CustomerID: s.customerID(), ConnectionID: s.utils.uuid()},
-		core.ResolvedManifest{ConnectorID: "slack"}, registration)
+		core.ResolvedManifest{ConnectorID: "slack_bot"}, registration)
 }
 
-// slackLikeConnector stores a custom connector of the test's app that authorizes at Slack's
-// user-token endpoint, with client.registration [registration].
-func (s *ConnectorProviderAppsSuite) slackLikeConnector(registration string) string {
+// slackConnectorVerifiedWith stores a custom bot connector of the test's app that lists
+// managed and verifies its events with secret, in the shape of providers/slack_bot.yaml.
+func (s *ConnectorProviderAppsSuite) slackConnectorVerifiedWith(secret string) string {
 	id := "custom_slack" + strings.ReplaceAll(s.utils.uuid(), "-", "")
 	manifest, err := core.ParseManifest([]byte(`
 id: ` + id + `
 revision: 1
-name: Slack, the operator's only
+name: Slack, verified with another secret
 endpoints:
-  authorize: https://slack.com/oauth/v2_user/authorize
-  token: https://slack.com/api/oauth.v2.user.access
-  mcp: https://mcp.slack.com/mcp
+  authorize: https://slack.com/oauth/v2/authorize
+  token: https://slack.com/api/oauth.v2.access
 schemes: [oauth2_code]
 client:
-  registration: [` + registration + `]
-  env: SLACK
+  registration: [managed, operator]
+  env: SLACK_BOT
 scopes:
   list: [chat:write]
-sources:
-  - kind: mcp
-    endpoint: mcp
+capture:
+  - name: team_id
+    from: token_response
+    path: $.team.id
+identity: [team_id]
+channel:
+  verifier:
+    kind: secret_header
+    secret: ` + secret + `
+    header: X-Secret
+  format: json
+  signals:
+    - kind: uninstalled
+      match:
+        $.event.type: app_uninstalled
+      identity:
+        team_id: $.team_id
 `))
 	s.Require().NoError(err)
 	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
@@ -458,5 +502,5 @@ func providerAppPath(connector string) string {
 }
 
 func operatorAppPath(customer string) string {
-	return "/v1/ops/customers/" + customer + "/connectors/slack/provider-app"
+	return "/v1/ops/customers/" + customer + "/connectors/slack_bot/provider-app"
 }
