@@ -233,6 +233,11 @@ type Agent struct {
 	// wait. At most three replies are started this way for one run of the caller's words. 120ms
 	// by default; 0 looks at the words alone.
 	PreviewQuiet time.Duration `koanf:"preview_quiet"`
+	// ReplyHedge is how long a reply may say nothing, neither text nor a tool call, before the same
+	// request is asked of another candidate of its target as well. Whichever says something first is
+	// kept and the other is cancelled. It only applies to a target with more than one candidate.
+	// 1.2s by default; 0 turns it off.
+	ReplyHedge time.Duration `koanf:"reply_hedge"`
 	// ChatTimings shows how long each stage of a turn took after the agent's reply in its
 	// chat channel, for a developer talking to the agent. Off by default: it is not something a
 	// caller should read.
@@ -313,6 +318,7 @@ var variables = map[string]string{
 	"agent.reply_resume_gap":        "ROUTER_REPLY_RESUME_GAP",
 	"agent.preview_debounce":        "ROUTER_PREVIEW_DEBOUNCE",
 	"agent.preview_quiet":           "ROUTER_PREVIEW_QUIET",
+	"agent.reply_hedge":             "ROUTER_REPLY_HEDGE",
 	"agent.chat_timings":            "ROUTER_CHAT_TIMINGS",
 	"auth.proxy_declares_kind":      "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":            "ROUTER_CONNECTORS_ENABLED",
@@ -346,6 +352,7 @@ func Defaults() Config {
 			ReplyResumeGap:        200 * time.Millisecond,
 			PreviewDebounce:       60 * time.Millisecond,
 			PreviewQuiet:          120 * time.Millisecond,
+			ReplyHedge:            1200 * time.Millisecond,
 		},
 		EOT:     EOT{Endpoint: eotdefaults.HostedDemoEndpoint, Mode: "primary", Threshold: 0.5},
 		Sandbox: Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
@@ -502,6 +509,9 @@ func (c Config) validate() error {
 	if c.Agent.PreviewQuiet < 0 {
 		return fmt.Errorf("config: agent.preview_quiet cannot be negative, got %s", c.Agent.PreviewQuiet)
 	}
+	if c.Agent.ReplyHedge < 0 {
+		return fmt.Errorf("config: agent.reply_hedge cannot be negative, got %s", c.Agent.ReplyHedge)
+	}
 	if c.EOT.Mode != "gate" && c.EOT.Mode != "primary" {
 		return fmt.Errorf("config: eot.mode must be gate or primary, got %q", c.EOT.Mode)
 	}
@@ -599,6 +609,7 @@ func (c Config) export() error {
 		"agent.reply_resume_gap":        c.Agent.ReplyResumeGap.String(),
 		"agent.preview_debounce":        c.Agent.PreviewDebounce.String(),
 		"agent.preview_quiet":           c.Agent.PreviewQuiet.String(),
+		"agent.reply_hedge":             c.Agent.ReplyHedge.String(),
 		"agent.chat_timings":            fmt.Sprint(c.Agent.ChatTimings),
 		"connectors.enabled":            fmt.Sprint(c.Connectors.Enabled),
 		"sandbox.enabled":               fmt.Sprint(c.Sandbox.Enabled),

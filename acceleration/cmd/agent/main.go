@@ -145,6 +145,8 @@ func parseOptions(args []string) (options, bool, error) {
 		"how long the caller's words must hold still before the reply to them is started ahead of the wait, 0 starts it with the wait")
 	flags.DurationVar(&parsed.previewQuiet, "preview-quiet", timing.PreviewQuiet,
 		"how long the caller's audio must also have been quiet before that, 0 looks at the words alone")
+	flags.DurationVar(&parsed.replyHedge, "reply-hedge", timing.ReplyHedge,
+		"how long a reply may say nothing before the same request is asked of another candidate as well, 0 asks once")
 	verbose := flags.Bool("verbose", false, "log lifecycle events")
 	if err := flags.Parse(args); err != nil {
 		return options{}, false, err
@@ -186,6 +188,7 @@ type options struct {
 	replyResumeGap        time.Duration
 	previewDebounce       time.Duration
 	previewQuiet          time.Duration
+	replyHedge            time.Duration
 
 	number       string
 	vendor       string
@@ -250,7 +253,7 @@ func run(options options, logger *slog.Logger) error {
 		return err
 	}
 
-	routers, cleanup, err := buildRouters(ctx, logger)
+	routers, cleanup, err := buildRouters(ctx, options.replyHedge, logger)
 	if err != nil {
 		return err
 	}
@@ -555,7 +558,7 @@ type routers struct {
 
 // buildRouters wires all three routers, using Postgres and Redis when they are configured.
 // The demo is useful without them: it just stops recording usage.
-func buildRouters(ctx context.Context, logger *slog.Logger) (routers, func(), error) {
+func buildRouters(ctx context.Context, replyHedge time.Duration, logger *slog.Logger) (routers, func(), error) {
 	config, err := routing.LoadConfig(os.Getenv(configEnvVar))
 	if err != nil {
 		return routers{}, nil, err
@@ -612,11 +615,12 @@ func buildRouters(ctx context.Context, logger *slog.Logger) (routers, func(), er
 	closers = append(closers, transcriber.Close)
 
 	reasoner, err := llmrouter.New(llmrouter.Options{
-		Config:   config[routing.LLM],
-		Registry: llmrouter.DefaultRegistry(),
-		Store:    pgStore,
-		Live:     liveClient,
-		Logger:   logger,
+		Config:     config[routing.LLM],
+		Registry:   llmrouter.DefaultRegistry(),
+		Store:      pgStore,
+		Live:       liveClient,
+		ReplyHedge: replyHedge,
+		Logger:     logger,
 	})
 	if err != nil {
 		cleanup()

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -59,7 +60,11 @@ type Options struct {
 	Gate routing.Gate
 	// Screen judges each response's input for prompt injection. Nil screens nothing.
 	Screen Screen
-	Logger *slog.Logger
+	// ReplyHedge is how long a reply may say nothing before the same request is asked of
+	// another candidate of its target as well, and whichever says something first is kept.
+	// Zero hedges nothing.
+	ReplyHedge time.Duration
+	Logger     *slog.Logger
 }
 
 // Screen judges what a response is asked while the model answers it. It returns nil when
@@ -95,8 +100,9 @@ type Request struct {
 // Router selects an LLM provider and opens sessions.
 type Router struct {
 	*routing.Router[Provider]
-	quota  *quota.Limiter
-	screen Screen
+	quota      *quota.Limiter
+	screen     Screen
+	replyHedge time.Duration
 }
 
 // New validates the options and returns a Router.
@@ -121,7 +127,7 @@ func New(options Options) (*Router, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Router{Router: core, quota: options.Quota, screen: options.Screen}, nil
+	return &Router{Router: core, quota: options.Quota, screen: options.Screen, replyHedge: options.ReplyHedge}, nil
 }
 
 // Start selects a provider and opens a session, falling back to the next candidate when one
@@ -146,6 +152,22 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	session := newSession(provider, config, core.Owner(), r.Recorder(), r.quota)
 	session.admit = r.Admit
 	session.screen = r.screen
+	session.hedgeAfter = r.replyHedge
+	session.hedge = func(ctx context.Context) (*Session, error) {
+		candidates, err := r.Candidates(ctx, core)
+		if err != nil {
+			return nil, err
+		}
+		var failures []error
+		for _, candidate := range hedgeCandidates(candidates, config) {
+			child, err := r.child(ctx, core, session, candidate.Config)
+			if err == nil {
+				return child, nil
+			}
+			failures = append(failures, err)
+		}
+		return nil, stack.Wrap(errors.Join(append(failures, errors.New("llmrouter: no other candidate to hedge on"))...))
+	}
 	session.fallback = func(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 		candidates, err := r.Candidates(ctx, core)
 		if err != nil {

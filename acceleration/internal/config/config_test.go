@@ -418,6 +418,28 @@ func (s *ConfigSuite) TestAReplyIsStartedAheadOfTheWaitOnlyOnceTheCallerHasBeenQ
 	s.Contains(err.Error(), "agent.preview_quiet")
 }
 
+func (s *ConfigSuite) TestALateReplyIsAskedOfAnotherCandidateAfterTheHedgeUnlessTurnedOff() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(1200*time.Millisecond, config.Agent.ReplyHedge)
+
+	s.T().Setenv("ROUTER_REPLY_HEDGE", "800ms")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(800*time.Millisecond, config.Agent.ReplyHedge)
+
+	s.T().Setenv("ROUTER_REPLY_HEDGE", "0")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Zero(config.Agent.ReplyHedge, "zero asks once rather than falling back to the default")
+	s.Equal("0s", os.Getenv("ROUTER_REPLY_HEDGE"), "what is exported says the same")
+
+	s.T().Setenv("ROUTER_REPLY_HEDGE", "-1s")
+	_, _, err = Load("")
+	s.Require().Error(err)
+	s.Contains(err.Error(), "agent.reply_hedge")
+}
+
 func (s *ConfigSuite) TestConnectorsAreOffUnlessAskedFor() {
 	config, _, err := Load("")
 	s.Require().NoError(err)

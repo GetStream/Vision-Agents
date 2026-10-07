@@ -681,14 +681,15 @@ func run(settings config.Config, logger *slog.Logger) error {
 			screen = policies.Screener(judging)
 		}
 		chat, err := llmrouter.New(llmrouter.Options{
-			Config:   section,
-			Registry: llmrouter.DefaultRegistry(),
-			Store:    pgStore,
-			Live:     liveClient,
-			Quota:    limiter,
-			Gate:     gate,
-			Screen:   screen,
-			Logger:   logger,
+			Config:     section,
+			Registry:   llmrouter.DefaultRegistry(),
+			Store:      pgStore,
+			Live:       liveClient,
+			Quota:      limiter,
+			Gate:       gate,
+			Screen:     screen,
+			ReplyHedge: settings.Agent.ReplyHedge,
+			Logger:     logger,
 		})
 		if err != nil {
 			return err
