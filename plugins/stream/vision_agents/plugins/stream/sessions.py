@@ -26,6 +26,7 @@ from ._generated.models import (
     CreateSessionRequestCustom,
     ForkSessionRequest,
     ForkSessionRequestCustom,
+    HistoryMessage,
     ModelOverwrites,
     Session as SessionRow,
     SessionFilter,
@@ -101,6 +102,10 @@ class SessionOptions:
         call_id: The call to join. Empty holds the conversation in writing.
         call_type: The Stream call type. Empty leaves the backend's default.
         conversation_id: The channel an earlier session was held in, to resume.
+        history: The conversation so far, oldest first, for a backend that keeps its own
+            thread: the model is handed it before the first response and the router
+            records none of it. Up to 100 messages; not with conversation_id. Server side
+            only.
         instructions: Overrides the agent's own system prompt for this conversation.
         user_id: Who the conversation belongs to, for a backend opening one on somebody's
             behalf. A client acting for a user leaves it empty: the token already says who.
@@ -120,6 +125,7 @@ class SessionOptions:
     call_id: str = ""
     call_type: str = ""
     conversation_id: str = ""
+    history: Optional[list[HistoryMessage]] = None
     instructions: str = ""
     user_id: str = ""
 
@@ -329,6 +335,8 @@ class Sessions:
                 setattr(request, name, getattr(options, name))
         if options.conversation_id:
             request.conversation_id = options.conversation_id
+        if options.history:
+            request.history = options.history
         if options.user_id:
             request.user_id = options.user_id
         if options.model_overwrites is not None:

@@ -4232,6 +4232,8 @@ export type components = {
             readonly description?: string;
             /** @description Said on joining without going through the model. Empty means the agent waits to be spoken to. */
             readonly greeting?: string;
+            /** @description The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth. */
+            readonly history?: readonly components["schemas"]["HistoryMessage"][];
             /** @description The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7. */
             readonly id?: string;
             /**
@@ -4501,6 +4503,22 @@ export type components = {
             /** @enum {string} */
             readonly status: "ok" | "degraded";
         };
+        readonly HistoryMessage: {
+            /**
+             * Format: date-time
+             * @description When it was said. The model is shown it beside a person's message, so it can tell an hour ago from just now.
+             */
+            readonly created_at?: string;
+            /** @description Who said it, when several people share the thread. The model is shown it as a label, never as who is asking now. */
+            readonly name?: string;
+            readonly role: components["schemas"]["HistoryRole"];
+            readonly text: string;
+        };
+        /**
+         * @description user is what a person said, assistant what the agent answered. These are the only turns a resumed conversation hands the model; instructions say anything a system message would.
+         * @enum {string}
+         */
+        readonly HistoryRole: "user" | "assistant";
         readonly ImageContentPart: {
             readonly image_url: components["schemas"]["ImageSource"];
             /** @enum {string} */
@@ -9456,6 +9474,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description A session with that id already exists */
             readonly 409: {

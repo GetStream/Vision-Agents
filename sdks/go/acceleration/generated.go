@@ -845,6 +845,24 @@ func (e HealthStatusStatus) Valid() bool {
 	}
 }
 
+// Defines values for HistoryRole.
+const (
+	HistoryRoleAssistant HistoryRole = "assistant"
+	HistoryRoleUser      HistoryRole = "user"
+)
+
+// Valid indicates whether the value is a known member of the HistoryRole enum.
+func (e HistoryRole) Valid() bool {
+	switch e {
+	case HistoryRoleAssistant:
+		return true
+	case HistoryRoleUser:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ImageContentPartType.
 const (
 	ImageUrl ImageContentPartType = "image_url"
@@ -3440,6 +3458,9 @@ type CreateSessionRequest struct {
 	// Greeting Said on joining without going through the model. Empty means the agent waits to be spoken to.
 	Greeting *string `json:"greeting,omitempty"`
 
+	// History The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
+	History *[]HistoryMessage `json:"history,omitempty"`
+
 	// Id The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7.
 	Id *string `json:"id,omitempty"`
 
@@ -3718,6 +3739,22 @@ type HealthStatus struct {
 
 // HealthStatusStatus defines model for HealthStatus.Status.
 type HealthStatusStatus string
+
+// HistoryMessage defines model for HistoryMessage.
+type HistoryMessage struct {
+	// CreatedAt When it was said. The model is shown it beside a person's message, so it can tell an hour ago from just now.
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+
+	// Name Who said it, when several people share the thread. The model is shown it as a label, never as who is asking now.
+	Name *string `json:"name,omitempty"`
+
+	// Role user is what a person said, assistant what the agent answered. These are the only turns a resumed conversation hands the model; instructions say anything a system message would.
+	Role HistoryRole `json:"role"`
+	Text string      `json:"text"`
+}
+
+// HistoryRole user is what a person said, assistant what the agent answered. These are the only turns a resumed conversation hands the model; instructions say anything a system message would.
+type HistoryRole string
 
 // IMessageProfile defines model for IMessageProfile.
 type IMessageProfile struct {
@@ -29599,6 +29636,8 @@ type CreateSessionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 	// JSON409 the response for an HTTP 409 `application/json` response
@@ -29620,6 +29659,11 @@ func (r CreateSessionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateSessionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateSessionResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -45073,6 +45117,13 @@ func ParseCreateSessionResponse(rsp *http.Response) (*CreateSessionResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound

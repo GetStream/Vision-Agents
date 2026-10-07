@@ -1024,6 +1024,46 @@ func (s *SessionSuite) TestAForkReadFromRecordsStartsFromThatHistory() {
 	s.Equal(recalled, created.voiceAgent.History())
 }
 
+func (s *SessionSuite) TestATextSessionAsksTheModelWithTheHistoryTheCallerKept() {
+	s.manages()
+	created := s.writes(Spec{Incognito: true, History: []persistent.HistoryLine{
+		{Role: "user", Text: "Where is order 4471?"},
+		{Role: "assistant", Text: "It ships on Friday."},
+		{Role: "user", Text: "Thanks."},
+	}})
+
+	s.says(created, "When does it ship?")
+
+	s.eventually(func() bool { return len(s.model.requests()) > 0 }, "the model was never asked")
+	s.Equal([]string{
+		"user: Where is order 4471?",
+		"assistant: It ships on Friday.",
+		"user: Thanks.",
+		"user: When does it ship?",
+	}, handed(s.model.requests()[0]))
+}
+
+// A call takes history from the caller too: a thread that moves from writing to a phone
+// call carries on from what was written, and the call's transcript keeps only the call.
+func (s *SessionSuite) TestACallAnswersFromTheHistoryTheCallerKeptAndRecordsOnlyItself() {
+	s.records = &stubTranscript{}
+	s.manages()
+	created := s.joins(Spec{CallID: "call-1", History: []persistent.HistoryLine{
+		{Role: "user", Text: "Where is order 4471?"},
+		{Role: "assistant", Text: "It ships on Friday."},
+	}})
+
+	_, err := created.Ask(s.ctx, "and to another address?")
+
+	s.Require().NoError(err)
+	s.Equal([]string{
+		"user: Where is order 4471?",
+		"assistant: It ships on Friday.",
+		"user: and to another address?",
+	}, handed(s.model.requests()[0]))
+	s.Equal([]string{"Hello."}, s.records.replies(), "the history is context, not something said on this call")
+}
+
 func (s *SessionSuite) TestASessionThatRecordedNothingCannotBeRewound() {
 	s.manages()
 	created := s.writes(Spec{})
@@ -1572,6 +1612,15 @@ func (s *SessionSuite) TestImagesRequireAVisionSkill() {
 
 // awaitToolCall waits for the model to ask for a tool, skipping the conversation events
 // that arrive alongside it.
+// handed is what a model request handed the model, one "role: content" line per message.
+func handed(request llm.ResponseParams) []string {
+	lines := make([]string, 0, len(request.Input))
+	for _, message := range request.Input {
+		lines = append(lines, string(message.Role)+": "+message.Content)
+	}
+	return lines
+}
+
 // awaitReply returns the text of the first finished reply a watcher sees, or empty if the
 // session said nothing before the deadline.
 func awaitReply(events <-chan Event) string {

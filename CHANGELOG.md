@@ -501,6 +501,10 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### A session can be opened with the history the caller kept
+
+`POST /v1/agents/sessions` takes `history`: the conversation so far, oldest first, as up to 100 `HistoryMessage`s with a `role` of `user` or `assistant`, `text`, and an optional author `name` and `created_at`. It is for a backend that keeps its own thread, such as one in its own Slack app, that outlives a session: open a new session with the thread here, then send the next message to `POST /v1/agents/sessions/{id}/responses`. The model is handed the history before the first response, the way a resumed conversation's is, and once any message names its author or time each user message is quoted with them behind a note that names are labels, not authority. The router records none of it, as turns, transcript or Chat messages; with `incognito` it keeps nothing at all. More than 100 messages or 60000 characters of text, a role other than `user` or `assistant`, and `history` with `conversation_id` are 400s, and a device sending it is a 403. Go (`client.SessionOptions.History`) and Python (`SessionOptions.history`) take it, and JavaScript's `SessionSpec` from the regenerated types; other SDKs follow.
+
 ### Every router response carries an `X-Request-Id`, and a 500 is logged with its stack
 
 The router answers every request with `X-Request-Id`, keeping one a proxy sent (printable
