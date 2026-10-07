@@ -164,6 +164,24 @@ func (s *SessionConnectorsSuite) TestAForkForAnotherUserDoesNotUseTheParentsConn
 	s.Equal("connection_unavailable", left["reason"])
 }
 
+// TestAStoppedChatReopensWithTheCallersConnection: a message to a chat whose session ended
+// carries it on from its row, with the connection its caller chose. Without it a required
+// binding would refuse the message with no_selection.
+func (s *SessionConnectorsSuite) TestAStoppedChatReopensWithTheCallersConnection() {
+	connector := s.connector()
+	mine, echo := s.connection(s.client, connector)
+	config := s.config(s.binding("crm", connector, "session", "", echo, true))
+	opened := s.client.createSession(s.session(config, map[string]string{"crm": mine}))
+	s.storedSelections(opened.Id)
+	s.client.stopSession(opened.Id)
+
+	status, failure := s.serverClient.actingFor(s.client).failure(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond",
+		RespondRequest{Text: "ask the crm", CommandId: pointerTo(s.utils.uuid())})
+
+	s.Equal(http.StatusOK, status, failure)
+	s.JSONEq(`[{"name": "crm", "connection_id": "`+mine+`"}]`, s.storedSelections(opened.Id))
+}
+
 // TestAForkWhoseConfigCannotBeReadFails: the fork does not go ahead without the bindings it
 // could not read. The config's row is broken so that reading it fails.
 func (s *SessionConnectorsSuite) TestAForkWhoseConfigCannotBeReadFails() {

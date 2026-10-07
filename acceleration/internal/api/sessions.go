@@ -464,7 +464,19 @@ func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, 
 	spec.Custom = row.Custom
 	spec.ModelOverwrites = row.ModelOverwrites
 	spec.ForkedFrom = row.ForkedFrom
+	// The caller's connections go on with the chat; the session checks each against the
+	// config as it is now and the caller asking, as it did when the chat opened.
+	spec.ConnectorSelections = selectionsOf(*row)
 	return spec, nil
+}
+
+// selectionsOf are the connections a stored session's caller chose for its session bindings.
+func selectionsOf(row store.AgentSession) []session.ConnectorSelection {
+	var chosen []session.ConnectorSelection
+	for _, selection := range row.ConnectorSelections {
+		chosen = append(chosen, session.ConnectorSelection{Name: selection.Name, ConnectionID: selection.ConnectionID})
+	}
+	return chosen
 }
 
 // holdUntilAnswered keeps a watcher on a reopened conversation until its agent settles.
@@ -859,10 +871,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 			Custom: row.Custom, ModelOverwrites: row.ModelOverwrites,
 			CallType: row.CallType,
 		}
-		for _, chosen := range row.ConnectorSelections {
-			spec.ConnectorSelections = append(spec.ConnectorSelections,
-				session.ConnectorSelection{Name: chosen.Name, ConnectionID: chosen.ConnectionID})
-		}
+		spec.ConnectorSelections = selectionsOf(*row)
 		parentID = row.ID
 		wasText = row.CallID == ""
 		spec.Text = wasText
