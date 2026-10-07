@@ -127,6 +127,9 @@ type Session struct {
 	// created. Kept so the call's row can say what was on offer: the spec carries names
 	// or nothing at all, and nothing at all means the built-in set.
 	skills harness.Skills
+	// carded is whether the session started with the person's episode cards
+	// (callCards.read). Set once, before the session can be reached.
+	carded bool
 
 	// Serializes persistent command acceptance/start with command-targeted interruption.
 	commandMu sync.Mutex
@@ -781,6 +784,14 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 	if next.Native() && strings.TrimSpace(next.Guardrail) != "" {
 		return stack.Wrap(errors.New(
 			"session: a speech-to-speech agent answers the caller directly, so a guardrail cannot screen its turns"))
+	}
+	// A speech-to-speech model is handed the history as a transcript in its instructions,
+	// which keeps no system message (agent.openSpeech), so the cards would reach it without
+	// the note that they are context, not authority. A session that read none moves as
+	// before.
+	if next.Native() && s.carded {
+		return stack.Wrap(errors.New(
+			"session: this session started with the person's episode cards, which a speech-to-speech model cannot be handed as context; start a new session to use one"))
 	}
 	if next.ControllerTarget == "" && !next.Native() {
 		next.ControllerTarget = defaultControllerTarget

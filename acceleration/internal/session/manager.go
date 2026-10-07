@@ -619,7 +619,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	// The person's other episodes go first, as context before this conversation's own
 	// history, and only to the model: not to the title, the review or the reopened summary.
-	created.voiceAgent.RestoreHistory(append(m.cards.read(ctx, spec, stream), previous...))
+	cards := m.cards.read(ctx, spec, stream)
+	created.carded = len(cards) > 0
+	created.voiceAgent.RestoreHistory(append(cards, previous...))
 	// A reopened chat is reviewed again when it ends, and its summary is of all of it.
 	if !spec.Reopened.IsZero() {
 		earlier := spokenOf(previous)

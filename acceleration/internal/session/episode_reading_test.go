@@ -26,9 +26,12 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -113,9 +116,19 @@ func (s *EpisodeReadingSuite) managerOver() *Manager {
 	speaker, err := ttsrouter.New(ttsrouter.Options{Config: stubConfig(), Registry: speech, Logger: logger})
 	s.Require().NoError(err)
 	s.T().Cleanup(speaker.Close)
+	native := stsrouter.NewRegistry()
+	native.Register("stub", func(routing.Spec) (sts.STS, error) {
+		return &quietSpeech{emitter: sts.NewEmitter(sts.EmitterBuffer)}, nil
+	})
+	// A session moved onto a native model asks it to write down what was said.
+	speaking := stubConfig()
+	speaking.Providers[0].Terms = []options.Term{options.TextInput, options.InputTranscript, options.OutputTranscript, options.Tools}
+	conversing, err := stsrouter.New(stsrouter.Options{Config: speaking, Registry: native, Logger: logger})
+	s.Require().NoError(err)
+	s.T().Cleanup(conversing.Close)
 
 	manager, err := NewManager(ManagerOptions{
-		LLM: reasoner, STT: transcriber, TTS: speaker, Store: s.store, Stream: s.apps,
+		LLM: reasoner, STT: transcriber, TTS: speaker, STS: conversing, Store: s.store, Stream: s.apps,
 		Conversations: persistent.NewForChats(persistent.StreamApps(s.apps)),
 		Logger:        logger,
 		Edge: func(context.Context, Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
@@ -125,6 +138,28 @@ func (s *EpisodeReadingSuite) managerOver() *Manager {
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { manager.Shutdown() })
 	return manager
+}
+
+// quietSpeech is a speech-to-speech model that hears and says nothing, for a session moved
+// onto one.
+type quietSpeech struct{ emitter *sts.Emitter }
+
+func (q *quietSpeech) Start(context.Context) error                     { return nil }
+func (q *quietSpeech) ProcessAudio(sts.PcmData, sts.Participant) error { return nil }
+func (q *quietSpeech) SendText(string, sts.Participant) error          { return nil }
+func (q *quietSpeech) SendFrame(llm.ImagePart) error                   { return sts.ErrNoImages }
+func (q *quietSpeech) SetInstructions(string) error                    { return nil }
+func (q *quietSpeech) SetTools([]llm.Tool) error                       { return nil }
+func (q *quietSpeech) Answer(string, string, error) error              { return nil }
+func (q *quietSpeech) Prompt(string) error                             { return nil }
+func (q *quietSpeech) Interrupt(int) error                             { return nil }
+func (q *quietSpeech) Events() <-chan sts.Event                        { return q.emitter.Events() }
+func (q *quietSpeech) Close() error                                    { q.emitter.Close(); return nil }
+func (q *quietSpeech) Provider() string                                { return "stub" }
+func (q *quietSpeech) Model() string                                   { return "stub-sts" }
+func (q *quietSpeech) SampleRate() int                                 { return 24_000 }
+func (q *quietSpeech) Capabilities() sts.Capabilities {
+	return sts.Capabilities{Text: true, Tools: true, InputTranscript: true, OutputTranscript: true}
 }
 
 // recordingLLM answers every request with one line and keeps them all, from every session.
@@ -383,18 +418,19 @@ func (s *EpisodeReadingSuite) TestANewSMSThreadSeesTheCardOfAnEarlierSlackThread
 // caller's calls, so the lines of the caller before and of the caller after are not this
 // call's.
 func (s *EpisodeReadingSuite) TestAnSMSSecondsAfterACallReadsTheCallsLastLines() {
-	callChannel := s.channel("phone-"+uuid.NewString(), "agent-user")
+	callID := "phone-" + uuid.NewString()
+	callChannel := s.channel(callID, "agent-user")
 	s.at(-120)
 	s.write(callChannel, "sip-+15550100199", "this was somebody else's call", said(false))
 	s.at(-60)
 	s.episode(omnichannel.Episode{Person: s.phone("+15550100100"), Source: store.EpisodeCall, ThreadChannel: callChannel,
-		CallID: "call-now", SessionID: "session-" + uuid.NewString(), StartedAt: s.now.Add(-60 * time.Second)})
+		CallID: callID, SessionID: "session-" + uuid.NewString(), StartedAt: s.now.Add(-60 * time.Second)})
 	s.at(-50)
 	s.write(callChannel, "sip-+15550100100", "book a cleaning for Thursday", said(false))
 	s.at(-40)
 	s.write(callChannel, "agent-user", "Booked: Thursday at 15:00.", said(true))
 	s.episode(omnichannel.Episode{Person: s.phone("+15550100177"), Source: store.EpisodeCall, ThreadChannel: callChannel,
-		CallID: "call-now", SessionID: "session-" + uuid.NewString(), StartedAt: s.now.Add(-30 * time.Second)})
+		CallID: callID, SessionID: "session-" + uuid.NewString(), StartedAt: s.now.Add(-30 * time.Second)})
 	s.at(-20)
 	s.write(callChannel, "sip-+15550100177", "the caller after", said(false))
 	s.at(10)
@@ -417,10 +453,11 @@ func (s *EpisodeReadingSuite) TestAnSMSSecondsAfterACallReadsTheCallsLastLines()
 // person's line by somebody other than its caller. Neither caller is handed the other's
 // words, so the card gives no lines.
 func (s *EpisodeReadingSuite) TestProbeAnotherCallersLinesInTheWindow() {
-	callChannel := s.channel("phone-"+uuid.NewString(), "agent-user")
+	callID := "phone-" + uuid.NewString()
+	callChannel := s.channel(callID, "agent-user")
 	s.at(-60)
 	s.episode(omnichannel.Episode{Person: s.phone("+15550100100"), Source: store.EpisodeCall, ThreadChannel: callChannel,
-		CallID: "call-shared", SessionID: "session-" + uuid.NewString(), StartedAt: s.now.Add(-60 * time.Second)})
+		CallID: callID, SessionID: "session-" + uuid.NewString(), StartedAt: s.now.Add(-60 * time.Second)})
 	s.at(-50)
 	s.write(callChannel, "sip-+15550100100", "I need an appointment", said(false))
 	s.at(-45)
@@ -436,6 +473,94 @@ func (s *EpisodeReadingSuite) TestProbeAnotherCallersLinesInTheWindow() {
 		s.NotContains(message.Content, "1 May", "another caller's words reached this person's session")
 	}
 	s.Nil(s.handed(params), "a card with no line and no summary says nothing")
+}
+
+// The review's probe: two calls whose sessions name one channel (agent_id "front-desk") write
+// into agent:front-desk. The agent's answer to Alice lands inside Bob's call, and an agent
+// line names nobody it answers, so a card of a channel the session named gives no lines.
+func (s *EpisodeReadingSuite) TestReviewProbeAgentReplyToAnotherCallerInTheWindow() {
+	shared := s.channel("front-desk-"+uuid.NewString(), "agent-user")
+	s.at(-60)
+	s.episode(omnichannel.Episode{Person: s.phone("+15550100199"), Source: store.EpisodeCall, ThreadChannel: shared,
+		CallID: "call-" + uuid.NewString(), SessionID: "session-" + uuid.NewString(), StartedAt: s.now.Add(-60 * time.Second)})
+	s.at(-55)
+	s.write(shared, "sip-+15550100199", "ALICE: I was born on 1 May 1980", said(false))
+	s.at(-40)
+	s.episode(omnichannel.Episode{Person: s.phone("+15550100100"), Source: store.EpisodeCall, ThreadChannel: shared,
+		CallID: "call-" + uuid.NewString(), SessionID: "session-" + uuid.NewString(), StartedAt: s.now.Add(-40 * time.Second)})
+	s.at(-38)
+	s.write(shared, "agent-user", "Thanks Alice, born 1 May 1980: you are booked.", said(true))
+	s.at(-30)
+	s.write(shared, "sip-+15550100100", "I need a cleaning", said(false))
+	s.at(10)
+	thread, _ := s.smsThread("+15550100100", "sms-author", "when is it?")
+
+	params := s.textSession(thread, true, "when is it?")
+
+	for _, message := range params.Input {
+		s.NotContains(message.Content, "1 May", "the agent's words to another caller reached this person's session")
+	}
+	s.Nil(s.handed(params))
+}
+
+// A call in its own channel, agent:<call id>, gives its lines; a call in a channel its
+// session named gives none, though both are the same person's.
+func (s *EpisodeReadingSuite) TestASharedCallChannelGivesNoLinesWhileTheCallsOwnDoes() {
+	shared := s.channel("front-desk-"+uuid.NewString(), "agent-user")
+	own := "phone-" + uuid.NewString()
+	ownChannel := s.channel(own, "agent-user")
+	s.at(-120)
+	s.episode(omnichannel.Episode{Person: s.phone("+15550100100"), Source: store.EpisodeCall, ThreadChannel: shared,
+		CallID: "call-" + uuid.NewString(), SessionID: "session-" + uuid.NewString(), StartedAt: s.now.Add(-120 * time.Second)})
+	s.at(-110)
+	s.write(shared, "sip-+15550100100", "said on the shared channel", said(false))
+	s.at(-60)
+	s.episode(omnichannel.Episode{Person: s.phone("+15550100100"), Source: store.EpisodeCall, ThreadChannel: ownChannel,
+		CallID: own, SessionID: "session-" + uuid.NewString(), StartedAt: s.now.Add(-60 * time.Second)})
+	s.at(-50)
+	s.write(ownChannel, "sip-+15550100100", "said on the call's own channel", said(false))
+	s.at(10)
+	thread, _ := s.smsThread("+15550100100", "sms-author", "hello")
+	asked := len(s.requests())
+
+	handed := s.handed(s.textSession(thread, true, "hello"))
+
+	s.Require().Len(handed, 1)
+	s.Equal([]any{map[string]any{"from": "person", "display_name": "sip-+15550100100", "text": "said on the call's own channel"}}, handed[0]["lines"])
+	s.Empty(namingAny(s.requests()[asked:], shared), "the shared channel is not even read")
+}
+
+// A cascaded call that started with the person's cards cannot be moved onto a
+// speech-to-speech model, which would be handed the cards without their note. A call that
+// read none moves as it always did.
+func (s *EpisodeReadingSuite) TestACallWithCardsIsNotMovedOntoASpeechToSpeechModel() {
+	s.at(-30)
+	s.smsThread("+15550100100", "sms-author", "is the clinic open on Sunday?")
+	native := "en-low-latency"
+
+	carded := s.joinedCall("sip-+15550100100")
+	err := carded.SetSettings(s.ctx, Settings{STS: &native})
+	s.Require().Error(err)
+	s.Contains(err.Error(), "episode cards")
+	s.Empty(carded.Spec().STSTarget, "the session stays on the cascade")
+
+	plain := s.joinedCall("sip-+15550100188")
+	s.Require().NoError(plain.SetSettings(s.ctx, Settings{STS: &native}))
+	s.Equal(native, plain.Spec().STSTarget)
+}
+
+// joinedCall is a cascaded session under the suite's agent, with the cards on, on a call the
+// SIP caller is on.
+func (s *EpisodeReadingSuite) joinedCall(caller string) *Session {
+	call := "call-" + uuid.NewString()
+	s.chat.PutCall("agent", call, caller)
+	created, err := s.manager.Create(s.ctx, Spec{
+		CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena", EpisodeCards: true, CallID: call,
+		LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency", Instructions: "be brief",
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _, _ = s.manager.Close(created.ID(), OwnerOf(created.Spec())) })
+	return created
 }
 
 // The last lines are the last said, whatever order Stream answers a channel in: the suite's
