@@ -57,6 +57,11 @@ func (c *callCards) started(created *Session, stream streamapp.Bound) {
 	if c == nil || !spec.EpisodeCards || spec.Text || spec.CallID == "" || spec.Incognito || spec.ConfigID == "" || stream.Client == nil {
 		return
 	}
+	// A call whose transcript is written nowhere it may write has no channel for its card to
+	// name, so it has no episode.
+	if created.transcribedInto == "" {
+		return
+	}
 	c.running.Add(1)
 	go func() {
 		defer c.running.Done()
@@ -139,12 +144,9 @@ func (c *callCards) write(ctx context.Context, created *Session, stream streamap
 		c.logger.Info("no episode card for a call whose number is not in E.164", "session", created.id)
 		return nil
 	}
-	// The transcript's channel: the conversation the call was held on, else the agent id's
-	// (chatlog: «Without it, the channel id is spec.AgentID»).
-	thread := spec.ConversationID
-	if thread == "" {
-		thread = streamapp.AgentChannelType + ":" + spec.AgentID
-	}
+	// The channel the transcript is written into (Manager.Create): the conversation the call
+	// was held on, else the agent id's.
+	thread := created.transcribedInto
 	opened, err := c.cards.Open(ctx, omnichannel.Episode{
 		CustomerID:    spec.CustomerID,
 		AgentConfigID: spec.ConfigID,

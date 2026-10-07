@@ -17,6 +17,7 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
+	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
@@ -541,12 +542,56 @@ func (s *EpisodeReadingSuite) TestACallWithCardsIsNotMovedOntoASpeechToSpeechMod
 	carded := s.joinedCall("sip-+15550100100")
 	err := carded.SetSettings(s.ctx, Settings{STS: &native})
 	s.Require().Error(err)
-	s.Contains(err.Error(), "episode cards")
+	s.ErrorIs(err, ErrCardedToNative)
 	s.Empty(carded.Spec().STSTarget, "the session stays on the cascade")
 
 	plain := s.joinedCall("sip-+15550100188")
 	s.Require().NoError(plain.SetSettings(s.ctx, Settings{STS: &native}))
 	s.Equal(native, plain.Spec().STSTarget)
+}
+
+// A call's card names the channel its transcript is written into. A device's call held under
+// a thread channel's agent id writes no transcript there (persistent.BarThread), so it has no
+// episode, rather than one naming a channel that holds none of it.
+func (s *EpisodeReadingSuite) TestACallsEpisodeNamesTheChannelItsTranscriptIsWrittenInto() {
+	thread := persistent.ThreadChannelPrefix + uuid.NewString()
+	cid := "agent:" + thread
+
+	barred := s.callUnder(persistent.BarThread(s.ctx, cid), thread, "sip-+15550100100")
+	written := s.callUnder(s.ctx, thread, "sip-+15550100188")
+
+	// The cards are written off the start: the barred call's would have been opened with the
+	// other's, which is waited for.
+	s.Require().Eventually(func() bool { return len(s.callEpisodes(written)) == 1 }, settleFor, 10*time.Millisecond)
+	s.Never(func() bool { return len(s.callEpisodes(barred)) > 0 }, 200*time.Millisecond, 20*time.Millisecond)
+	s.Equal(map[string]string{written: cid}, s.callEpisodes(barred, written))
+}
+
+// callUnder joins a call under agentID with the cards on, and returns the session's id.
+func (s *EpisodeReadingSuite) callUnder(ctx context.Context, agentID, caller string) string {
+	call := "call-" + uuid.NewString()
+	s.chat.PutCall("agent", call, caller)
+	created, err := s.manager.Create(ctx, Spec{
+		CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena", EpisodeCards: true, CallID: call, AgentID: agentID,
+		LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency", Instructions: "be brief",
+	})
+	s.Require().NoError(err)
+	return created.ID()
+}
+
+// callEpisodes is the thread channel of each of these sessions' call episodes.
+func (s *EpisodeReadingSuite) callEpisodes(sessions ...string) map[string]string {
+	rows, err := s.store.DB().QueryContext(s.ctx, "SELECT session_id, thread_channel FROM episodes WHERE session_id IN (?)", bun.In(sessions))
+	s.Require().NoError(err)
+	defer rows.Close()
+	found := map[string]string{}
+	for rows.Next() {
+		var session, channel string
+		s.Require().NoError(rows.Scan(&session, &channel))
+		found[session] = channel
+	}
+	s.Require().NoError(rows.Err())
+	return found
 }
 
 // joinedCall is a cascaded session under the suite's agent, with the cards on, on a call the

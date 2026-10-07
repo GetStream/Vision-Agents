@@ -597,6 +597,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if written == "" {
 		written = streamapp.AgentChannelType + ":" + spec.AgentID
 	}
+	if !persistent.Barred(ctx, written) {
+		created.transcribedInto = written
+	}
 	if m.options.Transcript != nil && conv == nil && !spec.Incognito && !persistent.Barred(ctx, written) {
 		// A transcript that cannot be opened is not a reason to refuse the call. What was
 		// said is worth keeping; it is not worth not having the conversation for.
