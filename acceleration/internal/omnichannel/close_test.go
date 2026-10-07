@@ -180,6 +180,28 @@ func (s *CloserSuite) TestAfterTheIdlePeriodTheCardHoldsASummary() {
 	s.Equal(llm.User, asked[0].Input[0].Role, "the lines are data, never instructions")
 }
 
+// A thread channel holds every episode of its thread, one after another: a summary is of its
+// own episode's lines, never of an earlier one's.
+func (s *CloserSuite) TestASummaryReadsOnlyItsOwnEpisodesLines() {
+	opened, thread := s.idleThread("where is my order 12?")
+	author := "slack-author"
+	earlier := "my old question from last week"
+	bound, err := s.apps.For(s.ctx, s.customerID)
+	s.Require().NoError(err)
+	s.chat.At(opened.Episode.StartedAt.Add(-30 * time.Minute))
+	_, err = bound.Client.Chat().SendMessage(s.ctx, chatlog.ChannelType, thread, &getstream.SendMessageRequest{
+		Message: getstream.MessageRequest{Text: &earlier, UserID: &author},
+	})
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.closer.Sweep(s.ctx))
+
+	asked := s.fast.requests()
+	s.Require().Len(asked, 1)
+	s.Contains(asked[0].Input[0].Content, "where is my order 12?")
+	s.NotContains(asked[0].Input[0].Content, earlier)
+}
+
 // The card a later session reads is the summary (read.go, summaryOf), not the thread's lines.
 func (s *CloserSuite) TestASessionReadsTheSummaryOnceTheCardHoldsIt() {
 	opened, _ := s.idleThread("where is my order 12?")

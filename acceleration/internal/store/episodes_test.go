@@ -254,6 +254,36 @@ func (s *StoreSuite) TestTwoSweepersAtOnceCloseEachIdleEpisodeOnce() {
 	}
 }
 
+// A router that is closing an episode holds its row until it commits. Another sweep leaves
+// that row to it, rather than waiting and closing it a second time.
+func (s *StoreSuite) TestAnEpisodeAnotherRouterIsClosingIsLeftToIt() {
+	episode := s.threadAt(s.mapped("+15550100"), "agent:thread-one", s.base)
+	closing, err := s.store.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	_, err = closing.ExecContext(s.ctx, "UPDATE episodes SET status = 'ended', ended_at = ? WHERE id = ?", s.base.Add(time.Hour), episode.ID)
+	s.Require().NoError(err)
+
+	swept := make(chan []ClosedEpisode, 1)
+	go func() {
+		now := s.base.Add(time.Hour)
+		closed, err := s.store.CloseIdleEpisodes(s.ctx, now.Add(-time.Hour), now, 50, now.Add(5*time.Minute))
+		s.NoError(err)
+		swept <- closed
+	}()
+	// A sweep that waited for the row would go on once the other router commits: give it
+	// the time to reach the row before that.
+	var closed []ClosedEpisode
+	select {
+	case closed = <-swept:
+	case <-time.After(200 * time.Millisecond):
+		s.Require().NoError(closing.Commit())
+		closed = <-swept
+	}
+	_ = closing.Rollback()
+
+	s.Empty(closed, "the episode was closed twice")
+}
+
 // A call id is unique only in its app: the event from one app ends that app's call only.
 func (s *StoreSuite) TestACallsEpisodesEndWithItInItsOwnAppOnly() {
 	person := s.mapped("+15550100")
