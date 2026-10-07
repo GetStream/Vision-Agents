@@ -67,27 +67,39 @@ change:
 
 ```markdown
 ---
-pending: [js, python, dotnet, ruby, rust, php]
+pending: [js, python, dotnet, ruby, rust, php, swift, kotlin, dart]
 ---
 
 What changed, the name of the method, and which SDKs have already moved.
 ```
 
-`pending` lists only the SDKs that still have work. Leave one off when the note
-says it needs nothing. A port removes its own name and deletes the file when the
-list is empty. Python's log is `plugins/stream/.sdk_update_log/`; the others are
+`pending` starts as every SDK. Remove a name only when that note has nothing for
+it, including nothing to draw, refuse, or omit. A client SDK stays listed when
+the note tells it to do any of those, even if there is nothing to regenerate. A
+port removes its own name and deletes the file when `pending` is present and
+empty. Python's log is `plugins/stream/.sdk_update_log/`; the others are
 `sdks/<lang>/.sdk_update_log/`.
 
 `changes/backlog.md` is the queue that sat at the bottom of this file when the
-notes moved out. Read it while it exists, and do not append to it. Delete it once
-every server SDK's `openapi.yaml` snapshot is newer than that split.
+notes moved out, at `0f7ed337`. Read it while it exists, and do not append to
+it. Its `pending` is the client work an OpenAPI diff does not carry. Delete it
+only when that list is empty and every server SDK's `openapi.yaml` snapshot is
+at or after that commit. A checkout gives every snapshot the same mtime, so
+compare commits, not mtimes:
+
+```
+git merge-base --is-ancestor 0f7ed337 "$(git log -1 --format=%H -- <sdk>/.sdk_update_log/openapi.yaml)"
+```
+
+The server snapshots are `sdks/go`, `sdks/js`, `plugins/stream`, `sdks/dotnet`,
+`sdks/ruby`, `sdks/rust`, and `sdks/php`.
 
 To bring one SDK up to date:
 
 1. Diff `acceleration/api/openapi.yaml` against that SDK's `.sdk_update_log/openapi.yaml`.
-2. Read `changes/backlog.md` while it exists, and every other file in `changes/` whose `pending` still names this SDK.
+2. Read `changes/backlog.md` while it exists, and every other file in `changes/` whose `pending` names this SDK.
 3. Copy `openapi.yaml` into that `.sdk_update_log/`. Do not copy this skill.
-4. Remove the SDK from `pending`.
+4. Remove this SDK from `pending` on each file that lists it. Delete a file only when its `pending` key is present and the list is empty. Do not delete `backlog.md` here.
 
 ## Client side SDKs
 

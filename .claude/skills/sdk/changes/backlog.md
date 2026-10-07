@@ -1,13 +1,30 @@
+---
+pending: [js, swift, kotlin, dart]
+split: 0f7ed337aa147c18b2f49f9ebcde6f5ba672846f
+---
+
 # Backlog
 
 This is the queue that was at the bottom of the sdk skill and not yet in
-`sdks/go/.sdk_update_log/SKILL.md` when the notes moved out. It is a snapshot of
-that moment. Do not append to it. New notes are their own file in this directory;
-the format is under "SDK updates" in the sdk skill.
+`sdks/go/.sdk_update_log/SKILL.md` when the notes moved out, at `0f7ed337`.
+It is a snapshot of that moment. Do not append to it. New notes are their own
+file in this directory; the format is under "SDK updates" in the sdk skill.
 
-While this file exists, a port reads it and takes the paragraphs that name its
-SDK. Delete this file once every server SDK's `.sdk_update_log/openapi.yaml` is
-newer than this split.
+`pending` is the work an OpenAPI diff does not carry. Swift, Kotlin, and Dart
+are on it, and so is `js` for the browser client. A port of one of those reads
+the paragraphs that name it, does that work, and then removes its name. Server
+SDKs are not on this list; they still read the file while it exists.
+
+Delete this file only when `pending` is empty and every server SDK's
+`openapi.yaml` snapshot is at or after `0f7ed337`. A checkout gives every
+snapshot the same mtime, so compare commits:
+
+```
+git merge-base --is-ancestor 0f7ed337 "$(git log -1 --format=%H -- <sdk>/.sdk_update_log/openapi.yaml)"
+```
+
+The server snapshots are `sdks/go`, `sdks/js`, `plugins/stream`, `sdks/dotnet`,
+`sdks/ruby`, `sdks/rust`, and `sdks/php`.
 
 `getAppSettings` (`GET /v1/settings/app`) reports what the router does for the calling app. Its `stream` block says whose Stream app the router acts in (`tenancy`: `deployment` or `app`), which app the app's conversations, transcripts, calls and phone lines are written into (`writes_into`: `this_app`, `deployment_app`, the router's own and shared, or `nowhere`), and whether that app holds the `agent` channel type and call type (`channel_type` and `call_type`: `present`, `missing`, `unsafe` for a channel type a client could forge a conversation's channel with, or `unknown` when Stream could not be asked), with `checked_at`. It is read-only, server-side only, and never carries an app id or a secret. Name it `settings.app()`, spelled the way the language spells it. Go has moved (`client.Settings().App`). JavaScript, Python (`plugins/stream`), .NET, Ruby, Rust and PHP need their generated clients regenerated and the method added.
 
