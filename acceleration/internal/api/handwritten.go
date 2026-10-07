@@ -10,7 +10,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 )
 
-// documentHandWritten declares the routes served by hand rather than by Huma: the three
+// documentHandWritten declares the routes served by hand rather than by Huma: the four
 // sockets, which an operation cannot express past the upgrade, the logs, exports and imports,
 // which stream, and the plugin callback, which a browser arrives at from the provider. They
 // are in the spec so a reader and a client generator know they exist, and so withServerSide
@@ -118,6 +118,38 @@ func documentHandWritten(api huma.API) {
 			"101": {Description: "The socket is open"},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"404": {Ref: "#/components/responses/NotFound"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
+		OperationID: "openSocketSession",
+		// A device holds a voice conversation over this socket when there is no call, as it
+		// creates one with POST /v1/agents/sessions, which is client-accessible too.
+		Extensions: map[string]any{clientAccessibleExtension: true},
+		Method:     http.MethodGet,
+		Path:       "/v1/agents/socket",
+		Summary:    "Hold a voice conversation over the socket itself, with no call",
+		Description: "A WebSocket, which OpenAPI cannot describe past the upgrade. Text frames are JSON " +
+			"objects carrying a `type`.\n" +
+			"The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an " +
+			"optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes " +
+			"one up for the records. A `text` session is refused, because the socket carries audio. " +
+			"A field that `createSession` refuses from an end user's device is refused here too: " +
+			"`history` is server-side only.\n" +
+			"The server answers `session`, with the `Session` and the `sample_rate` in use. Then " +
+			"binary frames are PCM16 mono at that rate in both directions: the caller's audio in, " +
+			"and the agent's speech out at the pace it would be heard on a call. A `cleared` frame " +
+			"says speech already sent was thrown away because the caller cut in. Tool calls and " +
+			"every other event go over the session's events socket, as they do for a call.\n" +
+			"A refused start is an `error` frame with `error`, the message, and the socket closes. " +
+			"An `error` frame for a field refused from a device also carries `code` and " +
+			"`error_type`, the `code` and `type` that `createSession` answers the same field with.\n" +
+			"The session lasts as long as the socket. Closing the socket, or sending `stop`, ends " +
+			"the conversation. A conversation that ends closes the socket.",
+		Responses: map[string]*huma.Response{
+			"101": {Description: "The socket is open"},
+			"400": {Ref: "#/components/responses/BadRequest"},
+			"401": {Ref: "#/components/responses/Unauthorized"},
+			"403": {Ref: "#/components/responses/Forbidden"},
 		},
 	})
 	document.AddOperation(&huma.Operation{

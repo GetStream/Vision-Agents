@@ -863,7 +863,7 @@ func serverSideRoutes(document *huma.OpenAPI) (*http.ServeMux, error) {
 // withServerSide refuses the generated operations only a backend may reach.
 //
 // It sits after withCustomer, because refusing a caller for what it is means having worked
-// out what it is first. The three sockets are left out of the embedded spec by being left
+// out what it is first. The four sockets are left out of the embedded spec by being left
 // out of generation, so socketRoutes puts them back rather than leaving them to be open by
 // omission.
 //
