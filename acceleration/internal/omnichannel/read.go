@@ -223,7 +223,20 @@ func summaryOf(ctx context.Context, bound streamapp.Bound, contact store.Contact
 // channel is (https://getstream.io/chat/docs/go-golang/channel_pagination/, «Fetch older
 // messages» with id_lt and a limit); the window's start is applied here. The lines are put in
 // time order here, so the tail taken is the last lines whatever order Stream answers in.
+//
+// A call's lines are read only from the call's own channel, agent:<call id>, where chatlog
+// writes a call's transcript unless the session names another channel (Spec.AgentID or
+// ConversationID). That channel holds one call at a time, so the window separates the calls
+// in it. A channel the session named can hold another call going on at the same time, and
+// the agent's lines there name nobody they answer, so no time window or speaker check keeps
+// its replies to another caller out: such a card gives no lines, and waits for its summary
+// (T55). Example: two calls with agent_id "front-desk" both write into agent:front-desk; the
+// agent's «Thanks Alice» lands inside Bob's call.
 func linesOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard) ([]line, error) {
+	call := card.Source == store.EpisodeCall
+	if call && (card.CallID == "" || card.ThreadChannel != chatlog.ChannelType+":"+card.CallID) {
+		return nil, nil
+	}
 	channelType, channelID, _ := strings.Cut(card.ThreadChannel, ":")
 	state := true
 	limit := maxCardLines
@@ -241,11 +254,17 @@ func linesOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard)
 	if r.Data.Channel == nil || r.Data.Channel.Custom[conversation.CustomerField] != card.CustomerID {
 		return nil, nil
 	}
-	call := card.Source == store.EpisodeCall
 	messages := append([]getstream.MessageResponse(nil), r.Data.Messages...)
+	// A message with no time sorts first; the window leaves it out below.
 	sort.SliceStable(messages, func(i, j int) bool {
 		a, b := messages[i].CreatedAt.Time, messages[j].CreatedAt.Time
-		return a != nil && b != nil && a.Before(*b)
+		switch {
+		case a == nil:
+			return b != nil
+		case b == nil:
+			return false
+		}
+		return a.Before(*b)
 	})
 	var lines []line
 	for _, message := range messages {
