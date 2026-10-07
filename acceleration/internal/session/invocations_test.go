@@ -178,6 +178,53 @@ func (s *InvocationLogSuite) TestARecordedCallsAuditRowNamesItsRequestAndSession
 	s.Equal(spec.ID, rows[0].SessionID)
 }
 
+// TestAnIncognitoSessionsOpenLeavesAnAuditRowWithNoRequest: the provider refuses the token
+// while the session lists the binding's tools, on the context of the request that creates
+// the session (Manager.Create). The revocation names neither that request nor the session.
+func (s *InvocationLogSuite) TestAnIncognitoSessionsOpenLeavesAnAuditRowWithNoRequest() {
+	spec, app := s.refusedSession()
+	spec.Incognito = true
+
+	rows := s.revokedAtOpen(spec, app)
+
+	s.Empty(rows[0].RequestID)
+	s.Empty(rows[0].SessionID)
+}
+
+// TestARecordedSessionsOpenLeavesAnAuditRowNamingItsRequestAndSession is the control.
+func (s *InvocationLogSuite) TestARecordedSessionsOpenLeavesAnAuditRowNamingItsRequestAndSession() {
+	spec, app := s.refusedSession()
+
+	rows := s.revokedAtOpen(spec, app)
+
+	s.Equal("create-request", rows[0].RequestID)
+	s.Equal(spec.ID, rows[0].SessionID)
+}
+
+// revokedAtOpen has the provider refuse the connection's token, opens spec on a context naming
+// the request that creates the session, and returns the audit row of the revocation.
+func (s *InvocationLogSuite) revokedAtOpen(spec Spec, app string) []store.ConnectorAuditEvent {
+	wrong, _, err := bearer.New().Complete(s.ctx, core.CompleteInput{Supplied: map[string]string{bearer.SuppliedToken: tokenOf("secondary")}})
+	s.Require().NoError(err)
+	s.setState(app, func(state *core.CredentialState) { state.Credentials = wrong })
+	created := core.WithCorrelation(s.ctx, core.Correlation{RequestID: "create-request"})
+
+	d, _, unavailable, err := s.manager.attachConnectors(created, &spec)
+	if d != nil {
+		s.T().Cleanup(d.Close)
+	}
+
+	s.Require().NoError(err)
+	s.Require().Len(unavailable, 1, "the binding could not be opened")
+	var rows []store.ConnectorAuditEvent
+	s.Require().Eventually(func() bool {
+		rows, err = s.store.ConnectorAuditEvents(s.ctx, s.customerID, store.AuditFilter{ConnectionID: app})
+		return err == nil && len(rows) == 1
+	}, 5*time.Second, 20*time.Millisecond)
+	s.Equal(store.AuditGrantRevoked, rows[0].Action)
+	return rows
+}
+
 // refusedSession is a session of an app connection whose token the provider will refuse
 // once the session is open.
 func (s *InvocationLogSuite) refusedSession() (Spec, string) {
@@ -277,13 +324,15 @@ func (s *InvocationLogSuite) TestTheLogDoesNotHoldUpTheCall() {
 	s.Require().NoError(err)
 	s.Equal("primary", said)
 	s.Less(took, 2*time.Second, "the call came back while its row could not be written")
-	// Polled here, on this goroutine: held is one transaction, which two goroutines must not
-	// share, as a testify Never's condition would.
-	for until := time.Now().Add(300 * time.Millisecond); time.Now().Before(until); time.Sleep(50 * time.Millisecond) {
-		var written int
-		s.Require().NoError(held.QueryRowContext(s.ctx, "SELECT count(*) FROM connector_invocations WHERE connection_id = ?", app).Scan(&written))
-		s.Require().Zero(written, "the write was held by the lock")
-	}
+	// Read from outside the transaction that holds the lock: the writer's insert is there,
+	// waiting on it, so the call came back while its row was blocked, not before it was sent.
+	s.Require().Eventually(func() bool {
+		var waiting int
+		err := s.store.DB().QueryRowContext(s.ctx, `SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock'
+			AND query LIKE 'INSERT INTO "connector_invocations"%'`).Scan(&waiting)
+		return err == nil && waiting > 0
+	}, 5*time.Second, 20*time.Millisecond, "the write waits on the lock")
 	s.Require().NoError(held.Commit())
 	s.Len(s.logged(app, 1), 1, "the row is written once the table is free")
 }
