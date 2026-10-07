@@ -13,6 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/gemini"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/grok"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/inworld"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/microsoft"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/muse"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/parakeet"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/togethernemotron"
@@ -241,7 +242,38 @@ func DefaultRegistry() *Registry {
 		})
 	})
 
+	registry.Register(microsoft.ProviderName, func(spec routing.Spec) (stt.STT, error) {
+		settings := microsoftSettings{}
+		if err := spec.Settings(&settings); err != nil {
+			return nil, err
+		}
+
+		return microsoft.New(microsoft.Options{
+			Model:     spec.Model,
+			Language:  onlyLanguage(spec.LanguageHints),
+			TurnGrace: time.Duration(settings.TurnGraceMs) * time.Millisecond,
+			Logger:    spec.Logger,
+		})
+	})
+
 	return registry
+}
+
+// microsoftSettings is the same wait as togetherNemotronSettings, for the same reason:
+// MAI-Transcribe-2-Streaming only takes null for turn detection, so the commit that ends a
+// turn is the router's to send.
+type microsoftSettings struct {
+	TurnGraceMs int `json:"turn_grace_ms"`
+}
+
+// onlyLanguage is the language to pin a session to. MAI-Transcribe-2-Streaming takes one
+// code or detects the language itself, so a list of hints is better left to detection than
+// narrowed to its first entry.
+func onlyLanguage(hints []string) string {
+	if len(hints) != 1 {
+		return ""
+	}
+	return hints[0]
 }
 
 // deepgramSettings are the Flux turn-detection thresholds a caller can reach through
