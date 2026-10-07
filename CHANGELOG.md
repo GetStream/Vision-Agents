@@ -1807,6 +1807,14 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A voice agent with tools says what it is about to do before it does it. The instruction that
+  has the reply model call a tool as soon as it has what the tool requires also made it skip the
+  read-back an operator's own instructions ask for first, so the caller heard a half-second
+  filler and then nothing while the tool ran. Before calling a tool the model is now told to say
+  one short sentence, what the instructions ask to be said before acting, such as reading the
+  caller's details back, or else what it is doing, and to call the tool in the same turn: acting
+  at once still holds, but a bare filler never replaces a required read-back.
+
 - In `primary` mode the agent no longer answers words that were not meant for it. The acoustic
   score hears that an utterance ended, not who it was said to, and it decided the turn without
   the flow controller, which used to be the one to set aside somebody else talking in the room

@@ -61,8 +61,19 @@ func (s *ToolsSuite) TestOnlyAModelWithToolsIsToldHowToUseThem() {
 	s.Equal(usePolicy, testTools().Prompt())
 }
 
+func (s *ToolsSuite) TestTheUsePolicyKeepsTheReadBackThatPrecedesAnAction() {
+	// Acting at once must not turn into acting in silence: what the operator has the agent say
+	// before a tool, and in its absence what the agent is doing, comes first, in the same turn.
+	s.Contains(usePolicy, "Before calling a tool, say one short sentence")
+	s.Contains(usePolicy, "what your instructions ask you to say before acting")
+	s.Contains(usePolicy, "reading the caller's details back")
+	s.Contains(usePolicy, "or else what you are doing")
+	s.Contains(usePolicy, "a bare filler never replaces a required read-back")
+	s.Contains(usePolicy, "call it in the same turn")
+}
+
 func (s *ToolsSuite) TestTheUsePolicyIsShortAndNamesNoToolOrDeployment() {
-	s.LessOrEqual(len(strings.Fields(usePolicy)), 90)
+	s.LessOrEqual(len(strings.Fields(usePolicy)), 110)
 	s.GreaterOrEqual(len(strings.Fields(usePolicy)), 60)
 	built, err := DefaultTools()
 	s.Require().NoError(err)
