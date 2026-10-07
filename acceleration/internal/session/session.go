@@ -147,6 +147,9 @@ type Session struct {
 	// connectorsUnavailable are the optional connector bindings the session opened without,
 	// fixed when it was created.
 	connectorsUnavailable []ConnectorUnavailable
+	// connectors is the session's connector dispatcher, nil when its config binds none. A
+	// consent finished for one of its logins is handed back to it (ConnectorConsentFinished).
+	connectors *dispatcher
 
 	// said is the conversation as it happens, kept so a finished call can be reviewed
 	// without reading back what was written to chat. It has a lock of its own so

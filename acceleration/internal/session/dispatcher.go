@@ -37,6 +37,8 @@ type dispatcher struct {
 	toolsets  []core.Toolset
 	closeOnce sync.Once
 	next      agent.ToolRunner
+	// logins are the session bindings waiting for their person to log in (connector_login.go).
+	logins *logins
 }
 
 // route is what one offered name was opened for.
@@ -58,6 +60,10 @@ func (d *dispatcher) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentP
 		// A name under a bound alias that was not opened is a tool the grant does not
 		// allow, or one the provider stopped offering. It goes nowhere else.
 		if alias, _, cut := strings.Cut(call.Name, mcp.Separator); cut && d.spec.boundAlias(alias) {
+			// A binding waiting for its person to log in answers with the login.
+			if waiting, ok := d.logins.waiting(alias); ok {
+				return d.runLogin(ctx, waiting, call)
+			}
 			return nil, errUnknownTool(call.Name)
 		}
 		if d.next != nil {
