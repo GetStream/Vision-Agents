@@ -68,7 +68,7 @@ type Stat struct {
 // slower of two hedged requests, or one cut off by the caller speaking. It is not successful,
 // but the provider did nothing wrong, so it is kept out of its health. What it generated
 // before it was cut off is still billed.
-const ErrorCancelled = "cancelled"
+const ErrorCancelled = store.ErrorCancelled
 
 // Recorder writes stats to Postgres and Redis off the request path. A conversation must
 // never wait on a database, so recording is asynchronous and stats are the thing that
