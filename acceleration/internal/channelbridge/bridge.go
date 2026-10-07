@@ -30,6 +30,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
@@ -66,6 +67,12 @@ const sendTimeout = 20 * time.Second
 // so 1 MiB is far over its size; the cap a 401's body is read with in core.Transports.
 const maxAnswerBytes = 1 << 20
 
+// episodeSources is the episode card source of each connector whose threads get a card in the
+// person's omni-channel (T41). The manifest's channel block does not say what its threads
+// are to the contact map, so each channel adds its connector here: slack_bot is Slack (T35);
+// iMessage (T36), WhatsApp (T51) and SMS (T53) add theirs, keyed by the author's number.
+var episodeSources = map[string]string{"slack_bot": store.EpisodeSlack}
+
 // Options configures a Bridge.
 type Options struct {
 	Store *store.Store
@@ -100,6 +107,9 @@ type Bridge struct {
 	schemes    map[string]core.Scheme
 	transports *core.Transports
 	resolver   core.Resolver
+	// cards writes the episode card of a thread's first message into the person's
+	// omni-channel.
+	cards *omnichannel.Cards
 	// retries are the waits before each send of a reply again (Options.RetryBackoff).
 	retries []time.Duration
 	logger  *slog.Logger
@@ -122,12 +132,17 @@ func New(options Options) (*Bridge, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	cards, err := omnichannel.New(omnichannel.Options{Store: options.Store, Stream: options.Stream})
+	if err != nil {
+		return nil, err
+	}
 	return &Bridge{
 		store:      options.Store,
 		stream:     options.Stream,
 		schemes:    options.Schemes,
 		transports: options.Transports,
 		resolver:   options.Resolver,
+		cards:      cards,
 		retries:    retries,
 		logger:     logger,
 		turns:      map[string]*holder{},
@@ -166,10 +181,18 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 		if !fresh {
 			continue
 		}
+		// After the claim, so a retried delivery opens nothing. A store that fails here
+		// costs the card, not the message: the claim is taken, so the provider's next
+		// delivery would be dropped.
+		episode, err := b.episode(ctx, thread, config, message)
+		if err != nil {
+			b.logger.Error("could not open the episode of an inbound message", "connector", message.ConnectorID,
+				"channel", thread.ChannelID, "error", err)
+		}
 		b.working.Add(1)
 		go func() {
 			defer b.working.Done()
-			b.write(thread, config, message)
+			b.write(thread, config, episode, message)
 		}()
 	}
 	return answered, nil
@@ -297,6 +320,32 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 	return thread, configs[0], fresh, nil
 }
 
+// episode opens the episode a message is in, in the omni-channel of the person who wrote it:
+// the thread's first message opens it and the later ones find it open, so a thread has one
+// card, in the omni-channel of whoever started it. A connector with no episode source, or an
+// author the contact map cannot key, gets no card; the message is answered all the same.
+func (b *Bridge) episode(ctx context.Context, thread store.ChannelThread, config store.AgentConfig, message core.InboundMessage) (omnichannel.Opened, error) {
+	source, carded := episodeSources[message.ConnectorID]
+	if !carded {
+		return omnichannel.Opened{}, nil
+	}
+	person, err := omnichannel.SlackUser(message.ProviderUnitID, message.AuthorID)
+	if err != nil {
+		b.logger.Info("no episode card for a message whose author the contact map cannot key",
+			"connector", message.ConnectorID, "channel", thread.ChannelID)
+		return omnichannel.Opened{}, nil
+	}
+	return b.cards.Open(ctx, omnichannel.Episode{
+		CustomerID:    thread.CustomerID,
+		AgentConfigID: config.ID,
+		AgentName:     config.Name,
+		Person:        person,
+		Source:        source,
+		ThreadChannel: chatlog.ChannelType + ":" + thread.ChannelID,
+		StreamAppPK:   thread.StreamAppPK,
+	})
+}
+
 // threadParts are the named parts of a message's thread key, which its replies name. The
 // verifier hands over the key alone, so they are read again from the raw body with the
 // connection's manifest, by the provider's id for the message (core.ChannelMessage).
@@ -324,7 +373,7 @@ func (b *Bridge) threadParts(ctx context.Context, connection store.ConnectorConn
 // write writes one claimed message into its thread channel as its author, creating the
 // channel the first time, with the agent config that answers it. One thread's messages are
 // written one at a time, in the order they were taken as far as the lock keeps it.
-func (b *Bridge) write(thread store.ChannelThread, config store.AgentConfig, message core.InboundMessage) {
+func (b *Bridge) write(thread store.ChannelThread, config store.AgentConfig, episode omnichannel.Opened, message core.InboundMessage) {
 	release := b.hold(thread.ChannelID)
 	defer release()
 	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
@@ -332,6 +381,10 @@ func (b *Bridge) write(thread store.ChannelThread, config store.AgentConfig, mes
 
 	if err := b.writeInto(ctx, thread, config, message); err != nil {
 		b.logger.Error("could not write an inbound message into its thread channel",
+			"connector", thread.ConnectorID, "channel", thread.ChannelID, "error", err)
+	}
+	if err := b.cards.Write(ctx, episode); err != nil {
+		b.logger.Error("could not write the episode card of a thread",
 			"connector", thread.ConnectorID, "channel", thread.ChannelID, "error", err)
 	}
 }

@@ -403,6 +403,10 @@ type AgentConfig struct {
 	// model, and the model only answers when the worker asks it to.
 	DispatchIncomingCall bool `bun:"dispatch_incoming_call,notnull"`
 	DispatchText         bool `bun:"dispatch_text,notnull"`
+	// EpisodeCards has each phone call under the config write an episode card into the
+	// caller's omni-channel (20261007042200_agent_config_episode_cards.sql). Off unless a
+	// config turns it on.
+	EpisodeCards bool `bun:"episode_cards,notnull"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
 	SyncHash  string     `bun:"sync_hash,notnull"`

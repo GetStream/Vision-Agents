@@ -149,6 +149,9 @@ type Manager struct {
 	reviews *reviewer
 	// titles names persistent conversations nobody renamed, on the session row and the channel.
 	titles *titler
+	// cards writes each phone call's episode card into the caller's omni-channel. Nil
+	// without a store or Stream clients.
+	cards *callCards
 	// hosts runs the tools workers host for an agent config. Nil offers none.
 	hosts ToolHosts
 
@@ -193,6 +196,7 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
 	}
 	manager.titles = newTitler(options.LLM, manager.records, options.Logger)
+	manager.cards = newCallCards(options.Store, options.Stream, options.Logger)
 	return manager, nil
 }
 
@@ -658,6 +662,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if m.options.Directory != nil {
 		m.options.Directory.Hold(ctx, created.id, spec.AgentID)
 	}
+	// A phone call's episode card, once the session holds the call (T41).
+	m.cards.started(created, stream)
 
 	m.logger.Info("session joined",
 		"session", created.id, "call", spec.CallID, "customer", spec.CustomerID)
@@ -1193,6 +1199,7 @@ func (m *Manager) Shutdown() error {
 	// lost on the way out. The reviews go with it: a summary is worth having, but not
 	// worth holding a shutdown open for a model to finish writing.
 	m.titles.Close()
+	m.cards.Close()
 	if m.calls != nil {
 		m.reviews.Close()
 		m.calls.Close()

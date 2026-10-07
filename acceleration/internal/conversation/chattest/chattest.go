@@ -26,6 +26,8 @@ type store struct {
 	messages map[string]map[string]any
 	users    map[string]map[string]any
 	trunks   map[string]map[string]any
+	// calls are the participant ids in each call's session, by "<type>:<id>".
+	calls    map[string][]string
 	rules    map[string]map[string]any
 	order    []string
 	now      func() time.Time
@@ -84,7 +86,7 @@ func NewServer(t *testing.T) *Server {
 	db := &store{
 		channels: map[string]map[string]any{}, messages: map[string]map[string]any{},
 		users: map[string]map[string]any{}, trunks: map[string]map[string]any{},
-		rules: map[string]map[string]any{}, now: time.Now,
+		rules: map[string]map[string]any{}, calls: map[string][]string{}, now: time.Now,
 		app: App{ID: 1, ChannelTypes: map[string]map[string][]string{"agent": safeGrants}, CallTypes: []string{"agent"}},
 	}
 	server := httptest.NewServer(http.HandlerFunc(db.serve))
@@ -187,6 +189,14 @@ func (s *Server) Members(id string) []string {
 		}
 	}
 	return ids
+}
+
+// PutCall puts a call in session with the participants named, for a reader of the call's
+// session to find: a SIP caller is sip-<number>.
+func (s *Server) PutCall(callType, id string, participants ...string) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.db.calls[callType+":"+id] = participants
 }
 
 // Trunks are the ids of the SIP trunks the app holds now.
@@ -299,6 +309,19 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result["name"], result["grants"] = name, grants
+	case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/video/call/"):
+		// A call nobody put is answered as one with nobody in session, which is what a call
+		// whose session has not started reads as.
+		cid := parts[len(parts)-2] + ":" + parts[len(parts)-1]
+		call := map[string]any{"cid": cid, "type": parts[len(parts)-2], "id": parts[len(parts)-1]}
+		if ids, ok := db.calls[cid]; ok {
+			participants := []map[string]any{}
+			for _, id := range ids {
+				participants = append(participants, map[string]any{"user": map[string]any{"id": id}, "role": "user"})
+			}
+			call["session"] = map[string]any{"id": "session-" + cid, "participants": participants}
+		}
+		result["call"] = call
 	case strings.HasSuffix(r.URL.Path, "/sip/inbound_trunks") && r.Method == http.MethodPost:
 		// Stream's ids are unique across every app, which is what lets a test tell one app's
 		// trunk from another's.

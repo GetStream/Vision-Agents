@@ -18,10 +18,13 @@ Slack -> POST /v1/connectors/events/{connector}/{app}   api.receiveProviderAppEv
     agent        store.AgentConfigsBindingConnection: exactly one, else dropped
     thread       store.LinkChannelThread: one thread channel per external thread
     claim        store.ClaimChannelThreadMessage: a retried delivery is dropped
+    episode      omnichannel.Cards.Open: contact map row of the author, episode
+                 opened on the thread's first message (episodeSources)
   200
   Bridge.write                                off the request
     author user, agent user (the channel's id), channel (agent_config_id,
     support_customer_id, support_agent_id), message without source -> Stream Chat
+    omnichannel.Cards.Write: a new episode's card (source slack) -> the omni-channel
 Stream Chat -> message.new -> api.receiveMessageEvent -> api.answerThread
   claim (thread channel, turn, Stream message id)
   lease the turn on channel_threads (one router per thread at a time)
@@ -46,6 +49,7 @@ conversation flush: final text stored (UpdateMessagePartial, no webhook)
 | thread channel | The agent channel that holds one external thread, `agent:thread-<uuid>` | `store.ChannelThread.ChannelID` |
 | thread link | One external thread (customer, connector, provider unit, thread key) to its thread channel, with the connection replies use | table `channel_threads`, `store.LinkChannelThread` |
 | author user | The Stream Chat user an external author writes as: one per customer, connector, provider unit and author | `authorUserID` |
+| episode card | One message in the omni-channel of whoever started a thread, with `source`, for the thread's episode (T41) | `internal/omnichannel`, table `episodes` |
 
 ## Rules
 
@@ -59,6 +63,8 @@ conversation flush: final text stored (UpdateMessagePartial, no webhook)
 - **A refusal the transport cannot see still ends the grant.** Slack answers a revoked token with HTTP 200 `invalid_auth`; the scheme's `Classify` reads it and `Reply` calls `Resolver.Invalidate`.
 - **One agent per connection.** The agent that answers is the one agent config of the customer that binds the connection as `fixed`. None or two: the message is dropped and logged.
 - **Replies leave only through `core.Transports`**, so the credential, the scheme and the egress checks are the connector layer's. The bridge holds no token.
+- **One card for each thread, in its starter's omni-channel.** The first message of a thread opens its episode; the later ones, anybody's, find it open. Example: Alice starts a thread, Bob replies; the card is in Alice's omni-channel only. Slack has no phone number, so a Slack user's omni-channel is keyed by workspace and user until account linking joins it to a phone's.
+- **A connector gets cards once it has an episode source** (`episodeSources`): only `slack_bot` today. The manifest's `channel` block does not say what its authors are to the contact map; iMessage (T36), WhatsApp (T51) and SMS (T53) add theirs, keyed by the number.
 - **No text and no author in logs.** They are a person's.
 
 ## Open

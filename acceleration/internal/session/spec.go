@@ -183,6 +183,9 @@ type Spec struct {
 	// DispatchText hands what an end user writes to the customer's dispatch worker rather
 	// than the model, from the agent's config. The model answers only the server.
 	DispatchText bool
+	// EpisodeCards has a phone call write its episode card into the caller's omni-channel,
+	// from the agent's config. Off, the call does what it did before the cards existed.
+	EpisodeCards bool
 
 	// SkillNames are the skills the voice model may hand to the subagent: the agent
 	// config's own, or one of the built-in think, recall and explain. Empty means the
@@ -295,6 +298,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		SandboxOptions:     config.SandboxOptions,
 		Harness:            config.Harness,
 		DispatchText:       config.DispatchText,
+		EpisodeCards:       config.EpisodeCards,
 		Tags:               routing.Tags(config.Tags),
 	}
 }
