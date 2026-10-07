@@ -42,6 +42,7 @@ class AgentConfigPatch:
                 is the same as leaving them out.
             dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
                 /v1/dispatch. Omitted settings are disabled.
+            episode_cards (bool | Unset):
             greeting (str | Unset):
             guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An
                 empty string removes the guardrail.
@@ -84,6 +85,7 @@ class AgentConfigPatch:
     channels: AgentChannels | Unset = UNSET
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
+    episode_cards: bool | Unset = UNSET
     greeting: str | Unset = UNSET
     guardrail: str | Unset = UNSET
     harness: Harness | Unset = UNSET
@@ -138,6 +140,8 @@ class AgentConfigPatch:
         dispatch: dict[str, Any] | Unset = UNSET
         if not isinstance(self.dispatch, Unset):
             dispatch = self.dispatch.to_dict()
+
+        episode_cards = self.episode_cards
 
         greeting = self.greeting
 
@@ -237,6 +241,8 @@ class AgentConfigPatch:
             field_dict["connectors"] = connectors
         if dispatch is not UNSET:
             field_dict["dispatch"] = dispatch
+        if episode_cards is not UNSET:
+            field_dict["episode_cards"] = episode_cards
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
         if guardrail is not UNSET:
@@ -352,6 +358,8 @@ class AgentConfigPatch:
             dispatch = UNSET
         else:
             dispatch = AgentDispatch.from_dict(_dispatch)
+
+        episode_cards = d.pop("episode_cards", UNSET)
 
         greeting = d.pop("greeting", UNSET)
 
@@ -473,6 +481,7 @@ class AgentConfigPatch:
             channels=channels,
             connectors=connectors,
             dispatch=dispatch,
+            episode_cards=episode_cards,
             greeting=greeting,
             guardrail=guardrail,
             harness=harness,

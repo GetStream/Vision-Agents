@@ -104,6 +104,8 @@ from .connection_validation import ConnectionValidation
 from .connection_validation_request import ConnectionValidationRequest
 from .connection_validation_status import ConnectionValidationStatus
 from .connector import Connector
+from .connector_binding_event import ConnectorBindingEvent
+from .connector_binding_event_arguments import ConnectorBindingEventArguments
 from .connector_client import ConnectorClient
 from .connector_client_alg import ConnectorClientAlg
 from .connector_client_auth_method import ConnectorClientAuthMethod
@@ -499,6 +501,8 @@ __all__ = (
     "ConnectionValidationRequest",
     "ConnectionValidationStatus",
     "Connector",
+    "ConnectorBindingEvent",
+    "ConnectorBindingEventArguments",
     "ConnectorClient",
     "ConnectorClientAlg",
     "ConnectorClientAuthMethod",

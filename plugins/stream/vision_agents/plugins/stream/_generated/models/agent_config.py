@@ -48,6 +48,8 @@ class AgentConfig:
             are none.
         dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
             /v1/dispatch. Omitted settings are disabled.
+        episode_cards (bool | Unset): Whether each phone call under this agent writes an episode card into the caller's
+            omni-channel.
         greeting (str | Unset):
         guardrail (str | Unset):
         harness (Harness | Unset): Which harness the agent's sessions run: what hands work to the subagent, loads
@@ -90,6 +92,7 @@ class AgentConfig:
     channels: AgentChannels | Unset = UNSET
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
+    episode_cards: bool | Unset = UNSET
     greeting: str | Unset = UNSET
     guardrail: str | Unset = UNSET
     harness: Harness | Unset = UNSET
@@ -154,6 +157,8 @@ class AgentConfig:
         dispatch: dict[str, Any] | Unset = UNSET
         if not isinstance(self.dispatch, Unset):
             dispatch = self.dispatch.to_dict()
+
+        episode_cards = self.episode_cards
 
         greeting = self.greeting
 
@@ -257,6 +262,8 @@ class AgentConfig:
             field_dict["connectors"] = connectors
         if dispatch is not UNSET:
             field_dict["dispatch"] = dispatch
+        if episode_cards is not UNSET:
+            field_dict["episode_cards"] = episode_cards
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
         if guardrail is not UNSET:
@@ -379,6 +386,8 @@ class AgentConfig:
         else:
             dispatch = AgentDispatch.from_dict(_dispatch)
 
+        episode_cards = d.pop("episode_cards", UNSET)
+
         greeting = d.pop("greeting", UNSET)
 
         guardrail = d.pop("guardrail", UNSET)
@@ -497,6 +506,7 @@ class AgentConfig:
             channels=channels,
             connectors=connectors,
             dispatch=dispatch,
+            episode_cards=episode_cards,
             greeting=greeting,
             guardrail=guardrail,
             harness=harness,
