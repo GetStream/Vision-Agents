@@ -22,11 +22,8 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
 	}
-	// What the model is told is the backend's to decide, as instructions are on an update:
-	// an assistant message in a device's history would be the agent having said it.
-	if request.Body.History != nil && !ServerSideFrom(ctx) {
-		return nil, forbidden("history is sent server-side: an assistant message in it is " +
-			"what the agent said, which a device cannot vouch for")
+	if failure, refused := refuseServerSideFields(ctx, *request.Body); refused {
+		return nil, failure
 	}
 
 	// A config is read before the session is created rather than inside it, so a caller
@@ -60,6 +57,24 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 		return nil, invalidRequest(err.Error())
 	}
 	return &createSessionResponse{Body: sessionOf(created)}, nil
+}
+
+// errDeviceHistory refuses a history sent by an end user's device.
+var errDeviceHistory = forbidden("history is sent server-side: an assistant message in it is " +
+	"what the agent said, which a device cannot vouch for")
+
+// refuseServerSideFields reports the failure a new session is refused with when an end user's
+// device sent a field only the backend may send. createSession and the session socket both
+// call it, so a field one of them refuses from a device the other refuses too, with the same
+// error.
+//
+// What the model is told is the backend's to decide, as instructions are on an update: an
+// assistant message in a device's history would be the agent having said it.
+func refuseServerSideFields(ctx context.Context, request CreateSessionRequest) (APIError, bool) {
+	if request.History != nil && !ServerSideFrom(ctx) {
+		return errDeviceHistory, true
+	}
+	return APIError{}, false
 }
 
 // registerSessionCreate declares the operations served in session_create.go.
