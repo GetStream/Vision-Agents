@@ -76,7 +76,8 @@ func (s *StoreSuite) SetupTest() {
 			" connector_connections, connector_authorization_attempts, connector_oauth_clients,"+
 			" connector_config_tokens, channel_threads, channel_thread_messages,"+
 			" connector_event_destinations, connector_event_deliveries, contact_map, episodes,"+
-			" connection_event_subscriptions, connection_event_deliveries CASCADE",
+			" connection_event_subscriptions, connection_event_deliveries,"+
+			" connector_invocations, connector_audit CASCADE",
 	)
 	s.Require().NoError(err)
 }

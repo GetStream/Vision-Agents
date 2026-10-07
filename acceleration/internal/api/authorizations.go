@@ -620,12 +620,15 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 	}
 
 	switched := false
+	var committed *core.CredentialState
 	err = s.credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
 		if state.AccountID != "" && state.AccountID != account.AccountID {
 			switched = true
 			state.LastError = accountSwitchError
 			return true, nil
 		}
+		// The credential store leaves the revision it committed here (core.CredentialStore).
+		committed = state
 		state.Credentials = credentials
 		state.Status = store.ConnectionConnected
 		state.LastError = ""
@@ -647,6 +650,8 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 	if switched {
 		return consentAccountMismatch
 	}
+	s.auditGrant(ctx, connection.CustomerID, connection.ID, connection.ConnectorID, connection.OwnerType,
+		store.AuditGrantCreated, store.AuditReasonConsent, committed.Revision, row.ID)
 	// A reconnect brings back the MCP event subscriptions its bindings declare, as a validate
 	// does: one a disconnect or a long wait dropped is made again. The consent itself is done,
 	// so a failure here is logged and the next validate tries again.

@@ -1693,6 +1693,13 @@ components:
           format: date-time
           readOnly: true
           type: string
+        used_by:
+          description: The agent config bindings that name this connection as their fixed connection, which deleting it would break. A binding a session fills with the caller's own connection names none, so it is never listed.
+          items:
+            $ref: '#/components/schemas/ConnectionUse'
+          nullable: true
+          readOnly: true
+          type: array
       required:
         - id
         - connector_id
@@ -1706,6 +1713,7 @@ components:
         - revision
         - created_at
         - updated_at
+        - used_by
       type: object
     ConnectionCredentials:
       additionalProperties: false
@@ -1723,6 +1731,63 @@ components:
           type: object
       required:
         - expected_revision
+      type: object
+    ConnectionInvocation:
+      description: 'One connector tool call a session ran through the connection: the binding, the tool, how long it took and how it failed. What the call was asked and answered is never kept.'
+      properties:
+        binding:
+          description: The alias the config binds the connector under.
+          type: string
+        config_id:
+          description: The agent config whose binding the call went through.
+          type: string
+        connection_id:
+          type: string
+        connector_id:
+          type: string
+        error_type:
+          $ref: '#/components/schemas/InvocationErrorType'
+          description: How the call failed. Absent for a call that answered.
+        id:
+          type: string
+        latency_ms:
+          description: From the call reaching the router to its answer, the router's own checks included.
+          format: int64
+          type: integer
+        session_id:
+          description: The session that called it. Absent for an incognito session, whose calls are tied to no conversation.
+          type: string
+        started_at:
+          format: date-time
+          type: string
+        tool:
+          description: The tool's name at the provider, without the alias.
+          type: string
+      required:
+        - id
+        - connection_id
+        - connector_id
+        - config_id
+        - binding
+        - tool
+        - started_at
+        - latency_ms
+      type: object
+    ConnectionInvocationPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/ConnectionInvocation'
+          nullable: true
+          type: array
+        next_cursor:
+          description: Pass as cursor for the next page. Absent on the last one.
+          type: string
+      required:
+        - items
+        - has_more
       type: object
     ConnectionOwner:
       additionalProperties: false
@@ -1842,6 +1907,20 @@ components:
         - connection_id
         - tools
       type: object
+    ConnectionUse:
+      properties:
+        binding:
+          description: The alias the config binds the connection under.
+          type: string
+        config_id:
+          type: string
+        config_name:
+          type: string
+      required:
+        - config_id
+        - config_name
+        - binding
+      type: object
     ConnectionValidation:
       description: Whether a connection's credential works, found by asking the provider for its tools.
       properties:
@@ -1951,6 +2030,70 @@ components:
         - scopes
         - client
         - created_at
+      type: object
+    ConnectorAuditAction:
+      description: 'grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted.'
+      enum:
+        - grant_created
+        - grant_refreshed
+        - grant_revoked
+      type: string
+    ConnectorAuditEvent:
+      description: One grant a connection got, renewed or lost, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted.
+      properties:
+        action:
+          $ref: '#/components/schemas/ConnectorAuditAction'
+        attempt_id:
+          description: The authorization attempt a consent finished. Absent once the connection's user was deleted.
+          type: string
+        connection_id:
+          description: The connection, which may since have been deleted.
+          type: string
+        connector_id:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        owner_type:
+          $ref: '#/components/schemas/ConnectionOwnerType'
+        reason:
+          description: 'Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.'
+          type: string
+        request_id:
+          description: The X-Request-Id of the API request that caused it. For a change a session's tool call caused, that is the request that created the session, not the one that asked for the turn. Absent for an incognito session's, and once the connection's user was deleted.
+          type: string
+        revision:
+          description: The connection's credential revision once the change was made. Absent when the change names none, as a delete.
+          format: int64
+          type: integer
+        session_id:
+          description: The session whose tool call caused it. Absent for an incognito session, and once the connection's user was deleted.
+          type: string
+      required:
+        - id
+        - connection_id
+        - connector_id
+        - owner_type
+        - action
+        - created_at
+      type: object
+    ConnectorAuditPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/ConnectorAuditEvent'
+          nullable: true
+          type: array
+        next_cursor:
+          description: Pass as cursor for the next page, with the same connection_id. Absent on the last one.
+          type: string
+      required:
+        - items
+        - has_more
       type: object
     ConnectorBindingEvent:
       description: One MCP event a binding subscribes to on its fixed connection. Each one that arrives opens a text conversation from the config, as the app, with the event's data as the first thing said to it.
@@ -3179,6 +3322,15 @@ components:
       required:
         - instructions
       type: object
+    InvocationErrorType:
+      description: 'customer_auth: the provider refused the connection''s credential, or it had none; reconnect it. external_server: the provider answered with a failure or could not be reached. client_timeout: the router stopped waiting before the provider answered, and nothing says it got the call. outcome_unknown: the call was sent and cut off, by the binding''s timeout or an interrupted turn, so it may have been done. denied: the router refused it before anything was sent.'
+      enum:
+        - customer_auth
+        - external_server
+        - client_timeout
+        - outcome_unknown
+        - denied
+      type: string
     KnowledgeDocument:
       properties:
         source:
@@ -8949,6 +9101,56 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Set a connection's credentials
+  /v1/agents/connections/{id}/invocations:
+    get:
+      description: |-
+        Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, and an incognito session's calls name no session. Who may read them is who may read the connection.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: listConnectionInvocations
+      parameters:
+        - description: The connection, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connection, as returned when it was created.
+            type: string
+        - description: Up to 200. Omitted is 25.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 25.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page. Omitted is the first page.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page. Omitted is the first page.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionInvocationPage'
+          description: A page of tool calls
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: List a connection's tool calls
   /v1/agents/connections/{id}/tools:
     get:
       description: |-
@@ -9020,6 +9222,54 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Validate a connection
+  /v1/agents/connector-audit:
+    get:
+      description: |-
+        Every grant the app's connections got, renewed or lost, newest first, with the request, session and authorization attempt that caused each. A deleted connection's rows stay, and its deletion is one of them.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: listConnectorAudit
+      parameters:
+        - description: Keeps one connection's rows, deleted or not.
+          explode: false
+          in: query
+          name: connection_id
+          schema:
+            description: Keeps one connection's rows, deleted or not.
+            type: string
+        - description: Up to 200. Omitted is 25.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 25.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page. Omitted is the first page.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page. Omitted is the first page.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorAuditPage'
+          description: A page of audit rows
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: List the connector audit
   /v1/agents/connectors:
     get:
       description: |-
@@ -11595,6 +11845,36 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Store an agent directory's instructions, skills, knowledge, simulations and settings
+  /v1/agents/users/{user_id}/connections:
+    delete:
+      description: |-
+        For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. The provider is not asked to revoke what it issued. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
+
+        It deletes connections, not sessions: the tool calls and audit rows of the app's own connections keep the ids of the user's sessions that caused them. Delete those sessions too, and each id names a session that no longer exists.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: deleteUserConnections
+      parameters:
+        - description: The user whose connections to delete, as owner.user_id named them.
+          in: path
+          name: user_id
+          required: true
+          schema:
+            description: The user whose connections to delete, as owner.user_id named them.
+            minLength: 1
+            type: string
+      responses:
+        "204":
+          description: The user's connections are deleted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Delete every connection of one user
   /v1/agents/users/{user_id}/memories:
     delete:
       description: |-

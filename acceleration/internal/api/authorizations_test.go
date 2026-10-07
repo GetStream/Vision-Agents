@@ -318,6 +318,35 @@ func (s *AuthorizationsSuite) TestAReconnectRestoresTheEventSubscriptionsItsBind
 	s.Equal(1, held)
 }
 
+// TestAConsentLeavesOneGrantCreatedRowNamingItsAttempt: T47's audit of a grant created at the
+// callback.
+func (s *AuthorizationsSuite) TestAConsentLeavesOneGrantCreatedRowNamingItsAttempt() {
+	id := s.connection("")
+	started := s.start(id)
+
+	alice := s.browser()
+	alice.finish(s.consent(alice.handOff(started)))
+
+	rows := s.connectorAudit(id)
+	s.Require().Len(rows, 1)
+	s.Equal(ConnectorAuditAction(store.AuditGrantCreated), rows[0].Action)
+	s.Equal(store.AuditReasonConsent, rows[0].Reason)
+	s.Equal(started.ID, rows[0].AttemptID)
+	s.Equal(2, rows[0].Revision)
+	s.NotEmpty(rows[0].RequestID, "the callback's own request")
+}
+
+func (s *AuthorizationsSuite) TestAConsentForAnotherAccountLeavesNoNewRow() {
+	id := s.connection("")
+	s.connect(id)
+	s.provider.SwitchAccount()
+
+	alice := s.browser()
+	alice.finish(s.consent(alice.handOff(s.start(id))))
+
+	s.Len(s.connectorAudit(id), 1, "only the first consent's grant")
+}
+
 func (s *AuthorizationsSuite) TestAReconnectForAnotherAccountKeepsTheOldGrantAndSaysSo() {
 	id := s.connection("")
 	s.connect(id)

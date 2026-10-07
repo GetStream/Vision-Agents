@@ -178,15 +178,23 @@ type credentialed struct {
 // the renewed one is refused too, is the Resolver told (Invalidate), and the 401 is the answer.
 func (c *credentialed) RoundTrip(request *http.Request) (*http.Response, error) {
 	c.used.Store(c.now().UnixNano())
+	exchange := exchangeOf(request.Context())
 	credential, err := c.resolve(request, nil)
 	if err != nil {
+		exchange.refused(err)
 		if request.Body != nil {
 			_ = request.Body.Close()
 		}
 		return nil, err
 	}
 	for attempt := 1; ; attempt++ {
+		exchange.sending()
 		response, err := c.scheme.Wrap(c.base, credential).RoundTrip(request)
+		if err != nil {
+			exchange.answered(0, err)
+		} else {
+			exchange.answered(response.StatusCode, nil)
+		}
 		if err != nil || response.StatusCode != http.StatusUnauthorized {
 			return response, err
 		}
@@ -199,6 +207,7 @@ func (c *credentialed) RoundTrip(request *http.Request) (*http.Response, error) 
 		}
 		renewed, err := c.resolve(request, &credential)
 		if err != nil {
+			exchange.refused(err)
 			// The renewal failed, and the Resolver moved the connection as that failure says:
 			// the provider's refusal is the answer.
 			return response, nil

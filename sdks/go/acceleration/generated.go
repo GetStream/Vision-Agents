@@ -485,6 +485,27 @@ func (e ConnectionValidationStatus) Valid() bool {
 	}
 }
 
+// Defines values for ConnectorAuditAction.
+const (
+	GrantCreated   ConnectorAuditAction = "grant_created"
+	GrantRefreshed ConnectorAuditAction = "grant_refreshed"
+	GrantRevoked   ConnectorAuditAction = "grant_revoked"
+)
+
+// Valid indicates whether the value is a known member of the ConnectorAuditAction enum.
+func (e ConnectorAuditAction) Valid() bool {
+	switch e {
+	case GrantCreated:
+		return true
+	case GrantRefreshed:
+		return true
+	case GrantRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectorClientAlg.
 const (
 	PS256 ConnectorClientAlg = "PS256"
@@ -977,6 +998,33 @@ func (e ImageSourceDetail) Valid() bool {
 	case ImageSourceDetailHigh:
 		return true
 	case ImageSourceDetailLow:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InvocationErrorType.
+const (
+	ClientTimeout  InvocationErrorType = "client_timeout"
+	CustomerAuth   InvocationErrorType = "customer_auth"
+	Denied         InvocationErrorType = "denied"
+	ExternalServer InvocationErrorType = "external_server"
+	OutcomeUnknown InvocationErrorType = "outcome_unknown"
+)
+
+// Valid indicates whether the value is a known member of the InvocationErrorType enum.
+func (e InvocationErrorType) Valid() bool {
+	switch e {
+	case ClientTimeout:
+		return true
+	case CustomerAuth:
+		return true
+	case Denied:
+		return true
+	case ExternalServer:
+		return true
+	case OutcomeUnknown:
 		return true
 	default:
 		return false
@@ -3232,6 +3280,9 @@ type Connection struct {
 	// Status pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
 	Status    ConnectionStatus `json:"status"`
 	UpdatedAt *time.Time       `json:"updated_at,omitempty"`
+
+	// UsedBy The agent config bindings that name this connection as their fixed connection, which deleting it would break. A binding a session fills with the caller's own connection names none, so it is never listed.
+	UsedBy *[]ConnectionUse `json:"used_by,omitempty"`
 }
 
 // ConnectionCredentials Credentials for a connection, under the revision the caller last read. An unknown field is refused rather than ignored.
@@ -3241,6 +3292,40 @@ type ConnectionCredentials struct {
 
 	// Values What the connection's auth_scheme takes, write-only. api_key: api_key and header. bearer: token. none: nothing, which activates the connection. oauth2_client_credentials: client_id and client_secret, which are tried at the token endpoint at once. oauth2_code: a grant the provider already issued, as access_token, refresh_token (optional), expires_at (RFC 3339) and scope (the granted scopes joined as the connector's scopes are); its endpoints and client are the connector's, never the caller's.
 	Values *map[string]string `json:"values,omitempty"`
+}
+
+// ConnectionInvocation One connector tool call a session ran through the connection: the binding, the tool, how long it took and how it failed. What the call was asked and answered is never kept.
+type ConnectionInvocation struct {
+	// Binding The alias the config binds the connector under.
+	Binding string `json:"binding"`
+
+	// ConfigId The agent config whose binding the call went through.
+	ConfigId     string `json:"config_id"`
+	ConnectionId string `json:"connection_id"`
+	ConnectorId  string `json:"connector_id"`
+
+	// ErrorType customer_auth: the provider refused the connection's credential, or it had none; reconnect it. external_server: the provider answered with a failure or could not be reached. client_timeout: the router stopped waiting before the provider answered, and nothing says it got the call. outcome_unknown: the call was sent and cut off, by the binding's timeout or an interrupted turn, so it may have been done. denied: the router refused it before anything was sent.
+	ErrorType *InvocationErrorType `json:"error_type,omitempty"`
+	Id        string               `json:"id"`
+
+	// LatencyMs From the call reaching the router to its answer, the router's own checks included.
+	LatencyMs int64 `json:"latency_ms"`
+
+	// SessionId The session that called it. Absent for an incognito session, whose calls are tied to no conversation.
+	SessionId *string   `json:"session_id,omitempty"`
+	StartedAt time.Time `json:"started_at"`
+
+	// Tool The tool's name at the provider, without the alias.
+	Tool string `json:"tool"`
+}
+
+// ConnectionInvocationPage defines model for ConnectionInvocationPage.
+type ConnectionInvocationPage struct {
+	HasMore bool                    `json:"has_more"`
+	Items   *[]ConnectionInvocation `json:"items"`
+
+	// NextCursor Pass as cursor for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // ConnectionOwner Whose a connection is: the app's, which any of its agents may be bound to, or one user's.
@@ -3313,6 +3398,14 @@ type ConnectionTools struct {
 	Tools  *[]ConnectionTool `json:"tools"`
 }
 
+// ConnectionUse defines model for ConnectionUse.
+type ConnectionUse struct {
+	// Binding The alias the config binds the connection under.
+	Binding    string `json:"binding"`
+	ConfigId   string `json:"config_id"`
+	ConfigName string `json:"config_name"`
+}
+
 // ConnectionValidation Whether a connection's credential works, found by asking the provider for its tools.
 type ConnectionValidation struct {
 	// CheckedAt When the tools were listed. Absent until a validate listed them.
@@ -3376,6 +3469,48 @@ type Connector struct {
 
 	// Setup What a person does at the provider before the first consent.
 	Setup *ConnectorSetup `json:"setup,omitempty"`
+}
+
+// ConnectorAuditAction grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted.
+type ConnectorAuditAction string
+
+// ConnectorAuditEvent One grant a connection got, renewed or lost, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted.
+type ConnectorAuditEvent struct {
+	// Action grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted.
+	Action ConnectorAuditAction `json:"action"`
+
+	// AttemptId The authorization attempt a consent finished. Absent once the connection's user was deleted.
+	AttemptId *string `json:"attempt_id,omitempty"`
+
+	// ConnectionId The connection, which may since have been deleted.
+	ConnectionId string    `json:"connection_id"`
+	ConnectorId  string    `json:"connector_id"`
+	CreatedAt    time.Time `json:"created_at"`
+	Id           string    `json:"id"`
+
+	// OwnerType app is the app's own account, user one user's.
+	OwnerType ConnectionOwnerType `json:"owner_type"`
+
+	// Reason Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
+	Reason *string `json:"reason,omitempty"`
+
+	// RequestId The X-Request-Id of the API request that caused it. For a change a session's tool call caused, that is the request that created the session, not the one that asked for the turn. Absent for an incognito session's, and once the connection's user was deleted.
+	RequestId *string `json:"request_id,omitempty"`
+
+	// Revision The connection's credential revision once the change was made. Absent when the change names none, as a delete.
+	Revision *int64 `json:"revision,omitempty"`
+
+	// SessionId The session whose tool call caused it. Absent for an incognito session, and once the connection's user was deleted.
+	SessionId *string `json:"session_id,omitempty"`
+}
+
+// ConnectorAuditPage defines model for ConnectorAuditPage.
+type ConnectorAuditPage struct {
+	HasMore bool                   `json:"has_more"`
+	Items   *[]ConnectorAuditEvent `json:"items"`
+
+	// NextCursor Pass as cursor for the next page, with the same connection_id. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // ConnectorBindingEvent One MCP event a binding subscribes to on its fixed connection. Each one that arrives opens a text conversation from the config, as the app, with the event's data as the first thing said to it.
@@ -4175,6 +4310,9 @@ type InputParts struct {
 type InstructionsRequest struct {
 	Instructions string `json:"instructions"`
 }
+
+// InvocationErrorType customer_auth: the provider refused the connection's credential, or it had none; reconnect it. external_server: the provider answered with a failure or could not be reached. client_timeout: the router stopped waiting before the provider answered, and nothing says it got the call. outcome_unknown: the call was sent and cut off, by the binding's timeout or an interrupted turn, so it may have been done. denied: the router refused it before anything was sent.
+type InvocationErrorType string
 
 // KnowledgeDocument defines model for KnowledgeDocument.
 type KnowledgeDocument struct {
@@ -6959,6 +7097,27 @@ type DeleteConnectionParams struct {
 	Force *bool `form:"force,omitempty" json:"force,omitempty"`
 }
 
+// ListConnectionInvocationsParams defines parameters for ListConnectionInvocations.
+type ListConnectionInvocationsParams struct {
+	// Limit Up to 200. Omitted is 25.
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListConnectorAuditParams defines parameters for ListConnectorAudit.
+type ListConnectorAuditParams struct {
+	// ConnectionId Keeps one connection's rows, deleted or not.
+	ConnectionId *string `form:"connection_id,omitempty" json:"connection_id,omitempty"`
+
+	// Limit Up to 200. Omitted is 25.
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // ListConnectorsParams defines parameters for ListConnectors.
 type ListConnectorsParams struct {
 	// Q Keeps the connectors whose id, name, category or description holds this, ignoring case.
@@ -8261,6 +8420,15 @@ type ClientInterface interface {
 	// Corresponds with PUT /v1/agents/connections/{id}/credentials (the `PutConnectionCredentials` operationId).
 	PutConnectionCredentials(ctx context.Context, id string, body PutConnectionCredentialsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListConnectionInvocations List a connection's tool calls
+	//
+	// Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, and an incognito session's calls name no session. Who may read them is who may read the connection.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/connections/{id}/invocations (the `ListConnectionInvocations` operationId).
+	ListConnectionInvocations(ctx context.Context, id string, params *ListConnectionInvocationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListConnectionTools List a connection's tools
 	//
 	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
@@ -8291,6 +8459,15 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/connections/{id}/validate (the `ValidateConnection` operationId).
 	ValidateConnection(ctx context.Context, id string, body ValidateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListConnectorAudit List the connector audit
+	//
+	// Every grant the app's connections got, renewed or lost, newest first, with the request, session and authorization attempt that caused each. A deleted connection's rows stay, and its deletion is one of them.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/connector-audit (the `ListConnectorAudit` operationId).
+	ListConnectorAudit(ctx context.Context, params *ListConnectorAuditParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListConnectors List or search connectors
 	//
@@ -9149,6 +9326,17 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 	SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteUserConnections Delete every connection of one user
+	//
+	// For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. The provider is not asked to revoke what it issued. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
+	//
+	// It deletes connections, not sessions: the tool calls and audit rows of the app's own connections keep the ids of the user's sessions that caused them. Delete those sessions too, and each id names a session that no longer exists.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/agents/users/{user_id}/connections (the `DeleteUserConnections` operationId).
+	DeleteUserConnections(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// TruncateMemories Delete everything remembered about one user
 	//
@@ -11113,6 +11301,25 @@ func (c *Client) PutConnectionCredentials(ctx context.Context, id string, body P
 	return c.Client.Do(req)
 }
 
+// ListConnectionInvocations List a connection's tool calls
+//
+// Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, and an incognito session's calls name no session. Who may read them is who may read the connection.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/connections/{id}/invocations (the `ListConnectionInvocations` operationId).
+func (c *Client) ListConnectionInvocations(ctx context.Context, id string, params *ListConnectionInvocationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListConnectionInvocationsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListConnectionTools List a connection's tools
 //
 // The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
@@ -11164,6 +11371,25 @@ func (c *Client) ValidateConnectionWithBody(ctx context.Context, id string, cont
 // Corresponds with POST /v1/agents/connections/{id}/validate (the `ValidateConnection` operationId).
 func (c *Client) ValidateConnection(ctx context.Context, id string, body ValidateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewValidateConnectionRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListConnectorAudit List the connector audit
+//
+// Every grant the app's connections got, renewed or lost, newest first, with the request, session and authorization attempt that caused each. A deleted connection's rows stay, and its deletion is one of them.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/connector-audit (the `ListConnectorAudit` operationId).
+func (c *Client) ListConnectorAudit(ctx context.Context, params *ListConnectorAuditParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListConnectorAuditRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -12972,6 +13198,27 @@ func (c *Client) SyncAgentWithBody(ctx context.Context, contentType string, body
 // Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 func (c *Client) SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSyncAgentRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteUserConnections Delete every connection of one user
+//
+// For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. The provider is not asked to revoke what it issued. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
+//
+// It deletes connections, not sessions: the tool calls and audit rows of the app's own connections keep the ids of the user's sessions that caused them. Delete those sessions too, and each id names a session that no longer exists.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/agents/users/{user_id}/connections (the `DeleteUserConnections` operationId).
+func (c *Client) DeleteUserConnections(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteUserConnectionsRequest(c.Server, userId)
 	if err != nil {
 		return nil, err
 	}
@@ -16803,6 +17050,79 @@ func NewPutConnectionCredentialsRequestWithBody(server string, id string, conten
 	return req, nil
 }
 
+// NewListConnectionInvocationsRequest constructs an http.Request for the ListConnectionInvocations method
+func NewListConnectionInvocationsRequest(server string, id string, params *ListConnectionInvocationsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connections/%s/invocations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListConnectionToolsRequest constructs an http.Request for the ListConnectionTools method
 func NewListConnectionToolsRequest(server string, id string) (*http.Request, error) {
 	var err error
@@ -16880,6 +17200,84 @@ func NewValidateConnectionRequestWithBody(server string, id string, contentType 
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListConnectorAuditRequest constructs an http.Request for the ListConnectorAudit method
+func NewListConnectorAuditRequest(server string, params *ListConnectorAuditParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connector-audit")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.ConnectionId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "connection_id", *params.ConnectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -20299,6 +20697,40 @@ func NewSyncAgentRequestWithBody(server string, contentType string, body io.Read
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteUserConnectionsRequest constructs an http.Request for the DeleteUserConnections method
+func NewDeleteUserConnectionsRequest(server string, userId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "user_id", userId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/users/%s/connections", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -24484,6 +24916,17 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /v1/agents/connections/{id}/credentials (the `PutConnectionCredentials` operationId).
 	PutConnectionCredentialsWithResponse(ctx context.Context, id string, body PutConnectionCredentialsJSONRequestBody, reqEditors ...RequestEditorFn) (*PutConnectionCredentialsResponse, error)
 
+	// ListConnectionInvocationsWithResponse List a connection's tool calls
+	//
+	// Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, and an incognito session's calls name no session. Who may read them is who may read the connection.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/connections/{id}/invocations (the `ListConnectionInvocations` operationId).
+	ListConnectionInvocationsWithResponse(ctx context.Context, id string, params *ListConnectionInvocationsParams, reqEditors ...RequestEditorFn) (*ListConnectionInvocationsResponse, error)
+
 	// ListConnectionToolsWithResponse List a connection's tools
 	//
 	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
@@ -24516,6 +24959,17 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/connections/{id}/validate (the `ValidateConnection` operationId).
 	ValidateConnectionWithResponse(ctx context.Context, id string, body ValidateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*ValidateConnectionResponse, error)
+
+	// ListConnectorAuditWithResponse List the connector audit
+	//
+	// Every grant the app's connections got, renewed or lost, newest first, with the request, session and authorization attempt that caused each. A deleted connection's rows stay, and its deletion is one of them.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/connector-audit (the `ListConnectorAudit` operationId).
+	ListConnectorAuditWithResponse(ctx context.Context, params *ListConnectorAuditParams, reqEditors ...RequestEditorFn) (*ListConnectorAuditResponse, error)
 
 	// ListConnectorsWithResponse List or search connectors
 	//
@@ -25472,6 +25926,19 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 	SyncAgentWithResponse(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*SyncAgentResponse, error)
+
+	// DeleteUserConnectionsWithResponse Delete every connection of one user
+	//
+	// For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. The provider is not asked to revoke what it issued. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
+	//
+	// It deletes connections, not sessions: the tool calls and audit rows of the app's own connections keep the ids of the user's sessions that caused them. Delete those sessions too, and each id names a session that no longer exists.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/users/{user_id}/connections (the `DeleteUserConnections` operationId).
+	DeleteUserConnectionsWithResponse(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*DeleteUserConnectionsResponse, error)
 
 	// TruncateMemoriesWithResponse Delete everything remembered about one user
 	//
@@ -29385,6 +29852,82 @@ func (r PutConnectionCredentialsResponse) ContentType() string {
 	return ""
 }
 
+type ListConnectionInvocationsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectionInvocationPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListConnectionInvocationsResponse) GetJSON200() *ConnectionInvocationPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListConnectionInvocationsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListConnectionInvocationsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListConnectionInvocationsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListConnectionInvocationsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListConnectionInvocationsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListConnectionInvocationsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListConnectionInvocationsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListConnectionInvocationsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListConnectionInvocationsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListConnectionToolsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -29531,6 +30074,75 @@ func (r ValidateConnectionResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ValidateConnectionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListConnectorAuditResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorAuditPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListConnectorAuditResponse) GetJSON200() *ConnectorAuditPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListConnectorAuditResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListConnectorAuditResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListConnectorAuditResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListConnectorAuditResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListConnectorAuditResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListConnectorAuditResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListConnectorAuditResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListConnectorAuditResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -34625,6 +35237,68 @@ func (r SyncAgentResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r SyncAgentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteUserConnectionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteUserConnectionsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteUserConnectionsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteUserConnectionsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteUserConnectionsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteUserConnectionsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteUserConnectionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteUserConnectionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteUserConnectionsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -41351,6 +42025,23 @@ func (c *ClientWithResponses) PutConnectionCredentialsWithResponse(ctx context.C
 	return ParsePutConnectionCredentialsResponse(rsp)
 }
 
+// ListConnectionInvocationsWithResponse List a connection's tool calls
+//
+// Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, and an incognito session's calls name no session. Who may read them is who may read the connection.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/connections/{id}/invocations (the `ListConnectionInvocations` operationId).
+func (c *ClientWithResponses) ListConnectionInvocationsWithResponse(ctx context.Context, id string, params *ListConnectionInvocationsParams, reqEditors ...RequestEditorFn) (*ListConnectionInvocationsResponse, error) {
+	rsp, err := c.ListConnectionInvocations(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListConnectionInvocationsResponse(rsp)
+}
+
 // ListConnectionToolsWithResponse List a connection's tools
 //
 // The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
@@ -41400,6 +42091,23 @@ func (c *ClientWithResponses) ValidateConnectionWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseValidateConnectionResponse(rsp)
+}
+
+// ListConnectorAuditWithResponse List the connector audit
+//
+// Every grant the app's connections got, renewed or lost, newest first, with the request, session and authorization attempt that caused each. A deleted connection's rows stay, and its deletion is one of them.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/connector-audit (the `ListConnectorAudit` operationId).
+func (c *ClientWithResponses) ListConnectorAuditWithResponse(ctx context.Context, params *ListConnectorAuditParams, reqEditors ...RequestEditorFn) (*ListConnectorAuditResponse, error) {
+	rsp, err := c.ListConnectorAudit(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListConnectorAuditResponse(rsp)
 }
 
 // ListConnectorsWithResponse List or search connectors
@@ -42926,6 +43634,25 @@ func (c *ClientWithResponses) SyncAgentWithResponse(ctx context.Context, body Sy
 		return nil, err
 	}
 	return ParseSyncAgentResponse(rsp)
+}
+
+// DeleteUserConnectionsWithResponse Delete every connection of one user
+//
+// For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. The provider is not asked to revoke what it issued. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
+//
+// It deletes connections, not sessions: the tool calls and audit rows of the app's own connections keep the ids of the user's sessions that caused them. Delete those sessions too, and each id names a session that no longer exists.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/users/{user_id}/connections (the `DeleteUserConnections` operationId).
+func (c *ClientWithResponses) DeleteUserConnectionsWithResponse(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*DeleteUserConnectionsResponse, error) {
+	rsp, err := c.DeleteUserConnections(ctx, userId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteUserConnectionsResponse(rsp)
 }
 
 // TruncateMemoriesWithResponse Delete everything remembered about one user
@@ -46941,6 +47668,67 @@ func ParsePutConnectionCredentialsResponse(rsp *http.Response) (*PutConnectionCr
 	return response, nil
 }
 
+// ParseListConnectionInvocationsResponse parses an HTTP response from a ListConnectionInvocationsWithResponse call
+func ParseListConnectionInvocationsResponse(rsp *http.Response) (*ListConnectionInvocationsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListConnectionInvocationsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectionInvocationPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListConnectionToolsResponse parses an HTTP response from a ListConnectionToolsWithResponse call
 func ParseListConnectionToolsResponse(rsp *http.Response) (*ListConnectionToolsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -47050,6 +47838,60 @@ func ParseValidateConnectionResponse(rsp *http.Response) (*ValidateConnectionRes
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListConnectorAuditResponse parses an HTTP response from a ListConnectorAuditWithResponse call
+func ParseListConnectorAuditResponse(rsp *http.Response) (*ListConnectorAuditResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListConnectorAuditResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorAuditPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
@@ -51127,6 +51969,56 @@ func ParseSyncAgentResponse(rsp *http.Response) (*SyncAgentResponse, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteUserConnectionsResponse parses an HTTP response from a DeleteUserConnectionsWithResponse call
+func ParseDeleteUserConnectionsResponse(rsp *http.Response) (*DeleteUserConnectionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteUserConnectionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest BadRequest

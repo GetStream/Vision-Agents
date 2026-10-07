@@ -352,10 +352,39 @@ func (s *ConnectionsSuite) TestAConnectionAnAgentBindsIsNotDeletedUnlessForced()
 	status, failure := s.serverClient.failure(http.MethodDelete, "/v1/agents/connections/"+created.ID, nil)
 	s.Equal(http.StatusConflict, status)
 	s.Contains(failure, "force=true")
-	s.Equal(created, s.get(s.serverClient, created.ID), "it was not deleted")
+	kept := s.get(s.serverClient, created.ID)
+	s.Len(kept.UsedBy, 1, "and says what binds it")
+	kept.UsedBy = created.UsedBy
+	s.Equal(created, kept, "it was not deleted")
 
 	s.Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/connections/"+created.ID+"?force=true", nil, nil))
 	s.assertNotFoundLikeAMissingOne(s.serverClient, http.MethodGet, created.ID)
+}
+
+func (s *ConnectionsSuite) TestAConnectionSaysWhichAgentConfigsBindIt() {
+	created := s.create(s.serverClient, appOwned("linear"))
+	other := s.create(s.serverClient, appOwned("linear"))
+	config := s.bindFixed(created.ID)
+
+	read := s.get(s.serverClient, created.ID)
+	listed := s.list(s.serverClient, "app", "linear")
+
+	s.Equal([]ConnectionUse{{ConfigID: config.Id, ConfigName: config.Name, Binding: "tracker"}}, read.UsedBy)
+	for _, connection := range listed.Items {
+		switch connection.ID {
+		case created.ID:
+			s.Equal(read.UsedBy, connection.UsedBy)
+		case other.ID:
+			s.Empty(connection.UsedBy)
+		}
+	}
+}
+
+func (s *ConnectionsSuite) TestANewConnectionIsUsedByNothing() {
+	created := s.create(s.serverClient, appOwned("linear"))
+
+	s.NotNil(created.UsedBy, "an empty list, not an absent one")
+	s.Empty(created.UsedBy)
 }
 
 func (s *ConnectionsSuite) TestAnUnboundConnectionIsDeletedWithoutForce() {
@@ -484,15 +513,17 @@ sources:
 }
 
 // bindFixed makes an agent config of the suite's app bind the connection as its fixed one,
-// in the shape store.ConnectorConnectionReferenced matches. The column is written directly,
-// so these tests do not depend on what the config endpoints accept.
-func (s *ConnectionsSuite) bindFixed(connectionID string) {
+// in the shape store.ConnectorConnectionReferenced matches, and returns the config. The
+// column is written directly, so these tests do not depend on what the config endpoints
+// accept.
+func (s *ConnectionsSuite) bindFixed(connectionID string) AgentConfig {
 	config := s.data.createAgentConfig()
 	_, err := s.store.DB().ExecContext(context.Background(),
 		"UPDATE agent_configs SET connectors = ?::jsonb WHERE id = ?",
 		`[{"name": "tracker", "connector_id": "linear", "connection": {"type": "fixed", "connection_id": "`+connectionID+`"}}]`,
 		config.Id)
 	s.Require().NoError(err)
+	return config
 }
 
 func (s *ConnectionsSuite) connector(id string) Connector {

@@ -117,9 +117,16 @@ func (m *Manager) attachConnectors(ctx context.Context, spec *Spec) (*dispatcher
 	if spec.ConfigID == "" {
 		return nil, nil, nil, stack.Wrap(errors.New("session: connector bindings come from a stored agent config, and this session names none"))
 	}
-	d := &dispatcher{store: m.options.Store, spec: *spec, routes: map[string]route{}}
+	d := &dispatcher{store: m.options.Store, spec: *spec, routes: map[string]route{}, invocations: m.invocations}
+	// Opened on the context a call runs on (dispatcher.correlated): a refresh while the tools
+	// are listed is audited as one during a call is, with no request or session id for an
+	// incognito session. The MCP client keeps the values of the context it connected on for
+	// what it sends outside a call, the standalone stream and the DELETE that Close sends
+	// (connCtx, xcontext.Detach, in go-sdk v1.8.0 mcp/streamable.go:2074 and :2782), so this
+	// covers those too.
+	opening := d.correlated(ctx)
 	for _, binding := range spec.ConnectorBindings {
-		reason, err := m.openBinding(ctx, *spec, binding, selected[binding.Name], d)
+		reason, err := m.openBinding(opening, *spec, binding, selected[binding.Name], d)
 		if err != nil {
 			d.Close()
 			return nil, nil, nil, err
