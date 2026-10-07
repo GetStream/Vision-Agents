@@ -412,6 +412,103 @@ func (s *EpisodeReadingSuite) TestAnSMSSecondsAfterACallReadsTheCallsLastLines()
 	}, handed[0]["lines"])
 }
 
+// Two callers on one call id at once (whether Stream does that is unverified, the episodes
+// migration says), or a line written late at the window's edge: a call card's window holds a
+// person's line by somebody other than its caller. Neither caller is handed the other's
+// words, so the card gives no lines.
+func (s *EpisodeReadingSuite) TestProbeAnotherCallersLinesInTheWindow() {
+	callChannel := s.channel("phone-"+uuid.NewString(), "agent-user")
+	s.at(-60)
+	s.episode(omnichannel.Episode{Person: s.phone("+15550100100"), Source: store.EpisodeCall, ThreadChannel: callChannel,
+		CallID: "call-shared", SessionID: "session-" + uuid.NewString(), StartedAt: s.now.Add(-60 * time.Second)})
+	s.at(-50)
+	s.write(callChannel, "sip-+15550100100", "I need an appointment", said(false))
+	s.at(-45)
+	s.write(callChannel, "sip-+15550100199", "BOB: my date of birth is 1 May 1980", said(false))
+	s.at(-40)
+	s.write(callChannel, "agent-user", "Booked, Bob, for 1 May.", said(true))
+	s.at(10)
+	thread, _ := s.smsThread("+15550100100", "sms-author", "when is it?")
+
+	params := s.textSession(thread, true, "when is it?")
+
+	for _, message := range params.Input {
+		s.NotContains(message.Content, "1 May", "another caller's words reached this person's session")
+	}
+	s.Nil(s.handed(params), "a card with no line and no summary says nothing")
+}
+
+// The last lines are the last said, whatever order Stream answers a channel in: the suite's
+// Stream answers in the order messages were written, here the reverse of when they are dated.
+func (s *EpisodeReadingSuite) TestTheLastLinesAreTheLastSaidWhateverOrderStreamAnswersIn() {
+	earlier := s.thread("sms-author")
+	s.at(-1000)
+	s.episode(omnichannel.Episode{Person: s.phone("+15550100100"), Source: "sms", ThreadChannel: earlier, StartedAt: s.now.Add(-1000 * time.Second)})
+	for line := 24; line >= 0; line-- {
+		s.at(-900 + line)
+		s.write(earlier, "sms-author", fmt.Sprintf("line %d", line), nil)
+	}
+	s.at(0)
+	thread, _ := s.smsThread("+15550100100", "sms-author", "hello")
+
+	handed := s.handed(s.textSession(thread, true, "hello"))
+
+	s.Require().Len(handed, 1)
+	lines, _ := handed[0]["lines"].([]any)
+	s.Require().Len(lines, 20)
+	for i, said := range lines {
+		s.Equal(fmt.Sprintf("line %d", i+5), said.(map[string]any)["text"])
+	}
+}
+
+// A native speech-to-speech session reads no cards: it is handed its history as a transcript
+// in its instructions, which keeps no note that the cards are not authority. A cascaded
+// session of the same call reads them.
+func (s *EpisodeReadingSuite) TestANativeSessionReadsNoCards() {
+	s.at(-30)
+	s.smsThread("+15550100100", "sms-author", "is the clinic open on Sunday?")
+	call := "call-" + uuid.NewString()
+	s.chat.PutCall("agent", call, "sip-+15550100100")
+	bound, err := s.apps.For(s.ctx, s.customerID)
+	s.Require().NoError(err)
+	spec := Spec{ID: uuid.NewString(), CustomerID: s.customerID, ConfigID: s.configID, EpisodeCards: true, CallID: call, CallType: "agent"}
+	asked := len(s.requests())
+
+	native := spec
+	native.STSTarget = "sts-native"
+	s.Nil(s.manager.cards.read(s.ctx, native, bound))
+	s.Empty(namingAny(s.requests()[asked:], "/video/call/agent/"+call), "the call is not even read")
+
+	s.NotEmpty(s.manager.cards.read(s.ctx, spec, bound), "the same call cascaded reads the SMS card")
+}
+
+// With the cards on, a call whose Stream does not answer who is on it joins within the read's
+// budget, with no cards, rather than after the Stream client's own 30 s.
+func (s *EpisodeReadingSuite) TestASlowCallReadDelaysTheJoinByTheBudgetAtMost() {
+	s.at(-30)
+	s.smsThread("+15550100100", "sms-author", "is the clinic open on Sunday?")
+	call := "call-" + uuid.NewString()
+	s.chat.PutCall("agent", call, "sip-+15550100100")
+	waiting, release := s.chat.Hold("/video/call/agent/" + call)
+	defer release()
+
+	started := time.Now()
+	created, err := s.manager.Create(s.ctx, Spec{
+		CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena", EpisodeCards: true, CallID: call,
+		LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency", Instructions: "be brief",
+	})
+	took := time.Since(started)
+
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _, _ = s.manager.Close(created.ID(), OwnerOf(created.Spec())) })
+	<-waiting
+	s.GreaterOrEqual(took, omnichannel.ReadTimeout, "the call read was held")
+	s.Less(took, omnichannel.ReadTimeout+2*time.Second, "the join waited no longer than the budget")
+	_, err = created.Respond(s.ctx, "hello", nil)
+	s.Require().NoError(err)
+	s.Nil(s.handed(s.replyTo("hello")))
+}
+
 // T42 acceptance: a call after an SMS thread starts with the SMS card in its context.
 func (s *EpisodeReadingSuite) TestACallAfterAnSMSThreadStartsWithTheSMSCard() {
 	s.at(-30)

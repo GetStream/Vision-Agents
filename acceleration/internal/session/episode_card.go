@@ -79,13 +79,21 @@ func (c *callCards) started(created *Session, stream streamapp.Bound) {
 //     call's card left out.
 //
 // Any other session reads none: an incognito one, which keeps nothing of the person, one
-// with no agent config, whose contact map the cards are keyed by, and a text session on any
-// other channel, whose person the contact map cannot key yet. A card that cannot be read is
-// logged and left out; the session starts all the same.
+// with no agent config, whose contact map the cards are keyed by, a text session on any
+// other channel, whose person the contact map cannot key yet, and a native speech-to-speech
+// one. A native model is handed its history as a transcript in its instructions
+// (agent.openSpeech), which keeps no system note, so the cards would reach it without the
+// note that they are context, not authority, and a new call would read as one carried on.
+//
+// The whole read, the call included, takes at most omnichannel.ReadTimeout: a slow Stream
+// delays a call's join by that and no more, and the call starts with no cards. A card that
+// cannot be read is logged and left out; the session starts all the same.
 func (c *callCards) read(ctx context.Context, spec Spec, stream streamapp.Bound) []llm.Message {
-	if c == nil || !spec.EpisodeCards || spec.Incognito || spec.ConfigID == "" {
+	if c == nil || !spec.EpisodeCards || spec.Incognito || spec.ConfigID == "" || spec.Native() {
 		return nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, omnichannel.ReadTimeout)
+	defer cancel()
 	reading := omnichannel.Reading{CustomerID: spec.CustomerID, AgentConfigID: spec.ConfigID, StreamAppPK: spec.StreamApp}
 	switch {
 	case spec.Text && spec.PersistConversation && spec.Shared():
