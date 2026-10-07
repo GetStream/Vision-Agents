@@ -60,7 +60,18 @@ const cardText = "Episode in progress"
 
 // e164Digits is a number in E.164 without its plus: a country code, which starts with 1 to 9,
 // and at most 15 digits in all (ITU-T Recommendation E.164, «the maximum number length»: 15).
-var e164Digits = regexp.MustCompile(`^[1-9][0-9]{1,14}$`)
+// At least 8 is a choice, not the Recommendation's: it refuses service and short codes such
+// as 911, 1001 and 12, at the cost of the shortest numbers of a few small countries, whose
+// length is unverified.
+var e164Digits = regexp.MustCompile(`^[1-9][0-9]{7,14}$`)
+
+// internationalPrefix is the international call prefix most countries dial, which some write
+// in place of the plus: 0044 20 7946 0018. That ITU-T recommends it is unverified.
+const internationalPrefix = "00"
+
+// trunkZero is the national trunk prefix some write after the country code, +44 (0) 20 7946
+// 0018. It is not dialled from abroad, so it is no digit of the E.164 number.
+const trunkZero = "(0)"
 
 // Options configures Cards.
 type Options struct {
@@ -90,21 +101,36 @@ type Person struct {
 	Address string
 }
 
-// Phone is the person a phone number is: the number in E.164, +<country code><number>. Spaces,
-// hyphens, dots and brackets are dropped. A number without its plus is read as international,
-// as Vonage quotes them (phone/vonage.e164); a national number, which starts with a 0 trunk
-// prefix, is refused rather than guessed at.
+// Phone is the person a phone number is: the number in E.164, +<country code><number>. Only a
+// number that says it is international is read: one that starts with + or 00. Spaces,
+// hyphens, dots and brackets are dropped, and a (0) trunk prefix with them. Anything else is
+// refused rather than guessed at: 5550100100 could be a national number of any country, or
+// +55 for Brazil, and +44 (020) 7946 0018 holds a trunk zero that cannot be told from a digit.
+// No caller of it reads a number from a vendor known to leave the plus off.
 func Phone(number string) (Person, error) {
+	refused := stack.Wrap(errors.New("omnichannel: not a phone number in E.164"))
+	international := strings.TrimSpace(number)
+	switch {
+	case strings.HasPrefix(international, "+"):
+		international = international[1:]
+	case strings.HasPrefix(international, internationalPrefix):
+		international = international[len(internationalPrefix):]
+	default:
+		return Person{}, refused
+	}
+	international = strings.Replace(international, trunkZero, "", 1)
+	if strings.Contains(international, "(0") {
+		return Person{}, refused
+	}
 	digits := strings.Map(func(r rune) rune {
 		switch r {
 		case ' ', '-', '.', '(', ')':
 			return -1
 		}
 		return r
-	}, strings.TrimSpace(number))
-	digits = strings.TrimPrefix(digits, "+")
+	}, international)
 	if !e164Digits.MatchString(digits) {
-		return Person{}, stack.Wrap(errors.New("omnichannel: not a phone number in E.164"))
+		return Person{}, refused
 	}
 	return Person{Kind: store.ContactPhone, Address: "+" + digits}, nil
 }
