@@ -6,7 +6,6 @@ import pytest
 from aiohttp import WSCloseCode, WSMsgType, web
 from aiohttp.test_utils import TestServer
 from vision_agents.core import Agent
-from vision_agents.core.llm import FunctionRegistry
 from vision_agents.core.messaging import InboundMessage
 from vision_agents.core.telephony import InboundCall
 from vision_agents.plugins import stream
@@ -928,24 +927,26 @@ class TestDispatch:
         assert finished.is_set()
 
     @pytest.fixture
-    def functions(self) -> FunctionRegistry:
-        registry = FunctionRegistry()
+    def support(self, router: Router) -> stream.Agent:
+        agent = stream.Client(url=router.url, customer_id="acme").agent(
+            "stream-support"
+        )
 
-        @registry.register(description="Read SDK source")
+        @agent.register(description="Read SDK source")
         async def investigate_sdk(sdk: str) -> str:
             if sdk == "broken":
                 raise RuntimeError("the checkout is missing")
             return f"read {sdk}"
 
-        return registry
+        return agent
 
     @pytest.fixture
     async def hosting(
-        self, router: Router, functions: FunctionRegistry
+        self, router: Router, support: stream.Agent
     ) -> AsyncIterator[stream.Dispatch]:
         """A worker that only hosts tools, connected and torn down afterwards."""
         worker = stream.Dispatch(url=router.url, customer_id="acme", report_every=0.05)
-        worker.host("stream-support", functions, timeout=60)
+        worker.host(support, tool_timeout=60)
         running = asyncio.create_task(worker.run())
         yield worker
         running.cancel()
@@ -1020,21 +1021,23 @@ class TestDispatch:
         self, router: Router
     ):
         # The socket a call arrived on is also what delivers the next one.
-        registry = FunctionRegistry()
+        agent = stream.Client(url=router.url, customer_id="acme").agent(
+            "stream-support"
+        )
         release = asyncio.Event()
 
-        @registry.register(description="Wait until released")
+        @agent.register(description="Wait until released")
         async def slow() -> str:
             await release.wait()
             return "slow"
 
-        @registry.register(description="Release the slow one")
+        @agent.register(description="Release the slow one")
         async def fast() -> str:
             release.set()
             return "fast"
 
         worker = stream.Dispatch(url=router.url, customer_id="acme", report_every=0.05)
-        worker.host("stream-support", registry)
+        worker.host(agent)
         running = asyncio.create_task(worker.run())
         try:
             await router.hand_over({"type": "tool_call", "id": "1", "name": "slow"})
@@ -1057,14 +1060,14 @@ class TestDispatch:
         assert [first["output"], second["output"]] == ["fast", "slow"]
 
     async def test_a_worker_the_router_drops_reconnects_and_hosts_again(
-        self, router: Router, functions: FunctionRegistry
+        self, router: Router, support: stream.Agent
     ):
         # A worker that stopped at either drop would leave every session naming the agent
         # without its tools.
         router.drops = ["cut", "going_away"]
         worker = stream.Dispatch(url=router.url, customer_id="acme")
         worker._first_retry = 0.01
-        worker.host("stream-support", functions)
+        worker.host(support)
         running = asyncio.create_task(worker.run())
         try:
             await asyncio.wait_for(router._connected.wait(), SETTLE)
@@ -1078,11 +1081,11 @@ class TestDispatch:
         assert declared["timeout_ms"] == 0
 
     async def test_a_worker_whose_tools_are_refused_stops_waiting(
-        self, router: Router, functions: FunctionRegistry
+        self, router: Router, support: stream.Agent
     ):
         # A worker nobody will call should say so rather than sit connected looking healthy.
         worker = stream.Dispatch(url=router.url, customer_id="acme")
-        worker.host("stream-support", functions)
+        worker.host(support)
         running = asyncio.create_task(worker.run())
 
         await router.hand_over(

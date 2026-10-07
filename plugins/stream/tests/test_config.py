@@ -627,6 +627,30 @@ class TestSyncAgent:
             },
         ]
 
+    async def test_offering_tools_progressively_is_sent(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nprogressive_tools: true\n"
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.configs[result.config.id]["progressive_tools"] is True
+
+    async def test_a_file_saying_nothing_about_progressive_tools_sends_nothing(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text("name: support\n")
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert "progressive_tools" not in router.configs[result.config.id]
+
     async def test_the_channels_the_agent_answers_on_are_sent(
         self, router: Router, support_dir
     ):

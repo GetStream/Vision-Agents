@@ -201,6 +201,16 @@ func (c *credentialed) RoundTrip(request *http.Request) (*http.Response, error) 
 			exchange.answered(0, err)
 		} else {
 			exchange.answered(response.StatusCode, nil)
+			// A 429 (RFC 6585 section 4) is read for the session's dispatcher, which holds
+			// further calls until its Retry-After passes (Limiter). Every scheme's Classify
+			// makes a 429 RateLimited with the Retry-After it carries (contracttest
+			// TestClassifyMakesA429RateLimitedWithItsRetryAfter). Only for a request whose
+			// context carries an Exchange, so no other caller's answer is read.
+			if exchange != nil && response.StatusCode == http.StatusTooManyRequests {
+				if outcome := c.classify(response); outcome.Kind == OutcomeRateLimited {
+					exchange.limited(outcome.RetryAfter)
+				}
+			}
 		}
 		if err != nil || response.StatusCode != http.StatusUnauthorized && response.StatusCode != http.StatusForbidden {
 			return response, err

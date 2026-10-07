@@ -1028,6 +1028,17 @@ func (c *testClient) actingFor(user *testClient) *testClient {
 	return &named
 }
 
+// from is the same caller saying which client it is and who is at the keyboard, which is
+// what the audit records a change as having been made with.
+func (c *testClient) from(client, actorID, actorName string) *testClient {
+	named := *c
+	named.header = c.header.Clone()
+	named.header.Set(clientHeader, client)
+	named.header.Set(actorIDHeader, actorID)
+	named.header.Set(actorNameHeader, actorName)
+	return &named
+}
+
 // on is the same caller sending to another node of the same deployment, for a test about
 // what a caller reaches when their request did not land where the session is.
 func (c *testClient) on(other *httptest.Server) *testClient {

@@ -81,7 +81,13 @@ func (s *Server) addKnowledgeUrl(ctx context.Context, request *addKnowledgeUrlRe
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
-	return &addKnowledgeUrlResponse{Body: knowledgeURLOf(page)}, nil
+	subscribed := knowledgeURLOf(page)
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditKnowledgeURL, ResourceID: page.ID, ResourceName: page.URL,
+		AgentID: s.agentOfKnowledge(ctx, customerID, page.Namespace),
+		Action:  store.AuditCreated, Changes: auditDiff(nil, subscribed),
+	})
+	return &addKnowledgeUrlResponse{Body: subscribed}, nil
 }
 
 // getKnowledgeUrl returns one page.
@@ -133,9 +139,19 @@ func (s *Server) deleteKnowledgeUrl(ctx context.Context, request *deleteKnowledg
 		return nil, errNoKnowledgeURLs
 	}
 
+	// Read before it goes, so the entry recording the deletion can say which page it was.
+	existing, err := s.pages.Get(ctx, customerID, request.Id)
+	if err != nil {
+		return nil, errUnknownKnowledgeURL
+	}
 	if err := s.pages.Remove(ctx, customerID, request.Id); err != nil {
 		return nil, errUnknownKnowledgeURL
 	}
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditKnowledgeURL, ResourceID: existing.ID, ResourceName: existing.URL,
+		AgentID: s.agentOfKnowledge(ctx, customerID, existing.Namespace),
+		Action:  store.AuditDeleted, Changes: auditDiff(knowledgeURLOf(existing), nil),
+	})
 	return nil, nil
 }
 

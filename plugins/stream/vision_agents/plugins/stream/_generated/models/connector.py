@@ -13,6 +13,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.connector_client import ConnectorClient
     from ..models.connector_input import ConnectorInput
+    from ..models.connector_setup import ConnectorSetup
 
 
 T = TypeVar("T", bound="Connector")
@@ -38,6 +39,7 @@ class Connector:
             scopes (list[str] | None): The scopes a consent asks for.
             category (str | Unset):
             description (str | Unset):
+            setup (ConnectorSetup | Unset): What a person does at the provider before the first consent.
     """
 
     client: ConnectorClient
@@ -51,6 +53,7 @@ class Connector:
     scopes: list[str] | None
     category: str | Unset = UNSET
     description: str | Unset = UNSET
+    setup: ConnectorSetup | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -94,6 +97,10 @@ class Connector:
 
         description = self.description
 
+        setup: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.setup, Unset):
+            setup = self.setup.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -113,6 +120,8 @@ class Connector:
             field_dict["category"] = category
         if description is not UNSET:
             field_dict["description"] = description
+        if setup is not UNSET:
+            field_dict["setup"] = setup
 
         return field_dict
 
@@ -120,6 +129,7 @@ class Connector:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.connector_client import ConnectorClient
         from ..models.connector_input import ConnectorInput
+        from ..models.connector_setup import ConnectorSetup
 
         d = dict(src_dict)
         client = ConnectorClient.from_dict(d.pop("client"))
@@ -190,6 +200,13 @@ class Connector:
 
         description = d.pop("description", UNSET)
 
+        _setup = d.pop("setup", UNSET)
+        setup: ConnectorSetup | Unset
+        if isinstance(_setup, Unset):
+            setup = UNSET
+        else:
+            setup = ConnectorSetup.from_dict(_setup)
+
         connector = cls(
             client=client,
             created_at=created_at,
@@ -202,6 +219,7 @@ class Connector:
             scopes=scopes,
             category=category,
             description=description,
+            setup=setup,
         )
 
         connector.additional_properties = d

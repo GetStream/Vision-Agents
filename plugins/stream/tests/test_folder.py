@@ -227,6 +227,21 @@ class TestFolder:
         with pytest.raises(ValueError, match="user"):
             load(root)
 
+    def test_progressive_tools_is_read(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nprogressive_tools: true\n")
+
+        assert load(root).settings.progressive_tools is True
+
+    def test_progressive_tools_that_is_not_true_or_false_is_refused(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nprogressive_tools: sometimes\n")
+
+        with pytest.raises(ValueError, match="progressive_tools"):
+            load(root)
+
     def test_a_declaration_that_names_no_model_decides_nothing(self, tmp_path: Path):
         root = tmp_path / "jean"
         write(root, "agent.yaml", "name: jean\ndescription: the receptionist\n")

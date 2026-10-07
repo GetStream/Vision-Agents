@@ -36,6 +36,7 @@ edits them.
 | [The dashboard](dashboard.md)                  | sprints 9, 15        | Built; the review score is a placeholder |
 | [Authentication](auth.md)                      | sprint 17            | Four modes; nothing creates a key or a setting but a database call |
 | [The app config store](app_store.md)           | after sprint 17      | Built; traced and measured, no exporter configured |
+| [The audit log](audit_log.md)                  | after sprint 17      | Built for every config resource; only agents write to it |
 | [Hosting](hosting.md)                          | sprints 9, 17        | Built in the chat repository; not deployed |
 
 Everything lives in [acceleration/](../../acceleration), a Go module beside the Python

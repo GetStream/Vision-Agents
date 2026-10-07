@@ -173,6 +173,10 @@ type Settings struct {
 	// MCPServers are MCP servers outside the plugin catalog, which the router opens by
 	// their URL, with a login when the server asks for one.
 	MCPServers []MCPServerSettings `yaml:"mcp_servers"`
+	// ProgressiveTools offers plugin, MCP server and connector tools by a summary, the
+	// first call to each returning its full description instead of running it. Nil when
+	// the declaration says nothing about it.
+	ProgressiveTools *bool `yaml:"progressive_tools"`
 	// Channels are the lines the agent answers on besides its Stream Chat channel: a
 	// WhatsApp number, a number to text, an iMessage line. Each names a number the app
 	// connected on the router, which is where the provider's credentials live.

@@ -368,6 +368,8 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
         body.user_plugins = [_plugin_entry(plugin) for plugin in settings.user_plugins]
     if settings.mcp_servers:
         body.mcp_servers = [_mcp_server(server) for server in settings.mcp_servers]
+    if settings.progressive_tools is not None:
+        body.progressive_tools = settings.progressive_tools
     if settings.channels is not None:
         declared = AgentChannels()
         if settings.channels.whatsapp is not None:

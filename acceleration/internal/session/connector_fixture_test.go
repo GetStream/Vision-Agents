@@ -273,6 +273,9 @@ type accountsProvider struct {
 	// tool has answered, as a server that streams progress does. Off answers in one JSON
 	// object when the tool is done.
 	streams bool
+	// limited answers tools/call of an account with 429 and the Retry-After it maps to, none
+	// when that is "" (RFC 6585 section 4: the header is a MAY).
+	limited map[string]string
 }
 
 // slowFor is how long slow takes before it answers, longer than any test lets it run; it
@@ -280,7 +283,7 @@ type accountsProvider struct {
 const slowFor = 2 * time.Second
 
 func newAccountsProvider(s *connectorFixture) *accountsProvider {
-	p := &accountsProvider{called: map[string]int{}, methods: map[string][]string{}}
+	p := &accountsProvider{called: map[string]int{}, methods: map[string][]string{}, limited: map[string]string{}}
 	servers := map[string]*mcpsdk.Server{}
 	for _, account := range []string{"primary", "secondary", "moved"} {
 		server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: account, Version: "1"}, nil)
@@ -344,7 +347,15 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 			p.called[account]++
 		}
 		streams := p.streams
+		retryAfter, limited := p.limited[account]
 		p.mu.Unlock()
+		if limited && message.Method == "tools/call" {
+			if retryAfter != "" {
+				w.Header().Set("Retry-After", retryAfter)
+			}
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
 		if message.Method == "tools/call" && message.Params.Name == toolGuarded.Name && message.Params.Arguments.Claims != "" {
 			// Microsoft's claims challenge: a 401 insufficient_claims with the base64 claims
 			// request (oauth2code's Classify).
@@ -385,7 +396,21 @@ func (p *accountsProvider) streamFirst() {
 func (p *accountsProvider) forget() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.called, p.methods, p.streams = map[string]int{}, map[string][]string{}, false
+	p.called, p.methods, p.streams, p.limited = map[string]int{}, map[string][]string{}, false, map[string]string{}
+}
+
+// limit has account answer tools/call with 429 and retryAfter, until lift.
+func (p *accountsProvider) limit(account, retryAfter string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.limited[account] = retryAfter
+}
+
+// lift ends every limit.
+func (p *accountsProvider) lift() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.limited = map[string]string{}
 }
 
 // calls is how many tools/call reached account.

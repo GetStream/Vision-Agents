@@ -236,7 +236,14 @@ func (s *Server) setPluginClient(ctx context.Context, request *setPluginClientRe
 		}
 		s.pluginEvents.Changed(customerID, request.Id)
 	}
-	return &setPluginClientResponse{Body: pluginClientOf(client)}, nil
+	stored := pluginClientOf(client)
+	// The secret is never in the log: pluginClientOf hands back the client id and whether a
+	// secret is set, which is the whole of what a change to a login can say out loud.
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditPlugin, ResourceID: plugin.ID, ResourceName: plugin.Name,
+		AgentID: request.Id, Action: store.AuditUpdated, Changes: auditDiff(nil, stored),
+	})
+	return &setPluginClientResponse{Body: stored}, nil
 }
 
 // deletePluginClient drops the OAuth client a config set for a plugin.
@@ -258,6 +265,15 @@ func (s *Server) deletePluginClient(ctx context.Context, request *deletePluginCl
 	if err != nil {
 		return nil, err
 	}
+	name := request.PluginId
+	if plugin, known := plugins.Lookup(request.PluginId); known {
+		name = plugin.Name
+	}
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditPlugin, ResourceID: request.PluginId, ResourceName: name,
+		AgentID: request.Id, Action: store.AuditDeleted,
+		Changes: []store.AuditChange{{Field: "client", Before: "set"}},
+	})
 	return nil, nil
 }
 

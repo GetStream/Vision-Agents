@@ -2,6 +2,7 @@ import type { Agent } from "./agent.js";
 import type { BackendOptions } from "./backend.js";
 import { Client } from "./client.js";
 import { ConfigurationError, HostingRefusedError } from "./errors.js";
+import type { AgentHandle } from "./handle.js";
 import { callOf, messageOf, type InboundCall, type InboundMessage } from "./inbound.js";
 import { Responses, type AgentResponse } from "./responses.js";
 import type { Session } from "./session.js";
@@ -41,15 +42,18 @@ export type CallHandler = (call: InboundCall) => void | Promise<void>;
 export type MessageHandler = (message: InboundMessage) => void | Promise<void>;
 
 export interface HostOptions {
-  /** How long the router gives one call. Left out, the router's default. */
-  timeoutMs?: number;
+  /**
+   * How long the router waits for one tool call to be answered before telling the model it
+   * failed. Not how long the worker runs. Left out, the router's default of two minutes.
+   */
+  toolTimeoutMs?: number;
 }
 
 /** One set of functions this worker runs for every session under an agent id. */
 interface Hosting {
   agentId: string;
   tools: Tools;
-  timeoutMs: number;
+  toolTimeoutMs: number;
 }
 
 /**
@@ -145,15 +149,25 @@ export class Dispatch {
   }
 
   /**
-   * Runs these functions for every session opened under an agent id, whoever opened it.
+   * Runs an agent's tools for every session opened under it, whoever opened it.
    *
    * A session's own functions run in the process that opened it, which is no use to a
    * conversation opened from a browser that wants to read a source tree. Hosting is the
-   * other direction: the router offers these functions to each session naming the agent and
+   * other direction: the router offers `agent.tools` to each session naming the agent and
    * sends every call to a worker hosting them. Call before `run`.
+   *
+   * ```ts
+   * const agent = client.agent("my-agent");
+   * agent.tools.register({ name: "lookup", description: "Look up an order", run });
+   * await new Dispatch().host(agent).run();
+   * ```
    */
-  host(agentId: string, tools: Tools, options: HostOptions = {}): this {
-    this.hosted.push({ agentId, tools, timeoutMs: options.timeoutMs ?? 0 });
+  host(agent: AgentHandle, options: HostOptions = {}): this {
+    this.hosted.push({
+      agentId: agent.name,
+      tools: agent.tools,
+      toolTimeoutMs: options.toolTimeoutMs ?? 0,
+    });
     return this;
   }
 
@@ -363,7 +377,7 @@ export class Dispatch {
         type: "host_tools",
         agent_id: offer.agentId,
         tools: offer.tools.declared(),
-        timeout_ms: offer.timeoutMs,
+        timeout_ms: offer.toolTimeoutMs,
       });
     }
   }

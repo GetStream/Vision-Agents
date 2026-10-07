@@ -53,6 +53,11 @@ def _parse_response(
 
         return response_403
 
+    if response.status_code == 409:
+        response_409 = ErrorResponse.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
 
@@ -91,6 +96,13 @@ def sync_detailed(
 
     knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of
     its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+
+    A directory is not the only thing that writes an agent: somebody may have changed one of the same
+    settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with
+    `unsynced_changes` instead of writing over them -- only when it really would write over them, so a
+    directory that already holds what the dashboard says syncs without complaint. Read the changes from
+    `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to
+    go ahead.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -136,6 +148,13 @@ def sync(
     knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of
     its simulations: a file taken out of the directory is taken out of the backend on the next sync.
 
+    A directory is not the only thing that writes an agent: somebody may have changed one of the same
+    settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with
+    `unsynced_changes` instead of writing over them -- only when it really would write over them, so a
+    directory that already holds what the dashboard says syncs without complaint. Read the changes from
+    `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to
+    go ahead.
+
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -174,6 +193,13 @@ async def asyncio_detailed(
 
     knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of
     its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+
+    A directory is not the only thing that writes an agent: somebody may have changed one of the same
+    settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with
+    `unsynced_changes` instead of writing over them -- only when it really would write over them, so a
+    directory that already holds what the dashboard says syncs without complaint. Read the changes from
+    `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to
+    go ahead.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -216,6 +242,13 @@ async def asyncio(
 
     knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of
     its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+
+    A directory is not the only thing that writes an agent: somebody may have changed one of the same
+    settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with
+    `unsynced_changes` instead of writing over them -- only when it really would write over them, so a
+    directory that already holds what the dashboard says syncs without complaint. Read the changes from
+    `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to
+    go ahead.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 

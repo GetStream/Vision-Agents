@@ -218,21 +218,60 @@ func (s *Server) fillKnowledge(
 	if err != nil {
 		return 0, 0, err
 	}
-	before := make(map[string]int, len(stored))
+	before := make(map[string]store.KnowledgeDocument, len(stored))
 	for _, document := range stored {
-		before[document.Source] = document.Passages
+		before[document.Source] = document
 	}
+	agentID := s.agentOfKnowledge(ctx, customerID, namespace)
 	for i := range written {
 		document := &written[i]
-		stale := ingest.IDs(document.Source, document.Passages, before[document.Source])
+		was, had := before[document.Source]
+		stale := ingest.IDs(document.Source, document.Passages, was.Passages)
 		if err := s.knowledge.Delete(ctx, base, stale); err != nil {
 			return 0, 0, err
 		}
 		if err := s.store.SaveKnowledgeDocument(ctx, document); err != nil {
 			return 0, 0, err
 		}
+		action := store.AuditCreated
+		var previous any
+		if had {
+			action = store.AuditUpdated
+			previous = auditedKnowledgeOf(was)
+		}
+		s.audit(ctx, auditRecord{
+			ResourceType: store.AuditKnowledge, ResourceID: document.ID, ResourceName: document.Source,
+			AgentID: agentID, Action: action,
+			Changes: auditDiff(previous, auditedKnowledgeOf(*document)),
+		})
 	}
 	return len(written), len(passages), nil
+}
+
+// auditedKnowledgeOf is a document as a change records it: the text, because that is what
+// somebody edited, and the namespace it was filed under. The passage count is left out,
+// since it is the router's arithmetic rather than anybody's edit.
+func auditedKnowledgeOf(document store.KnowledgeDocument) map[string]any {
+	return map[string]any{
+		"namespace": document.Namespace,
+		"source":    document.Source,
+		"text":      document.Text,
+	}
+}
+
+// agentOfKnowledge is the agent a knowledge base belongs to, so a change to what an agent
+// reads is on that agent's own history. A directory sync names the base after the agent, so
+// the name is the link; a base filled under a name no agent goes by belongs to none, and
+// the change is recorded against the app instead.
+func (s *Server) agentOfKnowledge(ctx context.Context, customerID, namespace string) string {
+	if s.configs == nil || namespace == "" {
+		return ""
+	}
+	config, found, err := s.configs.AgentConfigByName(ctx, customerID, namespace)
+	if err != nil || !found {
+		return ""
+	}
+	return config.ID
 }
 
 // forgetKnowledge removes every document in a knowledge base that is not among these,
@@ -271,7 +310,16 @@ func (s *Server) removeKnowledgeDocument(ctx context.Context, document store.Kno
 	if err := s.knowledge.Delete(ctx, base, ids); err != nil {
 		return err
 	}
-	return s.store.DeleteKnowledgeDocument(ctx, document.CustomerID, document.ID)
+	if err := s.store.DeleteKnowledgeDocument(ctx, document.CustomerID, document.ID); err != nil {
+		return err
+	}
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditKnowledge, ResourceID: document.ID, ResourceName: document.Source,
+		AgentID: s.agentOfKnowledge(ctx, document.CustomerID, document.Namespace),
+		Action:  store.AuditDeleted,
+		Changes: auditDiff(auditedKnowledgeOf(document), nil),
+	})
+	return nil
 }
 
 // indexedKnowledgeDocumentOf is the stored row as the API describes it.
