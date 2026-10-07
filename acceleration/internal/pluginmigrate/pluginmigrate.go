@@ -62,7 +62,9 @@ type Options struct {
 	// Customer limits the run to one app's rows. Empty moves every app's.
 	Customer string
 	// IncludeRotating moves a grant with a refresh token to a connector whose manifest says
-	// refresh tokens rotate (github, linear, slack, calendly). Off, each is a Skipped row.
+	// refresh tokens rotate (github, linear, slack, calendly), or does not say whether they do
+	// (refresh.rotating nil: sentry, hubspot, shopify, calcom, gong, salesforce). Off, each is
+	// a Skipped row; only rotating: false moves by default.
 	IncludeRotating bool
 	Store           *store.Store
 	Configs         Configs

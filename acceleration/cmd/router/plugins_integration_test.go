@@ -151,9 +151,6 @@ func (s *PluginsMigrateSuite) TestAnAppWithNoPluginRowsMovesNothing() {
 	s.Contains(real, "0 rows: 0 moved")
 }
 
-// TestALoginItCannotMoveIsPrintedWithWhy: a login to an MCP server named by its URL, and one
-// to a catalog plugin whose config is gone, each print a row saying why, and a real run moves
-// neither.
 // TestADryRunLeavesAClientSecretUnderAnOlderKeyAsItIs: the app's GitHub client record was sealed
 // under key version 1, and the command's keyring writes version 2. The dry run opens it to
 // compare it with the plugin's, and seals nothing again: a router still on version 1 could not
@@ -187,6 +184,9 @@ func (s *PluginsMigrateSuite) TestADryRunLeavesAClientSecretUnderAnOlderKeyAsItI
 	s.True(bytes.Equal(sealed, after.SecretSealed), "the sealed secret is the one written under version 1")
 }
 
+// TestALoginItCannotMoveIsPrintedWithWhy: a login to an MCP server named by its URL, and one
+// to a catalog plugin whose config is gone, each print a row saying why, and a real run moves
+// neither.
 func (s *PluginsMigrateSuite) TestALoginItCannotMoveIsPrintedWithWhy() {
 	customer := "app-" + store.NewID()
 	db := s.db
