@@ -42,6 +42,9 @@ type Exchange struct {
 	credential error
 	timedOut   bool
 	retryAfter time.Duration
+	// scopeRequired is the provider asking for more access than the grant has, nil when no
+	// answer did.
+	scopeRequired *Outcome
 }
 
 type exchangeKey struct{}
@@ -95,6 +98,18 @@ func (e *Exchange) TimedOut() bool {
 	return e.timedOut
 }
 
+// ScopeRequired is the provider's ask for more access than the grant has: a scope_required
+// Outcome with the scopes or the claims challenge to consent to (Scheme.Classify). It
+// reports false when no answer asked.
+func (e *Exchange) ScopeRequired() (Outcome, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.scopeRequired == nil {
+		return Outcome{}, false
+	}
+	return *e.scopeRequired, true
+}
+
 // refused records that the Resolver gave a request no credential.
 func (e *Exchange) refused(err error) {
 	if e == nil {
@@ -138,4 +153,14 @@ func (e *Exchange) limited(wait time.Duration) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.retryAfter = wait
+}
+
+// asked records that the provider asked for more access than the grant has.
+func (e *Exchange) asked(outcome Outcome) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.scopeRequired = &outcome
 }

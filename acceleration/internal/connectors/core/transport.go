@@ -13,9 +13,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
-// maxClassifiedBody caps what of a 401's body is read for Scheme.Classify, which looks for an
-// error member in it (RFC 6749 section 5.2, RFC 6750 section 3). It is the cap oauth2code
-// reads any token response with (maxResponseBytes in schemes/oauth2code/discovery.go), the
+// maxClassifiedBody caps what of a 401's or a 403's body is read for Scheme.Classify, which
+// looks for an error member in it (RFC 6749 section 5.2, RFC 6750 section 3). It is the cap
+// oauth2code reads any token response with (maxResponseBytes in schemes/oauth2code/discovery.go), the
 // prototype's limit (internal/mcp/oauth.go:124 on codex/connector-support at cf62af0d). The
 // cap is a choice, not a measurement. The rest of the body stays readable for the caller.
 const maxClassifiedBody = 1 << 20
@@ -168,14 +168,21 @@ type credentialed struct {
 // RoundTrip resolves the access credential for the request, with the request's deadline as
 // the call's budget, and sends the request through the scheme's Wrap of it.
 //
-// A 401 the scheme classifies as invalid_grant or scope_required is the provider refusing
-// that credential, which may still be a grant that works: its clock may run ahead of the
-// router's, or it may have ended the token early. So the Resolver is first asked for a
-// credential renewed past the refused one (CredentialRequest.Refused): a refresh, or the
-// credential another router already renewed. With one, the request goes once more, when its
-// body can be read again. A refused renewal is the Resolver's to act on, as any failed
-// renewal is. Only when nothing renews it (a static key, a token with no refresh token), or
-// the renewed one is refused too, is the Resolver told (Invalidate), and the 401 is the answer.
+// A 401 the scheme classifies as invalid_grant is the provider refusing that credential,
+// which may still be a grant that works: its clock may run ahead of the router's, or it may
+// have ended the token early. So the Resolver is first asked for a credential renewed past
+// the refused one (CredentialRequest.Refused): a refresh, or the credential another router
+// already renewed. With one, the request goes once more, when its body can be read again. A
+// refused renewal is the Resolver's to act on, as any failed renewal is. Only when nothing
+// renews it (a static key, a token with no refresh token), or the renewed one is refused too,
+// is the Resolver told (Invalidate), and the 401 is the answer.
+//
+// A 401 or 403 the scheme classifies as scope_required is the provider asking for more access
+// than the grant has (RFC 6750 section 3.1's insufficient_scope, a claims challenge). A
+// renewed credential carries the same grant, so nothing is renewed or sent again, and the
+// grant is left as it is: it still works for what it covers, and a step-up consent replaces
+// it only once that consent succeeds (AI-854). The ask is recorded on the call's Exchange
+// (Exchange.ScopeRequired), and the provider's answer is the answer.
 func (c *credentialed) RoundTrip(request *http.Request) (*http.Response, error) {
 	c.used.Store(c.now().UnixNano())
 	exchange := exchangeOf(request.Context())
@@ -205,11 +212,15 @@ func (c *credentialed) RoundTrip(request *http.Request) (*http.Response, error) 
 				}
 			}
 		}
-		if err != nil || response.StatusCode != http.StatusUnauthorized {
+		if err != nil || response.StatusCode != http.StatusUnauthorized && response.StatusCode != http.StatusForbidden {
 			return response, err
 		}
 		outcome := c.classify(response)
-		if outcome.Kind != OutcomeInvalidGrant && outcome.Kind != OutcomeScopeRequired {
+		if outcome.Kind == OutcomeScopeRequired {
+			exchange.asked(outcome)
+			return response, nil
+		}
+		if response.StatusCode != http.StatusUnauthorized || outcome.Kind != OutcomeInvalidGrant {
 			return response, nil
 		}
 		if attempt == maxAttempts {
@@ -252,7 +263,7 @@ func (c *credentialed) invalidate(request *http.Request, response *http.Response
 	return response, nil
 }
 
-// classify is the scheme's outcome for a 401. It reads at most maxClassifiedBody of the
+// classify is the scheme's outcome for a 401 or a 403. It reads at most maxClassifiedBody of the
 // body and puts what it read back in front of the rest, so the caller reads the whole body.
 func (c *credentialed) classify(response *http.Response) Outcome {
 	read, err := io.ReadAll(io.LimitReader(response.Body, maxClassifiedBody))

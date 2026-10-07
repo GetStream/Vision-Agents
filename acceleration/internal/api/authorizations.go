@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -172,7 +173,7 @@ func (s *Server) createAuthorization(ctx context.Context, request *createAuthori
 	if s.connectorSecrets == nil || s.credentials == nil {
 		return nil, notConfigured("consents cannot be started: connectors are not enabled on this deployment")
 	}
-	begun, err := s.consents().begin(ctx, connection)
+	begun, err := s.consents().begin(ctx, connection, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +215,7 @@ func ConnectorConsents(records *store.Store, registry core.Registry, secrets *au
 		if err != nil {
 			return session.Consent{}, err
 		}
-		begun, err := c.begin(ctx, connection)
+		begun, err := c.begin(ctx, connection, request.StepUp)
 		if err != nil {
 			return session.Consent{}, err
 		}
@@ -288,8 +289,13 @@ func (c consents) connectionFor(ctx context.Context, request session.ConsentRequ
 	return connection, nil
 }
 
-// begin starts the provider's consent for connection and seals its attempt.
-func (c consents) begin(ctx context.Context, connection store.ConnectorConnection) (Authorization, error) {
+// begin starts the provider's consent for connection and seals its attempt. stepUp, when set,
+// is what the provider asked for on a call of the connection (session.ConsentRequest.StepUp):
+// the attempt is a step-up that asks for that access. Its callback is any consent's
+// (finishConnectorConsent), so the grant is replaced only once the provider granted it, for
+// the same account, and a step-up denied, failed or never finished leaves the old grant as
+// it is.
+func (c consents) begin(ctx context.Context, connection store.ConnectorConnection, stepUp *core.Outcome) (Authorization, error) {
 	// Checked here, not at the callback: a consent the provider cannot send back would
 	// otherwise be found out only after the user approved it.
 	public := strings.TrimRight(c.publicURL, "/")
@@ -304,6 +310,14 @@ func (c consents) begin(ctx context.Context, connection store.ConnectorConnectio
 	manifest, err := connectionManifest(ctx, c.store, connection, connection.DefinitionRevision)
 	if err != nil {
 		return Authorization{}, err
+	}
+	kind := store.AttemptReconnect
+	if connection.Status == store.ConnectionPending {
+		kind = store.AttemptConsent
+	}
+	if stepUp != nil {
+		kind = store.AttemptStepUp
+		manifest = steppedUp(manifest, connection, *stepUp)
 	}
 	ref := core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}
 	begun, err := scheme.Begin(ctx, core.BeginInput{Ref: ref, Manifest: manifest, RedirectURI: public + ConnectorCallbackPath})
@@ -331,10 +345,6 @@ func (c consents) begin(ctx context.Context, connection store.ConnectorConnectio
 		return Authorization{}, err
 	}
 
-	kind := store.AttemptReconnect
-	if connection.Status == store.ConnectionPending {
-		kind = store.AttemptConsent
-	}
 	id := store.NewID()
 	raw, err := json.Marshal(attempt{
 		ConnectorID:        connection.ConnectorID,
@@ -376,6 +386,42 @@ func (c consents) begin(ctx context.Context, connection store.ConnectorConnectio
 		HandoffToken: handoff,
 		ExpiresAt:    expires,
 	}, nil
+}
+
+// steppedUp is manifest asking for what a step-up needs (AI-854):
+//
+//   - the scopes the provider asked for (RFC 6750 section 3.1, insufficient_scope's scope),
+//     with, when the manifest's scopes.step_up_union is set, the ones it lists and the ones
+//     the grant has, for a provider whose new grant replaces the old one rather than adds to
+//     it. MCP's «Scope Challenge Handling» (2025-11-25, Authorization) has a client ask for
+//     the union too. Asked for none, the manifest's own list stays;
+//   - a claims challenge as the authorize request's claims parameter: OpenID Connect Core 1.0
+//     section 5.5, which Microsoft's «Claims challenges, claims requests and client
+//     capabilities» has a client send back as it was decoded
+//     (learn.microsoft.com/en-us/entra/identity-platform/claims-challenge).
+func steppedUp(manifest core.ResolvedManifest, connection store.ConnectorConnection, asked core.Outcome) core.ResolvedManifest {
+	scopes := asked.Scopes
+	if manifest.Scopes.StepUpUnion {
+		scopes = slices.Concat(manifest.Scopes.List, connection.GrantedScopes, asked.Scopes)
+	}
+	var unique []string
+	for _, scope := range scopes {
+		if !slices.Contains(unique, scope) {
+			unique = append(unique, scope)
+		}
+	}
+	if len(unique) > 0 {
+		manifest.Scopes.List = unique
+	}
+	if asked.Claims != "" {
+		params := maps.Clone(manifest.AuthorizeParams)
+		if params == nil {
+			params = map[string]string{}
+		}
+		params["claims"] = asked.Claims
+		manifest.AuthorizeParams = params
+	}
+	return manifest
 }
 
 // launchPage is the router-hosted page a consent starts on. It waits for the dashboard that

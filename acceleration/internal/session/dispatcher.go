@@ -46,6 +46,9 @@ type dispatcher struct {
 	logins *logins
 	// invocations writes the log; nil records nothing.
 	invocations *invocationRecorder
+	// stepUps asks the caller for more access when a provider wants it (step_up.go); nil
+	// asks nobody.
+	stepUps *stepUps
 	// limiter holds calls after a provider's 429 (Connectors.Limiter); nil limits nothing.
 	limiter *core.Limiter
 }
@@ -165,6 +168,11 @@ func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]ll
 		}
 		if held := d.limiter.Block(ctx, r.limit, exchange.RetryAfter()); held > 0 {
 			return llm.TextParts(rateLimited(call.Name, held)), failed(ctx, exchange), nil
+		}
+		if asked, ok := exchange.ScopeRequired(); ok {
+			if text, asking := d.stepUp(ctx, r, call.TurnID, asked); asking {
+				return llm.TextParts(text), failed(ctx, exchange), nil
+			}
 		}
 		return nil, failed(ctx, exchange), err
 	}
