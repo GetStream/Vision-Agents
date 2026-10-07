@@ -3,6 +3,7 @@
 package store
 
 import (
+	"strings"
 	"time"
 )
 
@@ -128,6 +129,48 @@ func (s *StoreSuite) TestAClaimTakesAtMostPerDestinationLessWhatIsBeingSent() {
 		taken[delivery.DestinationID]++
 	}
 	s.Equal(map[string]int{"slow": 1, "other": 1}, taken)
+}
+
+// Two routers claim one backlog at once. Router A's claim pauses after the rows it ranks were
+// read, while router B's claim takes them and commits: A must then skip what B leased, not
+// lease it again (the review of #778). The pause is pg_sleep in A's statement, so B's commit
+// lands inside A's statement every run.
+func (s *StoreSuite) TestTwoRoutersClaimingAtOnceTakeEachDeliveryOnce() {
+	for _, id := range []string{"one", "two", "three"} {
+		s.eventDestination("acme-app", "slack_bot", id, ForwardAll)
+	}
+	_, err := s.store.QueueEventDeliveries(s.ctx, "acme-app", "slack_bot", []string{ForwardAll}, EventDelivery{ID: "msg_one", Body: []byte("{}"), NextAttemptAt: s.base})
+	s.Require().NoError(err)
+	routerA, err := Open(s.dsn)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { s.Require().NoError(routerA.Close()) })
+	ranked := "    WHERE cedl.next_attempt_at <= ?\n), due AS ("
+	s.Require().Contains(claimEventDeliveriesQuery, ranked)
+	paused := strings.Replace(claimEventDeliveriesQuery, ranked,
+		"    WHERE cedl.next_attempt_at <= ? AND (SELECT 1 FROM pg_sleep(0.5)) = 1\n), due AS (", 1)
+
+	type claim struct {
+		claimed []ClaimedEventDelivery
+		err     error
+	}
+	byA := make(chan claim, 1)
+	go func() {
+		claimed, err := routerA.claimEventDeliveries(s.ctx, paused, s.base, 10, 2, nil, s.base.Add(time.Minute))
+		byA <- claim{claimed, err}
+	}()
+	s.Require().Eventually(func() bool {
+		var sleeping int
+		s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+			"SELECT count(*) FROM pg_stat_activity WHERE wait_event = 'PgSleep' AND datname = current_database()").Scan(&sleeping))
+		return sleeping == 1
+	}, 5*time.Second, 10*time.Millisecond, "router A's claim is in its pause")
+	byB, err := s.store.ClaimEventDeliveries(s.ctx, s.base, 10, 2, nil, s.base.Add(time.Minute))
+	s.Require().NoError(err)
+	a := <-byA
+	s.Require().NoError(a.err)
+
+	s.Len(byB, 3)
+	s.Empty(a.claimed, "router A takes none of what router B leased")
 }
 
 func (s *StoreSuite) TestTheNextDeliveryIsTheOneDueFirstAndNoneWhenNothingIsQueued() {

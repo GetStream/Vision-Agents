@@ -254,17 +254,20 @@ ON CONFLICT (destination_id, id) DO NOTHING`,
 // holds perDestination of the caller's sends, and other destinations' deliveries are taken
 // past its own.
 func (s *Store) ClaimEventDeliveries(ctx context.Context, now time.Time, limit, perDestination int, sending map[string]int, leaseUntil time.Time) ([]ClaimedEventDelivery, error) {
-	claimed := []ClaimedEventDelivery{}
-	if limit < 1 || perDestination < 1 {
-		return claimed, nil
-	}
-	busy, counts := make([]string, 0, len(sending)), make([]int, 0, len(sending))
-	for destination, count := range sending {
-		busy, counts = append(busy, destination), append(counts, count)
-	}
-	// Postgres refuses FOR UPDATE beside a window function in one SELECT, so ranked numbers
-	// each destination's due rows first and due locks the ones within the cap.
-	err := s.db.NewRaw(`
+	return s.claimEventDeliveries(ctx, claimEventDeliveriesQuery, now, limit, perDestination, sending, leaseUntil)
+}
+
+// claimEventDeliveriesQuery is ClaimEventDeliveries' statement. Postgres refuses FOR UPDATE
+// beside a window function in one SELECT, so ranked numbers each destination's due rows first
+// and due locks the ones within the cap.
+//
+// due checks next_attempt_at on the row it locks, not only in ranked, which reads the rows as
+// they were when the statement started. When another router's claim commits in between,
+// Postgres locks the row's newer version and checks only due's own WHERE on it again («the
+// second updater ... re-evaluates its WHERE condition»: Read Committed Isolation Level,
+// https://www.postgresql.org/docs/16/transaction-iso.html, opened October 7, 2026). Without
+// the check in due, a row another router just leased is leased again (AI-924 review of #778).
+const claimEventDeliveriesQuery = `
 WITH sending AS (
     SELECT * FROM unnest(?::text[], ?::int[]) AS s (destination_id, count)
 ), ranked AS (
@@ -277,7 +280,7 @@ WITH sending AS (
 ), due AS (
     SELECT cedl.destination_id, cedl.id FROM connector_event_deliveries AS cedl
     JOIN ranked ON ranked.destination_id = cedl.destination_id AND ranked.id = cedl.id
-    WHERE ranked.slot <= ?
+    WHERE ranked.slot <= ? AND cedl.next_attempt_at <= ?
     ORDER BY cedl.next_attempt_at
     LIMIT ?
     FOR UPDATE OF cedl SKIP LOCKED
@@ -288,8 +291,21 @@ FROM due, connector_event_destinations AS ced
 WHERE cedl.destination_id = due.destination_id AND cedl.id = due.id AND ced.id = cedl.destination_id
 RETURNING cedl.destination_id, cedl.id, cedl.headers, cedl.body, cedl.attempts, cedl.next_attempt_at, cedl.created_at,
     cedl.provider_headers_until, ced.customer_id, ced.connector_id, ced.url, ced.secret_sealed, ced.kek_version,
-    ced.previous_secret_sealed, ced.previous_kek_version, ced.previous_until`,
-		pgdialect.Array(busy), pgdialect.Array(counts), now.UTC(), perDestination, limit, leaseUntil.UTC()).Scan(ctx, &claimed)
+    ced.previous_secret_sealed, ced.previous_kek_version, ced.previous_until`
+
+// claimEventDeliveries runs query, ClaimEventDeliveries' statement or a test's variant of it
+// with a pause in it, with ClaimEventDeliveries' arguments.
+func (s *Store) claimEventDeliveries(ctx context.Context, query string, now time.Time, limit, perDestination int, sending map[string]int, leaseUntil time.Time) ([]ClaimedEventDelivery, error) {
+	claimed := []ClaimedEventDelivery{}
+	if limit < 1 || perDestination < 1 {
+		return claimed, nil
+	}
+	busy, counts := make([]string, 0, len(sending)), make([]int, 0, len(sending))
+	for destination, count := range sending {
+		busy, counts = append(busy, destination), append(counts, count)
+	}
+	err := s.db.NewRaw(query, pgdialect.Array(busy), pgdialect.Array(counts), now.UTC(), perDestination, now.UTC(), limit,
+		leaseUntil.UTC()).Scan(ctx, &claimed)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: claim event deliveries: %w", err))
 	}
