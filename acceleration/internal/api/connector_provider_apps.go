@@ -19,12 +19,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// providerAppEventsPath is where a provider app's own events arrive, followed by the
-// connector id and the provider app id: the route AI-878 adds (T38,
-// POST /v1/connectors/events/{connector_id}/{provider_app_id}). An app the router creates
-// gets it as its Events API request URL, so the URL names the tenant and the signing secret.
-const providerAppEventsPath = "/v1/connectors/events/"
-
 // configTokenMargin is how long before its expiry a configuration token is rotated rather
 // than used. A PUT spends it on up to two Slack calls after the rotation check (create, then
 // update), each bounded by the egress client's timeout (connectorHTTPTimeout, 10 s, in
@@ -443,6 +437,13 @@ func (s *Server) managedConnector(ctx context.Context, customerID, id string) (c
 		return core.Manifest{}, invalidRequest(fmt.Sprintf("%s takes no app the router creates: its client.registration is %v, which does not list managed",
 			manifest.ID, manifest.Client.Registration))
 	}
+	// The app's events reach the provider app's own route (receiveProviderAppEvent), which
+	// verifies them with the app's signing secret only for a channel whose secret is
+	// provider_app. Any other channel's events would never be read there.
+	if manifest.Channel != nil && manifest.Channel.Verifier.Secret != core.SecretProviderApp {
+		return core.Manifest{}, invalidRequest(fmt.Sprintf("%s verifies its events with the %s secret, not the app's own (provider_app), so an app the router creates could not deliver them",
+			manifest.ID, manifest.Channel.Verifier.Secret))
+	}
 	return manifest, nil
 }
 
@@ -481,7 +482,11 @@ func (s *Server) sealProviderApp(record *store.ConnectorOAuthClient, clientSecre
 // id apps.manifest.create returned: the connector's own scopes and events at its latest
 // revision, and the template's name and ranges.
 func (s *Server) applyProviderAppManifest(ctx context.Context, manifest core.Manifest, template slackapps.Template, token, appID string) error {
-	template.RequestURL = strings.TrimRight(s.publicURL, "/") + providerAppEventsPath + manifest.ID + "/" + appID
+	// The route receiveProviderAppEvent serves, POST providerAppEventsPath{connector_id}/{provider_app_id}.
+	// A connector without a channel reads no events, so its app gets no request URL.
+	if manifest.Channel != nil {
+		template.RequestURL = strings.TrimRight(s.publicURL, "/") + providerAppEventsPath + manifest.ID + "/" + appID
+	}
 	applied, err := slackapps.ManifestFor(manifest, template)
 	if err != nil {
 		return invalidRequest(err.Error())

@@ -404,6 +404,11 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	// turns off, so any Chat client can read it back.
 	spec.PersistConversation = spec.Text
 	spec.ConversationID = value(request.ConversationId)
+	for _, said := range value(request.History) {
+		spec.History = append(spec.History, conversation.HistoryLine{
+			Role: string(said.Role), Text: said.Text, Name: value(said.Name), At: value(said.CreatedAt),
+		})
+	}
 
 	spec.Incognito = value(request.Incognito)
 	spec.Title = override(spec.Title, request.Title)

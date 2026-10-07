@@ -188,6 +188,7 @@ func (f *fixture) consent(ref core.ConnectionRef) {
 		state.LastError = ""
 		state.AccountID, state.Metadata, state.Scopes = account.AccountID, account.Metadata, account.Scopes
 		state.ExpiresAt = time.Time{}
+		state.ConnectedAt = time.Now().UTC()
 	})
 }
 

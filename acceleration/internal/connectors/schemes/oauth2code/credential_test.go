@@ -542,6 +542,15 @@ func (s *OAuth2CodeSuite) TestClassifyMakesARefusedGrantInvalidGrant() {
 		{"a Bearer invalid_token after another scheme's padded token68", func() (*http.Response, []byte, error) {
 			return s.synthetic(http.StatusUnauthorized, http.Header{"Www-Authenticate": {`Newauth abc==, Bearer error="invalid_token"`}}, "")
 		}},
+		{"Slack's chat.postMessage invalid_auth with 200", func() (*http.Response, []byte, error) {
+			return s.synthetic(http.StatusOK, nil, `{"ok":false,"error":"invalid_auth"}`)
+		}},
+		{"Slack's token_revoked with 200", func() (*http.Response, []byte, error) {
+			return s.synthetic(http.StatusOK, nil, `{"ok":false,"error":"token_revoked"}`)
+		}},
+		{"Slack's account_inactive with 200", func() (*http.Response, []byte, error) {
+			return s.synthetic(http.StatusOK, nil, `{"ok":false,"error":"account_inactive"}`)
+		}},
 	} {
 		s.Equal(core.Outcome{Kind: core.OutcomeInvalidGrant}, s.classify(row.answer), row.name)
 	}

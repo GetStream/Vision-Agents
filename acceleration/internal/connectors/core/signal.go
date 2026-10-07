@@ -1,6 +1,9 @@
 package core
 
-import "net/http"
+import (
+	"net/http"
+	"time"
+)
 
 // Verifier checks one inbound provider request and reads what it says. A request that fails
 // verification changes nothing, so the inbound endpoint needs no API auth.
@@ -65,6 +68,11 @@ type Signal struct {
 	// splits an id.
 	Identity map[string]string
 	Kind     SignalKind
+	// At is when the provider says the event happened (SignalRule.At), to the second; zero
+	// when it does not say. A provider that retries a delivery sends the same event, so a
+	// retry that arrives after the account reconnected still says when the old grant ended,
+	// and Resolver.Revoke leaves the new grant alone.
+	At time.Time
 }
 
 // InboundMessage is one message a person sent on an external thread, named by the provider's

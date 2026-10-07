@@ -848,6 +848,24 @@ func (e HealthStatusStatus) Valid() bool {
 	}
 }
 
+// Defines values for HistoryRole.
+const (
+	HistoryRoleAssistant HistoryRole = "assistant"
+	HistoryRoleUser      HistoryRole = "user"
+)
+
+// Valid indicates whether the value is a known member of the HistoryRole enum.
+func (e HistoryRole) Valid() bool {
+	switch e {
+	case HistoryRoleAssistant:
+		return true
+	case HistoryRoleUser:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ImageContentPartType.
 const (
 	ImageUrl ImageContentPartType = "image_url"
@@ -3470,6 +3488,9 @@ type CreateSessionRequest struct {
 	// Greeting Said on joining without going through the model. Empty means the agent waits to be spoken to.
 	Greeting *string `json:"greeting,omitempty"`
 
+	// History The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
+	History *[]HistoryMessage `json:"history,omitempty"`
+
 	// Id The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7.
 	Id *string `json:"id,omitempty"`
 
@@ -3748,6 +3769,22 @@ type HealthStatus struct {
 
 // HealthStatusStatus defines model for HealthStatus.Status.
 type HealthStatusStatus string
+
+// HistoryMessage defines model for HistoryMessage.
+type HistoryMessage struct {
+	// CreatedAt When it was said. The model is shown it beside a person's message, so it can tell an hour ago from just now.
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+
+	// Name Who said it, when several people share the thread. The model is shown it as a label, never as who is asking now.
+	Name *string `json:"name,omitempty"`
+
+	// Role user is what a person said, assistant what the agent answered. These are the only turns a resumed conversation hands the model; instructions say anything a system message would.
+	Role HistoryRole `json:"role"`
+	Text string      `json:"text"`
+}
+
+// HistoryRole user is what a person said, assistant what the agent answered. These are the only turns a resumed conversation hands the model; instructions say anything a system message would.
+type HistoryRole string
 
 // IMessageProfile defines model for IMessageProfile.
 type IMessageProfile struct {
@@ -8876,6 +8913,13 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/classify (the `Classify` operationId).
 	Classify(ctx context.Context, body ClassifyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReceiveProviderAppEvent Receive a provider app's event
+	//
+	// Where a provider delivers the events of one customer's provider app: the Request URL of a customer's Slack app, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector's manifest names (channel.verifier) against that app's own signing secret, so an event signed for another app is refused and changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves the app's customer's connections of that account to needs_reauthorization, unless they connected after the event. A message goes to the channel bridge, which writes it into the thread channel of its external thread in Stream Chat; a retried delivery is dropped. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.
+	//
+	// Corresponds with POST /v1/connectors/events/{connector_id}/{provider_app_id} (the `ReceiveProviderAppEvent` operationId).
+	ReceiveProviderAppEvent(ctx context.Context, connectorId string, providerAppId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListDataChanges What has happened to this app's rows since a cursor
 	//
 	// Oldest first, for replaying onto the deployment that took the export. A change is only returned once every transaction older than it has committed, so following the cursor never steps over a row, and a change carries the row as it now reads rather than the columns that changed, so applying one twice is the same as applying it once.
@@ -12668,6 +12712,23 @@ func (c *Client) ClassifyWithBody(ctx context.Context, contentType string, body 
 // Corresponds with POST /v1/classify (the `Classify` operationId).
 func (c *Client) Classify(ctx context.Context, body ClassifyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewClassifyRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReceiveProviderAppEvent Receive a provider app's event
+//
+// Where a provider delivers the events of one customer's provider app: the Request URL of a customer's Slack app, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector's manifest names (channel.verifier) against that app's own signing secret, so an event signed for another app is refused and changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves the app's customer's connections of that account to needs_reauthorization, unless they connected after the event. A message goes to the channel bridge, which writes it into the thread channel of its external thread in Stream Chat; a retried delivery is dropped. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.
+//
+// Corresponds with POST /v1/connectors/events/{connector_id}/{provider_app_id} (the `ReceiveProviderAppEvent` operationId).
+func (c *Client) ReceiveProviderAppEvent(ctx context.Context, connectorId string, providerAppId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReceiveProviderAppEventRequest(c.Server, connectorId, providerAppId)
 	if err != nil {
 		return nil, err
 	}
@@ -19695,6 +19756,47 @@ func NewClassifyRequestWithBody(server string, contentType string, body io.Reade
 	return req, nil
 }
 
+// NewReceiveProviderAppEventRequest constructs an http.Request for the ReceiveProviderAppEvent method
+func NewReceiveProviderAppEventRequest(server string, connectorId string, providerAppId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "connector_id", connectorId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "provider_app_id", providerAppId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/connectors/events/%s/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListDataChangesRequest constructs an http.Request for the ListDataChanges method
 func NewListDataChangesRequest(server string, params *ListDataChangesParams) (*http.Request, error) {
 	var err error
@@ -24148,6 +24250,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/classify (the `Classify` operationId).
 	ClassifyWithResponse(ctx context.Context, body ClassifyJSONRequestBody, reqEditors ...RequestEditorFn) (*ClassifyResponse, error)
+
+	// ReceiveProviderAppEventWithResponse Receive a provider app's event
+	//
+	// Where a provider delivers the events of one customer's provider app: the Request URL of a customer's Slack app, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector's manifest names (channel.verifier) against that app's own signing secret, so an event signed for another app is refused and changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves the app's customer's connections of that account to needs_reauthorization, unless they connected after the event. A message goes to the channel bridge, which writes it into the thread channel of its external thread in Stream Chat; a retried delivery is dropped. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/connectors/events/{connector_id}/{provider_app_id} (the `ReceiveProviderAppEvent` operationId).
+	ReceiveProviderAppEventWithResponse(ctx context.Context, connectorId string, providerAppId string, reqEditors ...RequestEditorFn) (*ReceiveProviderAppEventResponse, error)
 
 	// ListDataChangesWithResponse What has happened to this app's rows since a cursor
 	//
@@ -30118,6 +30229,8 @@ type CreateSessionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 	// JSON409 the response for an HTTP 409 `application/json` response
@@ -30139,6 +30252,11 @@ func (r CreateSessionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateSessionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateSessionResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -33521,6 +33639,47 @@ func (r ClassifyResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ClassifyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReceiveProviderAppEventResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ReceiveProviderAppEventResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ReceiveProviderAppEventResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReceiveProviderAppEventResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReceiveProviderAppEventResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReceiveProviderAppEventResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -40484,6 +40643,21 @@ func (c *ClientWithResponses) ClassifyWithResponse(ctx context.Context, body Cla
 	return ParseClassifyResponse(rsp)
 }
 
+// ReceiveProviderAppEventWithResponse Receive a provider app's event
+//
+// Where a provider delivers the events of one customer's provider app: the Request URL of a customer's Slack app, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector's manifest names (channel.verifier) against that app's own signing secret, so an event signed for another app is refused and changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves the app's customer's connections of that account to needs_reauthorization, unless they connected after the event. A message goes to the channel bridge, which writes it into the thread channel of its external thread in Stream Chat; a retried delivery is dropped. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/connectors/events/{connector_id}/{provider_app_id} (the `ReceiveProviderAppEvent` operationId).
+func (c *ClientWithResponses) ReceiveProviderAppEventWithResponse(ctx context.Context, connectorId string, providerAppId string, reqEditors ...RequestEditorFn) (*ReceiveProviderAppEventResponse, error) {
+	rsp, err := c.ReceiveProviderAppEvent(ctx, connectorId, providerAppId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReceiveProviderAppEventResponse(rsp)
+}
+
 // ListDataChangesWithResponse What has happened to this app's rows since a cursor
 //
 // Oldest first, for replaying onto the deployment that took the export. A change is only returned once every transaction older than it has committed, so following the cursor never steps over a row, and a change carries the row as it now reads rather than the columns that changed, so applying one twice is the same as applying it once.
@@ -45941,6 +46115,13 @@ func ParseCreateSessionResponse(rsp *http.Response) (*CreateSessionResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -48649,6 +48830,41 @@ func ParseClassifyResponse(rsp *http.Response) (*ClassifyResponse, error) {
 			return nil, err
 		}
 		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReceiveProviderAppEventResponse parses an HTTP response from a ReceiveProviderAppEventWithResponse call
+func ParseReceiveProviderAppEventResponse(rsp *http.Response) (*ReceiveProviderAppEventResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReceiveProviderAppEventResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		break // No content-type
+
+	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case rsp.StatusCode == 413:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

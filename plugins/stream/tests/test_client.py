@@ -312,6 +312,33 @@ class TestSessions:
         body = router.body("POST", "/v1/agents/sessions")
         assert body["incognito"] is True
 
+    async def test_history_the_caller_kept_reaches_the_router_in_order(
+        self, api: stream.Client, router: Router
+    ):
+        session = await api.agent("docs").sessions.create(
+            stream.SessionOptions(
+                incognito=True,
+                history=[
+                    stream.HistoryMessage(
+                        role=stream.HistoryRole.HISTORY_ROLE_USER,
+                        text="Where is order 4471?",
+                        name="Ann",
+                    ),
+                    stream.HistoryMessage(
+                        role=stream.HistoryRole.HISTORY_ROLE_ASSISTANT,
+                        text="It ships Friday.",
+                    ),
+                ],
+            )
+        )
+        await session.close()
+
+        body = router.body("POST", "/v1/agents/sessions")
+        assert body["history"] == [
+            {"role": "user", "text": "Where is order 4471?", "name": "Ann"},
+            {"role": "assistant", "text": "It ships Friday."},
+        ]
+
     async def test_querying_narrows_to_the_agent_and_the_filters_given(
         self, api: stream.Client, router: Router
     ):

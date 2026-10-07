@@ -229,7 +229,7 @@ func (s *ConnectionToolsSuite) TestAPendingConnectionValidatesAsPendingWithoutAs
 // grant (as a verified tokens_revoked does), and validate opens no MCP session.
 func (s *ConnectionToolsSuite) TestAConnectionThatNeedsAReconnectSaysSoWithoutAskingTheProvider() {
 	id := s.connected(bearer.Name)
-	s.Require().NoError(s.resolver.Revoke(context.Background(), core.ConnectionRef{CustomerID: s.customerID(), ConnectionID: id}, core.SignalRevoked))
+	s.Require().NoError(s.resolver.Revoke(context.Background(), core.ConnectionRef{CustomerID: s.customerID(), ConnectionID: id}, core.SignalRevoked, time.Time{}))
 	before := s.provider.Hits(fakeprovider.PathMCP)
 
 	validation := s.validate(id)

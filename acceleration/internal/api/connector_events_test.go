@@ -406,7 +406,7 @@ type deliveries struct {
 	messages []core.InboundMessage
 }
 
-func (d *deliveries) Deliver(_ context.Context, messages []core.InboundMessage) error {
+func (d *deliveries) Deliver(_ context.Context, _ store.ConnectorOAuthClient, messages []core.InboundMessage) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.messages = append(d.messages, messages...)

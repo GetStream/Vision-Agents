@@ -12,6 +12,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.create_session_request_custom import CreateSessionRequestCustom
     from ..models.create_session_request_tags import CreateSessionRequestTags
+    from ..models.history_message import HistoryMessage
     from ..models.model_overwrites import ModelOverwrites
     from ..models.session_memory import SessionMemory
     from ..models.session_phone import SessionPhone
@@ -44,6 +45,14 @@ class CreateSessionRequest:
         description (str | Unset): A longer note about the conversation, searched alongside the title.
         greeting (str | Unset): Said on joining without going through the model. Empty means the agent waits to be
             spoken to.
+        history (list[HistoryMessage] | Unset): The conversation so far, for a backend that keeps its own: a thread in
+            its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on:
+            open a new session with the thread's messages here, oldest first, then send the message to answer to the
+            responses endpoint. The model is handed them before the first response, as a resumed conversation's history is.
+            They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to
+            100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more
+            is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only:
+            a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
         id (str | Unset): The id to hold the session by, so a caller can know it before the session exists. It must be a
             UUID nobody has used for a session before. Omitted, the router generates a UUIDv7.
         incognito (bool | Unset): Hold the conversation and record nothing about it: no session row, no turns, no
@@ -104,6 +113,7 @@ class CreateSessionRequest:
     custom: CreateSessionRequestCustom | Unset = UNSET
     description: str | Unset = UNSET
     greeting: str | Unset = UNSET
+    history: list[HistoryMessage] | Unset = UNSET
     id: str | Unset = UNSET
     incognito: bool | Unset = False
     instructions: str | Unset = UNSET
@@ -156,6 +166,13 @@ class CreateSessionRequest:
         description = self.description
 
         greeting = self.greeting
+
+        history: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.history, Unset):
+            history = []
+            for history_item_data in self.history:
+                history_item = history_item_data.to_dict()
+                history.append(history_item)
 
         id = self.id
 
@@ -253,6 +270,8 @@ class CreateSessionRequest:
             field_dict["description"] = description
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
+        if history is not UNSET:
+            field_dict["history"] = history
         if id is not UNSET:
             field_dict["id"] = id
         if incognito is not UNSET:
@@ -316,6 +335,7 @@ class CreateSessionRequest:
         from ..models.create_session_request_tags import (
             CreateSessionRequestTags,
         )
+        from ..models.history_message import HistoryMessage
         from ..models.model_overwrites import ModelOverwrites
         from ..models.session_memory import SessionMemory
         from ..models.session_phone import SessionPhone
@@ -349,6 +369,15 @@ class CreateSessionRequest:
         description = d.pop("description", UNSET)
 
         greeting = d.pop("greeting", UNSET)
+
+        _history = d.pop("history", UNSET)
+        history: list[HistoryMessage] | Unset = UNSET
+        if _history is not UNSET:
+            history = []
+            for history_item_data in _history:
+                history_item = HistoryMessage.from_dict(history_item_data)
+
+                history.append(history_item)
 
         id = d.pop("id", UNSET)
 
@@ -446,6 +475,7 @@ class CreateSessionRequest:
             custom=custom,
             description=description,
             greeting=greeting,
+            history=history,
             id=id,
             incognito=incognito,
             instructions=instructions,
