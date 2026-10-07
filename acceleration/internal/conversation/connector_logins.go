@@ -64,6 +64,23 @@ func (c *Conversation) AskToConnect(owner string, found ConnectorAuthorization) 
 	return true
 }
 
+// ShowsLogin reports whether the reply being written already shows the login of this
+// attempt, not yet finished, so a second call in the same reply need not begin another.
+func (c *Conversation) ShowsLogin(authorizationID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m := c.data.Current
+	if m == nil || m.FinishedAt != nil {
+		return false
+	}
+	for _, found := range m.ConnectorAuthorizations {
+		if found.AuthorizationID == authorizationID && found.Status == "" {
+			return true
+		}
+	}
+	return false
+}
+
 // ConnectorConnected marks the login of this attempt as finished on the reply of this
 // conversation that asked for it, and writes that reply again. It reports whether one did.
 func (c *Conversation) ConnectorConnected(authorizationID string) bool {
@@ -176,6 +193,7 @@ func validConnectorAuthorization(found ConnectorAuthorization) bool {
 		return false
 	}
 	parsed, err := url.Parse(found.LaunchURL)
-	return err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") && parsed.Host != "" &&
+	// https only, as plugins.ValidAuthorization requires of an authorize URL.
+	return err == nil && parsed.Scheme == "https" && parsed.Host != "" &&
 		parsed.User == nil && strings.HasSuffix(parsed.Path, connectorLaunchPath+found.AuthorizationID)
 }

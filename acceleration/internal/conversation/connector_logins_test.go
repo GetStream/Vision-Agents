@@ -121,8 +121,25 @@ func (s *DisplaySuite) TestAnAttachmentThatIsNotALaunchPageIsNotReadBack() {
 	elsewhere.LaunchURL = "https://evil.example/authorize"
 	otherAttempt := login("slack", "attempt-1")
 	otherAttempt.AuthorizationID = "attempt-2"
+	plain := login("slack", "attempt-1")
+	plain.LaunchURL = "http://router.example/v1/agents/connectors/oauth/launch/attempt-1"
 
 	s.True(validConnectorAuthorization(login("slack", "attempt-1")))
 	s.False(validConnectorAuthorization(elsewhere))
 	s.False(validConnectorAuthorization(otherAttempt))
+	s.False(validConnectorAuthorization(plain), "https only")
+}
+
+// TestTheReplyBeingWrittenSaysWhichLoginItShows: a second call in the same reply reuses the
+// consent it shows; a finished reply, or a finished login, shows none.
+func (s *DisplaySuite) TestTheReplyBeingWrittenSaysWhichLoginItShows() {
+	c := s.open("on_call")
+	_, err := c.BeginCommand("command-a", "Tell Nash a joke on Slack", "")
+	s.Require().NoError(err)
+	s.Require().True(c.AskToConnect("employee", login("slack", "attempt-1")))
+
+	s.True(c.ShowsLogin("attempt-1"))
+	s.False(c.ShowsLogin("attempt-2"))
+	c.Observe(agent.Responded{})
+	s.False(c.ShowsLogin("attempt-1"), "the reply is finished")
 }
