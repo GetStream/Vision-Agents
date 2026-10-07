@@ -23,6 +23,9 @@ import (
 type Connectors struct {
 	Registry   core.Registry
 	Transports *core.Transports
+	// Consents begins a consent for the caller's own connection when a tool call needs one
+	// (connector_login.go). Nil leaves such a binding out of the session, as it was before.
+	Consents Consents
 }
 
 // defaultConnectorTimeout bounds one connector tool call whose binding sets no timeout_ms.
@@ -114,9 +117,16 @@ func (m *Manager) attachConnectors(ctx context.Context, spec *Spec) (*dispatcher
 	if spec.ConfigID == "" {
 		return nil, nil, nil, stack.Wrap(errors.New("session: connector bindings come from a stored agent config, and this session names none"))
 	}
-	d := &dispatcher{store: m.options.Store, spec: *spec, routes: map[string]route{}}
+	d := &dispatcher{store: m.options.Store, spec: *spec, routes: map[string]route{}, invocations: m.invocations}
+	// Opened on the context a call runs on (dispatcher.correlated): a refresh while the tools
+	// are listed is audited as one during a call is, with no request or session id for an
+	// incognito session. The MCP client keeps the values of the context it connected on for
+	// what it sends outside a call, the standalone stream and the DELETE that Close sends
+	// (connCtx, xcontext.Detach, in go-sdk v1.8.0 mcp/streamable.go:2074 and :2782), so this
+	// covers those too.
+	opening := d.correlated(ctx)
 	for _, binding := range spec.ConnectorBindings {
-		reason, err := m.openBinding(ctx, *spec, binding, selected[binding.Name], d)
+		reason, err := m.openBinding(opening, *spec, binding, selected[binding.Name], d)
 		if err != nil {
 			d.Close()
 			return nil, nil, nil, err
@@ -131,6 +141,7 @@ func (m *Manager) attachConnectors(ctx context.Context, spec *Spec) (*dispatcher
 		}
 		m.logger.Warn("opening the session without a connector", "connector", binding.Name, "reason", reason)
 		unavailable = append(unavailable, ConnectorUnavailable{Name: binding.Name, ConnectorID: binding.ConnectorID, Reason: reason})
+		m.offerLogin(*spec, binding, reason, selected[binding.Name], d)
 	}
 	return d, d.tools, unavailable, nil
 }

@@ -13,11 +13,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
@@ -30,9 +32,14 @@ const (
 )
 
 const (
-	defaultBaseURL = "https://api.twilio.com"
-	defaultTimeout = 30 * time.Second
+	defaultBaseURL    = "https://api.twilio.com"
+	defaultPricingURL = "https://pricing.twilio.com"
+	defaultTimeout    = 30 * time.Second
 )
+
+// pricesTTL is how long a country's prices are kept. Twilio changes them rarely, and a day
+// keeps a search to one extra call per country.
+const pricesTTL = 24 * time.Hour
 
 // errorBodyLimit caps how much of a failed response is read into an error message.
 const errorBodyLimit = 2048
@@ -51,6 +58,8 @@ type Options struct {
 	AuthToken string
 	// BaseURL defaults to Twilio's API host.
 	BaseURL string
+	// PricingURL defaults to Twilio's pricing host.
+	PricingURL string
 	// Timeout bounds one call. Buying a number is slower than most, so this is generous.
 	Timeout time.Duration
 	// HTTPClient replaces the one built from Timeout.
@@ -62,7 +71,17 @@ type Provider struct {
 	accountSID string
 	authToken  string
 	baseURL    string
+	pricingURL string
 	client     *http.Client
+
+	mu     sync.Mutex
+	prices map[string]countryPrices
+}
+
+// countryPrices is what one number of each type costs a month in a country, in micros.
+type countryPrices struct {
+	micros  map[phone.NumberType]int64
+	fetched time.Time
 }
 
 // New validates the options and returns a Provider.
@@ -79,6 +98,9 @@ func New(options Options) (*Provider, error) {
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
 	}
+	if options.PricingURL == "" {
+		options.PricingURL = defaultPricingURL
+	}
 	if options.Timeout <= 0 {
 		options.Timeout = defaultTimeout
 	}
@@ -90,7 +112,9 @@ func New(options Options) (*Provider, error) {
 		accountSID: options.AccountSID,
 		authToken:  options.AuthToken,
 		baseURL:    strings.TrimSuffix(options.BaseURL, "/"),
+		pricingURL: strings.TrimSuffix(options.PricingURL, "/"),
 		client:     options.HTTPClient,
+		prices:     map[string]countryPrices{},
 	}, nil
 }
 
@@ -144,16 +168,19 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 		return nil, err
 	}
 
+	price := p.monthlyPrice(ctx, search.Country, kind)
+
 	offered := make([]phone.Available, 0, len(response.AvailablePhoneNumbers))
 	for _, number := range response.AvailablePhoneNumbers {
 		offered = append(offered, phone.Available{
-			E164:         number.PhoneNumber,
-			Vendor:       p.Vendor(),
-			Country:      number.ISOCountry,
-			Region:       number.Region,
-			Locality:     number.Locality,
-			Type:         kind,
-			Capabilities: number.Capabilities.list(),
+			E164:              number.PhoneNumber,
+			Vendor:            p.Vendor(),
+			Country:           number.ISOCountry,
+			Region:            number.Region,
+			Locality:          number.Locality,
+			Type:              kind,
+			Capabilities:      number.Capabilities.list(),
+			MonthlyCostMicros: price,
 		})
 	}
 	return offered, nil
@@ -165,6 +192,47 @@ var resources = map[phone.NumberType]string{
 	phone.Local:    "Local",
 	phone.TollFree: "TollFree",
 	phone.Mobile:   "Mobile",
+}
+
+// pricedAs is the name Twilio's pricing gives each kind of number.
+var pricedAs = map[string]phone.NumberType{
+	"local":     phone.Local,
+	"toll free": phone.TollFree,
+	"mobile":    phone.Mobile,
+}
+
+// monthlyPrice is what Twilio charges a month for a number of this type in this country,
+// or zero when it cannot say. Search works without it, so a failure is logged, not returned.
+func (p *Provider) monthlyPrice(ctx context.Context, country string, kind phone.NumberType) int64 {
+	country = strings.ToUpper(country)
+
+	p.mu.Lock()
+	cached, ok := p.prices[country]
+	p.mu.Unlock()
+	if ok && time.Since(cached.fetched) < pricesTTL {
+		return cached.micros[kind]
+	}
+
+	var response numberPrices
+	if err := p.do(ctx, http.MethodGet, p.pricingURL, "/v1/PhoneNumbers/Countries/"+country, nil, nil, &response); err != nil {
+		slog.WarnContext(ctx, "twilio: no number prices", "country", country, "error", err)
+		return 0
+	}
+
+	// Micros are dollars, so a price in another currency is no price.
+	micros := map[phone.NumberType]int64{}
+	if response.PriceUnit == "USD" {
+		for _, price := range response.PhoneNumberPrices {
+			if known, ok := pricedAs[price.NumberType]; ok {
+				micros[known] = dollarsToMicros(price.CurrentPrice)
+			}
+		}
+	}
+
+	p.mu.Lock()
+	p.prices[country] = countryPrices{micros: micros, fetched: time.Now()}
+	p.mu.Unlock()
+	return micros[kind]
 }
 
 // Supports is everything except a state and an anchored prefix.
@@ -217,7 +285,7 @@ func (p *Provider) ReleaseNumber(ctx context.Context, e164 string) error {
 	}
 
 	path := fmt.Sprintf("/2010-04-01/Accounts/%s/IncomingPhoneNumbers/%s.json", p.accountSID, sid)
-	return p.do(ctx, http.MethodDelete, path, nil, nil, nil)
+	return p.do(ctx, http.MethodDelete, p.baseURL, path, nil, nil, nil)
 }
 
 // ConfigureInbound points the number's voice webhook at TwiML that dials the Stream trunk,
@@ -245,7 +313,7 @@ func (p *Provider) ConfigureInbound(ctx context.Context, inbound phone.Inbound) 
 		"VoiceMethod": {http.MethodGet},
 	}
 	path := fmt.Sprintf("/2010-04-01/Accounts/%s/IncomingPhoneNumbers/%s.json", p.accountSID, sid)
-	return p.do(ctx, http.MethodPost, path, nil, form, nil)
+	return p.do(ctx, http.MethodPost, p.baseURL, path, nil, form, nil)
 }
 
 // Dial places a call and bridges the answered leg into the Stream trunk. Stream's SIP is
@@ -334,15 +402,15 @@ func (p *Provider) sidFor(ctx context.Context, e164 string) (string, error) {
 }
 
 func (p *Provider) get(ctx context.Context, path string, query url.Values, into any) error {
-	return p.do(ctx, http.MethodGet, path, query, nil, into)
+	return p.do(ctx, http.MethodGet, p.baseURL, path, query, nil, into)
 }
 
 func (p *Provider) post(ctx context.Context, path string, form url.Values, into any) error {
-	return p.do(ctx, http.MethodPost, path, nil, form, into)
+	return p.do(ctx, http.MethodPost, p.baseURL, path, nil, form, into)
 }
 
-func (p *Provider) do(ctx context.Context, method, path string, query, form url.Values, into any) error {
-	endpoint := p.baseURL + path
+func (p *Provider) do(ctx context.Context, method, base, path string, query, form url.Values, into any) error {
+	endpoint := base + path
 	if len(query) > 0 {
 		endpoint += "?" + query.Encode()
 	}
@@ -469,6 +537,14 @@ type availableNumbers struct {
 		Locality     string       `json:"locality"`
 		Capabilities capabilities `json:"capabilities"`
 	} `json:"available_phone_numbers"`
+}
+
+type numberPrices struct {
+	PriceUnit         string `json:"price_unit"`
+	PhoneNumberPrices []struct {
+		NumberType   string `json:"number_type"`
+		CurrentPrice string `json:"current_price"`
+	} `json:"phone_number_prices"`
 }
 
 type incomingNumber struct {

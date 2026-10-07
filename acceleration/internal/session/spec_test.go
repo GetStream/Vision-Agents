@@ -85,6 +85,32 @@ func (s *SpecSuite) TestAConnectorBindingWinsOverAPluginEntryForTheSameProvider(
 	s.Equal([]store.PluginEntry{{Name: "gong"}}, spec.UserPlugins)
 }
 
+// TestAVoiceSessionIsKeyedUnderTheAgentIDItNamesBeforeNormalize: KeyedAgentID is what
+// Normalize keys a voice session under, its call id when it names no agent id, trimmed as
+// Normalize trims it.
+func (s *SpecSuite) TestAVoiceSessionIsKeyedUnderTheAgentIDItNamesBeforeNormalize() {
+	spec := Spec{CustomerID: "acme", CallID: "call-1"}
+	padded := Spec{CustomerID: "acme", CallID: " call-1 \n"}
+	keyed, paddedKeyed := spec.KeyedAgentID(), padded.KeyedAgentID()
+
+	s.Require().NoError(spec.Normalize())
+	s.Require().NoError(padded.Normalize())
+
+	s.Equal("call-1", keyed)
+	s.Equal(keyed, spec.AgentID)
+	s.Equal("call-1", paddedKeyed)
+	s.Equal(paddedKeyed, padded.AgentID)
+}
+
+// TestATextSessionNamingNoAgentIDIsKeyedUnderNoneACallerNamed: Normalize gives it a new id.
+func (s *SpecSuite) TestATextSessionNamingNoAgentIDIsKeyedUnderNoneACallerNamed() {
+	spec := Spec{CustomerID: "acme", Text: true}
+
+	s.Empty(spec.KeyedAgentID())
+	s.Require().NoError(spec.Normalize())
+	s.NotEmpty(spec.AgentID)
+}
+
 // TestWithoutABindingThePluginsAreLeftExactlyAsConfigured: Normalize's same-provider rule
 // is a no-op for a config that binds no connector, down to an empty list staying empty.
 func (s *SpecSuite) TestWithoutABindingThePluginsAreLeftExactlyAsConfigured() {
@@ -114,6 +140,22 @@ func (s *SpecSuite) TestAPluginOfAnotherProviderStaysBesideABinding() {
 	s.Require().NoError(spec.Normalize())
 
 	s.Equal([]store.PluginEntry{{Name: "slack"}}, spec.AgentPlugins)
+}
+
+// A call's transcript goes into the conversation's agent channel, else the agent id's, as
+// chatlog.New picks it from the Channel the transcript factory passes: a conversation_id of
+// another channel type, or none at all, is the agent id's.
+func (s *SpecSuite) TestATranscriptGoesIntoTheConversationsAgentChannelElseTheAgentIds() {
+	for conversation, want := range map[string][2]string{
+		"agent:support-0199": {"support-0199", "agent:support-0199"},
+		"messaging:X":        {"", "agent:front-desk"},
+		"X":                  {"", "agent:front-desk"},
+		"":                   {"", "agent:front-desk"},
+	} {
+		spec := Spec{ConversationID: conversation, AgentID: "front-desk"}
+		s.Equal(want[0], spec.ConversationChannel(), conversation)
+		s.Equal(want[1], spec.TranscriptChannel(), conversation)
+	}
 }
 
 func (s *SpecSuite) TestAThreadChannelIsAConversationSeveralPeopleShare() {

@@ -505,6 +505,7 @@ Google reports it as a token count rather than streaming it, so there are no
 | `gemini/gemini-3.5-transcribe-live`                        | 85+       | ~$0.54         |
 | `grok/grok-stt`                                            | 25        | $0.20          |
 | `inworld/inworld-stt-1`                                    | 30        | $0.15          |
+| `microsoft/MAI-Transcribe-2-Streaming`                     | 60        | $0.54          |
 | `muse/muse-voice-transcribe-1.0`                           | 25        | $0.18          |
 | `parakeet/parakeet-tdt-0.6b-v3`                            | 25        | $0.079         |
 | `together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b`   | en        | $0.09          |

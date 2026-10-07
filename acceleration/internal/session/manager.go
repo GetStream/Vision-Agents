@@ -149,12 +149,15 @@ type Manager struct {
 	// conversation is read back from. Nil without a store, and never handed an incognito
 	// session.
 	records *sessionRecorder
+	// invocations logs each connector tool call. Nil without a store or with connectors off,
+	// where no session opens a connector.
+	invocations *invocationRecorder
 	// reviews says what a finished call went like, onto the row calls wrote.
 	reviews *reviewer
 	// titles names persistent conversations nobody renamed, on the session row and the channel.
 	titles *titler
-	// cards writes each phone call's episode card into the caller's omni-channel. Nil
-	// without a store or Stream clients.
+	// cards writes each phone call's episode card into the caller's omni-channel, and reads
+	// the person's cards for a session to start with. Nil without a store or Stream clients.
 	cards *callCards
 	// hosts runs the tools workers host for an agent config. Nil offers none.
 	hosts ToolHosts
@@ -198,6 +201,9 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		manager.calls = newCallRecorder(options.Store, options.Logger)
 		manager.records = newSessionRecorder(options.Store, options.Logger)
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
+		if options.Connectors.Transports != nil {
+			manager.invocations = newInvocationRecorder(options.Store, options.Logger)
+		}
 	}
 	manager.titles = newTitler(options.LLM, manager.records, options.Logger)
 	manager.cards = newCallCards(options.Store, options.Stream, options.Logger)
@@ -494,7 +500,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		tools = append(tools, connectorTools...)
 		connectors.next = runner
 		runner = connectors
-		created.closers = append(created.closers, connectors.Close)
+		connectors.askIn(conv, created.chose)
+		created.connectors = connectors
+		created.closers = append(created.closers, connectors.Close, connectors.closeLogins)
 	}
 	created.connectorsUnavailable = connectorsUnavailable
 
@@ -582,7 +590,18 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		})
 	}
 
-	if m.options.Transcript != nil && conv == nil && !spec.Incognito {
+	// A transcript is written into the conversation's channel, else the agent id's
+	// (chatlog.Options.Channel). One a device asked for under a thread channel's agent id is
+	// not written there (persistent.BarThread).
+	written := spec.ConversationID
+	if written == "" {
+		written = streamapp.AgentChannelType + ":" + spec.AgentID
+	}
+	// Where the transcript actually goes, as the transcript factory picks it.
+	if !persistent.Barred(ctx, written) {
+		created.transcribedInto = spec.TranscriptChannel()
+	}
+	if m.options.Transcript != nil && conv == nil && !spec.Incognito && !persistent.Barred(ctx, written) {
 		// A transcript that cannot be opened is not a reason to refuse the call. What was
 		// said is worth keeping; it is not worth not having the conversation for.
 		transcript, err := m.options.Transcript(ctx, spec, stream, m.logger)
@@ -602,7 +621,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			"call", spec.CallID, "conversation", spec.ConversationID,
 			"turns", len(previous), "truncated", spec.ContextTruncated)
 	}
-	created.voiceAgent.RestoreHistory(previous)
+	// The person's other episodes go first, as context before this conversation's own
+	// history, and only to the model: not to the title, the review or the reopened summary.
+	cards := m.cards.read(ctx, spec, stream)
+	created.carded = len(cards) > 0
+	created.voiceAgent.RestoreHistory(append(cards, previous...))
 	// A reopened chat is reviewed again when it ends, and its summary is of all of it.
 	if !spec.Reopened.IsZero() {
 		earlier := spokenOf(previous)
@@ -854,13 +877,27 @@ func (m *Manager) ByAgentWhere(agentID string, admits func(customer string, app 
 	if agentID == "" {
 		return nil, false
 	}
+	return m.newest(func(spec Spec) bool { return spec.AgentID == agentID }, admits)
+}
 
+// ByConversationWhere is the newest running session holding the conversation cid, among the
+// sessions a test admits, by their customer and the Stream app they act in. Unlike an agent
+// id, which any caller may name, a conversation is held only by a session opened on it.
+func (m *Manager) ByConversationWhere(cid string, admits func(customer string, app int64) bool) (*Session, bool) {
+	if cid == "" {
+		return nil, false
+	}
+	return m.newest(func(spec Spec) bool { return spec.ConversationID == cid }, admits)
+}
+
+// newest is the newest running session whose spec matches, among those admits takes.
+func (m *Manager) newest(matches func(Spec) bool, admits func(customer string, app int64) bool) (*Session, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	var newest *Session
 	for _, found := range m.sessions {
-		if found.spec.AgentID != agentID {
+		if !matches(found.spec) {
 			continue
 		}
 		if admits != nil && !admits(found.spec.CustomerID, found.spec.StreamApp) {
@@ -1235,6 +1272,9 @@ func (m *Manager) Shutdown() error {
 		m.calls.Close()
 		m.records.Close()
 		m.logs.close()
+	}
+	if m.invocations != nil {
+		m.invocations.Close()
 	}
 	// A conversation store the caller passed in outlives this manager.
 	if m.conversations != nil && m.options.Conversations == nil {

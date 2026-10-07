@@ -114,6 +114,60 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) erro
 	}))
 }
 
+// AddConnectorBinding appends binding to a live config's connectors and writes that column
+// alone, with updated_at, so an edit of any other column that lands meanwhile is kept. The
+// config row is locked FOR UPDATE for the read and the write, so two writers of connectors
+// take turns. A fixed binding's connection is locked as UpdateAgentConfig locks it and must
+// be live. added is false, and nothing is written, when the config already has a binding of
+// that name. The config is returned as it is after, for a caller that forgets a cached copy.
+// For router plugins migrate (T61 in acceleration/docs/connectors/subtasks.md on
+// connectors/planning).
+func (s *Store) AddConnectorBinding(ctx context.Context, customerID, configID string, binding ConnectorBinding) (config AgentConfig, added bool, err error) {
+	if customerID == "" || configID == "" || binding.Name == "" {
+		return AgentConfig{}, false, stack.Wrap(errors.New("store: a customer, a config and a binding name are required"))
+	}
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		missing, err := lockBoundConnections(ctx, tx, &AgentConfig{CustomerID: customerID, Connectors: []ConnectorBinding{binding}})
+		if err != nil {
+			return err
+		}
+		if err := refuseUnbindable(missing, nil); err != nil {
+			return err
+		}
+		err = tx.NewSelect().Model(&config).
+			Where("id = ?", configID).
+			Where("customer_id = ?", customerID).
+			Where("deleted_at IS NULL").
+			For("UPDATE").
+			Scan(ctx)
+		if errors.Is(err, sql.ErrNoRows) {
+			return unknownAgentConfig(configID)
+		}
+		if err != nil {
+			return fmt.Errorf("store: add connector binding: %w", err)
+		}
+		if slices.ContainsFunc(config.Connectors, func(b ConnectorBinding) bool { return b.Name == binding.Name }) {
+			return nil
+		}
+		config.Connectors = append(config.Connectors, binding)
+		config.UpdatedAt = time.Now().UTC()
+		_, err = tx.NewUpdate().Model(&config).
+			Column("connectors", "updated_at").
+			Where("id = ?", configID).
+			Where("customer_id = ?", customerID).
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("store: add connector binding: %w", err)
+		}
+		added = true
+		return nil
+	})
+	if err != nil {
+		return AgentConfig{}, false, stack.Wrap(err)
+	}
+	return config, added, nil
+}
+
 // lockBoundConnections locks each live connection of the config's customer that the config
 // binds as fixed until the transaction ends, and returns the ids it binds that are not live.
 // It makes a bind and an unforced delete (DeleteUnboundConnectorConnection, which locks the

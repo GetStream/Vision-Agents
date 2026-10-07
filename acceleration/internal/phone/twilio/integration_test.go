@@ -50,6 +50,7 @@ func (s *TwilioIntegrationSuite) TestTwilioOffersVoiceNumbersInTheUS() {
 	for _, number := range offered {
 		s.Contains(number.Capabilities, phone.Voice, number.E164+" cannot take a call")
 		s.Equal("US", number.Country)
+		s.Positive(number.MonthlyCostMicros, number.E164+" has no price")
 	}
 }
 

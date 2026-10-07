@@ -53,6 +53,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
@@ -222,6 +223,9 @@ type RouterSuite struct {
 	// it returns at the time, whatever host a manifest's reply names: the test's own fake
 	// provider. Nil leaves bridge as the suite set it.
 	channelProvider func() string
+	// transcripts, set by a suite before it starts the harness, opens each voice session's
+	// transcript, as cmd/router's chatlog does. Nil keeps none, as the other suites do.
+	transcripts session.TranscriptFactory
 	// forwardHTTP, set by a suite about event forwarding before it starts the harness, gives
 	// the router an event forwarder (internal/eventforward) whose sends go through it, to the
 	// test's own destinations on loopback, which egress refuses; a destination URL on loopback
@@ -230,6 +234,14 @@ type RouterSuite struct {
 	// suites'.
 	forwardHTTP *http.Client
 	forwarder   *eventforward.Forwarder
+	// mcpEventsOn, set by a suite about MCP events before it starts the harness, gives the
+	// router an MCP events service (internal/mcpevents) whose callbacks are the suite's own
+	// router, reached on loopback over http. Off leaves it absent, as a deployment with
+	// connectors off has, and runs no worker beside the other suites'.
+	mcpEventsOn bool
+	mcpEvents   *mcpevents.Service
+	// transports is the connections' outbound clients the router was built with.
+	transports *core.Transports
 	// resolver is the router's connector resolver over the suite's store and sealer, with
 	// connectors' schemes, set by SetupSuite.
 	resolver *resolver.Resolver
@@ -362,7 +374,9 @@ func (s *RouterSuite) SetupSuite() {
 	transports, err := core.NewTransports(core.TransportsConfig{Resolver: s.resolver, Timeout: suiteConnectorTimeout,
 		NewClient: loopbackClients(s.connectorHTTP)})
 	s.Require().NoError(err)
-	sessions := s.sessionManager(streams, directory, session.Connectors{Registry: s.connectors, Transports: transports}, logger)
+	s.transports = transports
+	sessions := s.sessionManager(streams, directory, session.Connectors{Registry: s.connectors, Transports: transports,
+		Consents: ConnectorConsents(pgStore, s.connectors, s.sealer, s.publicURL)}, logger)
 	// A nil client reaches public hosts alone, and every auth server here is a local one.
 	public := &plugins.Auth{HTTP: http.DefaultClient}
 	s.events = s.pluginEvents(sessions, public, logger)
@@ -392,6 +406,19 @@ func (s *RouterSuite) SetupSuite() {
 		s.Require().NoError(err)
 		s.forwarder.Start()
 		s.T().Cleanup(s.forwarder.Close)
+	}
+
+	if s.mcpEventsOn {
+		s.mcpEvents, err = mcpevents.New(mcpevents.Options{
+			Store: pgStore, Sessions: sessions, Registry: s.connectors, Transports: transports, Secrets: s.sealer,
+			PublicURL: "http://" + listener.Listener.Addr().String(), Logger: logger,
+			// A second, not the production minute, so a test's look by this worker comes and
+			// saves within its window, and is longer than an attempt against the fake.
+			Lease: time.Second,
+		})
+		s.Require().NoError(err)
+		s.mcpEvents.Start()
+		s.T().Cleanup(s.mcpEvents.Close)
 	}
 
 	server, err := NewServer(Options{
@@ -439,6 +466,7 @@ func (s *RouterSuite) SetupSuite() {
 		ConnectorEventSecrets: s.eventSecrets,
 		ChannelBridge:         s.bridge,
 		EventForwarder:        s.forwarder,
+		MCPEvents:             s.mcpEvents,
 		SlackApps:             s.slackApps,
 		OperatorProviderApps:  s.operatorApps,
 	})
@@ -624,6 +652,9 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 			ID: store.NewID(), Name: connectorEcho, Arguments: `{"text":"` + connectorEchoText + `"}`,
 		}}}, nil
 	})
+	// A model that runs crm's echo through a waiting binding's call_tool whenever somebody
+	// asks it something, a follow-up after a login included (chat_logins_test.go).
+	reasoning.Register("logging-in", func(routing.Spec) (llmrouter.Provider, error) { return &loggingInLLM{}, nil })
 	reasoner, err := llmrouter.New(llmrouter.Options{
 		Config: reasoningConfig(), Registry: reasoning, Store: s.store, Live: s.live,
 		Quota: limiter, Gate: gate, Logger: logger,
@@ -713,6 +744,7 @@ func (s *RouterSuite) sessionManager(
 		STT:           streams.STT,
 		TTS:           streams.TTS,
 		Memory:        remembering,
+		Transcript:    s.transcripts,
 		Conversations: conversations,
 		Stream:        s.stream,
 		Store:         s.store,

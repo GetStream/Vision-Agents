@@ -93,6 +93,7 @@ const (
 	codeSimulationRunNotFound  = "simulation_run_not_found"
 	codeSkillNotFound          = "skill_not_found"
 	codeVoiceNotFound          = "voice_not_found"
+	codeCardedSessionToNative  = "carded_session_to_native"
 )
 
 // APIError is a failure an operation answers with on purpose: its type decides the

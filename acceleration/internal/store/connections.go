@@ -197,6 +197,44 @@ func ConnectionLimit(asked int) int {
 // must be one the customer can see. The registry is passed in rather than held by the store, so which
 // schemes exist is decided by whoever built it, and a test can register its own.
 func (s *Store) CreateConnectorConnection(ctx context.Context, registry core.Registry, connection *ConnectorConnection) error {
+	return s.createConnection(ctx, registry, connection, newID())
+}
+
+// ErrConnectorConnectionExists says a row, live or deleted, already has the id a
+// CreateConnectorConnectionWithID was given.
+var ErrConnectorConnectionExists = errors.New("store: a connector connection already has this id")
+
+// CreateConnectorConnectionWithID is CreateConnectorConnection under an id the caller chose,
+// for router plugins migrate, which derives it from the plugin login it moves so that a
+// second run finds what the first made (T61 in acceleration/docs/connectors/subtasks.md on
+// connectors/planning). An id any row already has, deleted or not, is
+// ErrConnectorConnectionExists and writes nothing.
+func (s *Store) CreateConnectorConnectionWithID(ctx context.Context, registry core.Registry, connection *ConnectorConnection, id string) error {
+	if id == "" {
+		return stack.Wrap(errors.New("store: a connection id is required"))
+	}
+	return s.createConnection(ctx, registry, connection, id)
+}
+
+// ConnectorConnectionEvenDeleted returns the customer's connection with id, deleted or not,
+// so router plugins migrate can tell a connection it made and someone deleted since from one
+// it never made.
+func (s *Store) ConnectorConnectionEvenDeleted(ctx context.Context, customerID, id string) (ConnectorConnection, error) {
+	var connection ConnectorConnection
+	err := s.db.NewSelect().Model(&connection).
+		Where("customer_id = ?", customerID).
+		Where("id = ?", id).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ConnectorConnection{}, stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorConnection, id))
+	}
+	if err != nil {
+		return ConnectorConnection{}, stack.Wrap(fmt.Errorf("store: connector connection: %w", err))
+	}
+	return connection, nil
+}
+
+func (s *Store) createConnection(ctx context.Context, registry core.Registry, connection *ConnectorConnection, id string) error {
 	if connection.CustomerID == "" || connection.ConnectorID == "" {
 		return stack.Wrap(errors.New("store: a customer and a connector id are required"))
 	}
@@ -234,7 +272,7 @@ func (s *Store) CreateConnectorConnection(ctx context.Context, registry core.Reg
 
 	// Truncated to what Postgres keeps, so the row handed back is the row a read returns.
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	connection.ID = newID()
+	connection.ID = id
 	connection.Status = ConnectionPending
 	connection.Revision = 1
 	connection.CredentialsSealed = []byte{}
@@ -254,7 +292,13 @@ func (s *Store) CreateConnectorConnection(ctx context.Context, registry core.Reg
 	if connection.CachedTools == nil {
 		connection.CachedTools = []ConnectorTool{}
 	}
-	if _, err := s.db.NewInsert().Model(connection).Exec(ctx); err != nil {
+	_, err = s.db.NewInsert().Model(connection).Exec(ctx)
+	// The primary key, named by Postgres's default for a table's (CREATE TABLE in
+	// 20261002193000_connector_connections.sql names none).
+	if constraint(err) == "connector_connections_pkey" {
+		return stack.Wrap(fmt.Errorf("%w: %s", ErrConnectorConnectionExists, id))
+	}
+	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: create connector connection: %w", err))
 	}
 	return nil
@@ -545,6 +589,129 @@ func softDeleteConnection(ctx context.Context, db bun.IDB, customerID, id string
 		return 0, stack.Wrap(fmt.Errorf("store: delete connector connection: %w", err))
 	}
 	return affected, nil
+}
+
+// DeletedConnection is one connection DeleteUserConnectorConnections removed.
+type DeletedConnection struct {
+	ID          string
+	ConnectorID string
+	// HadGrant says it still held stored credentials, which the delete revoked.
+	HadGrant bool
+}
+
+// DeleteUserConnectorConnections hard deletes every connection of one user of the
+// customer's, live or already soft deleted, with their attempts and their invocations, so
+// the user's id and their accounts' ids are gone (architecture doc, «Add» item 9: «hard
+// delete of owner_id and account_id on request»). The audit rows of those connections stay,
+// with their session, request and attempt ids emptied. A user with none is not an error.
+//
+// The rows are locked FOR UPDATE before they go, so a credentials write in flight commits
+// first or finds the row gone (ErrConnectorConnectionChanged). A connection the user makes
+// after the delete began is not one it removes.
+func (s *Store) DeleteUserConnectorConnections(ctx context.Context, customerID, userID string) ([]DeletedConnection, error) {
+	if customerID == "" || userID == "" {
+		return nil, stack.Wrap(errors.New("store: a customer and a user id are required"))
+	}
+	var deleted []DeletedConnection
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var rows []struct {
+			ID          string `bun:"id"`
+			ConnectorID string `bun:"connector_id"`
+			HadGrant    bool   `bun:"had_grant"`
+		}
+		err := tx.NewSelect().Model((*ConnectorConnection)(nil)).
+			Column("cc.id", "cc.connector_id").
+			ColumnExpr("cc.credentials_sealed <> ''::bytea AS had_grant").
+			Where("cc.customer_id = ?", customerID).
+			Where("cc.owner_type = ?", OwnerUser).
+			Where("cc.owner_id = ?", userID).
+			For("UPDATE").
+			Scan(ctx, &rows)
+		if err != nil {
+			return fmt.Errorf("store: lock a user's connector connections: %w", err)
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		ids := make([]string, 0, len(rows))
+		for _, row := range rows {
+			ids = append(ids, row.ID)
+			deleted = append(deleted, DeletedConnection{ID: row.ID, ConnectorID: row.ConnectorID, HadGrant: row.HadGrant})
+		}
+		// Attempts reference their connection with no cascade (20261002193100), so they go
+		// first. Invocations cascade.
+		if _, err := tx.NewDelete().Model((*ConnectorAuthorizationAttempt)(nil)).
+			Where("caa.connection_id IN (?)", bun.In(ids)).Exec(ctx); err != nil {
+			return fmt.Errorf("store: delete a user's authorization attempts: %w", err)
+		}
+		if _, err := tx.NewDelete().Model((*ConnectorConnection)(nil)).
+			Where("cc.customer_id = ?", customerID).
+			Where("cc.id IN (?)", bun.In(ids)).Exec(ctx); err != nil {
+			return fmt.Errorf("store: delete a user's connector connections: %w", err)
+		}
+		// The audit keeps the connections' rows, which name no user, but its correlation ids
+		// lead back to one: a session id joins agent_sessions.user_id, and a request id and an
+		// attempt id are found in the access log beside the user's requests.
+		if _, err := tx.NewUpdate().Model((*ConnectorAuditEvent)(nil)).
+			Set("session_id = ''").
+			Set("request_id = ''").
+			Set("attempt_id = ''").
+			Where("ca.customer_id = ?", customerID).
+			Where("ca.connection_id IN (?)", bun.In(ids)).Exec(ctx); err != nil {
+			return fmt.Errorf("store: unlink a user's connector audit: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	return deleted, nil
+}
+
+// ConnectionUse is one binding of a live agent config that names a connection as its fixed
+// connection: what deleting the connection would break.
+type ConnectionUse struct {
+	ConfigID   string `bun:"config_id"`
+	ConfigName string `bun:"config_name"`
+	// Binding is the alias the config binds it under.
+	Binding      string `bun:"binding"`
+	ConnectionID string `bun:"connection_id"`
+}
+
+// ConnectorConnectionUses are the bindings of the customer's live agent configs that name
+// each of ids as their fixed connection, by connection id, each list by config name and
+// alias. A binding a session fills names no connection, so it is never one of them. It reads
+// the shape boundByConfig matches.
+func (s *Store) ConnectorConnectionUses(ctx context.Context, customerID string, ids []string) (map[string][]ConnectionUse, error) {
+	if customerID == "" {
+		return nil, stack.Wrap(errors.New("store: a customer id is required"))
+	}
+	uses := map[string][]ConnectionUse{}
+	if len(ids) == 0 {
+		return uses, nil
+	}
+	var rows []ConnectionUse
+	// A row whose connectors is not an array binds nothing, rather than failing the read: the
+	// column is jsonb, and a writer that skips the store can put anything there.
+	err := s.db.NewSelect().
+		TableExpr("agent_configs AS ac").
+		Join("CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(ac.connectors) = 'array' THEN ac.connectors ELSE '[]'::jsonb END) AS binding").
+		ColumnExpr("ac.id AS config_id, ac.name AS config_name").
+		ColumnExpr("binding ->> 'name' AS binding").
+		ColumnExpr("binding -> 'connection' ->> 'connection_id' AS connection_id").
+		Where("ac.customer_id = ?", customerID).
+		Where("ac.deleted_at IS NULL").
+		Where("binding -> 'connection' ->> 'type' = 'fixed'").
+		Where("binding -> 'connection' ->> 'connection_id' IN (?)", bun.In(ids)).
+		OrderExpr("ac.name, ac.id, binding ->> 'name'").
+		Scan(ctx, &rows)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: connector connection uses: %w", err))
+	}
+	for _, row := range rows {
+		uses[row.ConnectionID] = append(uses[row.ConnectionID], row)
+	}
+	return uses, nil
 }
 
 // ConnectorConnectionReferenced reports whether a live agent config of the customer's binds

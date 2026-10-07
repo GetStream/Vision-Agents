@@ -6,6 +6,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -57,7 +58,13 @@ func documentHandWritten(api huma.API) {
 			"and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin " +
 			"the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: " +
 			"a client shows it as a button opening authorize_url. Once the user finishes that login " +
-			"the message is sent again with the attachment's status set to connected. Activity states are thinking, queued, tools, writing, completed, " +
+			"the message is sent again with the attachment's status set to connected. " +
+			"A connector_authorization attachment asks the end user to connect a connector binding " +
+			"the reply needed with their own account, with name (the binding's alias), connector_id, " +
+			"connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a " +
+			"client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. " +
+			"Once the user finishes that login the message is sent again with status connected and " +
+			"no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, " +
 			"failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; " +
 			"tool_ran also includes tool_call_id.\n" +
 			"A respond command carrying command_id emits command_accepted with a nested command " +
@@ -401,6 +408,30 @@ func documentHandWritten(api huma.API) {
 			"202": {Description: "The event is taken, and a conversation is opening for it"},
 			"401": {Description: "The delivery is not signed with the subscription's secret"},
 			"410": {Description: "There is no such subscription any more; stop delivering to it"},
+			"413": {Description: "The delivery is over 256 KiB"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
+		OperationID: "receiveConnectionEvent",
+		Method:      http.MethodPost,
+		Path:        mcpevents.Path + "{token}",
+		Summary:     "Receive a connection's MCP event",
+		Description: "Where a connection's MCP server delivers the events an agent config's binding " +
+			"subscribed to, signed with Standard Webhooks (MCP Events, a draft). The path is " +
+			"unauthenticated because the server is not a customer: the token names the subscription, " +
+			"and each delivery is checked against that subscription's own secret, never a provider " +
+			"app's. A verification is answered with its challenge, and an event opens a text " +
+			"conversation from the config.",
+		Security: []map[string][]string{},
+		Parameters: []*huma.Param{
+			{Name: "token", In: "path", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "A verification's challenge, echoed, or an event already taken"},
+			"202": {Description: "The event is taken, and a conversation is opening for it"},
+			"400": {Description: "The delivery is not JSON, or not an event this subscription is for"},
+			"401": {Description: "The delivery is not signed with the subscription's secret"},
+			"410": {Description: "There is no such subscription, or its connection or declaration is gone; stop delivering to it"},
 			"413": {Description: "The delivery is over 256 KiB"},
 		},
 	})

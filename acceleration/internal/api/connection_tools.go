@@ -228,11 +228,14 @@ func (s *Server) putConnectionCredentials(ctx context.Context, request *putConne
 		return nil, invalidRequest("the credentials were refused: " + err.Error())
 	}
 	stale := false
+	var committed *core.CredentialState
 	err = s.credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
 		if state.Revision != sent.ExpectedRevision {
 			stale = true
 			return false, nil
 		}
+		// The credential store leaves the revision it committed here (core.CredentialStore).
+		committed = state
 		state.Credentials = credentials
 		state.Status = store.ConnectionConnected
 		state.LastError = ""
@@ -258,6 +261,8 @@ func (s *Server) putConnectionCredentials(ctx context.Context, request *putConne
 	if stale {
 		return nil, errStaleRevision
 	}
+	s.auditGrant(ctx, connection.CustomerID, connection.ID, connection.ConnectorID, connection.OwnerType,
+		store.AuditGrantCreated, store.AuditReasonCredentials, committed.Revision, "")
 	return s.getConnection(ctx, &connectionRequest{ID: connection.ID})
 }
 
@@ -327,6 +332,22 @@ func (s *Server) validateConnection(ctx context.Context, request *validateConnec
 	}
 	if err != nil {
 		return nil, err
+	}
+	// The credential works, so the events its bindings declare are subscribed to, off the
+	// request (internal/mcpevents). Nil with connectors off.
+	// The connection is read again, after Resolve took the credential lock: the copy read
+	// before it can be another router's renewal in flight, which Reconcile leaves alone.
+	if s.mcpEvents != nil {
+		resolved, err := s.store.ConnectorConnection(ctx, connection.CustomerID, connection.ID)
+		if errors.Is(err, store.ErrNoConnectorConnection) {
+			return nil, errNoSuchConnection
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err := s.mcpEvents.Reconcile(ctx, resolved); err != nil {
+			return nil, err
+		}
 	}
 	validation := ConnectionValidation{ConnectionID: connection.ID, Status: validationConnected,
 		ToolsDigest: digest, CheckedAt: &listedAt}

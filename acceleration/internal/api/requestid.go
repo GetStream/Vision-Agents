@@ -9,6 +9,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
@@ -41,7 +42,10 @@ func withRequestID(next http.Handler) http.Handler {
 			id = uuid.NewString()
 		}
 		w.Header().Set(RequestIDHeader, id)
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDContextKey{}, id)))
+		ctx := context.WithValue(r.Context(), requestIDContextKey{}, id)
+		// The connector audit rows the request causes, such as a refresh, name it too.
+		ctx = core.WithCorrelation(ctx, core.Correlation{RequestID: id})
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

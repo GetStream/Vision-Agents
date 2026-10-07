@@ -106,6 +106,11 @@ type Spec struct {
 	// have kept should not have to trust that a "hidden" flag is honoured everywhere.
 	//
 	// It forces PersistConversation off, because a channel in Stream Chat is a record.
+	//
+	// One exception: each connector tool call still leaves its row in the connection's call
+	// log (store.ConnectorInvocation), with no session id, no arguments and no results, and
+	// the grant changes it causes are audited with no request or session id. The row is the
+	// use of a credential, which its owner is owed; nothing in it names the conversation.
 	Incognito bool
 	// Title and Description are the caller's own names for the conversation, for a list a
 	// person reads. Never shown to the model: what a conversation is called is a label on
@@ -185,7 +190,8 @@ type Spec struct {
 	// than the model, from the agent's config. The model answers only the server.
 	DispatchText bool
 	// EpisodeCards has a phone call write its episode card into the caller's omni-channel,
-	// from the agent's config. Off, the call does what it did before the cards existed.
+	// and a session on a thread channel or a phone call start with the person's other cards,
+	// from the agent's config. Off, the session does what it did before the cards existed.
 	EpisodeCards bool
 
 	// SkillNames are the skills the voice model may hand to the subagent: the agent
@@ -373,7 +379,7 @@ func (s *Spec) Normalize() error {
 		}
 	}
 
-	s.CallID = strings.TrimSpace(s.CallID)
+	s.CallID = joinedCallID(s.CallID)
 	switch {
 	case !s.Reopened.IsZero() && !(s.Text && s.PersistConversation && s.ConversationID != ""):
 		return stack.Wrap(errors.New("session: only a persistent text conversation is reopened"))
@@ -403,7 +409,7 @@ func (s *Spec) Normalize() error {
 	// it, and a second id minted here would not match, so the conversation is asked for
 	// the one it was written under instead.
 	if s.AgentID == "" && !(s.Text && s.PersistConversation && s.ConversationID != "") {
-		s.AgentID = s.CallID
+		s.AgentID = s.KeyedAgentID()
 		if s.Text {
 			s.AgentID = newID()
 		}
@@ -492,6 +498,45 @@ func checkHistory(lines []persistent.HistoryLine, conversationID string) error {
 			size, persistent.MaxHistoryRunes))
 	}
 	return nil
+}
+
+// KeyedAgentID is the agent id a caller's spec names for the session, before Normalize: its
+// own, else a voice session's call id, which Normalize gives it. A text session without one
+// is given a new id, which no caller names, so it names none.
+func (s Spec) KeyedAgentID() string {
+	if s.AgentID != "" || s.Text {
+		return s.AgentID
+	}
+	return joinedCallID(s.CallID)
+}
+
+// joinedCallID is a call id as the session joins it and is keyed under: without the spaces
+// around it. Normalize and KeyedAgentID both read a call id through it.
+func joinedCallID(id string) string {
+	return strings.TrimSpace(id)
+}
+
+// ConversationChannel is the id, without its type, of the agent channel ConversationID names:
+// the channel a call's transcript is written into (chatlog.Options.Channel). Empty for a
+// ConversationID that names no agent channel, whose transcript goes into the agent id's.
+func (s Spec) ConversationChannel() string {
+	channel := strings.TrimPrefix(s.ConversationID, streamapp.AgentChannelType+":")
+	if channel == s.ConversationID {
+		return ""
+	}
+	return channel
+}
+
+// TranscriptChannel is the cid of the channel a call's transcript is written into: the
+// conversation's agent channel, else the agent id's, as chatlog.New picks it from
+// ConversationChannel. Example: conversation_id "messaging:X" under agent id "front-desk" is
+// written into agent:front-desk.
+func (s Spec) TranscriptChannel() string {
+	channel := s.ConversationChannel()
+	if channel == "" {
+		channel = s.AgentID
+	}
+	return streamapp.AgentChannelType + ":" + channel
 }
 
 // Shared reports whether more than one verified person writes in the conversation: a thread

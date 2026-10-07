@@ -62,6 +62,27 @@ func minimal(extra string) []byte {
 	return []byte("id: example\nrevision: 1\nname: Example\nschemes: [oauth2_code]\n" + extra)
 }
 
+func (s *ManifestSuite) TestASetupPageIsHTTPSAndEveryStepHasATitleAndADescription() {
+	parsed, err := ParseManifest(minimal("setup:\n  url: https://example.com/apps\n  steps:\n    - title: Create an app\n      description: Make one.\n"))
+	s.Require().NoError(err)
+	s.Equal(Setup{URL: "https://example.com/apps", Steps: []SetupStep{{Title: "Create an app", Description: "Make one."}}}, parsed.Setup)
+
+	_, err = ParseManifest(minimal("setup:\n  url: http://example.com/apps\n"))
+	s.ErrorContains(err, `setup.url: "http://example.com/apps" is not an https URL`)
+	_, err = ParseManifest(minimal("setup:\n  steps:\n    - title: Create an app\n"))
+	s.ErrorContains(err, "setup.steps[0]: a step needs a title and a description")
+}
+
+// A manifest without setup marshals as it did before the field existed, so the seeder finds
+// a stored built-in unchanged (store.sameManifest).
+func (s *ManifestSuite) TestAManifestWithoutSetupMarshalsWithoutIt() {
+	parsed, err := ParseManifest(minimal(""))
+	s.Require().NoError(err)
+	raw, err := json.Marshal(parsed)
+	s.Require().NoError(err)
+	s.NotContains(string(raw), "setup")
+}
+
 // The 12 stress-test manifests and the 4 channel ones (channel_test.go).
 func (s *ManifestSuite) TestEveryFixtureManifestLoads() {
 	paths, err := filepath.Glob(filepath.Join("testdata", "manifests", "*.yaml"))

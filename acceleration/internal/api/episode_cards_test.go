@@ -4,10 +4,13 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -121,6 +124,72 @@ func (s *EpisodeCardsSuite) TestACallWithNoPhoneOnItMakesNoCard() {
 	s.called("someone-in-a-browser")
 
 	s.Never(func() bool { return s.contacts() > 0 }, dropped, 20*time.Millisecond)
+}
+
+// A call that started with the person's cards is refused a move onto a speech-to-speech
+// model by both operations that move one, with the one named failure; a call that read no
+// cards moves as before.
+func (s *EpisodeCardsSuite) TestACallWithCardsIsRefusedAMoveOntoSpeechToSpeech() {
+	s.smsWithALine(s.number, "is the clinic open on Sunday?")
+	carded := s.joined("sip-" + s.number)
+	plain := s.joined("sip-" + s.utils.number())
+
+	for _, move := range []struct {
+		path string
+		body any
+	}{
+		{"/v1/agents/sessions/" + carded + "/settings", SessionSettingsRequest{Sts: pointerTo("sts-fast")}},
+		{"/v1/agents/sessions/" + carded, UpdateSessionRequest{Sts: pointerTo("sts-fast")}},
+	} {
+		status, payload := s.serverClient.call(http.MethodPatch, move.path, move.body)
+		s.Equal(http.StatusBadRequest, status, move.path)
+		var failure ErrorResponse
+		s.Require().NoError(json.Unmarshal(payload, &failure))
+		s.Equal("carded_session_to_native", failure.Error.Code, move.path)
+		s.NotContains(failure.Error.Message, "session:", "a clean message, not the session package's")
+	}
+	// The suite's sessions have no speech-to-speech models, so the move is refused by the agent,
+	// as at base: the call without cards gets that refusal, not the cards' one.
+	_, payload := s.serverClient.call(http.MethodPatch, "/v1/agents/sessions/"+plain+"/settings",
+		SessionSettingsRequest{Sts: pointerTo("sts-fast")})
+	var failure ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &failure))
+	s.Equal("invalid_request", failure.Error.Code, "a call without cards moves, or fails to, as before")
+	s.Contains(failure.Error.Message, "no speech-to-speech models")
+}
+
+// smsWithALine opens an SMS episode of number, as the bridge will (T53), with one line in its
+// thread channel, so a call from the number starts with its card.
+func (s *EpisodeCardsSuite) smsWithALine(number, text string) {
+	ctx := context.Background()
+	cards, err := omnichannel.New(omnichannel.Options{Store: s.store, Stream: s.stream})
+	s.Require().NoError(err)
+	person, err := omnichannel.Phone(number)
+	s.Require().NoError(err)
+	bound, err := s.stream.For(ctx, s.customerID())
+	s.Require().NoError(err)
+	thread, author := "thread-"+s.utils.uuid(), "sms-author"
+	_, err = bound.Client.Chat().GetOrCreateChannel(ctx, "agent", thread, &getstream.GetOrCreateChannelRequest{
+		Data: &getstream.ChannelInput{CreatedByID: &author, Custom: map[string]any{"support_customer_id": s.customerID()}},
+	})
+	s.Require().NoError(err)
+	_, err = bound.Client.Chat().SendMessage(ctx, "agent", thread, &getstream.SendMessageRequest{
+		Message: getstream.MessageRequest{Text: &text, UserID: &author},
+	})
+	s.Require().NoError(err)
+	opened, err := cards.Open(ctx, omnichannel.Episode{
+		CustomerID: s.customerID(), AgentConfigID: s.config.Id, AgentName: s.config.Name, Person: person,
+		Source: "sms", ThreadChannel: "agent:" + thread,
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(cards.Write(ctx, opened))
+}
+
+// joined is the id of a session under the test's agent on a call the participant is on.
+func (s *EpisodeCardsSuite) joined(participant string) string {
+	call := s.utils.callID()
+	s.chat.PutCall("agent", call, participant)
+	return s.serverClient.createSession(CreateSessionRequest{CallId: &call, CallType: pointerTo("agent"), ConfigId: &s.config.Id}).Id
 }
 
 // called opens a session under the test's agent on a call whose session holds the

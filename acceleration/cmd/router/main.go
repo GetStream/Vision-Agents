@@ -50,6 +50,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
@@ -119,6 +120,7 @@ const usage = `usage: router [--config path] [command]
   keys create           mint a credential for an app, printing the secret once
   replicate             copy another deployment's data here and follow its changes
   stream-apps           look after the Stream apps customers registered in app mode
+  plugins migrate       move the plugin rows onto connectors, by hand; --apply writes
 `
 
 func main() {
@@ -200,6 +202,8 @@ func dispatchCommand(command string, args []string, settings config.Config, logg
 		return runReplicate(args, settings, logger)
 	case "stream-apps":
 		return runStreamApps(args, settings, logger)
+	case "plugins":
+		return runPlugins(args, settings, logger)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
@@ -835,7 +839,9 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
 	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, streamClients, pluginAuth,
-		session.Connectors{Registry: connectors, Transports: connectorTransports}, logger)
+		session.Connectors{Registry: connectors, Transports: connectorTransports,
+			// Nil with connectors off: no secrets to seal an attempt with.
+			Consents: api.ConnectorConsents(pgStore, connectors, connectorSecrets, settings.PublicURL)}, logger)
 	if err != nil {
 		return err
 	}
@@ -1055,6 +1061,24 @@ func run(settings config.Config, logger *slog.Logger) error {
 		forwarder.Start()
 		defer forwarder.Close()
 		options.EventForwarder = forwarder
+	}
+	// A connection's MCP events are subscribed to on its server, signed with secrets sealed
+	// under the connector keyring, and each opens a conversation, so they need connectors on,
+	// a database, sessions and an https public URL for the callback: the draft refuses any
+	// other («Servers MUST reject events/subscribe with a non-https delivery.url»). Every router
+	// runs the worker that refreshes them; a subscription is taken by one router at a time.
+	if connectorResolver != nil && connectorSecrets != nil && pgStore != nil && sessions != nil &&
+		strings.HasPrefix(settings.PublicURL, "https://") {
+		events, err := mcpevents.New(mcpevents.Options{
+			Store: pgStore, Sessions: sessions, Registry: connectors, Transports: connectorTransports,
+			Secrets: connectorSecrets, PublicURL: settings.PublicURL, Logger: logger,
+		})
+		if err != nil {
+			return err
+		}
+		events.Start()
+		defer events.Close()
+		options.MCPEvents = events
 	}
 	if streamClients.PerApp() {
 		// Each registered app signs its own hooks and mints its own tokens, so only work in

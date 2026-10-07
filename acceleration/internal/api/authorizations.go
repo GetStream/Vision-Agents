@@ -18,8 +18,11 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -169,20 +172,138 @@ func (s *Server) createAuthorization(ctx context.Context, request *createAuthori
 	if s.connectorSecrets == nil || s.credentials == nil {
 		return nil, notConfigured("consents cannot be started: connectors are not enabled on this deployment")
 	}
-	// Checked here, not at the callback: a consent the provider cannot send back would
-	// otherwise be found out only after the user approved it.
-	public := strings.TrimRight(s.publicURL, "/")
-	if public == "" {
-		return nil, notConfigured("consents cannot be started: ROUTER_PUBLIC_URL is not set, " +
-			"so the provider has nowhere to send the browser back to")
-	}
-	scheme, found := s.connectors.Schemes[connection.AuthScheme]
-	if !found {
-		return nil, invalidRequest(fmt.Sprintf("auth_scheme %q is not one this deployment has", connection.AuthScheme))
-	}
-	manifest, err := s.connectionManifest(ctx, connection, connection.DefinitionRevision)
+	begun, err := s.consents().begin(ctx, connection)
 	if err != nil {
 		return nil, err
+	}
+	return &authorizationResponse{Body: begun}, nil
+}
+
+// consents begins consents for the backend that asks for one (createAuthorization) and for a
+// session whose end user's own connection a tool call needs (ConnectorConsents). One path, so
+// a consent begun from the chat is the same single-use attempt, bound to the first browser
+// that hands it off, as one the backend begins.
+type consents struct {
+	store     *store.Store
+	registry  core.Registry
+	secrets   *auth.Sealer
+	publicURL string
+}
+
+func (s *Server) consents() consents {
+	return consents{store: s.store, registry: s.connectors, secrets: s.connectorSecrets, publicURL: s.publicURL}
+}
+
+// ConnectorConsents is how a session begins a consent for its caller's own connection, when
+// a tool call needs one (session.Consents): the attempt createAuthorization begins, on the
+// connection chosen, or else on the caller's newest connection to the connector in any
+// status, or else on a new one. Nil when connectors are off or ROUTER_PUBLIC_URL is
+// unset, so no consent could begin: a session binding with no usable connection is then left
+// out of the session, as before.
+func ConnectorConsents(records *store.Store, registry core.Registry, secrets *auth.Sealer, publicURL string) session.Consents {
+	if records == nil || secrets == nil || len(registry.Schemes) == 0 || strings.TrimRight(publicURL, "/") == "" {
+		return nil
+	}
+	c := consents{store: records, registry: registry, secrets: secrets, publicURL: publicURL}
+	return func(ctx context.Context, request session.ConsentRequest) (session.Consent, error) {
+		connection, err := c.connectionFor(ctx, request)
+		if err != nil {
+			return session.Consent{}, err
+		}
+		definition, err := records.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, connection.DefinitionRevision)
+		if err != nil {
+			return session.Consent{}, err
+		}
+		begun, err := c.begin(ctx, connection)
+		if err != nil {
+			return session.Consent{}, err
+		}
+		return session.Consent{
+			ConnectionID: connection.ID, AuthorizationID: begun.ID, LaunchURL: begun.LaunchURL,
+			HandoffToken: begun.HandoffToken, ExpiresAt: begun.ExpiresAt, Name: definition.Manifest.Name,
+		}, nil
+	}
+}
+
+// connectionFor is the caller's own connection a consent from the chat is for. One chosen
+// must be theirs and to the binding's connector, as mayReach and the session's owner rule
+// (session.mayUse) require.
+func (c consents) connectionFor(ctx context.Context, request session.ConsentRequest) (store.ConnectorConnection, error) {
+	if request.CustomerID == "" || request.ConnectorID == "" || request.UserID == "" {
+		return store.ConnectorConnection{}, stack.Wrap(errors.New("a consent from the chat needs a customer, a connector and the caller"))
+	}
+	mine := func(connection store.ConnectorConnection) bool {
+		return connection.OwnerType == store.OwnerUser && connection.OwnerID == request.UserID &&
+			connection.ConnectorID == request.ConnectorID
+	}
+	if request.ConnectionID != "" {
+		connection, err := c.store.ConnectorConnection(ctx, request.CustomerID, request.ConnectionID)
+		if err != nil {
+			return store.ConnectorConnection{}, err
+		}
+		if !mine(connection) {
+			return store.ConnectorConnection{}, stack.Wrap(errors.New("the connection chosen is not the caller's own to the binding's connector"))
+		}
+		return connection, nil
+	}
+	held, err := c.store.ConnectorConnectionsByOwner(ctx, request.CustomerID, store.ConnectionFilter{
+		OwnerType: store.OwnerUser, OwnerID: request.UserID, ConnectorID: request.ConnectorID,
+	})
+	if err != nil {
+		return store.ConnectorConnection{}, err
+	}
+	// The caller's newest connection to the connector, in any status, so a new chat asking
+	// again does not leave a row and a grant each time. The person still consents in this
+	// chat: one connected before gets a reconnect (begin), which keeps the old grant when it
+	// comes back with another account (completeConsent, account_mismatch), and the session
+	// opens it only once that consent connected it anew (session.openOrAsk). A session still
+	// uses only the connection chosen for it (T22): this one, by the person's own consent.
+	for _, connection := range held {
+		if mine(connection) {
+			return connection, nil
+		}
+	}
+	definition, err := c.store.LatestConnectorDefinition(ctx, request.CustomerID, request.ConnectorID)
+	if err != nil {
+		return store.ConnectorConnection{}, err
+	}
+	// The chat cannot ask for a scheme or an input, so only a connector that needs neither is
+	// connected from it, as createConnection takes one with neither named.
+	if len(definition.Manifest.Schemes) != 1 {
+		return store.ConnectorConnection{}, stack.Wrap(fmt.Errorf("%s allows %d schemes, and the chat cannot choose one",
+			definition.ID, len(definition.Manifest.Schemes)))
+	}
+	scheme := definition.Manifest.Schemes[0]
+	profile, err := definition.Manifest.Resolve(scheme, nil, nil)
+	if err != nil {
+		return store.ConnectorConnection{}, stack.Wrap(err)
+	}
+	connection := store.ConnectorConnection{
+		CustomerID: request.CustomerID, ConnectorID: definition.ID, DefinitionRevision: definition.Revision,
+		OwnerType: store.OwnerUser, OwnerID: request.UserID, AuthScheme: scheme, Inputs: profile.Inputs,
+	}
+	if err := c.store.CreateConnectorConnection(ctx, c.registry, &connection); err != nil {
+		return store.ConnectorConnection{}, err
+	}
+	return connection, nil
+}
+
+// begin starts the provider's consent for connection and seals its attempt.
+func (c consents) begin(ctx context.Context, connection store.ConnectorConnection) (Authorization, error) {
+	// Checked here, not at the callback: a consent the provider cannot send back would
+	// otherwise be found out only after the user approved it.
+	public := strings.TrimRight(c.publicURL, "/")
+	if public == "" {
+		return Authorization{}, notConfigured("consents cannot be started: ROUTER_PUBLIC_URL is not set, " +
+			"so the provider has nowhere to send the browser back to")
+	}
+	scheme, found := c.registry.Schemes[connection.AuthScheme]
+	if !found {
+		return Authorization{}, invalidRequest(fmt.Sprintf("auth_scheme %q is not one this deployment has", connection.AuthScheme))
+	}
+	manifest, err := connectionManifest(ctx, c.store, connection, connection.DefinitionRevision)
+	if err != nil {
+		return Authorization{}, err
 	}
 	ref := core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}
 	begun, err := scheme.Begin(ctx, core.BeginInput{Ref: ref, Manifest: manifest, RedirectURI: public + ConnectorCallbackPath})
@@ -190,24 +311,24 @@ func (s *Server) createAuthorization(ctx context.Context, request *createAuthori
 	// (ConnectorClients), so a connector that takes the app's own and finds none says where
 	// to put it.
 	if errors.Is(err, oauth2code.ErrNoClient) && slices.Contains(manifest.Client.Registration, core.ClientCustomer) {
-		return nil, invalidRequest(fmt.Sprintf("the provider's consent could not be started: %v; "+
+		return Authorization{}, invalidRequest(fmt.Sprintf("the provider's consent could not be started: %v; "+
 			"put the app's own OAuth client with PUT /v1/agents/connectors/%s/oauth-client", err, connection.ConnectorID))
 	}
 	if err != nil {
 		// A scheme's error carries no secret (core AGENTS.md, «Secrets never print»), and it
 		// is what the backend needs to fix: a missing client, an unreachable server.
-		return nil, invalidRequest("the provider's consent could not be started: " + err.Error())
+		return Authorization{}, invalidRequest("the provider's consent could not be started: " + err.Error())
 	}
 	if begun.Done {
-		return nil, invalidRequest(fmt.Sprintf("auth_scheme %q needs no consent", connection.AuthScheme))
+		return Authorization{}, invalidRequest(fmt.Sprintf("auth_scheme %q needs no consent", connection.AuthScheme))
 	}
 	state, err := authorizeState(begun.AuthorizeURL)
 	if err != nil {
-		return nil, err
+		return Authorization{}, err
 	}
 	handoff, err := randomToken(handoffBytes)
 	if err != nil {
-		return nil, err
+		return Authorization{}, err
 	}
 
 	kind := store.AttemptReconnect
@@ -224,37 +345,37 @@ func (s *Server) createAuthorization(ctx context.Context, request *createAuthori
 		State:              begun.State,
 	})
 	if err != nil {
-		return nil, err
+		return Authorization{}, err
 	}
-	sealed, err := s.connectorSecrets.SealWithAAD(string(raw), attemptAAD(connection.CustomerID, connection.ID, id))
+	sealed, err := c.secrets.SealWithAAD(string(raw), attemptAAD(connection.CustomerID, connection.ID, id))
 	if err != nil {
-		return nil, err
+		return Authorization{}, err
 	}
 	expires := time.Now().UTC().Add(attemptLifetime).Truncate(time.Microsecond)
-	err = s.store.CreateConnectorAuthorizationAttempt(ctx, &store.ConnectorAuthorizationAttempt{
+	err = c.store.CreateConnectorAuthorizationAttempt(ctx, &store.ConnectorAuthorizationAttempt{
 		ID:            id,
 		CustomerID:    connection.CustomerID,
 		ConnectionID:  connection.ID,
 		Kind:          kind,
 		StateHash:     store.AuthorizationStateHash(state),
 		AttemptSealed: sealed,
-		KEKVersion:    s.connectorSecrets.CurrentVersion(),
+		KEKVersion:    c.secrets.CurrentVersion(),
 		ExpiresAt:     expires,
 	})
 	// Deleted between the read above and the insert.
 	if errors.Is(err, store.ErrNoConnectorConnection) {
-		return nil, errNoSuchConnection
+		return Authorization{}, errNoSuchConnection
 	}
 	if err != nil {
-		return nil, err
+		return Authorization{}, err
 	}
-	return &authorizationResponse{Body: Authorization{
+	return Authorization{
 		ID:           id,
 		Kind:         AuthorizationKind(kind),
 		LaunchURL:    public + connectorLaunchPath + id,
 		HandoffToken: handoff,
 		ExpiresAt:    expires,
-	}}, nil
+	}, nil
 }
 
 // launchPage is the router-hosted page a consent starts on. It waits for the dashboard that
@@ -447,6 +568,11 @@ func (s *Server) finishConnectorConsent(w http.ResponseWriter, r *http.Request) 
 	http.SetCookie(w, s.attemptCookie(row.ID, "", time.Time{}))
 
 	outcome := s.completeConsent(ctx, row, sealed, query)
+	// A consent a session asked for in its conversation carries on there. The attempt names
+	// the session's own login, so no other session is handed it.
+	if outcome == consentConnected && s.sessions != nil {
+		s.sessions.ConnectorConsentFinished(ctx, row.CustomerID, row.ConnectionID, row.ID)
+	}
 	destination, err := url.Parse(s.dashboardURL)
 	if err != nil || s.dashboardURL == "" {
 		writeFailure(w, r, errors.Join(fmt.Errorf("the consent ended as %s, and DASHBOARD_BASE_URL is not set to go back to", outcome), err))
@@ -494,12 +620,15 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 	}
 
 	switched := false
+	var committed *core.CredentialState
 	err = s.credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
 		if state.AccountID != "" && state.AccountID != account.AccountID {
 			switched = true
 			state.LastError = accountSwitchError
 			return true, nil
 		}
+		// The credential store leaves the revision it committed here (core.CredentialStore).
+		committed = state
 		state.Credentials = credentials
 		state.Status = store.ConnectionConnected
 		state.LastError = ""
@@ -520,6 +649,20 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 	}
 	if switched {
 		return consentAccountMismatch
+	}
+	s.auditGrant(ctx, connection.CustomerID, connection.ID, connection.ConnectorID, connection.OwnerType,
+		store.AuditGrantCreated, store.AuditReasonConsent, committed.Revision, row.ID)
+	// A reconnect brings back the MCP event subscriptions its bindings declare, as a validate
+	// does: one a disconnect or a long wait dropped is made again. The consent itself is done,
+	// so a failure here is logged and the next validate tries again.
+	if s.mcpEvents != nil {
+		connected, err := s.store.ConnectorConnection(ctx, row.CustomerID, row.ConnectionID)
+		if err == nil {
+			err = s.mcpEvents.Reconcile(ctx, connected)
+		}
+		if err != nil {
+			s.logger.Error("could not subscribe a reconnected connection's MCP events", "connection", row.ConnectionID, "error", err)
+		}
 	}
 	return consentConnected
 }
@@ -599,7 +742,11 @@ func (s *Server) attemptCookie(id, value string, expires time.Time) *http.Cookie
 // connectionManifest is the connection's definition at revision, resolved for its inputs
 // and what earlier consents captured.
 func (s *Server) connectionManifest(ctx context.Context, connection store.ConnectorConnection, revision int) (core.ResolvedManifest, error) {
-	definition, err := s.store.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, revision)
+	return connectionManifest(ctx, s.store, connection, revision)
+}
+
+func connectionManifest(ctx context.Context, records *store.Store, connection store.ConnectorConnection, revision int) (core.ResolvedManifest, error) {
+	definition, err := records.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, revision)
 	if err != nil {
 		return core.ResolvedManifest{}, err
 	}

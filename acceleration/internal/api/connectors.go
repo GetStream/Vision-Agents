@@ -42,7 +42,33 @@ type Connector struct {
 	Inputs      []ConnectorInput `json:"inputs" doc:"What a connection is created with, such as a region or a shop."`
 	Scopes      []string         `json:"scopes" doc:"The scopes a consent asks for."`
 	Client      ConnectorClient  `json:"client"`
+	Setup       *ConnectorSetup  `json:"setup,omitempty" doc:"What a person does at the provider before the first consent, such as registering an OAuth client. Absent when the manifest says nothing."`
 	CreatedAt   time.Time        `json:"created_at" readOnly:"true" doc:"When this revision was stored."`
+}
+
+// ConnectorSetup is a provider's setup page and the steps a person takes there, as a dashboard
+// shows them beside the form a client is pasted into.
+type ConnectorSetup struct {
+	URL   string               `json:"url,omitempty" format:"uri" doc:"Where the steps start, a page of the provider's."`
+	Steps []ConnectorSetupStep `json:"steps" nullable:"false" doc:"In order."`
+}
+
+func (*ConnectorSetup) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What a person does at the provider before the first consent."
+	schema.AdditionalProperties = false
+	return schema
+}
+
+// ConnectorSetupStep is one step of a provider's setup.
+type ConnectorSetupStep struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+}
+
+func (*ConnectorSetupStep) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "One step of a provider's setup."
+	schema.AdditionalProperties = false
+	return schema
 }
 
 func (*Connector) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -352,7 +378,15 @@ func connectorOf(definition store.ConnectorDefinition) Connector {
 	for _, registration := range manifest.Client.Registration {
 		registrations = append(registrations, ConnectorClientRegistrationMethod(registration))
 	}
+	var setup *ConnectorSetup
+	if manifest.Setup.URL != "" || len(manifest.Setup.Steps) > 0 {
+		setup = &ConnectorSetup{URL: manifest.Setup.URL, Steps: make([]ConnectorSetupStep, 0, len(manifest.Setup.Steps))}
+		for _, step := range manifest.Setup.Steps {
+			setup.Steps = append(setup.Steps, ConnectorSetupStep{Title: step.Title, Description: step.Description})
+		}
+	}
 	return Connector{
+		Setup:       setup,
 		ID:          definition.ID,
 		Revision:    definition.Revision,
 		Name:        definition.Name,
