@@ -72,6 +72,20 @@ The Go SDK (`agents.PluginSettings`) and the Python folder reader (`PluginSettin
 `plugins/stream`) have moved, and the Python reader now accepts `scopes` and `user` on
 `mcp_servers`. Other SDKs follow.
 
+### `Dispatch.host` takes an agent and hosts its tools
+
+A dispatch worker hosts an agent's own tools under its name, in place of an agent id and a
+registry passed alongside. The router matches a hosted tool on a session's agent id or agent
+name, so the name is enough. In Python (`plugins/stream`), `Dispatch.host(agent_id, functions,
+timeout)` is `Dispatch.host(agent, tool_timeout)`, with `agent` from
+`stream.Client().agent(name)` and its tools registered with `@agent.register()`. In
+JavaScript, `host(agentId, tools, { timeoutMs })` is `host(agent, { toolTimeoutMs })`, hosting
+`client.agent(name).tools`. In Go, `Dispatch.Host(agentID, functions, timeout)` is
+`Dispatch.Host(agent, toolTimeout)`, on both `stream.Dispatch` and `agents.Dispatch`, hosting
+`client.Agent(name).Tools()` or an `agents.Agent`'s. .NET, Ruby, Rust and PHP take the agent
+the same way. The timeout is renamed to say what it is: how long the router waits for one
+tool call, not how long the worker runs.
+
 ### The connector catalog answers `Connector` and `ConnectorPage`
 
 `listConnectors`, `getConnector` and `createConnector` (`/v1/agents/connectors`) answered schemas named `ConnectorDefinition` and `ConnectorDefinitionPage`. They are `Connector` and `ConnectorPage` now; the JSON is unchanged. Go, JavaScript and Python clients use the new type names.
@@ -500,6 +514,10 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 `deepgram.TTS` now streams Flux TTS on `wss://api.deepgram.com/v2/speak` and defaults to `flux-haley-en`. Aura model strings (`aura-*`) are rejected with `ValueError`. Call sites that passed an Aura voice must switch to a Flux model (`flux-{voice}-en`). See the [Flux voice catalog](https://developers.deepgram.com/docs/flux-tts/voices).
 
 ## New Features
+
+### Tools can be loaded progressively
+
+An agent config takes `progressive_tools`, a boolean that is off by default, and so does `agent.yaml`. When it is on, the model sees each plugin, MCP server and connector tool as the first line of its description, plus its argument schema with every description, title and example removed. The first time the model calls a tool, the router returns the full description and input schema instead of running the tool, and the model calls it again. Some servers put a page of instructions and examples into a tool's description; with this setting, that page is only paid for in conversations that use the tool. The cost is one extra model turn for each tool a conversation uses. User plugins are unchanged, since they already list their tools on demand. Go and Python read the key from `agent.yaml`, and JavaScript has the regenerated types; other SDKs follow.
 
 ### A session can be opened with the history the caller kept
 

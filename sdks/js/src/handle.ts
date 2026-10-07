@@ -1,6 +1,7 @@
 import type { Client, Schemas } from "./client.js";
 import { ConfigurationError } from "./errors.js";
 import { Sessions } from "./sessions.js";
+import { Tools } from "./tools.js";
 
 /**
  * An agent, addressed by the name it is configured under.
@@ -23,6 +24,11 @@ export class AgentHandle {
   readonly name: string;
   /** This agent's conversations: opening one, and reading the old ones back. */
   readonly sessions: Sessions;
+  /**
+   * Functions run for every session of this agent, whoever opened it, once a dispatch worker
+   * hosts them with `dispatch.host(agent)`.
+   */
+  readonly tools = new Tools();
 
   private readonly client: Client;
 

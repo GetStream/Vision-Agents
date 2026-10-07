@@ -11,6 +11,7 @@ use Amp\TimeoutCancellation;
 use Amp\CancelledException;
 use Closure;
 use GetStream\VisionAgents\Agent;
+use GetStream\VisionAgents\AgentHandle;
 use GetStream\VisionAgents\AgentResponse;
 use GetStream\VisionAgents\Client;
 use GetStream\VisionAgents\Exception\ConfigurationException;
@@ -53,7 +54,7 @@ final class Dispatch
     /** @var list<string> the agent ids the router has said it sends this worker's tools for */
     public array $hosting = [];
 
-    /** @var list<array{agentId: string, tools: Tools, timeoutMs: int}> */
+    /** @var list<array{agentId: string, tools: Tools, toolTimeoutMs: int}> */
     private array $hosted = [];
     /** @var array<int, Future<mixed>> */
     private array $running = [];
@@ -119,17 +120,23 @@ final class Dispatch
     }
 
     /**
-     * Runs these tools for every session opened under an agent id, whoever opened it.
+     * Runs the agent's tools for every session opened under it, whoever opened it.
      *
      * A session's own tools run in the process that opened it, which is no use to a conversation
-     * opened from a browser. The router offers these to each session naming the agent and sends
-     * every call here. Call before `run()`.
+     * opened from a browser. The router offers `$agent->tools` to each session naming the agent
+     * and sends every call here. Call before `run()`.
      *
-     * @param int $timeoutMs how long the router gives one call; 0 takes its default
+     *     $agent = $client->agent('my-agent');
+     *     $agent->tools->register('lookup', 'Look up an order', $schema, $run);
+     *     (new Dispatch())->host($agent)->run();
+     *
+     * @param int $toolTimeoutMs how long the router waits for one tool call to be answered before
+     *                           telling the model it failed, not how long the worker runs; 0 takes
+     *                           the router's default of two minutes
      */
-    public function host(string $agentId, Tools $tools, int $timeoutMs = 0): self
+    public function host(AgentHandle $agent, int $toolTimeoutMs = 0): self
     {
-        $this->hosted[] = ['agentId' => $agentId, 'tools' => $tools, 'timeoutMs' => $timeoutMs];
+        $this->hosted[] = ['agentId' => $agent->name, 'tools' => $agent->tools, 'toolTimeoutMs' => $toolTimeoutMs];
         return $this;
     }
 
@@ -274,7 +281,7 @@ final class Dispatch
                 'type' => 'host_tools',
                 'agent_id' => $offer['agentId'],
                 'tools' => array_map(static fn (SessionTool $tool): array => $tool->toArray(), $offer['tools']->declared()),
-                'timeout_ms' => $offer['timeoutMs'],
+                'timeout_ms' => $offer['toolTimeoutMs'],
             ]);
         }
     }

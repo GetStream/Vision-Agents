@@ -411,6 +411,10 @@ type AgentConfig struct {
 	// on a thread channel or a phone call under it start with the person's other cards. Off
 	// unless a config turns it on.
 	EpisodeCards bool `bun:"episode_cards,notnull"`
+	// ProgressiveTools offers plugin, MCP server and connector tools by a summary, and
+	// sends a tool's full description the first time it is called instead of running it
+	// (20261008130000_agent_config_progressive_tools.sql). Off unless a config turns it on.
+	ProgressiveTools bool `bun:"progressive_tools,notnull"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
 	SyncHash  string     `bun:"sync_hash,notnull"`
