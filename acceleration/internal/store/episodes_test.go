@@ -2,7 +2,11 @@
 
 package store
 
-import "sync"
+import (
+	"fmt"
+	"sync"
+	"time"
+)
 
 // episodeOf is a thread episode of the acme-app customer for a contact, which a test changes
 // one part of.
@@ -146,6 +150,195 @@ func (s *StoreSuite) TestOnlyACallEpisodeNamesASession() {
 	call.Source = EpisodeCall
 	_, err = s.store.OpenEpisode(s.ctx, call)
 	s.ErrorContains(err, "only a call episode, names its session")
+}
+
+// threadAt is a thread episode of person in thread, opened at at.
+func (s *StoreSuite) threadAt(person, thread string, at time.Time) *Episode {
+	episode := s.episodeOf(person, thread)
+	episode.StartedAt = at
+	_, err := s.store.OpenEpisode(s.ctx, episode)
+	s.Require().NoError(err)
+	return episode
+}
+
+// closeIdle closes the thread episodes with no message for an hour before now, leased for
+// five minutes.
+func (s *StoreSuite) closeIdle(store *Store, now time.Time) []ClosedEpisode {
+	closed, err := store.CloseIdleEpisodes(s.ctx, now.Add(-time.Hour), now, 50, now.Add(5*time.Minute))
+	s.Require().NoError(err)
+	return closed
+}
+
+// episodeStatus is an episode's status as stored.
+func (s *StoreSuite) episodeStatus(id string) string {
+	var status string
+	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx, "SELECT status FROM episodes WHERE id = ?", id).Scan(&status))
+	return status
+}
+
+func (s *StoreSuite) TestAThreadQuietForTheIdlePeriodIsClosedAndLeasedToItsCloser() {
+	person := s.mapped("+15550100")
+	episode := s.threadAt(person, "agent:thread-one", s.base)
+	now := s.base.Add(time.Hour)
+
+	closed := s.closeIdle(s.store, now)
+
+	s.Require().Len(closed, 1)
+	s.Equal(episode.ID, closed[0].ID)
+	s.Equal(EpisodeEnded, closed[0].Status)
+	s.Require().NotNil(closed[0].EndedAt)
+	s.True(now.Equal(*closed[0].EndedAt))
+	s.Require().NotNil(closed[0].SummaryLeaseUntil)
+	s.True(now.Add(5 * time.Minute).Equal(*closed[0].SummaryLeaseUntil))
+	s.Equal("agent:omni-+15550100", closed[0].ConversationID, "the omni-channel the card is in")
+	s.Equal("agent-one", closed[0].AgentConfigID, "the config whose LLM writes the summary")
+	s.Equal(EpisodeEnded, s.episodeStatus(episode.ID))
+}
+
+// Each message of a thread is its last one, so a thread that is talking is not idle.
+func (s *StoreSuite) TestAThreadWithAMessageInTheIdlePeriodStaysOpen() {
+	person := s.mapped("+15550100")
+	episode := s.threadAt(person, "agent:thread-one", s.base)
+	s.threadAt(person, "agent:thread-one", s.base.Add(50*time.Minute))
+
+	closed := s.closeIdle(s.store, s.base.Add(90*time.Minute))
+
+	s.Empty(closed)
+	s.Equal(episodeInProgress, s.episodeStatus(episode.ID))
+}
+
+// A call ends when its call does, never for being quiet.
+func (s *StoreSuite) TestACallIsNeverClosedAsIdle() {
+	call := s.episodeOf(s.mapped("+15550100"), "agent:call-one")
+	call.Source, call.CallID, call.SessionID = EpisodeCall, "call-one", "session-one"
+	_, err := s.store.OpenEpisode(s.ctx, call)
+	s.Require().NoError(err)
+
+	closed := s.closeIdle(s.store, s.base.Add(48*time.Hour))
+
+	s.Empty(closed)
+	s.Equal(episodeInProgress, s.episodeStatus(call.ID))
+}
+
+// Several routers sweep at once: each idle episode is closed by one of them, once, so one
+// summary is written for it.
+func (s *StoreSuite) TestTwoSweepersAtOnceCloseEachIdleEpisodeOnce() {
+	person := s.mapped("+15550100")
+	for i := range 20 {
+		s.threadAt(person, fmt.Sprintf("agent:thread-%d", i), s.base)
+	}
+	pools := s.pools(8)
+	now := s.base.Add(time.Hour)
+	var wg sync.WaitGroup
+	closed := make([][]ClosedEpisode, len(pools))
+	for i, pool := range pools {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var err error
+			closed[i], err = pool.CloseIdleEpisodes(s.ctx, now.Add(-time.Hour), now, 50, now.Add(5*time.Minute))
+			s.NoError(err)
+		}()
+	}
+	wg.Wait()
+
+	seen := map[string]int{}
+	for _, swept := range closed {
+		for _, episode := range swept {
+			seen[episode.ID]++
+		}
+	}
+	s.Len(seen, 20)
+	for id, times := range seen {
+		s.Equal(1, times, "episode %s was closed by more than one sweeper", id)
+	}
+}
+
+// A call id is unique only in its app: the event from one app ends that app's call only.
+func (s *StoreSuite) TestACallsEpisodesEndWithItInItsOwnAppOnly() {
+	person := s.mapped("+15550100")
+	call := func(callID, session string) *Episode {
+		episode := s.episodeOf(person, "agent:"+callID)
+		episode.Source, episode.CallID, episode.SessionID = EpisodeCall, callID, session
+		_, err := s.store.OpenEpisode(s.ctx, episode)
+		s.Require().NoError(err)
+		return episode
+	}
+	first, second, other := call("call-one", "session-one"), call("call-one", "session-two"), call("call-two", "session-three")
+	now := s.base.Add(10 * time.Minute)
+
+	elsewhere, err := s.store.EndCallEpisodes(s.ctx, AppScope{App: 7}, "call-one", now, now.Add(5*time.Minute))
+	s.Require().NoError(err)
+	s.Empty(elsewhere, "another app's call of the same id")
+	ended, err := s.store.EndCallEpisodes(s.ctx, AppScope{App: 4242}, "call-one", now, now.Add(5*time.Minute))
+	s.Require().NoError(err)
+
+	s.ElementsMatch([]string{first.ID, second.ID}, []string{ended[0].ID, ended[1].ID})
+	s.Equal(episodeInProgress, s.episodeStatus(other.ID))
+	again, err := s.store.EndCallEpisodes(s.ctx, AppScope{App: 4242}, "call-one", now, now.Add(5*time.Minute))
+	s.Require().NoError(err)
+	s.Empty(again, "an event delivered twice ends each episode once")
+}
+
+// A router that closed an episode and stopped before its summary leaves it ended; once the
+// lease runs out the next sweep takes it, once.
+func (s *StoreSuite) TestAnEpisodeWhoseSummaryLeaseRanOutIsTakenAgainOnce() {
+	episode := s.threadAt(s.mapped("+15550100"), "agent:thread-one", s.base)
+	closedAt := s.base.Add(time.Hour)
+	s.closeIdle(s.store, closedAt)
+
+	early, err := s.store.ClaimEpisodeSummaries(s.ctx, closedAt.Add(4*time.Minute), 10, closedAt.Add(time.Hour))
+	s.Require().NoError(err)
+	s.Empty(early, "its closer still holds it")
+	late := closedAt.Add(6 * time.Minute)
+	taken, err := s.store.ClaimEpisodeSummaries(s.ctx, late, 10, late.Add(5*time.Minute))
+	s.Require().NoError(err)
+	s.Require().Len(taken, 1)
+	s.Equal(episode.ID, taken[0].ID)
+	s.Equal("agent:omni-+15550100", taken[0].ConversationID)
+	again, err := s.store.ClaimEpisodeSummaries(s.ctx, late, 10, late.Add(5*time.Minute))
+	s.Require().NoError(err)
+	s.Empty(again, "the new lease holds it")
+}
+
+func (s *StoreSuite) TestAFinishedSummaryIsNeverTakenAgain() {
+	episode := s.threadAt(s.mapped("+15550100"), "agent:thread-one", s.base)
+	s.closeIdle(s.store, s.base.Add(time.Hour))
+
+	s.Require().NoError(s.store.FinishEpisodeSummary(s.ctx, "acme-app", episode.ID, EpisodeSummarized))
+
+	s.Equal(EpisodeSummarized, s.episodeStatus(episode.ID))
+	taken, err := s.store.ClaimEpisodeSummaries(s.ctx, s.base.Add(48*time.Hour), 10, s.base.Add(49*time.Hour))
+	s.Require().NoError(err)
+	s.Empty(taken)
+}
+
+// Only an ended episode is finished: one still in progress has no summary to finish.
+func (s *StoreSuite) TestASummaryFinishesOnlyAnEndedEpisode() {
+	episode := s.threadAt(s.mapped("+15550100"), "agent:thread-one", s.base)
+
+	s.Require().NoError(s.store.FinishEpisodeSummary(s.ctx, "acme-app", episode.ID, EpisodeSummaryFailed))
+
+	s.Equal(episodeInProgress, s.episodeStatus(episode.ID))
+}
+
+func (s *StoreSuite) TestAnyEpisodeCardsIsWhetherAConfigTurnedThemOn() {
+	off := &AgentConfig{CustomerID: "acme-app", Name: "plain"}
+	s.Require().NoError(s.store.CreateAgentConfig(s.ctx, off))
+	any, err := s.store.AnyEpisodeCards(s.ctx)
+	s.Require().NoError(err)
+	s.False(any)
+
+	on := &AgentConfig{CustomerID: "acme-app", Name: "carded", EpisodeCards: true}
+	s.Require().NoError(s.store.CreateAgentConfig(s.ctx, on))
+	any, err = s.store.AnyEpisodeCards(s.ctx)
+	s.Require().NoError(err)
+	s.True(any)
+
+	s.Require().NoError(s.store.DeleteAgentConfig(s.ctx, "acme-app", on.ID))
+	any, err = s.store.AnyEpisodeCards(s.ctx)
+	s.Require().NoError(err)
+	s.False(any, "a deleted config writes no card")
 }
 
 // episodeRows is how many episodes there are.
