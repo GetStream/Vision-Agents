@@ -126,6 +126,8 @@ func parseOptions(args []string) (options, bool, error) {
 		"how sure the transcriber must be for the agent to answer rather than check what was meant")
 	flags.BoolVar(&parsed.demo, "demo", true,
 		"open a browser on a link that joins the call, so there is somebody for the agent to talk to")
+	flags.BoolVar(&parsed.chatTimings, "chat-timings", config.Defaults().Agent.ChatTimings,
+		"for development: show how long each stage of a turn took after the agent's reply in the chat channel")
 	timing := config.Defaults().Agent
 	flags.DurationVar(&parsed.replySilence, "reply-silence", timing.ReplySilence,
 		"how long the caller must have been quiet before the first sound of a reply is let out, 0 lets it out as soon as it is ready")
@@ -172,6 +174,7 @@ type options struct {
 	checkIn        bool
 	minConfidence  float64
 	demo           bool
+	chatTimings    bool
 
 	replySilence          time.Duration
 	replySilenceMax       time.Duration
@@ -343,6 +346,7 @@ func run(options options, logger *slog.Logger) error {
 		Agent:     chatlog.User{ID: options.userID, Name: "Vision Agent"},
 		APIKey:    streamKey,
 		APISecret: streamSecret,
+		Timings:   options.chatTimings,
 		Logger:    logger,
 	})
 	if err != nil {

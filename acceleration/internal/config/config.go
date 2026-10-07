@@ -233,6 +233,10 @@ type Agent struct {
 	// wait. At most three replies are started this way for one run of the caller's words. 120ms
 	// by default; 0 looks at the words alone.
 	PreviewQuiet time.Duration `koanf:"preview_quiet"`
+	// ChatTimings shows how long each stage of a turn took after the agent's reply in its
+	// chat channel, for a developer talking to the agent. Off by default: it is not something a
+	// caller should read.
+	ChatTimings bool `koanf:"chat_timings"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -309,6 +313,7 @@ var variables = map[string]string{
 	"agent.reply_resume_gap":        "ROUTER_REPLY_RESUME_GAP",
 	"agent.preview_debounce":        "ROUTER_PREVIEW_DEBOUNCE",
 	"agent.preview_quiet":           "ROUTER_PREVIEW_QUIET",
+	"agent.chat_timings":            "ROUTER_CHAT_TIMINGS",
 	"auth.proxy_declares_kind":      "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":            "ROUTER_CONNECTORS_ENABLED",
 
@@ -594,6 +599,7 @@ func (c Config) export() error {
 		"agent.reply_resume_gap":        c.Agent.ReplyResumeGap.String(),
 		"agent.preview_debounce":        c.Agent.PreviewDebounce.String(),
 		"agent.preview_quiet":           c.Agent.PreviewQuiet.String(),
+		"agent.chat_timings":            fmt.Sprint(c.Agent.ChatTimings),
 		"connectors.enabled":            fmt.Sprint(c.Connectors.Enabled),
 		"sandbox.enabled":               fmt.Sprint(c.Sandbox.Enabled),
 		"sandbox.recipients":            fmt.Sprint(c.Sandbox.Recipients),

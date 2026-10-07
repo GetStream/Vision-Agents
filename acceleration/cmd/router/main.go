@@ -1244,7 +1244,7 @@ func buildSessions(
 		Live:               liveClient,
 		Logger:             logger,
 		Edge:               edgeFor(stream),
-		Transcript:         transcriptFor(),
+		Transcript:         transcriptFor(settings.Agent.ChatTimings),
 		Configs:            configs,
 		Directory:          directory,
 		PluginAuth:         pluginAuth,

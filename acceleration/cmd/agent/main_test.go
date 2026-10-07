@@ -219,3 +219,24 @@ func clearEnvironmentForTest(t *testing.T, keys ...string) {
 		})
 	}
 }
+
+func TestParseOptionsKeepsChatTimingsForDevelopment(t *testing.T) {
+	t.Chdir(t.TempDir())
+	clearEnvironmentForTest(t, demoEOTURLVar, demoEOTModeVar, demoEOTThresholdVar, demoEOTTokenFileVar)
+
+	parsed, _, err := parseOptions([]string{"-call", "demo-call"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.chatTimings {
+		t.Fatal("timings should not be written to the chat channel unless asked for")
+	}
+
+	parsed, _, err = parseOptions([]string{"-call", "demo-call", "-chat-timings=true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !parsed.chatTimings {
+		t.Fatal("-chat-timings=true should opt in to timings on the agent's replies")
+	}
+}

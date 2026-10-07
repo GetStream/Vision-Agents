@@ -120,6 +120,7 @@ the other commands that read them there.
 | `ROUTER_REPLY_RESUME_GAP` | How long a reply must have been silent, once some of it has been let out, for the next sound it makes to be taken for the agent speaking again rather than carrying on. A caller who was listening takes their turn in a pause between two sentences, and the sentence after it would be started into their voice, so that sound is held, with what follows it, until the caller's audio has been quiet for `ROUTER_REPLY_SILENCE_CONFIDENT` (or `ROUTER_REPLY_SILENCE` if that is shorter). One turn is held this way for no more than `ROUTER_REPLY_SILENCE_MAX` in all, after which its later sentences are let out as they come, so a caller who never goes quiet cannot stall a reply sentence after sentence. As with the first sound, the hold only delays: a caller who really took the floor cancels the reply with their words like any other interruption. Silence that the agent's own audio carries counts towards the gap, and speech queued ahead of what is still playing is carrying on. Defaults to `200ms`; `0` lets every sentence out as it comes |
 | `ROUTER_PREVIEW_DEBOUNCE` | How long a caller's words have to hold still before the reply to them is started, ahead of the wait that decides whether they have finished, so the model is already working for part of that wait. Words that change again restart it, and words that end on a comma, a joining word or a hesitation are not previewed. The candidate for the same words takes the reply over, so it is still one model call, and a reply for words that are never answered is paid for like any other dropped one. Applies wherever `ROUTER_SPECULATIVE_REPLIES` does. Defaults to `60ms`; `0` starts the reply when the wait is over |
 | `ROUTER_PREVIEW_QUIET` | How long the caller's audio, as well as their words, has to have been quiet before the reply to them is started ahead of that wait. Words hold still while a caller is still voiced, in a breath or a sound that is not speech, and a reply started then is thrown away and paid for. It is looked at again when `ROUTER_PREVIEW_DEBOUNCE` runs out, and at most three replies are started this way for one run of the caller's words, after which the reply starts with the candidate. Defaults to `120ms`; `0` looks at the words alone |
+| `ROUTER_CHAT_TIMINGS` | For development: each voice reply in the session's chat channel gets a line after its text with how long each stage of its turn took, and the same stages as a `timings` field on the message. See [Transcripts](#transcripts-memory-and-phone). Anything that reads the conversation back leaves the line out. Off by default; `cmd/agent` takes it as `-chat-timings` |
 | `ROUTER_TRUSTED_PROXIES` | CIDR ranges your own proxies sit in, comma separated, e.g. `10.0.0.0/8`. Decides how much of `X-Forwarded-For` is believed. Unset means none of it is, and the connection's address is used |
 | `ROUTER_DATA_MOVE_RETENTION` | How long recorded changes are kept while a customer moves between deployments, defaults to `168h`. See [Moving a customer](#moving-a-customer) |
 | `ROUTER_EOT_URL` | Unset selects the hosted EU demo scorer automatically in both `cmd/router` and `cmd/agent`. No EOT credentials or Google Cloud login are needed. An explicit empty value disables scoring; a custom `POST /v1/eot` URL overrides the hosted service |
@@ -1266,6 +1267,21 @@ relevant transcript committed by the flow controller and every reply into the St
 channel `agent:{agentID}`, off
 the event stream rather than from inside the conversation loop. A voice call otherwise leaves
 nothing behind, and any Stream Chat client can already read a channel.
+
+For development, `ROUTER_CHAT_TIMINGS=true` (or `cmd/agent -chat-timings`) shows how fast each turn
+was on the agent's reply, so somebody talking to the agent in a call UI sees it without reading
+logs. Each reply gets a line after its text, such as
+`⏱ 1112 ms · stt 6 · wait 350 · eot 96 · llm 412 (ttft 731) · →tts 70 · tts 143 · audio 32 · hold 300`.
+It leads with the delay from the end of the caller's speech to the first sound they could hear (the
+first audio published, where the edge does not say when that was), then gives the stages in order:
+`stt`, `wait` for cadence settling, `eot` for the end-of-turn decision, `llm` to the first text with
+the model's `ttft` beside it, `→tts` to the voice, `tts` to its first audio, `audio` from that being
+published to being heard, and `hold` for how long the reply was held for the caller to be quiet (a
+hold before the first sound is already inside `tts`). A stage that did not happen is left out, and
+a turn the caller talked over starts `⏱ interrupted ·`. The same stages, in whole milliseconds, are
+on the message as the `timings` custom field. Reading the conversation back, in a transcript or as
+the history of a bound conversation, leaves the line out, so the agent never takes it for something
+said. Off by default.
 
 **Memory.** With `MEM0_API_KEY` set, an agent recalls what it knows about the customer on
 join and prepends it to its instructions, then hands each finished exchange over to be

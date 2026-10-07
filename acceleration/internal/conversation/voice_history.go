@@ -2,9 +2,35 @@ package conversation
 
 import (
 	"encoding/json"
+	"strings"
 
 	getstream "github.com/GetStream/getstream-go/v5"
 )
+
+// TimingsField is the custom field on a voice reply that carries how long each stage of its
+// turn took. A message with it has a line of those timings after what the agent said, for
+// whoever is watching the call.
+const TimingsField = "timings"
+
+// The line of timings starts with TimingsMark, a stopwatch, and follows the reply's text
+// after TimingsGap.
+const (
+	TimingsMark = "⏱"
+	TimingsGap  = "\n\n"
+)
+
+// WithoutTimings is what the agent said in a stored message: its text without the line of
+// timings written after it, which was never said and is not something to answer or remember.
+func WithoutTimings(text string, custom map[string]any) string {
+	if _, timed := custom[TimingsField]; !timed {
+		return text
+	}
+	line := strings.LastIndex(text, "\n") + 1
+	if !strings.HasPrefix(text[line:], TimingsMark) {
+		return text
+	}
+	return strings.TrimSuffix(text[:line], TimingsGap)
+}
 
 // The media-agent identity comes from the server's session spec, never message metadata.
 // Transcript content and artifact labels remain untrusted data; tools must still authorize
@@ -28,7 +54,7 @@ func messageFromVoice(wire getstream.MessageResponse, voiceAgent string) (Messag
 	default:
 		return Message{}, false
 	}
-	m := Message{ID: wire.ID, Role: role, Text: wire.Text, State: "completed", Saved: true,
+	m := Message{ID: wire.ID, Role: role, Text: WithoutTimings(wire.Text, wire.Custom), State: "completed", Saved: true,
 		StartedAt: *wire.CreatedAt.Time, authorID: wire.User.ID}
 	if wire.User.Name != nil {
 		m.authorName = *wire.User.Name

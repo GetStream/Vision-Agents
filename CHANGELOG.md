@@ -517,6 +517,21 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### A voice reply can show how fast its turn was: `ROUTER_CHAT_TIMINGS` and `-chat-timings`
+
+For development, a voice agent can write how long each stage of a turn took after its reply in
+the chat channel it writes its transcript to, so somebody talking to it in a call UI sees it
+without reading logs. It is off by default: `ROUTER_CHAT_TIMINGS=true` (`agent.chat_timings`)
+turns it on for the router's sessions and `cmd/agent -chat-timings` for the standalone agent. A
+reply gets one line after its text, such as
+`⏱ 1112 ms · stt 6 · wait 350 · eot 96 · llm 412 (ttft 731) · →tts 70 · tts 143 · audio 32 · hold 300`,
+which leads with the delay from the end of the caller's speech to the first sound they could hear
+and then gives the stages in order; a stage that did not happen is left out, and a turn the caller
+talked over starts `⏱ interrupted ·`. The message also carries the same stages in whole
+milliseconds as a `timings` custom field. Reading a conversation back, as the transcript endpoint
+and the history a bound conversation gives the agent do, leaves the line out, so the agent never
+takes it for something it said.
+
 ### Every router response carries an `X-Request-Id`, and a 500 is logged with its stack
 
 The router answers every request with `X-Request-Id`, keeping one a proxy sent (printable

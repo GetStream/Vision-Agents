@@ -141,3 +141,37 @@ func (s *VoiceArtifactsSuite) add(id, author, source, text string, generating bo
 		"custom": map[string]any{"source": source, "generating": generating}}
 	s.db.order = append(s.db.order, id)
 }
+
+func TestVoiceHistoryRestoresWhatTheAgentSaidWithoutItsTimings(t *testing.T) {
+	for _, test := range []struct {
+		name, text string
+		timings    bool
+		want       string
+		accepted   bool
+	}{
+		{name: "a reply with timings", text: "Hello\n\n⏱ 900 ms · stt 6", timings: true, want: "Hello", accepted: true},
+		{name: "a reply of several lines", text: "One\nTwo\n\n⏱ 900 ms", timings: true, want: "One\nTwo", accepted: true},
+		{name: "a reply cut off with only its timings", text: "⏱ interrupted · stt 6", timings: true},
+		{name: "a reply that happens to say the mark", text: "Hello\n\n⏱ 900 ms", want: "Hello\n\n⏱ 900 ms", accepted: true},
+		{name: "a reply that ends in a line that is not timings", text: "Hello\n\nbye", timings: true, want: "Hello\n\nbye", accepted: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			custom := map[string]any{"source": "agent", "generating": false}
+			if test.timings {
+				custom[TimingsField] = map[string]any{"voice_to_voice_ms": 900}
+			}
+			raw, err := json.Marshal(map[string]any{
+				"id": "voice-message", "text": test.text, "created_at": time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC).UnixNano(),
+				"user": map[string]any{"id": "media-agent"}, "custom": custom,
+			})
+			require.NoError(t, err)
+			var wire getstream.MessageResponse
+			require.NoError(t, json.Unmarshal(raw, &wire))
+
+			message, ok := messageFromVoice(wire, "media-agent")
+
+			require.Equal(t, test.accepted, ok)
+			require.Equal(t, test.want, message.Text)
+		})
+	}
+}
