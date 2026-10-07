@@ -669,6 +669,101 @@ stt:
       price:
         per_audio_hour: 0.45
 
+    # Microsoft's MAI-Transcribe-2-Streaming, launched 2026-10-01 in public preview, so
+    # without an SLA. Reached over the OpenAI Realtime-compatible socket of a Foundry
+    # resource, which is AZURE_MAI_ENDPOINT, and the deployment named by
+    # AZURE_MAI_DEPLOYMENT_NAME, which defaults to the model id.
+    #
+    # The languages are the 60 Microsoft list for it. A request with one language hint
+    # pins the session to it; otherwise the model detects the language.
+    #
+    # The server has no turn detection - null is the only value it takes - so nothing
+    # settles until the client commits. This provider commits once the words have stopped
+    # changing for 1.2 seconds, which is what the settle time here is made of, not the
+    # 128 ms Artificial Analysis measured by committing the moment speech ended.
+    #
+    # $0.54 an audio hour through 2026-12-31, per Microsoft's model card.
+    - provider: microsoft
+      model: MAI-Transcribe-2-Streaming
+      description: "Microsoft's MAI-Transcribe-2-Streaming, in preview: the most accurate live transcriber on the board, in 60 languages."
+      benchmark: { word_error_rate: 0.025, latency_ms: 128 }
+      languages:
+        [
+          af,
+          ar,
+          as,
+          az,
+          bg,
+          bn,
+          bs,
+          ca,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          et,
+          fa,
+          fi,
+          fil,
+          fr,
+          gl,
+          gu,
+          he,
+          hi,
+          hu,
+          hy,
+          id,
+          is,
+          it,
+          ja,
+          kk,
+          kn,
+          ko,
+          lt,
+          lv,
+          mk,
+          ml,
+          mr,
+          ms,
+          nb,
+          ne,
+          nl,
+          or,
+          pa,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sl,
+          sv,
+          sw,
+          ta,
+          te,
+          th,
+          tr,
+          uk,
+          ur,
+          vi,
+          yue,
+          zh,
+        ]
+      realtime: true
+      tier: low-latency
+      # A Foundry model sold by Azure: prompts and outputs are "NOT used to train any
+      # generative AI foundation models without your permission". Retention is the gap.
+      # Abuse monitoring may store flagged content for human review with no published
+      # duration, modified abuse monitoring is by application, and Microsoft say models in
+      # preview "may employ different privacy practices". So it serves no request that
+      # names a retention until our resource is approved and ContentLogging reads false.
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+      price:
+        per_audio_hour: 0.54
+
     # Nova-3 on the batch listen endpoint, which is the recording path rather than the
     # live one. It is not a Flux model: Flux exists to decide where a turn ended while
     # somebody is still talking, and a recording has the whole file in front of it, which
