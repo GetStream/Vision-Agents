@@ -1867,7 +1867,10 @@ func (a *Agent) takeKeptPreview(ready candidate, usable bool) bool {
 		delete(a.modelCallTimes, kept.key)
 		a.modelCallTimes[ready.ID] = ttft
 	}
-	a.previewTurns[p.turn.ID] = ready.ID
+	// A reply taken over by a candidate of the same id has nothing to be told apart from.
+	if p.turn.ID != ready.ID {
+		a.previewTurns[p.turn.ID] = ready.ID
+	}
 	a.mu.Unlock()
 	return true
 }

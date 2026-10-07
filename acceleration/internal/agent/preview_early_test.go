@@ -212,7 +212,48 @@ func (s *CadenceSuite) TestWordsThatHoldStillForTheDebounceAreAnnouncedAheadOfTh
 	(*timers)[0].fire()
 	ready := s.ready()
 	s.Equal(early.Revision, ready.Revision, "the candidate is for the words that were announced")
-	s.NotEqual(early.ID, ready.ID)
+	s.Equal(early.ID, ready.ID, "the cost of the reply started for the words joins the turn they become")
+}
+
+func (s *CadenceSuite) TestAnAnnouncedIdIsSpentByTheFirstCandidateForTheWordsOnly() {
+	timers := s.previewing(defaultPreviewDebounce)
+	alice := stt.Participant{ID: "alice"}
+	s.observe(alice, "book a table")
+	(*timers)[1].fire()
+	early := s.announced()
+	(*timers)[0].fire()
+	first := s.ready()
+	s.Equal(early.ID, first.ID)
+
+	// A Wait puts the same words again, and that is a turn of its own.
+	s.Require().True(s.cadence.Resolve(first.ID, true))
+	(*timers)[len(*timers)-1].fire()
+	again := s.ready()
+	s.Equal(first.Revision, again.Revision)
+	s.NotEqual(early.ID, again.ID)
+}
+
+func (s *CadenceSuite) TestACandidateForWordsThatChangedAfterTheAnnouncementIsAnIdOfItsOwn() {
+	timers := s.previewing(defaultPreviewDebounce)
+	alice := stt.Participant{ID: "alice"}
+	s.observe(alice, "book a table")
+	(*timers)[1].fire()
+	early := s.announced()
+
+	s.observe(alice, "book a table for two")
+	(*timers)[2].fire()
+
+	ready := s.ready()
+	s.Equal("book a table for two", ready.Text)
+	s.NotEqual(early.ID, ready.ID, "the reply for the old words is not the turn for the new ones")
+}
+
+func (s *CadenceSuite) TestACandidateWithNoAnnouncementIsAnIdOfItsOwn() {
+	timers := s.previewing(0)
+	s.observe(stt.Participant{ID: "alice"}, "book a table")
+	(*timers)[0].fire()
+
+	s.NotEmpty(s.ready().ID)
 }
 
 func (s *CadenceSuite) TestNewWordsRestartTheDebounce() {
@@ -594,6 +635,21 @@ func (s *AgentSuite) TestAStableRevisionStartsAReplyBeforeItsCandidateAndTheCand
 	responding, _ := firstOf[Responding](s.reported())
 	turn, _ := firstOf[Turn](s.reported())
 	s.Equal(responding.TurnID, turn.TurnID)
+
+	// What the reply cost is reported under the turn it became.
+	s.eventually(func() bool { return len(s.replyCalls()) == 1 }, "the model call was never reported")
+	s.Equal(turn.TurnID, s.replyCalls()[0].TurnID, "the model call does not join the turn row")
+}
+
+// replyCalls are the model calls reported so far for replies to the caller.
+func (s *AgentSuite) replyCalls() []ModelCall {
+	var calls []ModelCall
+	for _, event := range s.reported() {
+		if call, ok := event.(ModelCall); ok && call.Purpose == "reply" {
+			calls = append(calls, call)
+		}
+	}
+	return calls
 }
 
 func (s *AgentSuite) TestWordsThatChangeWithinTheDebounceRestartItAndOneReplyIsStartedForTheLastOnes() {

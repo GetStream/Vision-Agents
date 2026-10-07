@@ -143,6 +143,11 @@ type cadenceSpeaker struct {
 	// previews is how many replies were started ahead of the wait for the words since the last
 	// turn that was answered.
 	previews int
+	// previewID is the id the last reply announced for the words was started under, and
+	// previewRevision the words it was for. The candidate for those words takes the id over, so
+	// that what the reply cost is attributed to the turn it became.
+	previewID       string
+	previewRevision uint64
 }
 
 func newCadence(gap, retry, settle time.Duration, logger *slog.Logger) *cadence {
@@ -244,6 +249,7 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	superseded = current.candidateID
 	current.text = text
 	current.candidateID = ""
+	current.previewID = ""
 	current.generation++
 	c.revision++
 	current.revision = c.revision
@@ -296,6 +302,7 @@ func (c *cadence) resolveAfter(candidateID string, wait bool, retryAfter time.Du
 			current.committedUtterance = current.utterance
 			current.committedAt = time.Now()
 			current.previews = 0
+			current.previewID = ""
 			current.text = ""
 			current.carried = ""
 			current.speaker = ""
@@ -487,6 +494,14 @@ func (c *cadence) emit(participantID string, generation, timerEpoch int64) {
 	}
 	waited := time.Since(current.revisedAt)
 	current.candidateID = replyPrefix + turnStamp()
+	// A reply already started for these words was asked for under an id of its own, and the model
+	// call and the request it was reported as carry it. The turn is known by that id too, so the
+	// cost of the reply joins the turn it became. It is spent once: the same words put again after
+	// a Wait are a turn of their own.
+	if current.previewID != "" && current.previewRevision == current.revision {
+		current.candidateID = current.previewID
+	}
+	current.previewID = ""
 	current.emittedGeneration = generation
 	current.timer = nil
 	// The reply for these words is the candidate's to start from here.
@@ -612,6 +627,7 @@ func (c *cadence) emitPreview(participantID string, generation, epoch int64) {
 		ReadyAt:      time.Now(),
 		Revision:     current.revision,
 	}
+	current.previewID, current.previewRevision = ready.ID, ready.Revision
 	c.mu.Unlock()
 
 	c.logger.Debug("the words held still, starting a reply to them",
