@@ -3491,7 +3491,7 @@ type ConnectorAuditEvent struct {
 	// Action grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted.
 	Action ConnectorAuditAction `json:"action"`
 
-	// AttemptId The authorization attempt a consent finished.
+	// AttemptId The authorization attempt a consent finished. Absent once the connection's user was deleted.
 	AttemptId *string `json:"attempt_id,omitempty"`
 
 	// ConnectionId The connection, which may since have been deleted.
@@ -3506,13 +3506,13 @@ type ConnectorAuditEvent struct {
 	// Reason Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
 	Reason *string `json:"reason,omitempty"`
 
-	// RequestId The X-Request-Id of the API request that caused it.
+	// RequestId The X-Request-Id of the API request that caused it. For a change a session's tool call caused, that is the request that created the session, not the one that asked for the turn. Absent for an incognito session's, and once the connection's user was deleted.
 	RequestId *string `json:"request_id,omitempty"`
 
 	// Revision The connection's credential revision once the change was made. Absent when the change names none, as a delete.
 	Revision *int64 `json:"revision,omitempty"`
 
-	// SessionId The session whose tool call caused it. Absent for an incognito session.
+	// SessionId The session whose tool call caused it. Absent for an incognito session, and once the connection's user was deleted.
 	SessionId *string `json:"session_id,omitempty"`
 }
 

@@ -4525,7 +4525,7 @@ export type components = {
         /** @description One grant a connection got, renewed or lost, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted. */
         readonly ConnectorAuditEvent: {
             readonly action: components["schemas"]["ConnectorAuditAction"];
-            /** @description The authorization attempt a consent finished. */
+            /** @description The authorization attempt a consent finished. Absent once the connection's user was deleted. */
             readonly attempt_id?: string;
             /** @description The connection, which may since have been deleted. */
             readonly connection_id: string;
@@ -4536,14 +4536,14 @@ export type components = {
             readonly owner_type: components["schemas"]["ConnectionOwnerType"];
             /** @description Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked. */
             readonly reason?: string;
-            /** @description The X-Request-Id of the API request that caused it. */
+            /** @description The X-Request-Id of the API request that caused it. For a change a session's tool call caused, that is the request that created the session, not the one that asked for the turn. Absent for an incognito session's, and once the connection's user was deleted. */
             readonly request_id?: string;
             /**
              * Format: int64
              * @description The connection's credential revision once the change was made. Absent when the change names none, as a delete.
              */
             readonly revision?: number;
-            /** @description The session whose tool call caused it. Absent for an incognito session. */
+            /** @description The session whose tool call caused it. Absent for an incognito session, and once the connection's user was deleted. */
             readonly session_id?: string;
         };
         readonly ConnectorAuditPage: {
