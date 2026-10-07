@@ -320,7 +320,7 @@ func (s *ConfigSuite) TestAHeldReplyIsLetOutAfterAtMostASecondUnlessToldOtherwis
 func (s *ConfigSuite) TestAReplyIsStartedWhenTheWordsHaveHeldStillUnlessTurnedOff() {
 	config, _, err := Load("")
 	s.Require().NoError(err)
-	s.Equal(150*time.Millisecond, config.Agent.PreviewDebounce)
+	s.Equal(60*time.Millisecond, config.Agent.PreviewDebounce)
 
 	s.T().Setenv("ROUTER_PREVIEW_DEBOUNCE", "80ms")
 	config, _, err = Load("")

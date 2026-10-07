@@ -2,6 +2,7 @@ package agent
 
 import (
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -49,15 +50,144 @@ func (s *CadenceSuite) nothingAnnounced() {
 	}
 }
 
+// previewClock is the cadence's timers on a clock the test moves, so that revisions a few
+// milliseconds apart are replayed exactly. With fireStopped, a timer that was stopped still runs
+// when it falls due, which is a timer that had already begun to run when it was stopped.
+type previewClock struct {
+	fireStopped bool
+
+	mu     sync.Mutex
+	now    time.Duration
+	timers []*clockTimer
+}
+
+type clockTimer struct {
+	clock   *previewClock
+	due     time.Duration
+	run     func()
+	stopped bool
+	fired   bool
+}
+
+func (t *clockTimer) Stop() bool {
+	t.clock.mu.Lock()
+	defer t.clock.mu.Unlock()
+	active := !t.stopped && !t.fired
+	t.stopped = true
+	return active
+}
+
+func (c *previewClock) after(delay time.Duration, run func()) cadenceTimer {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	timer := &clockTimer{clock: c, due: c.now + delay, run: run}
+	c.timers = append(c.timers, timer)
+	return timer
+}
+
+// advance moves the clock on by d, running the timers that fall due on the way, earliest first.
+func (c *previewClock) advance(d time.Duration) {
+	c.mu.Lock()
+	target := c.now + d
+	c.mu.Unlock()
+	for {
+		c.mu.Lock()
+		var next *clockTimer
+		for _, timer := range c.timers {
+			if timer.fired || timer.due > target || (timer.stopped && !c.fireStopped) {
+				continue
+			}
+			if next == nil || timer.due < next.due {
+				next = timer
+			}
+		}
+		if next == nil {
+			c.now = target
+			c.mu.Unlock()
+			return
+		}
+		c.now, next.fired = next.due, true
+		c.mu.Unlock()
+		next.run()
+	}
+}
+
+// burst is the words of a caller being transcribed a few at a time.
+var burst = []string{
+	"please", "please find", "please find a", "please find a table", "please find a table for",
+	"please find a table for two",
+}
+
+// announcedNow is what the cadence has announced so far, without waiting for more.
+func (s *CadenceSuite) announcedNow() []candidate {
+	var early []candidate
+	for {
+		select {
+		case one := <-s.cadence.Previews():
+			early = append(early, one)
+		default:
+			return early
+		}
+	}
+}
+
+func (s *CadenceSuite) TestABurstOfRevisionsThirtyMillisecondsApartIsAnnouncedOnceForTheFinalWords() {
+	s.useDefaultCadence()
+	s.cadence.preview = defaultPreviewDebounce
+	clock := &previewClock{fireStopped: true}
+	s.cadence.after = clock.after
+	alice := stt.Participant{ID: "alice"}
+
+	for _, text := range burst {
+		s.observe(alice, text)
+		clock.advance(30 * time.Millisecond)
+		s.Empty(s.announcedNow(), "words that were still changing were announced: "+text)
+	}
+	clock.advance(defaultPreviewDebounce - 30*time.Millisecond)
+
+	early := s.announcedNow()
+	s.Require().Len(early, 1, "a burst of revisions is one preview")
+	s.Equal(burst[len(burst)-1], early[0].Text)
+
+	// Every earlier timer, stopped or not, and the candidate for the words come due.
+	clock.advance(time.Minute)
+	s.Empty(s.announcedNow(), "the words were announced again")
+	ready := s.ready()
+	s.Equal(early[0].Revision, ready.Revision, "the candidate is for the words that were announced")
+}
+
+func (s *CadenceSuite) TestADebounceThatFiresForWordsThatHaveChangedAnnouncesNothing() {
+	s.useDefaultCadence()
+	s.cadence.preview = defaultPreviewDebounce
+	clock := &previewClock{fireStopped: true}
+	s.cadence.after = clock.after
+	alice := stt.Participant{ID: "alice"}
+
+	s.observe(alice, "book a table")
+	s.observe(alice, "book a table and")
+	clock.advance(defaultPreviewDebounce)
+
+	s.Empty(s.announcedNow(), "words that were replaced by unfinished ones were announced")
+
+	s.observe(alice, "book a table for two")
+	s.cadence.Forget(alice)
+	s.observe(stt.Participant{ID: "bob"}, "who is there")
+	clock.advance(time.Minute)
+
+	early := s.announcedNow()
+	s.Require().Len(early, 1, "words that were forgotten were announced")
+	s.Equal("bob", early[0].Participant.ID)
+}
+
 func (s *CadenceSuite) TestWordsThatHoldStillForTheDebounceAreAnnouncedAheadOfTheirCandidate() {
-	timers := s.previewing(150 * time.Millisecond)
+	timers := s.previewing(defaultPreviewDebounce)
 	alice := stt.Participant{ID: "alice"}
 
 	s.observe(alice, "book a table")
 
 	s.Require().Len(*timers, 2)
 	s.Equal(defaultCadenceGap, (*timers)[0].delay)
-	s.Equal(150*time.Millisecond, (*timers)[1].delay)
+	s.Equal(defaultPreviewDebounce, (*timers)[1].delay)
 	(*timers)[1].fire()
 	early := s.announced()
 	s.Equal(alice, early.Participant)
@@ -73,7 +203,7 @@ func (s *CadenceSuite) TestWordsThatHoldStillForTheDebounceAreAnnouncedAheadOfTh
 }
 
 func (s *CadenceSuite) TestNewWordsRestartTheDebounce() {
-	timers := s.previewing(150 * time.Millisecond)
+	timers := s.previewing(defaultPreviewDebounce)
 	alice := stt.Participant{ID: "alice"}
 
 	s.observe(alice, "book a table")
@@ -90,7 +220,7 @@ func (s *CadenceSuite) TestNewWordsRestartTheDebounce() {
 }
 
 func (s *CadenceSuite) TestTheSameWordsAgainDoNotRestartTheDebounce() {
-	timers := s.previewing(150 * time.Millisecond)
+	timers := s.previewing(defaultPreviewDebounce)
 	alice := stt.Participant{ID: "alice"}
 
 	s.observe(alice, "book a table")
@@ -101,7 +231,7 @@ func (s *CadenceSuite) TestTheSameWordsAgainDoNotRestartTheDebounce() {
 }
 
 func (s *CadenceSuite) TestWordsThatEndUnfinishedAreNotAnnounced() {
-	timers := s.previewing(150 * time.Millisecond)
+	timers := s.previewing(defaultPreviewDebounce)
 	alice := stt.Participant{ID: "alice"}
 
 	for _, text := range []string{"book a table,", "book a table and", "book a table um", "my member id is ABC12"} {
@@ -115,7 +245,7 @@ func (s *CadenceSuite) TestWordsThatEndUnfinishedAreNotAnnounced() {
 }
 
 func (s *CadenceSuite) TestWordsWhoseCandidateIsDueNoLaterAreNotAnnounced() {
-	timers := s.previewing(150 * time.Millisecond)
+	timers := s.previewing(defaultPreviewDebounce)
 
 	s.cadence.Observe(stt.Transcript{Participant: stt.Participant{ID: "alice"}, Mode: stt.ModeFinal, Text: "book a table"})
 
@@ -132,7 +262,7 @@ func (s *CadenceSuite) TestWithoutADebounceNothingIsAnnounced() {
 }
 
 func (s *CadenceSuite) TestACandidateForTheWordsEndsTheDebounce() {
-	timers := s.previewing(150 * time.Millisecond)
+	timers := s.previewing(defaultPreviewDebounce)
 	s.observe(stt.Participant{ID: "alice"}, "book a table")
 
 	(*timers)[0].fire()
@@ -147,7 +277,7 @@ func (s *CadenceSuite) TestACandidateForTheWordsEndsTheDebounce() {
 }
 
 func (s *CadenceSuite) TestForgettingAParticipantEndsTheirDebounce() {
-	timers := s.previewing(150 * time.Millisecond)
+	timers := s.previewing(defaultPreviewDebounce)
 	alice := stt.Participant{ID: "alice"}
 	s.observe(alice, "book a table")
 
@@ -159,7 +289,7 @@ func (s *CadenceSuite) TestForgettingAParticipantEndsTheirDebounce() {
 }
 
 func (s *CadenceSuite) TestClosingEndsEveryDebounce() {
-	timers := s.previewing(150 * time.Millisecond)
+	timers := s.previewing(defaultPreviewDebounce)
 	s.observe(stt.Participant{ID: "alice"}, "book a table")
 
 	s.cadence.Close()
@@ -169,7 +299,7 @@ func (s *CadenceSuite) TestClosingEndsEveryDebounce() {
 	s.nothingAnnounced()
 }
 
-func TestThePreviewDebounceDefaultsToOneHundredFiftyMillisecondsAndCanBeTurnedOff(t *testing.T) {
+func TestThePreviewDebounceDefaultsToSixtyMillisecondsAndCanBeTurnedOff(t *testing.T) {
 	options := func(debounce *time.Duration) Options {
 		return Options{
 			CustomerID: "acme", Edge: newLoopbackEdge(), LLM: &llmrouter.Router{},
@@ -179,7 +309,7 @@ func TestThePreviewDebounceDefaultsToOneHundredFiftyMillisecondsAndCanBeTurnedOf
 
 	left, err := New(options(nil))
 	require.NoError(t, err)
-	require.Equal(t, 150*time.Millisecond, left.cadence.preview)
+	require.Equal(t, 60*time.Millisecond, left.cadence.preview)
 
 	off := time.Duration(0)
 	disabled, err := New(options(&off))
@@ -212,7 +342,6 @@ func (s *AgentSuite) asked(request int) string {
 // holdsAnEarlyPreview joins an agent that has started a reply for a caller's words and is not
 // going to ask about them, and returns the caller and what tells the reply was let go of.
 func (s *AgentSuite) holdsAnEarlyPreview() (stt.Participant, *atomic.Bool) {
-	s.debouncesFor(50 * time.Millisecond)
 	s.join(true)
 	s.slowGap(time.Hour)
 	alice := stt.Participant{ID: "alice"}
@@ -224,7 +353,6 @@ func (s *AgentSuite) holdsAnEarlyPreview() (stt.Participant, *atomic.Bool) {
 }
 
 func (s *AgentSuite) TestAStableRevisionStartsAReplyBeforeItsCandidateAndTheCandidateAdoptsIt() {
-	s.debouncesFor(60 * time.Millisecond)
 	s.join(true)
 	s.slowGap(500 * time.Millisecond)
 	alice := stt.Participant{ID: "alice"}
@@ -270,8 +398,36 @@ func (s *AgentSuite) TestWordsThatChangeWithinTheDebounceRestartItAndOneReplyIsS
 	s.Equal(1, s.keptPreviews())
 }
 
+func (s *AgentSuite) TestABurstOfRevisionsThirtyMillisecondsApartStartsOneReplyForTheFinalWords() {
+	s.join(true)
+	clock := &previewClock{fireStopped: true}
+	s.agent.cadence.mu.Lock()
+	s.agent.cadence.after = clock.after
+	s.agent.cadence.mu.Unlock()
+	alice := stt.Participant{ID: "alice"}
+	s.speak(alice)
+
+	for _, text := range burst {
+		s.mutters(alice, text)
+		s.eventually(func() bool {
+			heard, ok := s.agent.cadence.currentCandidate(alice.ID)
+			return ok && heard.Text == text
+		}, "the words were never heard: "+text)
+		clock.advance(30 * time.Millisecond)
+		s.Empty(s.model.requests(), "a reply was started for words that were still changing: "+text)
+		s.Zero(s.previewsHeld())
+	}
+	clock.advance(defaultPreviewDebounce)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "no reply was started for the last words")
+	s.Equal(burst[len(burst)-1], s.asked(0))
+	s.Never(func() bool { return len(s.model.requests()) > 1 || s.previewsHeld() > 1 }, 300*time.Millisecond,
+		10*time.Millisecond, "more than one reply for one participant")
+	s.Equal(1, s.keptPreviews())
+	s.Equal(1, s.previewsHeld())
+}
+
 func (s *AgentSuite) TestWordsThatChangeAfterAReplyWasStartedLetGoOfItAndStartAnother() {
-	s.debouncesFor(50 * time.Millisecond)
 	s.join(true)
 	s.slowGap(10 * time.Second)
 	alice := stt.Participant{ID: "alice"}
@@ -296,7 +452,6 @@ func (s *AgentSuite) TestWordsThatChangeAfterAReplyWasStartedLetGoOfItAndStartAn
 }
 
 func (s *AgentSuite) TestWordsThatLookUnfinishedAreNotPreviewedEarly() {
-	s.debouncesFor(50 * time.Millisecond)
 	s.join(true)
 	s.slowGap(10 * time.Second)
 	alice := stt.Participant{ID: "alice"}
@@ -331,7 +486,6 @@ func (s *AgentSuite) TestWithoutADebounceTheReplyStartsWithTheCandidate() {
 func (s *AgentSuite) TestNoReplyIsStartedEarlyWithoutSpeculativeReplies() {
 	off := false
 	s.speculation = &off
-	s.debouncesFor(50 * time.Millisecond)
 	s.join(true)
 	s.slowGap(10 * time.Second)
 	alice := stt.Participant{ID: "alice"}
@@ -344,7 +498,6 @@ func (s *AgentSuite) TestNoReplyIsStartedEarlyWithoutSpeculativeReplies() {
 }
 
 func (s *AgentSuite) TestNoReplyIsStartedEarlyWhileTheAgentIsSpeaking() {
-	s.debouncesFor(50 * time.Millisecond)
 	s.join(true)
 	s.slowGap(10 * time.Second)
 	s.agent.mu.Lock()
@@ -361,7 +514,6 @@ func (s *AgentSuite) TestNoReplyIsStartedEarlyWhileTheAgentIsSpeaking() {
 
 func (s *AgentSuite) TestNoReplyIsStartedEarlyWhenAPolicyMustClearTheWordsFirst() {
 	s.screens(guardrail.ModeBlocking)
-	s.debouncesFor(50 * time.Millisecond)
 	s.join(true)
 	s.slowGap(10 * time.Second)
 	alice := stt.Participant{ID: "alice"}
@@ -374,7 +526,6 @@ func (s *AgentSuite) TestNoReplyIsStartedEarlyWhenAPolicyMustClearTheWordsFirst(
 }
 
 func (s *AgentSuite) TestNoReplyIsStartedEarlyForAnotherVoiceAtTheMicrophone() {
-	s.debouncesFor(50 * time.Millisecond)
 	s.join(true)
 	s.slowGap(10 * time.Second)
 	alice := stt.Participant{ID: "alice"}
@@ -421,7 +572,7 @@ func (s *AgentSuite) TestClosingTheAgentLetsGoOfAnEarlyPreview() {
 func (s *AgentSuite) TestMovingASessionOntoOtherModelsLetsGoOfAnEarlyPreview() {
 	w := s.joinSwappable()
 	s.agent.cadence.mu.Lock()
-	s.agent.cadence.preview = 50 * time.Millisecond
+	s.agent.cadence.preview = defaultPreviewDebounce
 	s.agent.cadence.gap = time.Hour
 	s.agent.cadence.mu.Unlock()
 	alice := stt.Participant{ID: "alice"}
@@ -445,7 +596,6 @@ func (s *AgentSuite) TestMovingASessionOntoOtherModelsLetsGoOfAnEarlyPreview() {
 }
 
 func (s *AgentSuite) TestARulingThatIsNotAnAnswerLetsGoOfAnEarlyPreview() {
-	s.debouncesFor(50 * time.Millisecond)
 	s.join(true)
 	s.slowGap(300 * time.Millisecond)
 	s.flow.reply = []string{`{"disposition":"ignore","floor":"continue"}`}
@@ -465,7 +615,6 @@ func (s *AgentSuite) TestARulingThatIsNotAnAnswerLetsGoOfAnEarlyPreview() {
 }
 
 func (s *AgentSuite) TestAnEarlyPreviewIsLetGoWhenNothingComesOfTheWordsBeforeThePatienceRunsOut() {
-	s.debouncesFor(50 * time.Millisecond)
 	s.join(true)
 	s.slowGap(time.Hour)
 	s.agent.converse.mu.Lock()
@@ -483,7 +632,6 @@ func (s *AgentSuite) TestAnEarlyPreviewIsLetGoWhenNothingComesOfTheWordsBeforeTh
 }
 
 func (s *AgentSuite) TestAnEarlyPreviewAdoptedByAWaitIsLetGoWhenThePatienceRunsOut() {
-	s.debouncesFor(50 * time.Millisecond)
 	s.join(true)
 	s.slowGap(200 * time.Millisecond)
 	s.flow.reply = []string{`{"disposition":"wait","floor":"continue"}`}
@@ -505,7 +653,6 @@ func (s *AgentSuite) TestAnEarlyPreviewAdoptedByAWaitIsLetGoWhenThePatienceRunsO
 }
 
 func (s *AgentSuite) TestAnEarlyPreviewThatFailedLeavesNothingHeld() {
-	s.debouncesFor(50 * time.Millisecond)
 	s.join(true)
 	s.model.refuses = errors.New("the model is down")
 	s.slowGap(300 * time.Millisecond)

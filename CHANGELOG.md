@@ -741,11 +741,13 @@ setting.
 
 The reply to a caller's words used to be started when they became a candidate, which is after
 the cadence wait that decides whether the caller has finished, so the model began late. It is
-now started once a transcript revision has held still for `ROUTER_PREVIEW_DEBOUNCE`, `150ms`
+now started once a transcript revision has held still for `ROUTER_PREVIEW_DEBOUNCE`, `60ms`
 by default, and the candidate for the same words takes it over through the adoption a kept
 reply already uses, so there is still one model call for it. Words that change again restart
-the debounce, and words that end on a comma, a joining word or a hesitation, or in digits that
-may still be growing, are not started at all. There is never more than one for a participant:
+the debounce, so revisions arriving closer together than it are started once, for the last of
+them, and a debounce that fires for words that have since changed does nothing. Words that end
+on a comma, a joining word or a hesitation, or in digits that may still be growing, are not
+started at all. There is never more than one for a participant:
 new words let go of the reply for the old ones, and every other cause that lets go of a kept
 reply (the floor changing, the caller leaving, the call ending, the models being moved, a check
 that does not answer, the patience for the words running out) lets go of this one too. It

@@ -26,10 +26,12 @@ const (
 	cadenceFinalGap = 60 * time.Millisecond
 	// defaultPreviewDebounce is how long a transcript revision has to hold still before the
 	// reply to its words is started, ahead of the wait that decides whether the caller has
-	// finished. It is much shorter than that wait, so the model is already working for most of
-	// it, and long enough that words which are still arriving restart it instead of being
-	// previewed one revision at a time.
-	defaultPreviewDebounce = 150 * time.Millisecond
+	// finished. It is much shorter than that wait, so the model is already working for nearly
+	// all of it, and long enough that revisions arriving closer together than this restart it
+	// and are previewed once, for the last of them, instead of one revision at a time. It is
+	// also no longer than cadenceFinalGap, which is what leaves the words of a finalized
+	// transcript to their candidate.
+	defaultPreviewDebounce = 60 * time.Millisecond
 )
 
 // candidate is a stable transcript revision worth asking the flow controller about.
@@ -529,12 +531,16 @@ func (c *cadence) schedulePreviewLocked(current *cadenceSpeaker, candidateDelay 
 	})
 }
 
-// stopPreviewLocked cancels a debounce that has not run. The caller holds the lock.
+// stopPreviewLocked cancels a debounce that has not run. One that has already fired and is
+// waiting on the lock is cancelled too, because the epoch it was started under no longer
+// names a live timer, so it finds nothing to announce: stopping a timer cannot recall a
+// callback that has begun. The caller holds the lock.
 func (c *cadence) stopPreviewLocked(current *cadenceSpeaker) {
 	if current.previewTimer != nil {
 		current.previewTimer.Stop()
 		current.previewTimer = nil
 	}
+	current.previewEpoch = 0
 }
 
 // emitPreview announces words that held still for the preview debounce, unless they have
@@ -548,6 +554,8 @@ func (c *cadence) emitPreview(participantID string, generation, epoch int64) {
 		return
 	}
 	current.previewTimer = nil
+	// Announced once: the words are only announced again if they change and hold still again.
+	current.previewEpoch = 0
 	ready := candidate{
 		ID:           replyPrefix + turnStamp(),
 		Participant:  current.participant,

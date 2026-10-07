@@ -209,7 +209,7 @@ type Agent struct {
 	ReplySilenceMax time.Duration `koanf:"reply_silence_max"`
 	// PreviewDebounce is how long a caller's words have to hold still before the reply to them
 	// is started, ahead of the wait that decides whether they have finished. Words that change
-	// again restart it. It applies wherever SpeculativeReplies does. 150ms by default; 0 starts
+	// again restart it. It applies wherever SpeculativeReplies does. 60ms by default; 0 starts
 	// the reply when that wait is over.
 	PreviewDebounce time.Duration `koanf:"preview_debounce"`
 }
@@ -311,7 +311,7 @@ func Defaults() Config {
 			SpeculativeReplies: true,
 			ReplySilence:       700 * time.Millisecond,
 			ReplySilenceMax:    time.Second,
-			PreviewDebounce:    150 * time.Millisecond,
+			PreviewDebounce:    60 * time.Millisecond,
 		},
 		EOT:     EOT{Endpoint: eotdefaults.HostedDemoEndpoint, Mode: "primary", Threshold: 0.5},
 		Sandbox: Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},

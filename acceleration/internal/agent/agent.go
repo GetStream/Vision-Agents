@@ -184,7 +184,7 @@ type Options struct {
 	// is started, ahead of the wait that decides whether they have finished, so the model has
 	// been working for part of that wait. Words that change again restart it, and words that
 	// end on a comma, a joining word or a hesitation are not previewed at all. It applies
-	// wherever SpeculativeReplies does. Nil leaves it at 150ms, and a pointer to zero starts
+	// wherever SpeculativeReplies does. Nil leaves it at 60ms, and a pointer to zero starts
 	// the reply when the wait is over, as it did before.
 	PreviewDebounce *time.Duration
 
