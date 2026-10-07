@@ -391,25 +391,47 @@ func (s *CadenceSuite) TestIncompleteIdentifiersAreTheOnesThatStillHaveADigitTai
 func (s *CadenceSuite) TestUnfinishedWordsEndOnACommaAConjunctionOrAHesitation() {
 	for _, text := range []string{
 		"Burger, no bun,", "Name,", "Burger, no bun, ", "你好，", "これ、", "مرحبا،",
-		"a burger and", "Or", "I want that but", "So", "it is late because", "I would like, um", "uh", "er",
+		"a burger and", "Or", "I want that but", "it is late because", "I would like, um", "uh", "er",
 		"a burger and.", "AND...", "um…",
+		`He said "no bun,"`, "she said ‘no bun,’", "«no bun,»", "「你好，」",
 	} {
-		s.Truef(visiblyUnfinished(text), "%q is a caller part way through", text)
+		s.Truef(visiblyUnfinished(text, ""), "%q is a caller part way through", text)
 	}
 	for _, text := range []string{
 		"", "book a table", "Book a table.", "a rock band", "next summer", "the doctor", "my brother",
 		"I said uh-huh", "a burger, no bun", "yes, please.", "PIN 4471", "that is all, thanks",
+		"I think so.", "I think so", "So", "Is that so?", `He said "no bun"`,
 	} {
-		s.Falsef(visiblyUnfinished(text), "%q is not still going", text)
+		s.Falsef(visiblyUnfinished(text, ""), "%q is not still going", text)
+	}
+}
+
+func (s *CadenceSuite) TestTheWordsAThinkingSpeakerLeavesASentenceOnAreEnglish() {
+	for _, language := range []string{"", "en", "EN", "en-US", "en-GB"} {
+		s.Truef(visiblyUnfinished("a burger and", language), "%q is English or unsaid", language)
+		s.Truef(visiblyUnfinished("I would like, um", language), "%q is English or unsaid", language)
+	}
+	for _, language := range []string{"de", "es", "fr-CA", "ja", "eng", "end"} {
+		s.Falsef(visiblyUnfinished("um", language), "an \"um\" in %q is not a hesitation", language)
+		s.Falsef(visiblyUnfinished("or", language), "an \"or\" in %q is not a conjunction", language)
+		s.Truef(visiblyUnfinished("pan, queso,", language), "a comma is a comma in %q", language)
+		s.Truef(visiblyUnfinished("你好，", language), "a comma is a comma in %q", language)
 	}
 }
 
 // settleDelay is how long a transcript of the given kind is made to wait on the default
 // pacing, read off the timer it schedules rather than waited out.
 func (s *CadenceSuite) settleDelay(mode stt.Mode, text string) time.Duration {
+	return s.settleDelayIn("", mode, text)
+}
+
+// settleDelayIn is settleDelay for a transcript in the given language.
+func (s *CadenceSuite) settleDelayIn(language string, mode stt.Mode, text string) time.Duration {
 	s.useDefaultCadence()
 	timers := s.captureTimers()
-	s.cadence.Observe(stt.Transcript{Participant: stt.Participant{ID: "caller"}, Mode: mode, Text: text})
+	s.cadence.Observe(stt.Transcript{
+		Participant: stt.Participant{ID: "caller"}, Mode: mode, Text: text, Language: language,
+	})
 	s.Require().Len(*timers, 1)
 	return (*timers)[0].delay
 }
@@ -425,8 +447,32 @@ func (s *CadenceSuite) TestAFinalEndingOnACommaWaitsTheRetryGap() {
 }
 
 func (s *CadenceSuite) TestAFinalEndingOnAConjunctionOrHesitationWaitsTheRetryGap() {
-	for _, text := range []string{"a burger and", "Or", "maybe but", "So", "late because", "I would like, um", "uh.", "Er"} {
+	for _, text := range []string{"a burger and", "Or", "maybe but", "late because", "I would like, um", "uh.", "Er"} {
 		s.Equalf(defaultCadenceRetry, s.settleDelay(stt.ModeFinal, text), "%q", text)
+	}
+}
+
+func (s *CadenceSuite) TestAFinalEndingOnSoSettlesAtOnce() {
+	// "so" closes a sentence as often as it joins one.
+	for _, text := range []string{"I think so.", "I think so", "Is that so?", "So"} {
+		s.Equalf(cadenceFinalGap, s.settleDelay(stt.ModeFinal, text), "%q", text)
+	}
+}
+
+func (s *CadenceSuite) TestAFinalEndingOnAnEnglishFillerIsOnlyHeldInEnglish() {
+	for _, language := range []string{"", "en", "en-US"} {
+		s.Equalf(defaultCadenceRetry, s.settleDelayIn(language, stt.ModeFinal, "um"), "%q", language)
+	}
+	for _, language := range []string{"de", "pt-BR", "ja"} {
+		s.Equalf(cadenceFinalGap, s.settleDelayIn(language, stt.ModeFinal, "um"), "%q", language)
+		s.Equalf(cadenceFinalGap, s.settleDelayIn(language, stt.ModeFinal, "a burger or"), "%q", language)
+		s.Equalf(defaultCadenceRetry, s.settleDelayIn(language, stt.ModeFinal, "pan, queso,"), "%q", language)
+	}
+}
+
+func (s *CadenceSuite) TestAFinalEndingOnACommaBeforeAClosingQuoteWaitsTheRetryGap() {
+	for _, text := range []string{`He said "no bun,"`, "«sin cebolla,»"} {
+		s.Equalf(defaultCadenceRetry, s.settleDelayIn("es", stt.ModeFinal, text), "%q", text)
 	}
 }
 

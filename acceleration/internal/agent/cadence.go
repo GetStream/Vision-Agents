@@ -221,7 +221,7 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	current.confidence = transcript.Confidence
 	current.latencyMs = transcript.ProcessingTimeMs
 	current.utterance = transcript.Utterance
-	unfinished := incompleteIdentifier(text) || visiblyUnfinished(text)
+	unfinished := incompleteIdentifier(text) || visiblyUnfinished(text, transcript.Language)
 	final := transcript.Mode == stt.ModeFinal && !unfinished
 	if sameWords(current.text, text) {
 		// The transcriber finalizing words already waited on means they have stopped, so
@@ -401,8 +401,8 @@ func (c *cadence) ExpediteFinal(transcript stt.Transcript) bool {
 	current, ok := c.speakers[transcript.Participant.ID]
 	if !ok || current.text == "" || current.candidateID != "" || current.timer == nil ||
 		current.emittedGeneration == current.generation || c.grace > 0 ||
-		incompleteIdentifier(current.text) || visiblyUnfinished(current.text) ||
-		visiblyUnfinished(transcript.Text) || !sameWords(current.text, transcript.Text) {
+		incompleteIdentifier(current.text) || visiblyUnfinished(current.text, current.language) ||
+		visiblyUnfinished(transcript.Text, transcript.Language) || !sameWords(current.text, transcript.Text) {
 		c.mu.Unlock()
 		return false
 	}
@@ -688,12 +688,17 @@ func growsTranscript(previous, next string) bool {
 
 // continuationWords are the words a speaker leaves a sentence on when more is on its way:
 // the conjunctions that join on another clause and the sounds made while finding the next
-// word. They are English; other languages are covered by the comma alone.
-var continuationWords = []string{"and", "or", "but", "so", "because", "um", "uh", "er"}
+// word. "so" is not one of them: it ends a sentence as often as it joins one, as "I think so"
+// does. They are English, and only a transcript in English is held to them.
+var continuationWords = []string{"and", "or", "but", "because", "um", "uh", "er"}
 
 // clauseCommas are the commas a transcriber writes: the Latin one, and the fullwidth,
 // ideographic and Arabic ones, so the test holds in any language that is punctuated.
 const clauseCommas = ",，、،"
+
+// closingQuotes are the quotation marks a transcriber may close a quoted stretch with, after the
+// comma it was in the middle of.
+const closingQuotes = "\"'”’»›」』"
 
 // visiblyUnfinished reports whether the words stop where a speaker is plainly about to say
 // more: on a comma, a coordinating conjunction, or a filled hesitation.
@@ -701,12 +706,18 @@ const clauseCommas = ",，、،"
 // A pause there is a breath in the middle of a turn, a list being read out or a clause being
 // joined on, far more often than the end of one. A transcriber finalizing the words says
 // where the audio went quiet, not that the caller is done, so it is no reason to answer.
-// The comma is matched as a character and the rest as whole words, ignoring case and any
-// punctuation after them, so "band" and "summer" are not "and" and "um".
-func visiblyUnfinished(text string) bool {
+// The comma is matched as a character, whatever the language and even when a closing quote
+// follows it, and the rest as whole words, ignoring case and any punctuation after them, so
+// "band" and "summer" are not "and" and "um". The words are English, so they are only looked
+// for when the transcript is in English or does not say what it is in: "um" ends a sentence in
+// some other languages.
+func visiblyUnfinished(text, language string) bool {
 	text = strings.TrimRightFunc(text, unicode.IsSpace)
-	if last, _ := utf8.DecodeLastRuneInString(text); strings.ContainsRune(clauseCommas, last) {
+	if last, _ := utf8.DecodeLastRuneInString(strings.TrimRight(text, closingQuotes)); strings.ContainsRune(clauseCommas, last) {
 		return true
+	}
+	if !english(language) {
+		return false
 	}
 	lastWord := text
 	if space := strings.LastIndexFunc(text, unicode.IsSpace); space >= 0 {
@@ -722,6 +733,13 @@ func visiblyUnfinished(text string) bool {
 		}
 	}
 	return false
+}
+
+// english reports whether a transcript's language is English, or is not said, which is how a
+// transcriber that has not settled on one writes it.
+func english(language string) bool {
+	language = strings.ToLower(strings.TrimSpace(language))
+	return language == "" || language == "en" || strings.HasPrefix(language, "en-")
 }
 
 // incompleteIdentifier reports whether the last token still looks like a PIN, member ID,
