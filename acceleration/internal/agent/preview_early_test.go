@@ -435,10 +435,15 @@ func (s *CadenceSuite) TestWithoutAQuietTheWordsAloneDecide() {
 	s.Require().Len(s.announcedNow(), 1, "a caller who is voiced held a reply back that was asked to look at the words alone")
 }
 
-func (s *CadenceSuite) TestOnlyThreeRepliesAreStartedAheadOfTheWaitForOneRunOfWords() {
+func (s *CadenceSuite) TestEarlyRepliesStopAtTheCapForOneRunOfWords() {
 	timers := s.previewing(defaultPreviewDebounce)
 	alice := stt.Participant{ID: "alice"}
-	revisions := []string{"book", "book a", "book a table", "book a table for", "book a table for two"}
+	revisions := make([]string, maxEarlyPreviews+1)
+	words := "book"
+	for i := range revisions {
+		revisions[i] = words
+		words += " again"
+	}
 
 	for i, text := range revisions[:maxEarlyPreviews] {
 		s.observe(alice, text)
@@ -446,13 +451,13 @@ func (s *CadenceSuite) TestOnlyThreeRepliesAreStartedAheadOfTheWaitForOneRunOfWo
 		s.Equal(text, s.announced().Text)
 	}
 	armed := len(*timers)
-	s.observe(alice, revisions[3])
+	s.observe(alice, revisions[maxEarlyPreviews])
 	s.Len(*timers, armed+1, "a debounce was armed after the cap")
 	s.Equal(defaultCadenceGap, (*timers)[armed].delay, "only the candidate is")
 
 	(*timers)[armed].fire()
 	ready := s.ready()
-	s.Equal(revisions[3], ready.Text)
+	s.Equal(revisions[maxEarlyPreviews], ready.Text)
 	s.Require().True(s.cadence.Resolve(ready.ID, false))
 
 	armed = len(*timers)

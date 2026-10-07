@@ -38,10 +38,12 @@ const (
 	// started then is thrown away when the next revision arrives.
 	defaultPreviewQuiet = 120 * time.Millisecond
 	// maxEarlyPreviews is how many replies are started ahead of the wait for one run of a
-	// caller's words, counted from the last turn that was answered. A caller who goes on talking
-	// keeps changing their words, and every reply started for them is paid for and thrown away.
-	// After this many the reply is started with the candidate.
-	maxEarlyPreviews = 3
+	// caller's words, counted from the last turn that was answered. The preview quiet already
+	// keeps them to real pauses, so this only bounds a caller who pauses again and again: one
+	// who speaks in short sentences pauses after each, and a smaller bound would spend itself
+	// before the pause that ends the turn. After this many the reply is started with the
+	// candidate.
+	maxEarlyPreviews = 8
 )
 
 // candidate is a stable transcript revision worth asking the flow controller about.
