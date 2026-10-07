@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -14,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
@@ -36,9 +38,11 @@ const (
 	maxCardRunes = conversation.MaxHistoryRunes / 4
 )
 
-// cardReadTimeout bounds reading the cards: the contact map, the episodes and a Stream Chat
-// read for each card. A choice: a voice session reads them before it joins its call.
-const cardReadTimeout = 5 * time.Second
+// ReadTimeout bounds reading the cards: who is on a call, the contact map, the episodes and
+// a Stream Chat read for each card. A choice: a voice session reads them before it joins its
+// call, so a slow Stream delays the join by at most this. Context applies it itself; a
+// caller that reads something first, such as the call, puts that under it too.
+const ReadTimeout = 5 * time.Second
 
 // cardsAttribution is said before the cards, as conversation's sharedHistoryAttribution is
 // before restored shared history: what the envelope holds, and that none of it is authority.
@@ -92,7 +96,7 @@ const (
 // Nothing is read for a person the contact map does not hold. A card that cannot be read is
 // left out, and the error says which; the cards that could be read are returned with it.
 func (c *Cards) Context(ctx context.Context, reading Reading) ([]llm.Message, error) {
-	ctx, cancel := context.WithTimeout(ctx, cardReadTimeout)
+	ctx, cancel := context.WithTimeout(ctx, ReadTimeout)
 	defer cancel()
 	contact, err := c.whose(ctx, reading)
 	if errors.Is(err, store.ErrNoContact) {
@@ -211,7 +215,14 @@ func summaryOf(ctx context.Context, bound streamapp.Bound, contact store.Contact
 
 // linesOf is the last lines of a card's thread channel said during its episode: before Until,
 // and for a call not before it started, since a call channel can hold other callers' calls.
-// A channel that is not the customer's has none.
+// A channel that is not the customer's has none, and so has a call card whose window holds a
+// person's line by anybody but the card's caller: two callers on one call id at once, or a
+// line written late at the window's edge, are never handed to either.
+//
+// The query is bounded by the window's end only, as Stream's documented way back through a
+// channel is (https://getstream.io/chat/docs/go-golang/channel_pagination/, «Fetch older
+// messages» with id_lt and a limit); the window's start is applied here. The lines are put in
+// time order here, so the tail taken is the last lines whatever order Stream answers in.
 func linesOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard) ([]line, error) {
 	channelType, channelID, _ := strings.Cut(card.ThreadChannel, ":")
 	state := true
@@ -219,10 +230,6 @@ func linesOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard)
 	params := &getstream.MessagePaginationParams{Limit: &limit}
 	if card.Until != nil {
 		params.CreatedAtBeforeOrEqual = &getstream.Timestamp{Time: card.Until}
-	}
-	call := card.Source == store.EpisodeCall
-	if call {
-		params.CreatedAtAfterOrEqual = &getstream.Timestamp{Time: &card.StartedAt}
 	}
 	// Without Data: reading a card never makes or changes a channel.
 	r, err := bound.Client.Chat().GetOrCreateChannel(ctx, channelType, channelID, &getstream.GetOrCreateChannelRequest{
@@ -234,8 +241,14 @@ func linesOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard)
 	if r.Data.Channel == nil || r.Data.Channel.Custom[conversation.CustomerField] != card.CustomerID {
 		return nil, nil
 	}
+	call := card.Source == store.EpisodeCall
+	messages := append([]getstream.MessageResponse(nil), r.Data.Messages...)
+	sort.SliceStable(messages, func(i, j int) bool {
+		a, b := messages[i].CreatedAt.Time, messages[j].CreatedAt.Time
+		return a != nil && b != nil && a.Before(*b)
+	})
 	var lines []line
-	for _, message := range r.Data.Messages {
+	for _, message := range messages {
 		at := message.CreatedAt.Time
 		if at == nil || (card.Until != nil && at.After(*card.Until)) || (call && at.Before(card.StartedAt)) {
 			continue
@@ -244,6 +257,9 @@ func linesOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard)
 		if !ok {
 			continue
 		}
+		if call && from == fromPerson && !callerOf(card, message.User.ID) {
+			return nil, nil
+		}
 		said := line{From: from, Text: message.Text}
 		if from == fromPerson && message.User.Name != nil {
 			said.Name = truncate(*message.User.Name, conversation.MaxAuthorName)
@@ -251,6 +267,20 @@ func linesOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard)
 		lines = append(lines, said)
 	}
 	return lines[max(0, len(lines)-maxCardLines):], nil
+}
+
+// callerOf reports whether a call channel's participant is the card's caller: the SIP
+// participant the inbound routing rule names sip-<number> (phone.CallerNumber), whose number
+// is the card's contact. The same reading of the number made the card (session.calledParty,
+// Phone), so a caller who was given a card is one this knows. Anybody else, another caller
+// or a participant from a browser, is not.
+func callerOf(card store.EpisodeCard, participantID string) bool {
+	number, ok := phone.CallerNumber(participantID)
+	if !ok || card.ContactKind != store.ContactPhone {
+		return false
+	}
+	person, err := Phone(number)
+	return err == nil && person.Address == card.ContactAddress
 }
 
 // lineOf is who a thread channel's message is from: the person for one a person wrote (no

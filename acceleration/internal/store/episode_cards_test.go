@@ -83,7 +83,10 @@ func (s *StoreSuite) TestEveryRowPointingAtTheOmniChannelIsThePerson() {
 	sms := s.episodeIn(phone, "agent:thread-sms", 0)
 	thread := s.episodeIn(slack, "agent:thread-slack", 10)
 
-	s.Equal([]string{thread.ID, sms.ID}, ids(s.cardsOf("agent:omni-+15550100", CardsQuery{})))
+	cards := s.cardsOf("agent:omni-+15550100", CardsQuery{})
+	s.Equal([]string{thread.ID, sms.ID}, ids(cards))
+	s.Equal([2]string{ContactSlack, "T1:U1"}, [2]string{cards[0].ContactKind, cards[0].ContactAddress}, "each card says whose row it is")
+	s.Equal([2]string{ContactPhone, "+15550100"}, [2]string{cards[1].ContactKind, cards[1].ContactAddress})
 }
 
 // A session reads its own thread word for word, and its own call is going on, so neither is

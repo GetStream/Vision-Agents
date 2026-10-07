@@ -109,6 +109,10 @@ type EpisodeCard struct {
 	// callers' calls (episodes_call_session), so a call's lines end there. Nil while none
 	// of them is known.
 	Until *time.Time `bun:"until,scanonly"`
+	// ContactKind and ContactAddress are how the episode's person is known, from its contact
+	// map row: for a call, the caller's number, which is whose lines the card's are.
+	ContactKind    string `bun:"contact_kind,scanonly"`
+	ContactAddress string `bun:"contact_address,scanonly"`
 }
 
 // CardsQuery is whose episode cards a session reads, and which of them it leaves out
@@ -136,6 +140,7 @@ func (s *Store) EpisodeCards(ctx context.Context, query CardsQuery) ([]EpisodeCa
 	var cards []EpisodeCard
 	err := s.db.NewSelect().Model(&cards).
 		ColumnExpr("ep.*").
+		ColumnExpr("cm.kind AS contact_kind, cm.address AS contact_address").
 		// LEAST ignores NULLs, so Until is nil only when all three are.
 		ColumnExpr(`LEAST(ep.ended_at, asn.closed_at, (SELECT min(nx.started_at) FROM episodes AS nx
 			WHERE nx.customer_id = ep.customer_id AND nx.thread_channel = ep.thread_channel
