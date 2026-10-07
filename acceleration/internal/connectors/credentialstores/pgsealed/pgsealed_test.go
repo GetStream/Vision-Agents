@@ -474,6 +474,54 @@ func (s *PGSealedSuite) TestWhenAConsentConnectedIsKeptAndARefreshKeepsIt() {
 	s.True(connected.Equal(*stored.ConnectedAt))
 }
 
+// A credentials write that connects a connection names no time of its own (T18's write,
+// AI-849); the grant begins when it is committed.
+func (s *PGSealedSuite) TestAConnectionCommittedConnectedFromAnotherStatusIsStampedConnectedNow() {
+	ref := s.connected("acme-app", tokens{Access: "a", Refresh: "r"}, time.Time{})
+	credentialStore := s.credentialStore(s.v1)
+	s.Require().NoError(credentialStore.Update(s.ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+		state.Status = store.ConnectionNeedsReauthorization
+		return true, nil
+	}))
+	before := time.Now().UTC()
+
+	s.Require().NoError(credentialStore.Update(s.ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+		state.Credentials = credentials(tokens{Access: "a2", Refresh: "r2"})
+		state.Status = store.ConnectionConnected
+		return true, nil
+	}))
+
+	stored := s.stored(ref)
+	s.Require().NotNil(stored.ConnectedAt)
+	s.False(stored.ConnectedAt.Before(before.Truncate(time.Microsecond)))
+}
+
+// A refresh checkpoints needs_reauthorization and commits connected again; it is the same
+// grant, so its time stays.
+func (s *PGSealedSuite) TestARefreshPastItsCheckpointKeepsWhenTheGrantBegan() {
+	ref := s.connected("acme-app", tokens{Access: "a", Refresh: "r"}, time.Time{})
+	credentialStore := s.credentialStore(s.v1)
+	connected := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	s.Require().NoError(credentialStore.Update(s.ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+		state.ConnectedAt = connected
+		return true, nil
+	}))
+
+	s.Require().NoError(credentialStore.Update(s.ctx, ref, func(state *core.CredentialState, checkpoint func() error) (bool, error) {
+		state.Status = store.ConnectionNeedsReauthorization
+		if err := checkpoint(); err != nil {
+			return false, err
+		}
+		state.Credentials = credentials(tokens{Access: "a2", Refresh: "r2"})
+		state.Status = store.ConnectionConnected
+		return true, nil
+	}))
+
+	stored := s.stored(ref)
+	s.Require().NotNil(stored.ConnectedAt)
+	s.True(connected.Equal(*stored.ConnectedAt))
+}
+
 func (s *PGSealedSuite) TestTheRevisionIsNotTheCallbacksToMove() {
 	ref := s.connected("acme-app", tokens{Access: "a", Refresh: "r"}, time.Time{})
 

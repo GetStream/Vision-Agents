@@ -65,7 +65,7 @@ func (b *CredentialStore) Update(ctx context.Context, ref core.ConnectionRef,
 	fn func(state *core.CredentialState, checkpoint func() error) (changed bool, err error)) error {
 	return b.store.WithLockedConnectorConnection(ctx, ref.CustomerID, ref.ConnectionID,
 		func(connection *store.ConnectorConnection, save func() error) (bool, error) {
-			stored := &locked{connection: connection}
+			stored := &locked{connection: connection, loadedStatus: connection.Status, loadedConnectedAt: connection.ConnectedAt}
 			var err error
 			stored.credentials, stored.opened, err = b.open(ref, connection)
 			if err != nil {
@@ -100,6 +100,11 @@ type locked struct {
 	connection  *store.ConnectorConnection
 	credentials core.StoredCredentials
 	opened      bool
+	// loadedStatus and loadedConnectedAt are what the row said when the lock was taken,
+	// before any checkpoint: a connection that was not connected then and is committed
+	// connected now got a new grant in this Update.
+	loadedStatus      string
+	loadedConnectedAt *time.Time
 }
 
 // state is what fn sees of the connection.
@@ -158,6 +163,13 @@ func (b *CredentialStore) commit(ref core.ConnectionRef, stored *locked, state *
 	if !state.ExpiresAt.IsZero() {
 		expires := state.ExpiresAt.UTC().Truncate(time.Microsecond)
 		connection.ExpiresAt = &expires
+	}
+	// Whatever writes a new grant, a consent or a credentials write, the grant begins now when
+	// the connection was not connected before and the caller named no time of its own. A
+	// refresh is loaded connected, so it keeps the time, even past its own checkpoint.
+	if state.Status == store.ConnectionConnected && stored.loadedStatus != store.ConnectionConnected &&
+		sameTime(state.ConnectedAt, stored.loadedConnectedAt) {
+		state.ConnectedAt = time.Now().UTC()
 	}
 	connection.ConnectedAt = nil
 	if !state.ConnectedAt.IsZero() {
@@ -224,6 +236,14 @@ func (b *CredentialStore) open(ref core.ConnectionRef, connection *store.Connect
 func credentialsAAD(ref core.ConnectionRef, revision int) []byte {
 	return fmt.Appendf(nil, "accelerate:connector-material:v1:%d:%s:%d:%s:%d",
 		len(ref.CustomerID), ref.CustomerID, len(ref.ConnectionID), ref.ConnectionID, revision)
+}
+
+// sameTime is whether a state's time is the one the row held, nil being zero.
+func sameTime(state time.Time, row *time.Time) bool {
+	if row == nil {
+		return state.IsZero()
+	}
+	return state.Equal(*row)
 }
 
 func isEmpty(c core.StoredCredentials) bool {
