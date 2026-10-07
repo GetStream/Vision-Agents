@@ -20,6 +20,9 @@ import (
 
 var tracer = tracing.Tracer("llmrouter")
 
+// errClosed is what a session answers once it has been closed.
+var errClosed = errors.New("llmrouter: session is closed")
+
 // Session is a live model attached to one customer. It hands out the provider's streams
 // untouched apart from recording a stat row per response on the way past.
 type Session struct {
@@ -210,7 +213,7 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	closed := s.closed
 	s.mu.Unlock()
 	if closed {
-		return nil, stack.Wrap(errors.New("llmrouter: session is closed"))
+		return nil, stack.Wrap(errClosed)
 	}
 	ctx, span := tracer.Start(ctx, "llm.create")
 	defer span.End()
