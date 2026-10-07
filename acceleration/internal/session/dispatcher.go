@@ -46,6 +46,9 @@ type dispatcher struct {
 	logins *logins
 	// invocations writes the log; nil records nothing.
 	invocations *invocationRecorder
+	// stepUps asks the caller for more access when a provider wants it (step_up.go); nil
+	// asks nobody.
+	stepUps *stepUps
 }
 
 // route is what one offered name was opened for.
@@ -148,6 +151,11 @@ func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]ll
 	if err != nil {
 		if ctx.Err() == nil && errors.Is(bounded.Err(), context.DeadlineExceeded) {
 			return llm.TextParts(outcomeUnknown(call.Name)), store.InvocationOutcomeUnknown, nil
+		}
+		if asked, ok := exchange.ScopeRequired(); ok {
+			if text, asking := d.stepUp(ctx, r, asked); asking {
+				return llm.TextParts(text), failed(ctx, exchange), nil
+			}
 		}
 		return nil, failed(ctx, exchange), err
 	}

@@ -234,8 +234,12 @@ var (
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"note": map[string]any{"type": "string"}}}}
 	toolFails = &mcpsdk.Tool{Name: "fails", Description: "Reports its own failure.",
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}}}
+	// toolGuarded is never run: the provider refuses every call of it with a 403 that asks for
+	// the scope the call names (guardedChallenge).
+	toolGuarded = &mcpsdk.Tool{Name: "guarded", Description: "Needs a scope no grant has.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"scope": map[string]any{"type": "string"}}}}
 	providerTools = map[string]*mcpsdk.Tool{"whoami": toolWhoami, "secret": toolSecret, "slow": toolSlow,
-		"echo": toolEcho, "fails": toolFails}
+		"echo": toolEcho, "fails": toolFails, "guarded": toolGuarded}
 )
 
 // grants grant each of the provider's tools by name, at its digest.
@@ -302,6 +306,9 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 		server.AddTool(toolFails, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 			return &mcpsdk.CallToolResult{IsError: true, Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the record is locked"}}}, nil
 		})
+		server.AddTool(toolGuarded, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "guarded ran"}}}, nil
+		})
 		servers[account] = server
 	}
 	p.Server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -321,6 +328,12 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 		r.Body = io.NopCloser(bytes.NewReader(raw))
 		var message struct {
 			Method string `json:"method"`
+			Params struct {
+				Name      string `json:"name"`
+				Arguments struct {
+					Scope string `json:"scope"`
+				} `json:"arguments"`
+			} `json:"params"`
 		}
 		_ = json.Unmarshal(raw, &message)
 		p.mu.Lock()
@@ -330,6 +343,12 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 		}
 		streams := p.streams
 		p.mu.Unlock()
+		if message.Method == "tools/call" && message.Params.Name == toolGuarded.Name {
+			// RFC 6750 section 3.1: insufficient_scope, with the scope the request needs.
+			w.Header().Set("WWW-Authenticate", `Bearer error="insufficient_scope", scope="`+message.Params.Arguments.Scope+`"`)
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
 		if streams && message.Method == "tools/call" {
 			// The SSE headers go out now; the SDK's own WriteHeader after them is ignored, and
 			// its events follow on the stream once the tool answers.
