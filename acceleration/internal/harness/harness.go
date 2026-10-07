@@ -344,19 +344,7 @@ func (h *Harness) Preview(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	session := h.options.Model
 	// With no notes, instructions only resets state left by the preceding reply.
 	// Preview must leave that state alone until the controller accepts this turn.
-	parts := []string{}
-	if turn.Instructions != "" {
-		parts = append(parts, turn.Instructions)
-	}
-	if h.tasks != nil {
-		index := h.options.Skills.Prompt()
-		if h.options.Text {
-			index = h.options.Skills.TextPrompt()
-		}
-		if index != "" {
-			parts = append(parts, index)
-		}
-	}
+	parts := h.head(turn.Instructions, true)
 	if turn.Note != "" {
 		parts = append(parts, turn.Note)
 	}
@@ -760,11 +748,12 @@ func (h *Harness) consumeTasks() {
 	}
 }
 
-// instructions is the system prompt for a turn: what the agent was told to be, what it
-// may hand over, and whatever has come back since it last spoke. It must be called with
-// the lock held, because taking the notes is what clears them.
-func (h *Harness) instructions(agent, note string) string {
-	parts := make([]string, 0, 4)
+// head is how every reply opens, whatever else is added to it: what the agent was told to
+// be, what it may hand over, and, when the model is offered tools, how to use them. The
+// reply and the preview of it both start from here, so a preview is only ever asked what the
+// reply would have been, which is what lets it be taken over.
+func (h *Harness) head(agent string, tools bool) []string {
+	parts := make([]string, 0, 5)
 	if agent != "" {
 		parts = append(parts, agent)
 	}
@@ -777,21 +766,34 @@ func (h *Harness) instructions(agent, note string) string {
 			parts = append(parts, index)
 		}
 	}
+	if use := h.options.Tools.Prompt(); tools && use != "" {
+		parts = append(parts, use)
+	}
+	return parts
+}
+
+// instructions is the system prompt for a turn: what the agent was told to be, what it
+// may hand over, and whatever has come back since it last spoke. It must be called with
+// the lock held, because taking the notes is what clears them.
+func (h *Harness) instructions(agent, note string) string {
 	// Taking the notes is also what settles which skills this turn is reporting on, so a
 	// reply written to deliver an answer cannot ask for that answer again.
 	h.reporting = nil
 	h.asking = false
-	if len(h.notes) > 0 {
-		lines := make([]string, 0, len(h.notes))
-		for _, written := range h.notes {
-			lines = append(lines, written.text)
-			if written.skill != "" {
-				h.reporting = append(h.reporting, written.skill)
-			}
-			h.asking = h.asking || written.asking
+	lines := make([]string, 0, len(h.notes))
+	for _, written := range h.notes {
+		lines = append(lines, written.text)
+		if written.skill != "" {
+			h.reporting = append(h.reporting, written.skill)
 		}
+		h.asking = h.asking || written.asking
+	}
+	h.notes = nil
+	// A reply carrying a colleague's question is offered no tools, so it is not told how to
+	// use them either.
+	parts := h.head(agent, !h.asking)
+	if len(lines) > 0 {
 		parts = append(parts, strings.Join(lines, "\n"))
-		h.notes = nil
 	}
 	if note != "" {
 		parts = append(parts, note)

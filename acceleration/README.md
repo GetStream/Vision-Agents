@@ -803,6 +803,15 @@ tool instead.
   reply. A streaming filter takes it back out before the reply reaches the voice, so the
   caller hears "let me check that" and never the request. Everything that cannot yet be a
   tag is released immediately, because the caller is listening to the gap.
+- **A model that has tools is told how to use them.** The reply model, and the preview of its
+  reply, are given a short block after the agent's own instructions whenever the harness offers
+  tools: call a tool in the same turn once every argument it requires is known, without
+  collecting optional ones first or asking leave for what the caller just asked for; take a
+  name, number or value as the caller gave it, since a surname is a name; call the next tool
+  the request needs after a result; pass each argument as a bare value and leave out optional
+  arguments nobody gave. It names no tool and defers to the operator's own instructions and a
+  tool's approval setting wherever confirmation is required first. A reply carrying a
+  colleague's question is offered no tools and is not told about them.
 - **A task is a completion, so cancelling one is a targeted interrupt.** `Interrupt` on
   `llm.LLM` takes completion ids, which is what lets a conversation abandon stale work
   without stopping the reply being spoken. Work is abandoned when a newer request for the

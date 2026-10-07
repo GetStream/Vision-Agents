@@ -1807,6 +1807,16 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A voice agent with tools acts on a request once it has what the tools require. The model that
+  answers a caller was given the tools and nothing about using them, so it kept collecting
+  optional details, asked for a first name when a surname was given, asked whether to do what the
+  caller had just asked for, and passed values dressed in words. Whenever tools are offered, the
+  reply and the preview of it now carry a short instruction after the agent's own: call a tool in
+  the same turn once every argument it requires is known, take a name, number or value as the
+  caller gave it, call the next tool a result calls for, pass arguments as bare values and omit
+  optional ones nobody gave, and follow the operator's instructions and a tool's approval
+  setting wherever confirmation comes first.
+
 - A reply that is still held for the caller to have been quiet is replaced, not followed, by what the
   caller says in the meantime. The flow controller was told the agent was speaking and could let
   the words wait behind the reply, so the held reply was let out and the answer to the later words

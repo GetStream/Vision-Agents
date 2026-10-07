@@ -88,6 +88,29 @@ func (t Tools) Requests() []llm.Tool {
 	return rendered
 }
 
+// usePolicy is what a reply model is told about using the tools it is offered. A model that
+// answers as fast as a voice needs to will otherwise gather more than a tool asks for, ask
+// leave to do what it was just asked, or stop after one call, and a caller hangs up on a
+// conversation that never acts. It says nothing about any one tool, so it holds for any set,
+// and it leaves confirmation to the operator's own instructions and to a tool's approval.
+const usePolicy = "Call a tool in the same turn once every argument it requires is known; " +
+	"do not collect optional ones first or ask permission for what the caller asked for. " +
+	"Take a name, number or value as given (a surname is a name) rather than asking for " +
+	"more than the tool needs. After a result, call the next tool the request needs. " +
+	"Pass each argument as a bare value, not a phrase, and omit optional arguments nobody " +
+	"gave. Where your instructions or a tool's approval setting require confirmation " +
+	"first, follow them."
+
+// Prompt is what the model is told about using its tools: when to call one and how to fill
+// it in. It is empty when there are none, so a harness without tools adds nothing to the
+// system prompt.
+func (t Tools) Prompt() string {
+	if len(t.Tools) == 0 {
+		return ""
+	}
+	return usePolicy
+}
+
 // Validate reports the first tool the harness could not use.
 func (t Tools) Validate() error {
 	seen := map[string]struct{}{}
