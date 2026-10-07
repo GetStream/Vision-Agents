@@ -31,6 +31,13 @@ Complete(Ref, Manifest, State, Query)
   -> StoredCredentials{Scheme: oauth2_code, Version: 1, Payload: ref, client, endpoints, tokens, expiry,
      refresh expiry, scopes}, AccountInfo
 
+Complete(Ref, Manifest, Supplied), no State: a grant the provider already issued (import.go)
+  supplied   access_token, refresh_token, expires_at (RFC 3339), scope; any other key is refused
+  endpoints  discover, as Begin: the manifest and its metadata, never the caller
+  client     customer, managed or operator only: a client registered now (cimd, dcr) is not the
+             one the grant was issued to
+  -> StoredCredentials as above, AccountInfo{Scopes} only: nothing is captured
+
 Retrieve(stored, m, opts)
   due        expiry known and within refresh.margin (default 1 min, the prototype's) or at or before
              opts.ValidUntil, or opts.Refused (the provider refused it), whatever the expiry;

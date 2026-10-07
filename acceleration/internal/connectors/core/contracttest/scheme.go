@@ -1,6 +1,7 @@
 // Package contracttest holds the suites every adapter of one kind runs, so what the core
 // relies on is proved once and checked for each adapter. SchemeContract is the one for
-// core.Scheme. It is test code: import it only from _test.go files.
+// core.Scheme, SourceContract the one for core.ToolSource. It is test code: import it only
+// from _test.go files.
 package contracttest
 
 import (

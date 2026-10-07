@@ -207,6 +207,10 @@ type RouterSuite struct {
 	// resolver is the router's connector resolver over the suite's store and sealer, with
 	// connectors' schemes, set by SetupSuite.
 	resolver *resolver.Resolver
+	// connectorHTTP is what each connection's client sends through, for a suite whose
+	// providers listen on loopback, which egress refuses, to set before it starts the harness.
+	// Nil is egress's, as in the router.
+	connectorHTTP *http.Client
 	// publicURL and dashboardURL are the router's ROUTER_PUBLIC_URL and DASHBOARD_BASE_URL,
 	// for a suite about connector consents to set before it starts the harness. Empty leaves
 	// them unset, as a deployment that never set them has.
@@ -345,6 +349,9 @@ func (s *RouterSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.resolver, err = resolver.New(resolver.Config{Store: pgStore, Credentials: credentials, Schemes: s.connectors.Schemes})
 	s.Require().NoError(err)
+	transports, err := core.NewTransports(core.TransportsConfig{Resolver: s.resolver, Timeout: suiteConnectorTimeout,
+		NewClient: loopbackClients(s.connectorHTTP)})
+	s.Require().NoError(err)
 
 	server, err := NewServer(Options{
 		Routers:       s.modalities,
@@ -387,6 +394,7 @@ func (s *RouterSuite) SetupSuite() {
 		Logger:            logger,
 		// The connector events endpoint revokes through the suite's resolver.
 		ConnectorResolver:     s.resolver,
+		ConnectorTransports:   transports,
 		ConnectorEventSecrets: s.eventSecrets,
 		ChannelBridge:         s.bridge,
 	})
