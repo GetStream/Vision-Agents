@@ -42,6 +42,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	dlctelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/dlc/telnyx"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
@@ -1033,6 +1034,18 @@ func run(settings config.Config, logger *slog.Logger) error {
 			return err
 		}
 		options.OperatorProviderApps = api.ConnectorOperatorApps(os.Getenv)
+	}
+	// A provider app's events go on to the customer's event destinations, whose secrets are
+	// sealed under the connector keyring. Every router runs the worker that sends them; a
+	// forward is taken by one router at a time. Its client is egress's, as every scheme's is.
+	if connectorSecrets != nil && pgStore != nil {
+		forwarder, err := eventforward.New(eventforward.Options{Store: pgStore, Secrets: connectorSecrets, Logger: logger})
+		if err != nil {
+			return err
+		}
+		forwarder.Start()
+		defer forwarder.Close()
+		options.EventForwarder = forwarder
 	}
 	if streamClients.PerApp() {
 		// Each registered app signs its own hooks and mints its own tokens, so only work in

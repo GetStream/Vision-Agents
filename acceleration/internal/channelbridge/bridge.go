@@ -150,12 +150,19 @@ func (b *Bridge) Close() {
 // route, whose events name no customer. A message nobody can be found to answer is logged
 // and dropped, since delivering it again finds nobody either. An error is the store failing,
 // for the endpoint to answer 500, so the provider delivers again.
-func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, messages []core.InboundMessage) error {
+//
+// answered is whether an agent answers at least one of the messages, now or already for a
+// delivery the provider retried. When it is false the bridge handled none of them, and the
+// events route hands the delivery to the customer's event destinations that take what the
+// router does not handle (internal/eventforward, T46).
+func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, messages []core.InboundMessage) (answered bool, err error) {
 	for _, message := range messages {
 		thread, config, fresh, err := b.take(ctx, app, message)
 		if err != nil {
-			return err
+			return false, err
 		}
+		// take links a thread only for a message an agent answers.
+		answered = answered || thread.ChannelID != ""
 		if !fresh {
 			continue
 		}
@@ -165,7 +172,7 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 			b.write(thread, config, message)
 		}()
 	}
-	return nil
+	return answered, nil
 }
 
 // Reply sends an agent's finished reply in a thread channel to its external thread. The

@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -69,11 +70,13 @@ func ConnectorEventSecrets(getenv func(string) string) EventSecretLookup {
 // internal/channelbridge). Deliver takes the messages a verified inbound request carried, for
 // the provider app the request's route named: the zero record on a connector's own route,
 // which names no customer. An error makes the endpoint answer 500, so the provider delivers
-// again; a bridge drops a retried message by its ProviderMessageID. Replies do not pass here:
-// the conversation on a thread channel hands its finished replies to the bridge itself
-// (conversation.Service.OnFinishedReply).
+// again; a bridge drops a retried message by its ProviderMessageID. answered is whether an
+// agent answers at least one of the messages; a delivery none of whose messages is answered is
+// one the router did not handle, which the customer's event destinations may take. Replies do
+// not pass here: the conversation on a thread channel hands its finished replies to the bridge
+// itself (conversation.Service.OnFinishedReply).
 type ChannelBridge interface {
-	Deliver(ctx context.Context, app store.ConnectorOAuthClient, messages []core.InboundMessage) error
+	Deliver(ctx context.Context, app store.ConnectorOAuthClient, messages []core.InboundMessage) (answered bool, err error)
 }
 
 // droppingBridge is the bridge of a deployment without one: it logs that messages came and
@@ -82,12 +85,12 @@ type droppingBridge struct {
 	logger *slog.Logger
 }
 
-func (b droppingBridge) Deliver(_ context.Context, _ store.ConnectorOAuthClient, messages []core.InboundMessage) error {
+func (b droppingBridge) Deliver(_ context.Context, _ store.ConnectorOAuthClient, messages []core.InboundMessage) (bool, error) {
 	if len(messages) > 0 {
 		b.logger.Info("dropped inbound connector messages: no channel bridge",
 			"connector", messages[0].ConnectorID, "messages", len(messages))
 	}
-	return nil
+	return false, nil
 }
 
 // receiveConnectorEvent is the inbound handler for a built-in connector's provider events,
@@ -205,6 +208,8 @@ func readConnectorEvent(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 //	a challenge                                     200 text/plain, the challenge
 //	each signal -> the connections of its account -> Resolver.Revoke, with when it ended
 //	the messages -> ChannelBridge.Deliver, with app
+//	a provider app's delivery -> eventforward.Forward, queued for the customer's event
+//	  destinations, handled when a signal or an answered message was in it
 //	                                                200, or 500 so the provider retries
 func (s *Server) receiveEvent(w http.ResponseWriter, r *http.Request, body []byte, manifest core.Manifest, secret []byte, app store.ConnectorOAuthClient) {
 	verifier, registered := s.connectors.Verifiers[string(manifest.Channel.Verifier.Kind)]
@@ -237,8 +242,24 @@ func (s *Server) receiveEvent(w http.ResponseWriter, r *http.Request, body []byt
 			return
 		}
 	}
+	handled := len(event.Signals) > 0
 	if len(event.Messages) > 0 {
-		if err := s.channelBridge.Deliver(r.Context(), app, event.Messages); err != nil {
+		answered, err := s.channelBridge.Deliver(r.Context(), app, event.Messages)
+		if err != nil {
+			writeFailure(w, r, err)
+			return
+		}
+		handled = handled || answered
+	}
+	// Only a provider app's delivery is forwarded: its route names the customer whose
+	// destinations take it. A connector's own route is the operator's app, whose events are
+	// no one customer's. Forward queues and returns, so the ack does not wait on a customer.
+	if s.eventForwarder != nil && app.CustomerID != "" {
+		err := s.eventForwarder.Forward(r.Context(), eventforward.Event{
+			CustomerID: app.CustomerID, ConnectorID: manifest.ID,
+			Headers: eventforward.ProviderHeaders(manifest, r.Header), Body: body, Handled: handled,
+		})
+		if err != nil {
 			writeFailure(w, r, err)
 			return
 		}

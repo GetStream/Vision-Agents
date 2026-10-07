@@ -557,6 +557,24 @@ func (e ConnectorClientRegistrationMethod) Valid() bool {
 	}
 }
 
+// Defines values for ConnectorEventForward.
+const (
+	ConnectorEventForwardAll       ConnectorEventForward = "all"
+	ConnectorEventForwardUnhandled ConnectorEventForward = "unhandled"
+)
+
+// Valid indicates whether the value is a known member of the ConnectorEventForward enum.
+func (e ConnectorEventForward) Valid() bool {
+	switch e {
+	case ConnectorEventForwardAll:
+		return true
+	case ConnectorEventForwardUnhandled:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectorOAuthClientAuthMethod.
 const (
 	ConnectorOAuthClientAuthMethodClientSecretBasic ConnectorOAuthClientAuthMethod = "client_secret_basic"
@@ -3307,6 +3325,53 @@ type ConnectorClientAuthMethod string
 
 // ConnectorClientRegistrationMethod operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
 type ConnectorClientRegistrationMethod string
+
+// ConnectorEventDestination A URL of the app's own that a connector's raw provider events are forwarded to, such as Slack's block_actions or reaction_added. Each forward is a POST of the provider's body as it came, with the provider's own Content-Type, signature and timestamp headers, signed on top in the Standard Webhooks shape (webhook-id, webhook-timestamp, webhook-signature) with the destination's own secret. A 2xx answer is taken; a 5xx, a 429 or no answer is sent again after 5 s, 5 min, 30 min and 2 h; any other answer is not sent again.
+type ConnectorEventDestination struct {
+	ConnectorId *string    `json:"connector_id,omitempty"`
+	CreatedAt   *time.Time `json:"created_at,omitempty"`
+
+	// Forward Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there.
+	Forward ConnectorEventForward `json:"forward"`
+	Id      *string               `json:"id,omitempty"`
+
+	// PreviousSecretUntil Until when the secret the last rotation replaced still signs beside the current one. Absent when only one secret signs.
+	PreviousSecretUntil *time.Time `json:"previous_secret_until,omitempty"`
+
+	// UpdatedAt When the secret was last rotated, or the destination made.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	Url       string     `json:"url"`
+}
+
+// ConnectorEventDestinationPage defines model for ConnectorEventDestinationPage.
+type ConnectorEventDestinationPage struct {
+	HasMore bool                         `json:"has_more"`
+	Items   *[]ConnectorEventDestination `json:"items"`
+
+	// NextCursor Pass as cursor for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// ConnectorEventDestinationRequest An event destination to create. An unknown field is refused rather than ignored.
+type ConnectorEventDestinationRequest struct {
+	// Forward Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there.
+	Forward ConnectorEventForward `json:"forward"`
+
+	// Url A public https URL. One that is or resolves to a private, loopback or link-local address is refused.
+	Url string `json:"url"`
+}
+
+// ConnectorEventDestinationSecret An event destination and the secret its forwards are signed with, which no other response carries.
+type ConnectorEventDestinationSecret struct {
+	// Destination A URL of the app's own that a connector's raw provider events are forwarded to, such as Slack's block_actions or reaction_added. Each forward is a POST of the provider's body as it came, with the provider's own Content-Type, signature and timestamp headers, signed on top in the Standard Webhooks shape (webhook-id, webhook-timestamp, webhook-signature) with the destination's own secret. A 2xx answer is taken; a 5xx, a 429 or no answer is sent again after 5 s, 5 min, 30 min and 2 h; any other answer is not sent again.
+	Destination ConnectorEventDestination `json:"destination"`
+
+	// Secret The Standard Webhooks signing secret, whsec_ and 32 random bytes in base64. Shown this once: keep it, no later response carries it.
+	Secret string `json:"secret"`
+}
+
+// ConnectorEventForward Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there.
+type ConnectorEventForward string
 
 // ConnectorInput defines model for ConnectorInput.
 type ConnectorInput struct {
@@ -6660,6 +6725,15 @@ type FinishConnectorConsentParams struct {
 	Error *string `form:"error,omitempty" json:"error,omitempty"`
 }
 
+// ListConnectorEventDestinationsParams defines parameters for ListConnectorEventDestinations.
+type ListConnectorEventDestinationsParams struct {
+	// Limit Up to 200. Omitted is 25.
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // GetConversationCommandParams defines parameters for GetConversationCommand.
 type GetConversationCommandParams struct {
 	AgentId string `form:"agent_id" json:"agent_id"`
@@ -6989,6 +7063,9 @@ type ValidateConnectionJSONRequestBody = ConnectionValidationRequest
 
 // CreateConnectorJSONRequestBody defines body for CreateConnector for application/json ContentType.
 type CreateConnectorJSONRequestBody = CustomConnectorRequest
+
+// CreateConnectorEventDestinationJSONRequestBody defines body for CreateConnectorEventDestination for application/json ContentType.
+type CreateConnectorEventDestinationJSONRequestBody = ConnectorEventDestinationRequest
 
 // SetConnectorOAuthClientJSONRequestBody defines body for SetConnectorOAuthClient for application/json ContentType.
 type SetConnectorOAuthClientJSONRequestBody = ConnectorOAuthClientRequest
@@ -8012,6 +8089,55 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/agents/connectors/{id} (the `GetConnector` operationId).
 	GetConnector(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListConnectorEventDestinations List a connector's event destinations
+	//
+	// The connector's event destinations, newest first, without their secrets.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/connectors/{id}/event-destinations (the `ListConnectorEventDestinations` operationId).
+	ListConnectorEventDestinations(ctx context.Context, id string, params *ListConnectorEventDestinationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateConnectorEventDestinationWithBody Forward a connector's provider events to a URL
+	//
+	// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/connectors/{id}/event-destinations (the `CreateConnectorEventDestination` operationId).
+	CreateConnectorEventDestinationWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateConnectorEventDestination Forward a connector's provider events to a URL
+	//
+	// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/connectors/{id}/event-destinations (the `CreateConnectorEventDestination` operationId).
+	CreateConnectorEventDestination(ctx context.Context, id string, body CreateConnectorEventDestinationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteConnectorEventDestination Stop forwarding to an event destination
+	//
+	// Removes the destination, and every forward to it not yet sent.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/agents/connectors/{id}/event-destinations/{destination_id} (the `DeleteConnectorEventDestination` operationId).
+	DeleteConnectorEventDestination(ctx context.Context, id string, destinationId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RotateConnectorEventDestinationSecret Rotate an event destination's signing secret
+	//
+	// Makes a new signing secret for the destination and returns it, once. For the next 24 hours every forward is signed with both the new and the old secret, space-separated in webhook-signature, so the receiver can move to the new one without a forward failing its check. A rotation during another drops the oldest secret.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with POST /v1/agents/connectors/{id}/event-destinations/{destination_id}/rotate-secret (the `RotateConnectorEventDestinationSecret` operationId).
+	RotateConnectorEventDestinationSecret(ctx context.Context, id string, destinationId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteConnectorOAuthClient Remove the app's own OAuth client for a connector
 	//
@@ -10812,6 +10938,105 @@ func (c *Client) HandOffConnectorLaunch(ctx context.Context, id string, reqEdito
 // Corresponds with GET /v1/agents/connectors/{id} (the `GetConnector` operationId).
 func (c *Client) GetConnector(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetConnectorRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListConnectorEventDestinations List a connector's event destinations
+//
+// The connector's event destinations, newest first, without their secrets.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/connectors/{id}/event-destinations (the `ListConnectorEventDestinations` operationId).
+func (c *Client) ListConnectorEventDestinations(ctx context.Context, id string, params *ListConnectorEventDestinationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListConnectorEventDestinationsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateConnectorEventDestinationWithBody Forward a connector's provider events to a URL
+//
+// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/connectors/{id}/event-destinations (the `CreateConnectorEventDestination` operationId).
+func (c *Client) CreateConnectorEventDestinationWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateConnectorEventDestinationRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateConnectorEventDestination Forward a connector's provider events to a URL
+//
+// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/connectors/{id}/event-destinations (the `CreateConnectorEventDestination` operationId).
+func (c *Client) CreateConnectorEventDestination(ctx context.Context, id string, body CreateConnectorEventDestinationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateConnectorEventDestinationRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteConnectorEventDestination Stop forwarding to an event destination
+//
+// Removes the destination, and every forward to it not yet sent.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/agents/connectors/{id}/event-destinations/{destination_id} (the `DeleteConnectorEventDestination` operationId).
+func (c *Client) DeleteConnectorEventDestination(ctx context.Context, id string, destinationId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteConnectorEventDestinationRequest(c.Server, id, destinationId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RotateConnectorEventDestinationSecret Rotate an event destination's signing secret
+//
+// Makes a new signing secret for the destination and returns it, once. For the next 24 hours every forward is signed with both the new and the old secret, space-separated in webhook-signature, so the receiver can move to the new one without a forward failing its check. A rotation during another drops the oldest secret.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with POST /v1/agents/connectors/{id}/event-destinations/{destination_id}/rotate-secret (the `RotateConnectorEventDestinationSecret` operationId).
+func (c *Client) RotateConnectorEventDestinationSecret(ctx context.Context, id string, destinationId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRotateConnectorEventDestinationSecretRequest(c.Server, id, destinationId)
 	if err != nil {
 		return nil, err
 	}
@@ -16391,6 +16616,208 @@ func NewGetConnectorRequest(server string, id string) (*http.Request, error) {
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListConnectorEventDestinationsRequest constructs an http.Request for the ListConnectorEventDestinations method
+func NewListConnectorEventDestinationsRequest(server string, id string, params *ListConnectorEventDestinationsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/%s/event-destinations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateConnectorEventDestinationRequest calls the generic CreateConnectorEventDestination builder with application/json body
+func NewCreateConnectorEventDestinationRequest(server string, id string, body CreateConnectorEventDestinationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateConnectorEventDestinationRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewCreateConnectorEventDestinationRequestWithBody constructs an http.Request for the CreateConnectorEventDestination method, with any body, and a specified content type
+func NewCreateConnectorEventDestinationRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/%s/event-destinations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteConnectorEventDestinationRequest constructs an http.Request for the DeleteConnectorEventDestination method
+func NewDeleteConnectorEventDestinationRequest(server string, id string, destinationId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "destination_id", destinationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/%s/event-destinations/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRotateConnectorEventDestinationSecretRequest constructs an http.Request for the RotateConnectorEventDestinationSecret method
+func NewRotateConnectorEventDestinationSecretRequest(server string, id string, destinationId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "destination_id", destinationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/%s/event-destinations/%s/rotate-secret", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -23259,6 +23686,61 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/connectors/{id} (the `GetConnector` operationId).
 	GetConnectorWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectorResponse, error)
 
+	// ListConnectorEventDestinationsWithResponse List a connector's event destinations
+	//
+	// The connector's event destinations, newest first, without their secrets.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/connectors/{id}/event-destinations (the `ListConnectorEventDestinations` operationId).
+	ListConnectorEventDestinationsWithResponse(ctx context.Context, id string, params *ListConnectorEventDestinationsParams, reqEditors ...RequestEditorFn) (*ListConnectorEventDestinationsResponse, error)
+
+	// CreateConnectorEventDestinationWithBodyWithResponse Forward a connector's provider events to a URL
+	//
+	// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/connectors/{id}/event-destinations (the `CreateConnectorEventDestination` operationId).
+	CreateConnectorEventDestinationWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateConnectorEventDestinationResponse, error)
+
+	// CreateConnectorEventDestinationWithResponse Forward a connector's provider events to a URL
+	//
+	// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/connectors/{id}/event-destinations (the `CreateConnectorEventDestination` operationId).
+	CreateConnectorEventDestinationWithResponse(ctx context.Context, id string, body CreateConnectorEventDestinationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateConnectorEventDestinationResponse, error)
+
+	// DeleteConnectorEventDestinationWithResponse Stop forwarding to an event destination
+	//
+	// Removes the destination, and every forward to it not yet sent.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/connectors/{id}/event-destinations/{destination_id} (the `DeleteConnectorEventDestination` operationId).
+	DeleteConnectorEventDestinationWithResponse(ctx context.Context, id string, destinationId string, reqEditors ...RequestEditorFn) (*DeleteConnectorEventDestinationResponse, error)
+
+	// RotateConnectorEventDestinationSecretWithResponse Rotate an event destination's signing secret
+	//
+	// Makes a new signing secret for the destination and returns it, once. For the next 24 hours every forward is signed with both the new and the old secret, space-separated in webhook-signature, so the receiver can move to the new one without a forward failing its check. A rotation during another drops the oldest secret.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/connectors/{id}/event-destinations/{destination_id}/rotate-secret (the `RotateConnectorEventDestinationSecret` operationId).
+	RotateConnectorEventDestinationSecretWithResponse(ctx context.Context, id string, destinationId string, reqEditors ...RequestEditorFn) (*RotateConnectorEventDestinationSecretResponse, error)
+
 	// DeleteConnectorOAuthClientWithResponse Remove the app's own OAuth client for a connector
 	//
 	// Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
@@ -28357,6 +28839,303 @@ func (r GetConnectorResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetConnectorResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListConnectorEventDestinationsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorEventDestinationPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListConnectorEventDestinationsResponse) GetJSON200() *ConnectorEventDestinationPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListConnectorEventDestinationsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListConnectorEventDestinationsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListConnectorEventDestinationsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListConnectorEventDestinationsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListConnectorEventDestinationsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListConnectorEventDestinationsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListConnectorEventDestinationsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListConnectorEventDestinationsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateConnectorEventDestinationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *ConnectorEventDestinationSecret
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateConnectorEventDestinationResponse) GetJSON201() *ConnectorEventDestinationSecret {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateConnectorEventDestinationResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateConnectorEventDestinationResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateConnectorEventDestinationResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateConnectorEventDestinationResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateConnectorEventDestinationResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateConnectorEventDestinationResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateConnectorEventDestinationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateConnectorEventDestinationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateConnectorEventDestinationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateConnectorEventDestinationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteConnectorEventDestinationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteConnectorEventDestinationResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteConnectorEventDestinationResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteConnectorEventDestinationResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteConnectorEventDestinationResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteConnectorEventDestinationResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteConnectorEventDestinationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteConnectorEventDestinationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteConnectorEventDestinationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteConnectorEventDestinationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RotateConnectorEventDestinationSecretResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorEventDestinationSecret
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RotateConnectorEventDestinationSecretResponse) GetJSON200() *ConnectorEventDestinationSecret {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r RotateConnectorEventDestinationSecretResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RotateConnectorEventDestinationSecretResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RotateConnectorEventDestinationSecretResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RotateConnectorEventDestinationSecretResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r RotateConnectorEventDestinationSecretResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r RotateConnectorEventDestinationSecretResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RotateConnectorEventDestinationSecretResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RotateConnectorEventDestinationSecretResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RotateConnectorEventDestinationSecretResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -39051,6 +39830,91 @@ func (c *ClientWithResponses) GetConnectorWithResponse(ctx context.Context, id s
 	return ParseGetConnectorResponse(rsp)
 }
 
+// ListConnectorEventDestinationsWithResponse List a connector's event destinations
+//
+// The connector's event destinations, newest first, without their secrets.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/connectors/{id}/event-destinations (the `ListConnectorEventDestinations` operationId).
+func (c *ClientWithResponses) ListConnectorEventDestinationsWithResponse(ctx context.Context, id string, params *ListConnectorEventDestinationsParams, reqEditors ...RequestEditorFn) (*ListConnectorEventDestinationsResponse, error) {
+	rsp, err := c.ListConnectorEventDestinations(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListConnectorEventDestinationsResponse(rsp)
+}
+
+// CreateConnectorEventDestinationWithBodyWithResponse Forward a connector's provider events to a URL
+//
+// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/connectors/{id}/event-destinations (the `CreateConnectorEventDestination` operationId).
+func (c *ClientWithResponses) CreateConnectorEventDestinationWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateConnectorEventDestinationResponse, error) {
+	rsp, err := c.CreateConnectorEventDestinationWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateConnectorEventDestinationResponse(rsp)
+}
+
+// CreateConnectorEventDestinationWithResponse Forward a connector's provider events to a URL
+//
+// Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/connectors/{id}/event-destinations (the `CreateConnectorEventDestination` operationId).
+func (c *ClientWithResponses) CreateConnectorEventDestinationWithResponse(ctx context.Context, id string, body CreateConnectorEventDestinationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateConnectorEventDestinationResponse, error) {
+	rsp, err := c.CreateConnectorEventDestination(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateConnectorEventDestinationResponse(rsp)
+}
+
+// DeleteConnectorEventDestinationWithResponse Stop forwarding to an event destination
+//
+// Removes the destination, and every forward to it not yet sent.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/connectors/{id}/event-destinations/{destination_id} (the `DeleteConnectorEventDestination` operationId).
+func (c *ClientWithResponses) DeleteConnectorEventDestinationWithResponse(ctx context.Context, id string, destinationId string, reqEditors ...RequestEditorFn) (*DeleteConnectorEventDestinationResponse, error) {
+	rsp, err := c.DeleteConnectorEventDestination(ctx, id, destinationId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteConnectorEventDestinationResponse(rsp)
+}
+
+// RotateConnectorEventDestinationSecretWithResponse Rotate an event destination's signing secret
+//
+// Makes a new signing secret for the destination and returns it, once. For the next 24 hours every forward is signed with both the new and the old secret, space-separated in webhook-signature, so the receiver can move to the new one without a forward failing its check. A rotation during another drops the oldest secret.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/connectors/{id}/event-destinations/{destination_id}/rotate-secret (the `RotateConnectorEventDestinationSecret` operationId).
+func (c *ClientWithResponses) RotateConnectorEventDestinationSecretWithResponse(ctx context.Context, id string, destinationId string, reqEditors ...RequestEditorFn) (*RotateConnectorEventDestinationSecretResponse, error) {
+	rsp, err := c.RotateConnectorEventDestinationSecret(ctx, id, destinationId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRotateConnectorEventDestinationSecretResponse(rsp)
+}
+
 // DeleteConnectorOAuthClientWithResponse Remove the app's own OAuth client for a connector
 //
 // Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
@@ -44538,6 +45402,246 @@ func ParseGetConnectorResponse(rsp *http.Response) (*GetConnectorResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest Connector
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListConnectorEventDestinationsResponse parses an HTTP response from a ListConnectorEventDestinationsWithResponse call
+func ParseListConnectorEventDestinationsResponse(rsp *http.Response) (*ListConnectorEventDestinationsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListConnectorEventDestinationsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorEventDestinationPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateConnectorEventDestinationResponse parses an HTTP response from a CreateConnectorEventDestinationWithResponse call
+func ParseCreateConnectorEventDestinationResponse(rsp *http.Response) (*CreateConnectorEventDestinationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateConnectorEventDestinationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest ConnectorEventDestinationSecret
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteConnectorEventDestinationResponse parses an HTTP response from a DeleteConnectorEventDestinationWithResponse call
+func ParseDeleteConnectorEventDestinationResponse(rsp *http.Response) (*DeleteConnectorEventDestinationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteConnectorEventDestinationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRotateConnectorEventDestinationSecretResponse parses an HTTP response from a RotateConnectorEventDestinationSecretWithResponse call
+func ParseRotateConnectorEventDestinationSecretResponse(rsp *http.Response) (*RotateConnectorEventDestinationSecretResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RotateConnectorEventDestinationSecretResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorEventDestinationSecret
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
