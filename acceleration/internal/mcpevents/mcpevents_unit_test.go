@@ -70,6 +70,14 @@ func (s *UnitSuite) TestAGrantAlreadyEndedIsAskedForAgainALeaseFromNow() {
 	s.Equal(s.now.Add(time.Minute), refreshAt(s.now, &ended, time.Minute))
 }
 
+// TestAGrantOfAWeekIsAskedForAgainADayFromNow: every row is looked at daily, so one a failed
+// delete left goes within a day.
+func (s *UnitSuite) TestAGrantOfAWeekIsAskedForAgainADayFromNow() {
+	ends := s.now.Add(7 * 24 * time.Hour)
+
+	s.Equal(s.now.Add(24*time.Hour), refreshAt(s.now, &ends, time.Minute))
+}
+
 func (s *UnitSuite) TestAGrantEndingWithinALeaseIsAskedForAgainALeaseFromNow() {
 	ends := s.now.Add(30 * time.Second)
 

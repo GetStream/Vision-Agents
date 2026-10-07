@@ -178,11 +178,13 @@ func (s *ConnectionEventsSuite) TestAStaleCopyOfARenewalKeepsTheSubscriptions() 
 	s.Equal(store.ConnectionEventActive, held[0].Status)
 }
 
-// TestAWorkerThatMeetsARenewalAsksAgainBeforeTheGrantEnds: the worker's look comes while the
-// connection is needs_reauthorization, 30 s before the server's grant ends. It keeps the row
-// and looks again before refresh_before, not 15 minutes later, after the server stopped
-// delivering. An idle worker with a 200 ms lease does the look.
-func (s *ConnectionEventsSuite) TestAWorkerThatMeetsARenewalAsksAgainBeforeTheGrantEnds() {
+// TestAWorkerThatMeetsARenewalLooksAgainALeaseBeforeTheGrantEnds: the worker's look comes
+// while the connection is needs_reauthorization, 30 s before the server's grant ends. It keeps
+// the row and looks again a lease before refresh_before, not 15 minutes later, after the server
+// stopped delivering. The leases here (200 ms, 1 s) fit before the end; with the production
+// 1-min lease a grant 30 s from its end is looked at a lease from now, after it ends
+// (waitUntil's floor), and a look 10 minutes ahead (refreshAhead) is the case that matters.
+func (s *ConnectionEventsSuite) TestAWorkerThatMeetsARenewalLooksAgainALeaseBeforeTheGrantEnds() {
 	connection := s.subscribed(s.binding(s.connection(), issueCreated))
 	s.setStatus(connection, store.ConnectionNeedsReauthorization)
 	looked := time.Now().UTC()
@@ -202,6 +204,33 @@ func (s *ConnectionEventsSuite) TestAWorkerThatMeetsARenewalAsksAgainBeforeTheGr
 			held[0].NextAttemptAt.After(looked.Add(2*time.Second)) && held[0].NextAttemptAt.Before(refreshBefore)
 	}, settleFor, 10*time.Millisecond)
 	s.Equal(store.ConnectionEventActive, s.held(connection)[0].Status)
+}
+
+// TestARowLockedByAnotherRoutersClaimIsNotLookedForInABusyLoop: a row due now is locked by
+// another router's claim in flight, so this worker's claim skips it while its next-due query
+// still finds it due. The worker waits at least minLook (1 s) between looks, not 0: a few
+// queries in a second, not thousands. Its lease is 10 s, so the lease does not hide the floor.
+func (s *ConnectionEventsSuite) TestARowLockedByAnotherRoutersClaimIsNotLookedForInABusyLoop() {
+	ctx := context.Background()
+	_, err := s.store.DB().ExecContext(ctx, "DELETE FROM connection_event_subscriptions")
+	s.Require().NoError(err)
+	due := time.Now().UTC().Add(-time.Second)
+	locked := store.ConnectionEventSubscription{CustomerID: s.customerID(), ConnectionID: "gone-" + s.utils.uuid(),
+		ConfigID: s.utils.uuid(), Binding: "crm", Event: issueCreated, Key: "key", Token: s.utils.uuid(),
+		SecretSealed: []byte("sealed"), KEKVersion: 1, Status: store.ConnectionEventPending, NextAttemptAt: &due}
+	added, err := s.store.AddConnectionEventSubscription(ctx, &locked)
+	s.Require().NoError(err)
+	s.Require().True(added)
+	claim, err := s.store.DB().BeginTx(ctx, nil)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = claim.Rollback() })
+	_, err = claim.ExecContext(ctx, "SELECT id FROM connection_event_subscriptions WHERE id = ? FOR UPDATE", locked.ID)
+	s.Require().NoError(err)
+
+	queries := s.idleWorker(10 * time.Second)
+	time.Sleep(time.Second)
+
+	s.LessOrEqual(queries.Load(), int64(8))
 }
 
 // TestAGrantAlreadyEndedIsNotAskedForInALoop: the server answers a refreshBefore already past
@@ -273,6 +302,36 @@ func (s *ConnectionEventsSuite) TestABindingWithNoEventsSubscribesToNothing() {
 	s.validate(connection)
 
 	s.Never(func() bool { return len(s.held(connection)) > 0 || len(s.atTheFake(connection)) > 0 }, time.Second, 50*time.Millisecond)
+}
+
+func (s *ConnectionEventsSuite) TestAnEventWithNoNameIsRefused() {
+	binding := s.binding(s.connection(), "   ")
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "watcher-" + s.utils.uuid(), "connectors": []map[string]any{binding},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector binding "crm" declares an event with no name`)
+}
+
+// TestAStoredEventWithNoNameDoesNotFailTheValidate: a config whose event has no name, stored
+// some way other than the config endpoints, is left out; the validate still answers and the
+// other config's event on the same connection is subscribed.
+func (s *ConnectionEventsSuite) TestAStoredEventWithNoNameDoesNotFailTheValidate() {
+	connection := s.connection()
+	s.config(s.binding(connection, issueCreated))
+	broken := s.config(s.binding(connection, "issue.closed"))
+	_, err := s.store.DB().ExecContext(context.Background(),
+		`UPDATE agent_configs SET connectors = jsonb_set(connectors, '{0,events,0,event}', '""') WHERE id = ?`, broken)
+	s.Require().NoError(err)
+
+	s.validate(connection)
+
+	s.Eventually(func() bool {
+		held := s.held(connection)
+		return len(held) == 1 && held[0].Event == issueCreated && held[0].Status == store.ConnectionEventActive
+	}, settleFor, 20*time.Millisecond)
 }
 
 func (s *ConnectionEventsSuite) TestASessionBindingCannotDeclareEvents() {

@@ -101,6 +101,19 @@ func (s *Store) ConnectionEventSubscriptionByToken(ctx context.Context, token st
 	return sub, nil
 }
 
+// DueConnectionEventSubscription makes one subscription due at now, so the next worker to look
+// asks the server for it again, or drops it.
+func (s *Store) DueConnectionEventSubscription(ctx context.Context, id string, now time.Time) error {
+	_, err := s.db.NewUpdate().Model((*ConnectionEventSubscription)(nil)).
+		Set("next_attempt_at = ?", now.UTC()).
+		Where("id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: due connection event subscription: %w", err))
+	}
+	return nil
+}
+
 // DueConnectionEventSubscriptions makes every subscription of a connection due at now, so the
 // next worker to look asks the server for each again, or drops it.
 func (s *Store) DueConnectionEventSubscriptions(ctx context.Context, customerID, connectionID string, now time.Time) error {

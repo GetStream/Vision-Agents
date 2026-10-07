@@ -431,6 +431,9 @@ func connectorBindingsComplaint(bindings *[]AgentConnectorBinding) (string, bool
 		}
 		events := map[string]bool{}
 		for _, event := range value(binding.Events) {
+			if strings.TrimSpace(event.Event) == "" {
+				return fmt.Sprintf("connector binding %q declares an event with no name", alias), false
+			}
 			key := mcpevents.Key(strings.TrimSpace(event.Event), value(event.Arguments))
 			if events[key] {
 				return fmt.Sprintf("connector binding %q declares event %q with the same arguments twice", alias, event.Event), false

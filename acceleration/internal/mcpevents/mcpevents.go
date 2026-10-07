@@ -218,6 +218,12 @@ func (s *Service) Reconcile(ctx context.Context, connection store.ConnectorConne
 				continue
 			}
 			for _, event := range binding.Events {
+				// The config endpoints refuse an event with no name; one stored some other way
+				// is left out, so it cannot fail the validate of every config on the connection.
+				if strings.TrimSpace(event.Event) == "" {
+					s.logger.Warn("not subscribing to an MCP event with no name", "config", config.ID, "binding", binding.Name)
+					continue
+				}
 				if err := s.add(ctx, connection, config.ID, binding.Name, event); err != nil {
 					return err
 				}
@@ -403,7 +409,10 @@ func gone(connection store.ConnectorConnection, err error) bool {
 }
 
 // refreshAt is when a grant is asked for again: refreshAhead before it expires, or halfway
-// there for a grant shorter than that, and never sooner than a lease from now. The floor is
+// there for a grant shorter than that, never later than a day (maxRetryAfter) and never sooner
+// than a lease from now. The day is what has every row looked at daily, so a row a failed
+// delete left goes within a day; the draft finds refreshing once a day «not a meaningful
+// burden» («Recommended grants»). The floor is
 // what keeps a grant already ended, or ending within a lease (a clock skewed past the grant,
 // or a server answering a refreshBefore in the past), from being claimed again at once in a
 // loop of events/subscribe: it is asked again once a lease instead, as an honest server whose
@@ -417,6 +426,9 @@ func refreshAt(now time.Time, refreshBefore *time.Time, lease time.Duration) tim
 	next := refreshBefore.Add(-refreshAhead)
 	if next.Before(now) {
 		next = now.Add(refreshBefore.Sub(now) / 2)
+	}
+	if ceiling := now.Add(maxRetryAfter); next.After(ceiling) {
+		return ceiling
 	}
 	if floor := now.Add(lease); next.Before(floor) {
 		return floor
@@ -574,7 +586,7 @@ func (s *Service) Receive(ctx context.Context, token string, header http.Header,
 	}
 	if !ok {
 		// The worker unsubscribes and drops it.
-		if err := s.store.DueConnectionEventSubscriptions(ctx, sub.CustomerID, sub.ConnectionID, time.Now()); err == nil {
+		if err := s.store.DueConnectionEventSubscription(ctx, sub.ID, time.Now()); err == nil {
 			s.wake()
 		}
 		return Reply{Status: http.StatusGone, Body: failure("the agent no longer subscribes to this event")}
