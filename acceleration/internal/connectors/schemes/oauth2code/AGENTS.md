@@ -31,6 +31,13 @@ Complete(Ref, Manifest, State, Query)
   -> StoredCredentials{Scheme: oauth2_code, Version: 1, Payload: ref, client, endpoints, tokens, expiry,
      refresh expiry, scopes}, AccountInfo
 
+Complete(Ref, Manifest, Supplied), no State: a grant the provider already issued (import.go)
+  supplied   access_token, refresh_token, expires_at (RFC 3339), scope; any other key is refused
+  endpoints  discover, as Begin: the manifest and its metadata, never the caller
+  client     customer, managed or operator only: a client registered now (cimd, dcr) is not the
+             one the grant was issued to
+  -> StoredCredentials as above, AccountInfo{Scopes} only: nothing is captured
+
 Retrieve(stored, m, opts)
   due        expiry known and within refresh.margin (default 1 min, the prototype's) or at or before
              opts.ValidUntil, or opts.Refused (the provider refused it), whatever the expiry;
@@ -55,11 +62,14 @@ Classify(resp, body, err)
   429        RateLimited, Retry-After (delay-seconds or HTTP-date)
   challenge  Bearer insufficient_scope -> ScopeRequired + scopes; 401 insufficient_claims -> ScopeRequired + decoded
              claims; invalid_token -> InvalidGrant. A token68 or unparseable text skips to the next comma
-  body       invalid_grant, invalid_refresh_token -> InvalidGrant; temporarily_unavailable -> Transient;
+  body       invalid_grant, invalid_refresh_token, Slack's invalid_auth, token_revoked, account_inactive
+             -> InvalidGrant; temporarily_unavailable -> Transient;
              server_error, internal_error, fatal_error -> Uncertain; insufficient_scope -> ScopeRequired;
              invalid_client, unauthorized_client, unsupported_grant_type, invalid_scope -> Transient; any other
              code is a resource's own error and falls through
-  status     503 Transient; other 5xx Uncertain; anything else OK
+  status     503 Transient; other 5xx Uncertain; a 401 to a request that carried a bearer token
+             (resp.Request) InvalidGrant, as an MCP server's bare challenge; anything else OK, a token
+             endpoint's bare 401 among it (its request authenticates the client, never with Bearer)
 
 ClassifyStatic(resp, body, err)  Classify, then a 401 it found nothing in -> InvalidGrant; the Classify of
                                  api_key, bearer and none, whose credential nothing renews

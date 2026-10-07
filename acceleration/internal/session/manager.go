@@ -149,8 +149,15 @@ type ManagerOptions struct {
 	// PluginAuth signs an end user into the plugins an agent names per user, sending the
 	// provider back to this deployment's public URL. Nil sends it to localhost.
 	PluginAuth *plugins.Auth
-	Logger     *slog.Logger
+	// DetachedGrace is how long a persistent text session outlives its last watcher.
+	// Zero is defaultDetachedGrace.
+	DetachedGrace time.Duration
+	Logger        *slog.Logger
 }
+
+// defaultDetachedGrace is long enough to finish a plugin login in another tab, or to leave
+// the page a conversation is on and come back to it.
+const defaultDetachedGrace = 5 * time.Minute
 
 // Manager owns the sessions this process is running.
 type Manager struct {
@@ -171,8 +178,11 @@ type Manager struct {
 	records *sessionRecorder
 	// reviews says what a finished call went like, onto the row calls wrote.
 	reviews *reviewer
-	// titles names persistent conversations nobody named, on the session row and the channel.
+	// titles names persistent conversations nobody renamed, on the session row and the channel.
 	titles *titler
+	// cards writes each phone call's episode card into the caller's omni-channel. Nil
+	// without a store or Stream clients.
+	cards *callCards
 	// hosts runs the tools workers host for an agent config. Nil offers none.
 	hosts ToolHosts
 
@@ -191,6 +201,9 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
+	}
+	if options.DetachedGrace == 0 {
+		options.DetachedGrace = defaultDetachedGrace
 	}
 
 	manager := &Manager{
@@ -214,6 +227,7 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
 	}
 	manager.titles = newTitler(options.LLM, manager.records, options.Logger)
+	manager.cards = newCallCards(options.Store, options.Stream, options.Logger)
 	return manager, nil
 }
 
@@ -244,14 +258,15 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		m.mu.Unlock()
 		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
 	}
-	_, live := m.sessions[spec.ID]
+	held, live := m.sessions[spec.ID]
 	m.mu.Unlock()
-	if live {
+	if live && !replaces(spec, held) {
 		return nil, stack.Wrap(ErrSessionExists)
 	}
 	// The id is the row's primary key whoever owns it, so one somebody already used would
-	// write this session over theirs.
-	if m.options.Store != nil {
+	// write this session over theirs. A reopened one is the same session, its owner checked
+	// by whoever reopened it.
+	if m.options.Store != nil && spec.Reopened.IsZero() {
 		taken, err := m.options.Store.SessionExists(ctx, spec.ID)
 		if err != nil {
 			return nil, stack.Wrap(err)
@@ -305,6 +320,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		service, err := m.Conversations()
 		if err != nil {
 			return nil, stack.Wrap(err)
+		}
+		// A channel OpenInApp refuses, such as a thread channel a request named, takes over
+		// no session that holds it.
+		if spec.ConversationID != "" && persistent.Openable(ctx, spec.ConversationID) {
+			m.takeOver(spec.CustomerID, spec.ConversationID)
 		}
 		var truncated bool
 		conv, previous, truncated, err = service.OpenInApp(ctx, spec.StreamApp, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
@@ -385,6 +405,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if spec.Recall != nil && spec.Recall.Messages != nil {
 		previous = append(append([]llm.Message(nil), spec.Recall.Messages...), previous...)
 	}
+	// History the caller kept itself goes where a resumed conversation's goes, and only
+	// there: it is never written down as turns, a transcript or Chat messages.
+	if len(spec.History) > 0 {
+		previous = append(persistent.Supplied(spec.History), previous...)
+	}
 	m.supersede(spec)
 	m.think(ctx, &spec)
 
@@ -417,6 +442,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		return nil, stack.Wrap(err)
 	}
 
+	opening := time.Now().UTC()
+	if !spec.Reopened.IsZero() {
+		opening = spec.Reopened.UTC()
+	}
 	created := &Session{
 		logs:      m.logs,
 		persisted: conv,
@@ -424,12 +453,13 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		spec:      spec,
 		// Postgres keeps microseconds. The live session sorts by the same instant as its
 		// row, or a cursor taken from one would hand the other back on the next page.
-		created:  time.Now().UTC().Truncate(time.Microsecond),
-		logger:   m.logger,
-		watchers: map[uint64]*watcher{},
-		state:    Live,
-		modality: store.ModalityVoice,
-		skills:   skills,
+		created:       opening.Truncate(time.Microsecond),
+		logger:        m.logger,
+		watchers:      map[uint64]*watcher{},
+		detachedGrace: m.options.DetachedGrace,
+		state:         Live,
+		modality:      store.ModalityVoice,
+		skills:        skills,
 	}
 	if spec.Text {
 		created.modality = store.ModalityText
@@ -587,11 +617,17 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			"turns", len(previous), "truncated", spec.ContextTruncated)
 	}
 	created.voiceAgent.RestoreHistory(previous)
+	// A reopened chat is reviewed again when it ends, and its summary is of all of it.
+	if !spec.Reopened.IsZero() {
+		earlier := spokenOf(previous)
+		created.said = earlier[:min(len(earlier), reviewLimit)]
+	}
 	if conv != nil {
 		conv.Attach(func(update persistent.Updated) { created.broadcast(update) })
 		created.closers = append(created.closers, conv.Release)
-		// A caller that named the conversation named it; only an unnamed one is named here.
-		if service, err := m.Conversations(); err == nil && spec.Title == "" && spec.Description == "" {
+		// A title the conversation opened with is a placeholder: what was said names it,
+		// until somebody renames it.
+		if service, err := m.Conversations(); err == nil {
 			created.naming = &naming{titles: m.titles, service: service, earlier: spokenOf(previous)}
 		}
 	}
@@ -626,8 +662,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 
 	// The row is queued before the session is reachable, so the call cannot be recorded
-	// as ending before it is recorded as starting.
-	if m.calls != nil {
+	// as ending before it is recorded as starting. An incognito session has none: the row
+	// names the session, its caller and the instructions it ran with.
+	if m.calls != nil && !spec.Incognito {
 		created.calls = m.calls
 		created.closers = append(created.closers, func() {
 			m.calls.Ended(created.id, time.Now().UTC())
@@ -647,7 +684,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		created.closers = append(created.closers, func() {
 			m.records.Closed(created.id, time.Now().UTC())
 		})
-		m.records.Opened(sessionRow(created))
+		m.records.Opened(sessionRow(created), toolRows(created))
 	}
 
 	m.mu.Lock()
@@ -656,7 +693,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		created.Close()
 		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
 	}
-	if _, raced := m.sessions[created.id]; raced {
+	if held, raced := m.sessions[created.id]; raced && !replaces(spec, held) {
 		m.mu.Unlock()
 		created.Close()
 		return nil, stack.Wrap(ErrSessionExists)
@@ -669,11 +706,19 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if m.options.Directory != nil {
 		m.options.Directory.Hold(ctx, created.id, spec.AgentID)
 	}
+	// A phone call's episode card, once the session holds the call (T41).
+	m.cards.started(created, stream)
 
 	m.logger.Info("session joined",
 		"session", created.id, "call", spec.CallID, "customer", spec.CustomerID)
 	opened = true
 	return created, nil
+}
+
+// replaces reports whether a session being reopened may take the place of the one held under
+// its id, which it may once that one has ended.
+func replaces(spec Spec, held *Session) bool {
+	return !spec.Reopened.IsZero() && held.State() == Ended
 }
 
 // supersede ends whatever this agent was already doing in this call, before the new one
@@ -705,6 +750,28 @@ func (m *Manager) supersede(spec Spec) {
 			m.logger.Warn("the session left behind did not end cleanly",
 				"session", found.id, "error", err)
 		}
+	}
+}
+
+// takeOver ends the session holding the persistent conversation cid when nobody is
+// watching it, so reopening the conversation does not wait out that session's grace: the
+// client reopening it is most likely the one that stopped watching, after a crash.
+func (m *Manager) takeOver(customer, cid string) {
+	m.mu.Lock()
+	var left []*Session
+	for id, found := range m.sessions {
+		if found.spec.CustomerID == customer && found.unwatchedFor(cid) {
+			left = append(left, found)
+			delete(m.sessions, id)
+		}
+	}
+	m.mu.Unlock()
+
+	for _, found := range left {
+		m.release(found.id)
+		m.logger.Info("reopening a conversation nobody was watching",
+			"session", found.id, "conversation", cid)
+		found.abandon()
 	}
 }
 
@@ -1176,6 +1243,7 @@ func (m *Manager) Shutdown() error {
 	// lost on the way out. The reviews go with it: a summary is worth having, but not
 	// worth holding a shutdown open for a model to finish writing.
 	m.titles.Close()
+	m.cards.Close()
 	if m.calls != nil {
 		m.reviews.Close()
 		m.calls.Close()

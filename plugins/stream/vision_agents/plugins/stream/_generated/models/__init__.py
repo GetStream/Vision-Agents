@@ -2,6 +2,8 @@
 
 from .activity_bucket import ActivityBucket
 from .activity_granularity import ActivityGranularity
+from .add_trunk_number_request import AddTrunkNumberRequest
+from .add_trunk_number_request_tags import AddTrunkNumberRequestTags
 from .agent_channels import AgentChannels
 from .agent_config import AgentConfig
 from .agent_config_patch import AgentConfigPatch
@@ -53,6 +55,7 @@ from .call_event import CallEvent
 from .call_tags import CallTags
 from .call_token import CallToken
 from .call_token_request import CallTokenRequest
+from .call_tokens import CallTokens
 from .call_usage import CallUsage
 from .campaign import Campaign
 from .campaign_request import CampaignRequest
@@ -84,6 +87,8 @@ from .classify_usage import ClassifyUsage
 from .command_receipt import CommandReceipt
 from .connect_channel_request import ConnectChannelRequest
 from .connection import Connection
+from .connection_credentials import ConnectionCredentials
+from .connection_credentials_values import ConnectionCredentialsValues
 from .connection_inputs import ConnectionInputs
 from .connection_metadata import ConnectionMetadata
 from .connection_owner import ConnectionOwner
@@ -92,27 +97,42 @@ from .connection_page import ConnectionPage
 from .connection_request import ConnectionRequest
 from .connection_request_inputs import ConnectionRequestInputs
 from .connection_status import ConnectionStatus
+from .connection_tool import ConnectionTool
+from .connection_tool_input_schema import ConnectionToolInputSchema
+from .connection_tools import ConnectionTools
+from .connection_validation import ConnectionValidation
+from .connection_validation_request import ConnectionValidationRequest
+from .connection_validation_status import ConnectionValidationStatus
 from .connector import Connector
 from .connector_client import ConnectorClient
 from .connector_client_alg import ConnectorClientAlg
 from .connector_client_auth_method import ConnectorClientAuthMethod
 from .connector_client_registration_method import ConnectorClientRegistrationMethod
+from .connector_event_destination import ConnectorEventDestination
+from .connector_event_destination_page import ConnectorEventDestinationPage
+from .connector_event_destination_request import ConnectorEventDestinationRequest
+from .connector_event_destination_secret import ConnectorEventDestinationSecret
+from .connector_event_forward import ConnectorEventForward
 from .connector_input import ConnectorInput
 from .connector_o_auth_client import ConnectorOAuthClient
 from .connector_o_auth_client_auth_method import ConnectorOAuthClientAuthMethod
 from .connector_o_auth_client_request import ConnectorOAuthClientRequest
 from .connector_page import ConnectorPage
+from .connector_provider_app import ConnectorProviderApp
+from .connector_provider_app_request import ConnectorProviderAppRequest
 from .connector_tool_grant import ConnectorToolGrant
 from .contact import Contact
 from .contact_state import ContactState
 from .contacts_request import ContactsRequest
 from .contacts_request_contacts_item import ContactsRequestContactsItem
+from .cost_source import CostSource
 from .create_opt_out_request import CreateOptOutRequest
 from .create_opt_out_request_source import CreateOptOutRequestSource
 from .create_response_request import CreateResponseRequest
 from .create_session_request import CreateSessionRequest
 from .create_session_request_custom import CreateSessionRequestCustom
 from .create_session_request_tags import CreateSessionRequestTags
+from .create_sip_trunk_request import CreateSipTrunkRequest
 from .custom_connector_request import CustomConnectorRequest
 from .data_change import DataChange
 from .data_change_key import DataChangeKey
@@ -146,6 +166,8 @@ from .harness import Harness
 from .health_status import HealthStatus
 from .health_status_dependencies import HealthStatusDependencies
 from .health_status_status import HealthStatusStatus
+from .history_message import HistoryMessage
+from .history_role import HistoryRole
 from .i_message_profile import IMessageProfile
 from .image_content_part import ImageContentPart
 from .image_content_part_type import ImageContentPartType
@@ -161,6 +183,7 @@ from .image_source_detail import ImageSourceDetail
 from .indexed_knowledge_document import IndexedKnowledgeDocument
 from .ingest_knowledge_request import IngestKnowledgeRequest
 from .ingested_knowledge import IngestedKnowledge
+from .input_parts import InputParts
 from .instructions_request import InstructionsRequest
 from .knowledge_document import KnowledgeDocument
 from .knowledge_passage import KnowledgePassage
@@ -185,7 +208,11 @@ from .model_call_timing import ModelCallTiming
 from .model_overwrites import ModelOverwrites
 from .model_overwrites_thinking import ModelOverwritesThinking
 from .model_overwrites_verbosity import ModelOverwritesVerbosity
+from .model_tokens import ModelTokens
 from .number_search_result import NumberSearchResult
+from .offered_tool import OfferedTool
+from .offered_tool_parameters import OfferedToolParameters
+from .offered_tools import OfferedTools
 from .opt_out import OptOut
 from .opt_out_channel import OptOutChannel
 from .opt_out_page import OptOutPage
@@ -288,6 +315,8 @@ from .simulation_run import SimulationRun
 from .simulation_run_mode import SimulationRunMode
 from .simulation_run_state import SimulationRunState
 from .simulation_tags import SimulationTags
+from .sip_trunk import SipTrunk
+from .sip_trunk_transport import SipTrunkTransport
 from .skill import Skill
 from .skill_request import SkillRequest
 from .skipped_vendor import SkippedVendor
@@ -346,6 +375,7 @@ from .update_session_request import UpdateSessionRequest
 from .update_session_request_custom import UpdateSessionRequestCustom
 from .update_session_request_thinking import UpdateSessionRequestThinking
 from .update_session_request_verbosity import UpdateSessionRequestVerbosity
+from .update_sip_trunk_request import UpdateSipTrunkRequest
 from .use_case import UseCase
 from .use_case_channels import UseCaseChannels
 from .use_case_for_review import UseCaseForReview
@@ -370,6 +400,8 @@ from .whats_app_profile import WhatsAppProfile
 __all__ = (
     "ActivityBucket",
     "ActivityGranularity",
+    "AddTrunkNumberRequest",
+    "AddTrunkNumberRequestTags",
     "AgentChannels",
     "AgentConfig",
     "AgentConfigPatch",
@@ -417,6 +449,7 @@ __all__ = (
     "CallTags",
     "CallToken",
     "CallTokenRequest",
+    "CallTokens",
     "CallUsage",
     "Campaign",
     "CampaignRequest",
@@ -448,6 +481,8 @@ __all__ = (
     "CommandReceipt",
     "ConnectChannelRequest",
     "Connection",
+    "ConnectionCredentials",
+    "ConnectionCredentialsValues",
     "ConnectionInputs",
     "ConnectionMetadata",
     "ConnectionOwner",
@@ -456,27 +491,42 @@ __all__ = (
     "ConnectionRequest",
     "ConnectionRequestInputs",
     "ConnectionStatus",
+    "ConnectionTool",
+    "ConnectionToolInputSchema",
+    "ConnectionTools",
+    "ConnectionValidation",
+    "ConnectionValidationRequest",
+    "ConnectionValidationStatus",
     "Connector",
     "ConnectorClient",
     "ConnectorClientAlg",
     "ConnectorClientAuthMethod",
     "ConnectorClientRegistrationMethod",
+    "ConnectorEventDestination",
+    "ConnectorEventDestinationPage",
+    "ConnectorEventDestinationRequest",
+    "ConnectorEventDestinationSecret",
+    "ConnectorEventForward",
     "ConnectorInput",
     "ConnectorOAuthClient",
     "ConnectorOAuthClientAuthMethod",
     "ConnectorOAuthClientRequest",
     "ConnectorPage",
+    "ConnectorProviderApp",
+    "ConnectorProviderAppRequest",
     "ConnectorToolGrant",
     "Contact",
     "ContactState",
     "ContactsRequest",
     "ContactsRequestContactsItem",
+    "CostSource",
     "CreateOptOutRequest",
     "CreateOptOutRequestSource",
     "CreateResponseRequest",
     "CreateSessionRequest",
     "CreateSessionRequestCustom",
     "CreateSessionRequestTags",
+    "CreateSipTrunkRequest",
     "CustomConnectorRequest",
     "DataChange",
     "DataChangeKey",
@@ -508,6 +558,8 @@ __all__ = (
     "HealthStatus",
     "HealthStatusDependencies",
     "HealthStatusStatus",
+    "HistoryMessage",
+    "HistoryRole",
     "IMessageProfile",
     "ImageContentPart",
     "ImageContentPartType",
@@ -523,6 +575,7 @@ __all__ = (
     "IndexedKnowledgeDocument",
     "IngestKnowledgeRequest",
     "IngestedKnowledge",
+    "InputParts",
     "InstructionsRequest",
     "KnowledgeDocument",
     "KnowledgePassage",
@@ -547,7 +600,11 @@ __all__ = (
     "ModelOverwrites",
     "ModelOverwritesThinking",
     "ModelOverwritesVerbosity",
+    "ModelTokens",
     "NumberSearchResult",
+    "OfferedTool",
+    "OfferedToolParameters",
+    "OfferedTools",
     "OptOut",
     "OptOutChannel",
     "OptOutPage",
@@ -650,6 +707,8 @@ __all__ = (
     "SimulationRunMode",
     "SimulationRunState",
     "SimulationTags",
+    "SipTrunk",
+    "SipTrunkTransport",
     "Skill",
     "SkillRequest",
     "SkippedVendor",
@@ -708,6 +767,7 @@ __all__ = (
     "UpdateSessionRequestCustom",
     "UpdateSessionRequestThinking",
     "UpdateSessionRequestVerbosity",
+    "UpdateSipTrunkRequest",
     "UseCase",
     "UseCaseChannels",
     "UseCaseForReview",

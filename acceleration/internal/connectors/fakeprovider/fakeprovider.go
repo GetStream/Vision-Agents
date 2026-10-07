@@ -122,6 +122,13 @@ const (
 	// «Claims challenges, claims requests and client capabilities») until the token came
 	// from a consent that passed those claims.
 	ClaimsChallenge Personality = "claims_challenge"
+	// BareChallenge answers an MCP request whose token it does not take with 401 and a Bearer
+	// challenge that holds resource_metadata alone, with no error code, as MCP servers do:
+	// «Invalid or expired tokens MUST receive a HTTP 401 response», and the spec's 401 names
+	// the resource metadata, not an error (MCP 2026-07-28, Authorization, «Token Handling»
+	// and the example under «Scope Selection Strategy»). Without it the fake answers
+	// error="invalid_token" (RFC 6750 §3.1).
+	BareChallenge Personality = "bare_challenge"
 	// RateLimited answers MCP requests and refresh grants with 429 (RFC 6585 §4) and
 	// Retry-After (RFC 9110 §10.2.3) of RetryAfter. A refresh it refuses changes nothing.
 	RateLimited Personality = "rate_limited"
@@ -165,6 +172,18 @@ const (
 	// (core/testdata/recorded/salesforce.token.json). That the client credentials response
 	// carries it too is unverified.
 	IdentityURL Personality = "identity_url"
+	// SlackChannel plays Slack as an inbound channel (channel.go): Deliver posts an Events API
+	// event signed as Slack signs it (docs.slack.dev/authentication/verifying-requests-from-slack),
+	// and PathChatPostMessage takes a reply with a bot token InstallBot issued, answering as
+	// chat.postMessage does, a refusal included, which comes as HTTP 200 with ok false
+	// (docs.slack.dev/reference/methods/chat.postMessage). Without it PathChatPostMessage is
+	// 404. Only Slack has these shapes, so it is named for Slack.
+	SlackChannel Personality = "slack_channel"
+	// SlowConfigRotation holds every tooling.tokens.rotate for slowRotationDelay before it
+	// answers, so two callers that rotate one configuration token without a lock between
+	// them overlap at the server. Not a Slack behaviour: a slow network, which any caller can
+	// meet.
+	SlowConfigRotation Personality = "slow_config_rotation"
 )
 
 // tokenEndpoint are the personalities that decide what the token endpoint does; at most one
@@ -212,8 +231,20 @@ type Server struct {
 	lostOnce bool
 	// metadataClient fetches client metadata documents under ClientMetadataDocuments.
 	metadataClient *http.Client
+	// posts are the messages chat.postMessage took under SlackChannel.
+	posts []Post
+	// failPosts is how many more posts answer 503 (FailPosts).
+	failPosts int
 	// account is the user the next consent is by: UserID until SwitchAccount.
 	account string
+
+	// The fake Slack (slack.go): configuration tokens by token, refresh tokens with whether
+	// they were spent, successful rotations, and apps by id in the order they were made.
+	configTokens    map[string]*configToken
+	configRefresh   map[string]bool
+	configRotations int
+	slackApps       map[string]*SlackApp
+	slackOrder      []string
 }
 
 type client struct {
@@ -285,6 +316,9 @@ func New(t testing.TB, personalities ...Personality) *Server {
 		access:        map[string]*accessToken{},
 		refresh:       map[string]*refreshToken{},
 		hits:          map[string]int{},
+		configTokens:  map[string]*configToken{},
+		configRefresh: map[string]bool{},
+		slackApps:     map[string]*SlackApp{},
 	}
 	s.account = s.UserID
 	s.clients[s.ClientID] = &client{
@@ -426,6 +460,8 @@ func (s *Server) routes() http.Handler {
 	// asks of a server without the GET stream or sessions (Streamable HTTP, «Earlier
 	// Streamable HTTP Revisions»).
 	mux.HandleFunc("POST "+PathMCP, s.mcp)
+	mux.HandleFunc("POST "+PathChatPostMessage, s.chatPostMessage)
+	s.slackRoutes(mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		s.hits[r.URL.Path]++
@@ -441,6 +477,13 @@ func (s *Server) now() time.Time {
 
 func (s *Server) is(p Personality) bool {
 	return s.personalities[p]
+}
+
+// isOn is is for a caller that does not hold mu.
+func (s *Server) isOn(p Personality) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.is(p)
 }
 
 func (s *Server) resource() string {

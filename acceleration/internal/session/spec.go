@@ -4,11 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
@@ -121,11 +124,20 @@ type Spec struct {
 	ModelOverwrites store.ModelOverwrites
 	// ForkedFrom is the session this one continued from, empty for one opened fresh.
 	ForkedFrom string
+	// Reopened is when a persistent text session that ended first opened, set to carry it
+	// on under the same id rather than refuse an id already used. A chat is never over for
+	// the person writing in it, so its session ending is not the conversation ending.
+	Reopened time.Time
 	// Recall is the conversation a fork starts from, which is not the conversation it
 	// writes into. The parent's words are read out of its channel and given to the model;
 	// the fork's own transcript goes into its own channel, so continuing a conversation
 	// twice gives two transcripts rather than one with both halves interleaved.
 	Recall *Recall
+	// History is the conversation so far as the caller kept it, for a caller that holds its
+	// own thread and opens a session to answer in it. The model is handed it before the
+	// first response, where a resumed conversation's history goes, and it is recorded
+	// nowhere: not as turns, not in a transcript, not in Chat.
+	History []persistent.HistoryLine
 
 	Instructions string
 	// Greeting is said on joining without going through the model. Empty means the agent
@@ -171,6 +183,9 @@ type Spec struct {
 	// DispatchText hands what an end user writes to the customer's dispatch worker rather
 	// than the model, from the agent's config. The model answers only the server.
 	DispatchText bool
+	// EpisodeCards has a phone call write its episode card into the caller's omni-channel,
+	// from the agent's config. Off, the call does what it did before the cards existed.
+	EpisodeCards bool
 
 	// SkillNames are the skills the voice model may hand to the subagent: the agent
 	// config's own, or one of the built-in think, recall and explain. Empty means the
@@ -283,6 +298,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		SandboxOptions:     config.SandboxOptions,
 		Harness:            config.Harness,
 		DispatchText:       config.DispatchText,
+		EpisodeCards:       config.EpisodeCards,
 		Tags:               routing.Tags(config.Tags),
 	}
 }
@@ -312,6 +328,12 @@ func (s *Spec) Normalize() error {
 		return stack.Wrap(fmt.Errorf("session: the id %q is not a UUID", s.ID))
 	}
 
+	// Checked before incognito clears the conversation id, so naming both is refused
+	// whatever else the request says.
+	if err := checkHistory(s.History, s.ConversationID); err != nil {
+		return err
+	}
+
 	// Incognito is honoured here rather than at each of the places that records something,
 	// because one place that forgot would be a conversation kept against its caller's
 	// wishes. Everything downstream reads the spec, so turning persistence off here turns
@@ -336,6 +358,8 @@ func (s *Spec) Normalize() error {
 
 	s.CallID = strings.TrimSpace(s.CallID)
 	switch {
+	case !s.Reopened.IsZero() && !(s.Text && s.PersistConversation && s.ConversationID != ""):
+		return stack.Wrap(errors.New("session: only a persistent text conversation is reopened"))
 	case s.Text && s.CallID != "":
 		return stack.Wrap(errors.New("session: a text session holds no call, so it cannot join one"))
 	case s.Text && s.Native():
@@ -411,6 +435,41 @@ func (s *Spec) Normalize() error {
 		return err
 	}
 	return harness.Tools{Tools: s.Tools}.Validate()
+}
+
+// checkHistory refuses history from the caller that the model would not be handed whole.
+// The limits are the ones history read back from Chat is cut to, so a caller's thread is
+// held to what the router's own would be; a caller is told rather than cut, since only
+// it knows which messages matter.
+func checkHistory(lines []persistent.HistoryLine, conversationID string) error {
+	if len(lines) == 0 {
+		return nil
+	}
+	if conversationID != "" {
+		return stack.Wrap(errors.New("session: history and conversation_id both say what was said " +
+			"before; a resumed conversation reads its own, so name one"))
+	}
+	if len(lines) > persistent.MaxHistoryMessages {
+		return stack.Wrap(fmt.Errorf("session: history holds %d messages, more than the %d a session opens with",
+			len(lines), persistent.MaxHistoryMessages))
+	}
+	size := 0
+	for i, line := range lines {
+		switch {
+		case line.Role != "user" && line.Role != "assistant":
+			return stack.Wrap(fmt.Errorf("session: history[%d].role is %q; it must be user or assistant", i, line.Role))
+		case line.Text == "":
+			return stack.Wrap(fmt.Errorf("session: history[%d].text is empty", i))
+		case utf8.RuneCountInString(line.Name) > persistent.MaxAuthorName:
+			return stack.Wrap(fmt.Errorf("session: history[%d].name is longer than %d characters", i, persistent.MaxAuthorName))
+		}
+		size += utf8.RuneCountInString(line.Text)
+	}
+	if size > persistent.MaxHistoryRunes {
+		return stack.Wrap(fmt.Errorf("session: history holds %d characters of text, more than the %d a session opens with",
+			size, persistent.MaxHistoryRunes))
+	}
+	return nil
 }
 
 // Native reports whether this session is held by one speech-to-speech model rather than

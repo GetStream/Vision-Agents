@@ -15,8 +15,8 @@ import (
 
 // Classify maps a provider's answer to the one outcome the core acts on. It reads token
 // endpoint answers (RFC 6749 section 5.2) and protected resource answers (RFC 6750 section
-// 3) alike, since Retrieve and a tool source both hand it theirs and the two cannot always be told
-// apart. In order:
+// 3) alike, since Retrieve and a tool source both hand it theirs. Only a 401 whose challenge
+// names no error is told apart, by the request it answers. In order:
 //
 //   - err with no response: a request that was never written (errNotSent, or a failed
 //     dial) is Transient, since nothing reached the provider. Any other failure is
@@ -43,6 +43,15 @@ import (
 //     happened, and a 502 or 504 (sections 15.6.3, 15.6.5) says a gateway lost the answer
 //     of a server that may have acted. The prototype made every non-2xx refresh answer
 //     Uncertain (oauth.go:582-584).
+//   - A 401 to a request that carried a bearer token is InvalidGrant, though its challenge
+//     names no error: the resource refused the token, and only a renewed one can pass. MCP
+//     servers answer so: «Invalid or expired tokens MUST receive a HTTP 401 response», and
+//     the 401 carries resource_metadata in WWW-Authenticate with no error code (MCP
+//     2026-07-28, Authorization, «Token Handling» and the example under «Scope Selection
+//     Strategy»; 2025-11-25, «Protected Resource Metadata Discovery Requirements»). The
+//     request is what tells a resource answer from a token endpoint's: Wrap sends the access
+//     token as a bearer token (RFC 6750 section 2.1), and a token request authenticates the
+//     client instead (RFC 6749 section 2.3), so a token endpoint's 401 stays as below.
 //   - Anything else is OK: nothing about the credential for the core to act on. A 404 is
 //     still the caller's to report, and so is a resource's own error code.
 //
@@ -88,8 +97,21 @@ func (s *Scheme) Classify(resp *http.Response, body []byte, err error) core.Outc
 		return core.Outcome{Kind: core.OutcomeUncertain, RetryAfter: retryAfter}
 	case err != nil && resp.StatusCode < http.StatusBadRequest:
 		return core.Outcome{Kind: core.OutcomeUncertain}
+	case resp.StatusCode == http.StatusUnauthorized && carriedBearer(resp.Request):
+		return core.Outcome{Kind: core.OutcomeInvalidGrant}
 	}
 	return core.Outcome{Kind: core.OutcomeOK}
+}
+
+// carriedBearer reports whether request, the one a response answers (http.Response.Request),
+// sent a bearer token: RFC 6750 section 2.1's Authorization header, whose auth-scheme is
+// case-insensitive (RFC 9110 section 11.1).
+func carriedBearer(request *http.Request) bool {
+	if request == nil {
+		return false
+	}
+	scheme, _, _ := strings.Cut(request.Header.Get("Authorization"), " ")
+	return strings.EqualFold(scheme, "Bearer")
 }
 
 // ClassifyStatic is Classify for a credential nothing renews (api_key, bearer, none), with
@@ -129,6 +151,17 @@ var errorCodes = map[string]core.OutcomeKind{
 	// made both Uncertain (internal/mcp/oauth.go:576-578 at cf62af0d).
 	"internal_error": core.OutcomeUncertain,
 	"fatal_error":    core.OutcomeUncertain,
+	// Slack's Web API names for a token that no longer works, answered as HTTP 200 with
+	// «"ok": false» (docs.slack.dev/reference/methods/chat.postMessage, opened 2026-10-06):
+	// invalid_auth «Some aspect of authentication cannot be validated», token_revoked
+	// «Authentication token is for a deleted user or workspace or the app has been removed»,
+	// account_inactive «Authentication token is for a deleted user or workspace when using a
+	// bot token». Only a new consent helps. invalid_auth also covers «the request originates
+	// from an IP address disallowed», which a new consent does not fix; it still means no
+	// call with this token will pass, so it ends the grant as the others do.
+	"invalid_auth":     core.OutcomeInvalidGrant,
+	"token_revoked":    core.OutcomeInvalidGrant,
+	"account_inactive": core.OutcomeInvalidGrant,
 	// RFC 6749 section 5.2's other codes, which only a token endpoint answers: a refusal,
 	// so nothing was spent and a later attempt may pass. The prototype kept such a
 	// connection connected and «temporarily unavailable» (internal/connectors/runtime.go:

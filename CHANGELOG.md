@@ -548,6 +548,26 @@ milliseconds as a `timings` custom field. Reading a conversation back, as the tr
 and the history a bound conversation gives the agent do, leaves the line out, so the agent never
 takes it for something it said.
 
+### A session can be opened with the history the caller kept
+
+`POST /v1/agents/sessions` takes `history`: the conversation so far, oldest first, as up to 100 `HistoryMessage`s with a `role` of `user` or `assistant`, `text`, and an optional author `name` and `created_at`. It is for a backend that keeps its own thread, such as one in its own Slack app, that outlives a session: open a new session with the thread here, then send the next message to `POST /v1/agents/sessions/{id}/responses`. The model is handed the history before the first response, the way a resumed conversation's is, and once any message names its author or time each user message is quoted with them behind a note that names are labels, not authority. The router records none of it, as turns, transcript or Chat messages; with `incognito` it keeps nothing at all. More than 100 messages or 60000 characters of text, a role other than `user` or `assistant`, and `history` with `conversation_id` are 400s, and a device sending it is a 403. Go (`client.SessionOptions.History`) and Python (`SessionOptions.history`) take it, and JavaScript's `SessionSpec` from the regenerated types; other SDKs follow.
+
+### Calls from numbers on your own SIP trunk (#752)
+
+You can now place calls from the numbers that you already have at your own carrier.
+`POST /v1/phone/trunks` stores your SIP trunk: host, port, transport, username, password
+and codecs. The API never returns the password. `GET`, `PATCH` and `DELETE` on
+`/v1/phone/trunks/{id}` read, change and delete a trunk. `POST /v1/phone/trunks/{id}/numbers`
+adds one of your numbers to the trunk. `POST /v1/phone/calls` then places a call from that
+number through your carrier.
+
+These numbers make outbound calls only. You cannot send initial digits, press digits or add
+custom SIP headers on these calls. The router node that places a call holds it until it
+ends. If that node stops, the call ends.
+
+The trunk endpoints need a key encryption key (`ROUTER_AUTH_KEK`). Without a key, they
+answer 400 with the code `not_configured`. The router refuses a trunk host that resolves to an address that is not public.
+
 ### Every router response carries an `X-Request-Id`, and a 500 is logged with its stack
 
 The router answers every request with `X-Request-Id`, keeping one a proxy sent (printable
@@ -560,6 +580,18 @@ request id to find the rest in the logs.
 ### A provider can tell the router that a connection's grant ended
 
 `POST /v1/agents/connectors/events/{connector_id}` (`receiveConnectorEvent`, `security: []`, not client-accessible) takes a built-in connector's provider events. Each request is checked by the verifier the manifest's `channel.verifier` names, with the operator's secret, and an unsigned or stale one is a 401 that changes nothing. Slack's `tokens_revoked` moves the revoked user's connections to `needs_reauthorization`, and `app_uninstalled` moves every connection in that workspace; the next credential resolve on any router then fails at once. A URL verification is answered with its challenge. Point the operator's Slack app's Request URL at `/v1/agents/connectors/events/slack`, subscribe it to both events, and set `SLACK_MCP_SIGNING_SECRET`. A manifest's `channel` block takes `signals`, and may have them without `messages` and `reply`. The Go client and the JavaScript types are regenerated; no SDK wraps the route.
+
+### An agent answers in Slack threads through the app's own Slack app
+
+`POST /v1/connectors/events/{connector_id}/{provider_app_id}` (`receiveProviderAppEvent`, `security: []`, not client-accessible) is the Request URL of one customer's provider app, checked with that app's own signing secret. On the new built-in `slack_bot` connector, a person's message in a Slack channel or DM is written into a thread channel in Stream Chat (one per Slack thread, `agent:thread-<uuid>`, naming the agent config that binds the app's `slack_bot` connection). The router answers it itself: the message hook tells the persistent text session held on that thread channel, starting one from the agent config when none runs, so the reply is kept in the thread channel, and once its final text is stored it goes back into the same Slack thread with `chat.postMessage` and the workspace's bot token. A thread channel's message is not handed to a dispatch worker. A session created with `agent_id` naming a thread channel keeps its conversation there (its `conversation_id` is `agent:thread-<uuid>`). One thread is answered by one router at a time, and a reply Slack did not take (no answer, 5xx, 429) is sent again. A retried delivery, a repeated `message.new`, a reply told twice, the bot's own messages and `message` events with a `subtype` are each acted on at most once or not at all. Slack refusing the bot token (`invalid_auth`, `token_revoked`, `account_inactive`, answered with HTTP 200) moves the connection to `needs_reauthorization`. `tokens_revoked` and `app_uninstalled` on this URL move only that customer's connection, and not one reconnected after the event was dispatched. The Go client and the JavaScript types are regenerated; no SDK wraps the route.
+
+### A connector's raw provider events go on to the app's own URLs
+
+`POST /v1/agents/connectors/{id}/event-destinations` (`createConnectorEventDestination`, server-side only) adds a URL that the deliveries of the app's own provider app, such as its Slack app, are forwarded to, at most three per connector. `forward: unhandled` takes what the router acts on in no way: a button click (`block_actions`), a reaction, a modal submission, and a message no agent of the app answers. `forward: all` takes every verified delivery but Slack's URL handshake. A message an agent of the app answers is still answered in either mode. Each forward is the provider's raw body with its own `Content-Type` and signature headers (`X-Slack-Signature`, `X-Slack-Request-Timestamp`), so Slack Bolt verifies it with the app's signing secret, signed on top in the Standard Webhooks shape (`webhook-id`, `webhook-timestamp`, `webhook-signature`) with the destination's own `whsec_` secret, which the create returns once. Slack's ack never waits for it. A 5xx, a 429 or no answer is sent again after 5 s, 5 min, 30 min and 2 h; any other answer is not. A private, loopback or non-https URL is refused. `listConnectorEventDestinations` pages by cursor, `deleteConnectorEventDestination` removes one, and `rotateConnectorEventDestinationSecret` returns a new secret, the old one signing beside it for 24 hours. The Go client and the JavaScript types are regenerated; other SDKs follow.
+
+### Each Slack thread and each phone call gets an episode card in the person's omni-channel
+
+The first message of a Slack thread on the `slack_bot` connector, and each session that joins a phone call under an agent config with the new `episode_cards: true`, writes one card into the person's omni-channel: an `agent` channel `omni-<uuid>` for each person and agent, which names the agent config. The card is one message with `source` (`slack` or `call`), `status: in_progress`, `started_at`, `thread_channel` (the thread channel or the call channel that holds the raw text), `episode_id`, and `call_id` for a call. Later messages of the thread add no card, and the message hook answers no card. A caller is found by number: the call's SIP participant (`sip-<number>`), or the number an outbound call rang, read as E.164 when it starts with `+` or `00` (anything else is no card), so one number is one omni-channel whatever it comes in on. `episode_cards` is off by default, and a call under a config that leaves it off runs as before. A Slack user has an omni-channel of their own, keyed by workspace and user. A call's transcript stays in its call channel. `AgentConfig` gains `episode_cards`; left out on an update, it keeps what is stored. The Go client and the JavaScript types are regenerated; other SDKs follow.
 
 ### An app can put its own OAuth client for a connector
 
@@ -1792,7 +1824,15 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 - Standalone agent demo links now select the actual call type and the `agent` chat
   channel, allowing Pronto to display conversation messages when transcript storage
   is configured. (#749)
-
+- An `oauth2_code` or `oauth2_client_credentials` connection whose MCP server refuses its token
+  with a bare 401 (a `WWW-Authenticate` that names `resource_metadata` and no `error`, as the
+  MCP authorization spec answers an expired token) is renewed and the call sent once more. The
+  router read that 401 as nothing to act on, so every call failed until the stored expiry
+  passed, and `POST /v1/agents/connections/{id}/validate` reported `failed`. A refresh refused
+  with `invalid_grant` now moves the connection to `needs_reauthorization`, and validate says so.
+- An incognito session records nothing, as it promised. It still wrote a `calls` row with its
+  id, caller and instructions, turn timings under its agent id, and, on a call, the decisions
+  with the words that were heard. Its voice minutes no longer appear in the activity report.
 - A login card in a tool result is attached to the reply only when it comes from a server
   each end user logs into: a plugin under `user_plugins`, or an `mcp_servers` entry with
   `user: true`. A server the app logs into, or one with no login, can no longer put one in

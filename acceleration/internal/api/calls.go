@@ -1,9 +1,11 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -109,6 +111,111 @@ func (s *Server) attachUsage(ctx context.Context, customerID string, call store.
 		OutputTokens:      spent.OutputTokens,
 		CostMicros:        spent.CostMicros,
 		Requests:          spent.Requests,
+	}
+}
+
+// getCallTokens says what the call's models read and wrote, and what their prompts were made of.
+func (s *Server) getCallTokens(ctx context.Context, request *getCallTokensRequest) (*getCallTokensResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.store == nil {
+		return nil, errNoCalls
+	}
+
+	call, err := s.store.Call(ctx, customerID, request.Id)
+	if err != nil {
+		return nil, errUnknownCall
+	}
+	used, err := s.store.CallTokens(ctx, customerID, call.AgentID, call.StartedAt, call.EndedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	spent := CallTokens{Models: make([]ModelTokens, 0, len(used))}
+	for _, model := range used {
+		parts := inputPartsOf(model.InputParts)
+		spent.Models = append(spent.Models, ModelTokens{
+			Modality: model.Modality, Provider: model.Provider, Model: model.Model,
+			InputTokens: model.InputTokens, CachedInputTokens: model.CachedInputTokens,
+			OutputTokens: model.OutputTokens, CostMicros: model.CostMicros, Requests: model.Requests,
+			InputParts: parts,
+		})
+		spent.InputTokens += model.InputTokens
+		spent.CachedInputTokens += model.CachedInputTokens
+		spent.OutputTokens += model.OutputTokens
+		spent.CostMicros += model.CostMicros
+		spent.Requests += model.Requests
+		spent.InputParts.Instructions += parts.Instructions
+		spent.InputParts.Messages += parts.Messages
+		spent.InputParts.ToolDefinitions += parts.ToolDefinitions
+		spent.InputParts.ToolUse += parts.ToolUse
+		spent.InputParts.Images += parts.Images
+		spent.InputParts.Video += parts.Video
+	}
+	spent.CostSources = costSources(used)
+	return &getCallTokensResponse{Body: spent}, nil
+}
+
+// costSources splits what the models cost by where it came from. A model's prompt cost is
+// shared between the parts of its prompt by their tokens, and what is left over, from rows
+// recorded without the split, is input.
+func costSources(used []store.ModelTokens) []CostSource {
+	costs := map[string]int64{}
+	for _, model := range used {
+		if model.InputTokens+model.OutputTokens == 0 {
+			costs[model.Modality] += model.CostMicros
+			continue
+		}
+		costs["output"] += model.OutputCostMicros
+		input := model.CostMicros - model.OutputCostMicros
+		if model.InputTokens == 0 {
+			costs["input"] += input
+			continue
+		}
+		parts := model.InputParts
+		left, split, largest, most := input, int64(0), "input", int64(0)
+		for _, part := range []struct {
+			source string
+			tokens int64
+		}{
+			{"instructions", parts.InstructionTokens}, {"messages", parts.MessageTokens},
+			{"tool_definitions", parts.ToolDefinitionTokens}, {"tool_use", parts.ToolUseTokens},
+			{"images", parts.ImageTokens}, {"video", parts.VideoTokens},
+		} {
+			share := input * part.tokens / model.InputTokens
+			costs[part.source] += share
+			left -= share
+			split += part.tokens
+			if part.tokens > most {
+				largest, most = part.source, part.tokens
+			}
+		}
+		// A prompt split whole leaves only rounding over, which is the largest part's.
+		if split < model.InputTokens {
+			largest = "input"
+		}
+		costs[largest] += left
+	}
+
+	sources := make([]CostSource, 0, len(costs))
+	for source, cost := range costs {
+		if cost > 0 {
+			sources = append(sources, CostSource{Source: source, CostMicros: cost})
+		}
+	}
+	slices.SortFunc(sources, func(a, b CostSource) int {
+		return cmp.Or(cmp.Compare(b.CostMicros, a.CostMicros), cmp.Compare(a.Source, b.Source))
+	})
+	return sources
+}
+
+func inputPartsOf(stored store.InputParts) InputParts {
+	return InputParts{
+		Instructions: stored.InstructionTokens, Messages: stored.MessageTokens,
+		ToolDefinitions: stored.ToolDefinitionTokens, ToolUse: stored.ToolUseTokens,
+		Images: stored.ImageTokens, Video: stored.VideoTokens,
 	}
 }
 
@@ -785,6 +892,20 @@ func (s *Server) registerCalls(api huma.API) {
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.getCall)
 	huma.Register(api, huma.Operation{
+		OperationID: "getCallTokens",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/calls/{id}/tokens",
+		Summary:     "What a call's models read and wrote, and what their prompts were made of",
+		Description: "Read while the call is going as well as after it, unlike the usage on the call, " +
+			"which is counted once it is over. A prompt's parts are estimated: no provider says how " +
+			"much of a prompt was instructions, tools or images, so the router estimates it from each " +
+			"request and scales it to what the provider counted. The parts sum to the input tokens.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The call's tokens"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.getCallTokens)
+	huma.Register(api, huma.Operation{
 		OperationID: "getCallTranscript",
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/calls/{id}/transcript",
@@ -880,6 +1001,14 @@ type getCallResponse struct {
 	Body Call
 }
 
+type getCallTokensRequest struct {
+	Id string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+type getCallTokensResponse struct {
+	Body CallTokens
+}
+
 type getCallTranscriptRequest struct {
 	Id string `path:"id" doc:"The resource, as returned when it was created."`
 }
@@ -971,6 +1100,67 @@ type CallUsage struct {
 
 func (*CallUsage) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it."
+	return schema
+}
+
+// CallTokens What a call's models read and wrote, summed over every request, with what their prompts were made of.
+type CallTokens struct {
+	CachedInputTokens int64         `json:"cached_input_tokens" doc:"The part of the prompts a provider served from its own cache."`
+	CostMicros        int64         `json:"cost_micros" doc:"Millionths of a dollar, priced from the providers' configured rates."`
+	CostSources       []CostSource  `json:"cost_sources" nullable:"false" doc:"Where the cost came from, the costliest first. Sources that cost nothing are left out."`
+	InputParts        InputParts    `json:"input_parts"`
+	InputTokens       int64         `json:"input_tokens" doc:"Every prompt the models read, the cached part included."`
+	Models            []ModelTokens `json:"models" nullable:"false" doc:"Each model the call used, the busiest first. One billed by audio or characters reads zero tokens."`
+	OutputTokens      int64         `json:"output_tokens" doc:"Everything the models generated, reasoning included."`
+	Requests          int64         `json:"requests" doc:"How many calls to those models it took."`
+}
+
+func (*CallTokens) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What a call's models read and wrote, summed over every request, with what their prompts were made of."
+	return schema
+}
+
+// InputParts What prompts were made of, in tokens. Estimated from each request and scaled to what the provider counted, so the parts sum to the input tokens and only the split between them is a guess. Requests recorded before the split was kept read zero throughout.
+type InputParts struct {
+	Images          int64 `json:"images" doc:"Pictures, attached or returned by a tool."`
+	Instructions    int64 `json:"instructions" doc:"The system prompt: the agent's instructions, skills and plugin guidance."`
+	Messages        int64 `json:"messages" doc:"The conversation's words, from either side."`
+	ToolDefinitions int64 `json:"tool_definitions" doc:"The tools the model was offered: their names, descriptions and schemas."`
+	ToolUse         int64 `json:"tool_use" doc:"The tools the model called, and what they returned."`
+	Video           int64 `json:"video" doc:"Frames of a video, from the call's camera or an attached clip."`
+}
+
+func (*InputParts) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What prompts were made of, in tokens. Estimated from each request and scaled to what the provider counted, so the parts sum to the input tokens and only the split between them is a guess. Requests recorded before the split was kept read zero throughout."
+	return schema
+}
+
+// CostSource One place a call's cost came from.
+type CostSource struct {
+	Source     string `json:"source" doc:"For a model billed by tokens, the part of its prompt (instructions, messages, tool_definitions, tool_use, images or video), output for what it wrote, or input for prompt tokens recorded without a breakdown. For any other model, its modality: stt, tts, search and the rest."`
+	CostMicros int64  `json:"cost_micros" doc:"Millionths of a dollar. A part of the prompt is given its share of what the prompt cost, by tokens."`
+}
+
+func (*CostSource) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "One place a call's cost came from."
+	return schema
+}
+
+// ModelTokens What one model read and wrote over a call.
+type ModelTokens struct {
+	CachedInputTokens int64      `json:"cached_input_tokens"`
+	CostMicros        int64      `json:"cost_micros"`
+	InputParts        InputParts `json:"input_parts"`
+	InputTokens       int64      `json:"input_tokens"`
+	Modality          string     `json:"modality" doc:"What the model does: llm for a language model, sts for speech-to-speech, and so on."`
+	Model             string     `json:"model"`
+	OutputTokens      int64      `json:"output_tokens"`
+	Provider          string     `json:"provider"`
+	Requests          int64      `json:"requests"`
+}
+
+func (*ModelTokens) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What one model read and wrote over a call."
 	return schema
 }
 

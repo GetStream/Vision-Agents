@@ -46,14 +46,30 @@ type Request struct {
 	CachedInputTokens int64 `bun:"cached_input_tokens,notnull"`
 	// OutputTokens is everything an LLM generated, reasoning included.
 	OutputTokens int64 `bun:"output_tokens,notnull"`
+	// InputParts is what the prompt was made of, estimated and scaled to InputTokens.
+	InputParts InputParts `bun:"embed:input_"`
 	// Images is how many pictures were drawn.
 	Images    int64    `bun:"images,notnull"`
 	LatencyMs *float64 `bun:"latency_ms"`
 	// CostMicros is millionths of a dollar, priced from the provider's configured rates.
-	CostMicros   int64  `bun:"cost_micros,notnull"`
-	Success      bool   `bun:"success,notnull"`
-	ErrorCode    string `bun:"error_code,nullzero"`
-	ErrorMessage string `bun:"error_message,nullzero"`
+	CostMicros int64 `bun:"cost_micros,notnull"`
+	// OutputCostMicros is the part of CostMicros the generated tokens were priced at.
+	OutputCostMicros int64  `bun:"output_cost_micros,notnull"`
+	Success          bool   `bun:"success,notnull"`
+	ErrorCode        string `bun:"error_code,nullzero"`
+	ErrorMessage     string `bun:"error_message,nullzero"`
+}
+
+// InputParts splits an LLM prompt by what it carried. No provider reports this, so it is
+// estimated from the request and scaled to the provider's count: the parts sum to the
+// prompt's tokens, and only the split between them is a guess.
+type InputParts struct {
+	InstructionTokens    int64 `bun:"instruction_tokens,notnull"`
+	MessageTokens        int64 `bun:"message_tokens,notnull"`
+	ToolDefinitionTokens int64 `bun:"tool_definition_tokens,notnull"`
+	ToolUseTokens        int64 `bun:"tool_use_tokens,notnull"`
+	ImageTokens          int64 `bun:"image_tokens,notnull"`
+	VideoTokens          int64 `bun:"video_tokens,notnull"`
 }
 
 // Bucket is one aggregated row from stats_hourly or stats_daily.
@@ -276,6 +292,9 @@ type PhoneNumber struct {
 	// rather than the number.
 	StreamCallID   string `bun:"stream_call_id,nullzero"`
 	StreamCallType string `bun:"stream_call_type,nullzero"`
+	// SIPTrunkID is the customer's own trunk a number with vendor sip_trunk is dialled
+	// through. Empty for a bought number, and cleared when the number is released.
+	SIPTrunkID string `bun:"sip_trunk_id,nullzero"`
 	// UseCaseID is the 10DLC use case the number sends as. Empty sends as the app's default.
 	UseCaseID   string     `bun:"dlc_use_case_id,nullzero"`
 	PurchasedAt time.Time  `bun:"purchased_at,notnull"`
@@ -401,6 +420,10 @@ type AgentConfig struct {
 	// model, and the model only answers when the worker asks it to.
 	DispatchIncomingCall bool `bun:"dispatch_incoming_call,notnull"`
 	DispatchText         bool `bun:"dispatch_text,notnull"`
+	// EpisodeCards has each phone call under the config write an episode card into the
+	// caller's omni-channel (20261007042200_agent_config_episode_cards.sql). Off unless a
+	// config turns it on.
+	EpisodeCards bool `bun:"episode_cards,notnull"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
 	SyncHash  string     `bun:"sync_hash,notnull"`

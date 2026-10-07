@@ -27,7 +27,8 @@ class ConnectorOAuthClient:
             connector_id (str):
             created_at (datetime.datetime):
             registration (ConnectorClientRegistrationMethod): operator is this deployment's own client, customer one the app
-                registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+                registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one
+                registered on the fly (RFC 7591) and cimd one named by a metadata document.
             updated_at (datetime.datetime): When the client, its secret or its method last changed.
             auth_method (ConnectorOAuthClientAuthMethod | Unset): How the app's own OAuth client authenticates at the token
                 endpoint (RFC 7591 section 2): none for a public client, which has no secret, client_secret_basic or

@@ -45,6 +45,9 @@ type ImagePart struct {
 	// Caption is told to the model beside an image attached to a turn, such as which moment
 	// of a video a frame is. It is never sent as part of the image.
 	Caption string
+	// Video marks a frame taken from a video rather than a picture in its own right, so
+	// what a prompt spent on video is told apart from what it spent on images. Never sent.
+	Video bool
 }
 
 // Message is one turn of a conversation, and one item of a request's input.

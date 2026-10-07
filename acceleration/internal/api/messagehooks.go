@@ -129,6 +129,12 @@ func addressed(event messageEvent) bool {
 // The body is carried in rather than read again because the session may be running on
 // another node, which has to be handed the delivery exactly as Stream signed it.
 func (s *Server) routeArrivingMessage(r *http.Request, origin hookOrigin, body []byte, event messageEvent) {
+	// A thread channel holds an external thread, such as a Slack thread, which the Router
+	// answers itself: nobody watches it to hand the message to a worker.
+	if thread, linked := s.linkedThread(r.Context(), origin, event.ChannelID); linked {
+		go s.answerThread(origin, thread, event)
+		return
+	}
 	if s.sessions != nil {
 		// A session running on a channel of the same name in another app is somebody
 		// else's conversation.

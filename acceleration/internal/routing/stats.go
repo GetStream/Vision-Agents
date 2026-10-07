@@ -50,6 +50,8 @@ type Stat struct {
 	TurnID      string
 	DurationMs  float64
 	Usage
+	// InputParts is what an LLM's prompt was made of. Zero for every other modality.
+	InputParts store.InputParts
 	// LatencyMs is how long the customer waited for the work to be useful.
 	LatencyMs float64
 	// CostMicros overrides the priced amount for work that is not billed by the units in
@@ -116,6 +118,7 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 	if entry.CostMicros != 0 {
 		cost = entry.CostMicros
 	}
+	outputCost := min(config.Price.CostMicros(Usage{OutputTokens: entry.OutputTokens}), cost)
 
 	request := store.Request{
 		Modality:          string(r.modality),
@@ -134,8 +137,10 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 		InputTokens:       entry.InputTokens,
 		CachedInputTokens: entry.CachedInputTokens,
 		OutputTokens:      entry.OutputTokens,
+		InputParts:        entry.InputParts,
 		Images:            entry.Images,
 		CostMicros:        cost,
+		OutputCostMicros:  outputCost,
 		Success:           entry.Success,
 		ErrorCode:         entry.ErrorCode,
 		ErrorMessage:      store.SafeLogText(entry.ErrorMessage),

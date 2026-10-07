@@ -37,8 +37,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/slackapps"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -235,13 +237,28 @@ type Options struct {
 	// revokes through it when a provider says a grant ended. Absent when connectors are off,
 	// in which case the endpoint takes no events.
 	ConnectorResolver core.Resolver
+	// ConnectorTransports builds each connection's outbound client over ConnectorResolver.
+	// The validate endpoint lists a connection's tools through it. Absent when connectors are
+	// off, in which case no connection can be validated.
+	ConnectorTransports *core.Transports
 	// ConnectorEventSecrets finds the secret a connector's events are verified with
 	// (ConnectorEventSecrets reads the operator's from the environment). Absent, the
 	// endpoint takes no events.
 	ConnectorEventSecrets EventSecretLookup
-	// ChannelBridge takes the messages a verified provider event carries. Absent, they are
-	// logged and dropped, until the channel bridge (T57) registers here.
+	// ChannelBridge takes the messages a verified provider event carries
+	// (internal/channelbridge). Absent, they are logged and dropped.
 	ChannelBridge ChannelBridge
+	// EventForwarder forwards a provider app's verified deliveries to the customer's event
+	// destinations, and serves the endpoints that manage them (internal/eventforward). Absent,
+	// nothing is forwarded and the destination endpoints say forwarding is not enabled.
+	EventForwarder *eventforward.Forwarder
+	// SlackApps creates, updates and deletes the Slack app the router keeps for a customer
+	// (managed, T54). Absent, the provider app paths say connectors are not enabled.
+	SlackApps *slackapps.Client
+	// OperatorProviderApps finds this deployment's own provider app for a built-in connector
+	// (ConnectorOperatorApps reads it from the environment), which Stream staff make one
+	// customer's. Absent, the staff paths say it is not configured.
+	OperatorProviderApps OperatorAppLookup
 	// TrustedProxies are the ranges this deployment's own proxies sit in, and they decide
 	// how much of X-Forwarded-For is believed when working out who a request is from.
 	// Empty means none of it is, and the connection's own address is used.
@@ -303,7 +320,15 @@ type Server struct {
 	connectorResolver core.Resolver
 	eventSecrets      EventSecretLookup
 	channelBridge     ChannelBridge
-	trusted           []netip.Prefix
+	eventForwarder    *eventforward.Forwarder
+	// slackApps and operatorApps serve the provider app paths.
+	slackApps    *slackapps.Client
+	operatorApps OperatorAppLookup
+	trusted      []netip.Prefix
+
+	// connectorTransports is what the validate endpoint reaches a connection's tools through.
+	connectorTransports *core.Transports
+
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
 	serverSide *http.ServeMux
@@ -416,6 +441,9 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		connectorResolver: options.ConnectorResolver,
 		eventSecrets:      options.ConnectorEventSecrets,
 		channelBridge:     options.ChannelBridge,
+		eventForwarder:    options.EventForwarder,
+		slackApps:         options.SlackApps,
+		operatorApps:      options.OperatorProviderApps,
 		trusted:           options.TrustedProxies,
 		upgrader:          newUpgrader(options.CORSOrigins),
 		oauth: &plugins.Auth{
@@ -439,6 +467,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		}
 		server.connectorSecrets, server.credentials = options.ConnectorSecrets, credentials
 	}
+	server.connectorTransports = options.ConnectorTransports
 	if server.channelBridge == nil {
 		server.channelBridge = droppingBridge{logger: logger}
 	}
@@ -500,6 +529,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+ConnectorCallbackPath, s.finishConnectorConsent)
 	mux.HandleFunc("GET "+ConnectorClientMetadataPath, s.serveConnectorClientMetadata)
 	mux.HandleFunc("POST "+connectorEventsPath+"{connector_id}", s.receiveConnectorEvent)
+	mux.HandleFunc("POST "+providerAppEventsPath+"{connector_id}/{provider_app_id}", s.receiveProviderAppEvent)
 	mux.HandleFunc("GET /v1/agents/plugins/{plugin_id}/logo", s.servePluginLogo)
 	mux.HandleFunc("POST "+plugins.EventsPath+"{token}", s.receivePluginEvent)
 	mux.HandleFunc("GET "+channels.HookPath+"{token}", s.receiveChannelMessage)

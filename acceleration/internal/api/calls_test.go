@@ -195,6 +195,82 @@ func (s *CallsSuite) TestACallStillRunningIsNotToldWhatItHasSpentSoFar() {
 	s.Nil(rendered.Usage, "what a conversation cost is a question asked after it")
 }
 
+func (s *CallsSuite) TestACallsTokensAreReadWhileItRunsByModelAndByWhatThePromptsCarried() {
+	call := s.started(store.Call{})
+	for _, request := range []store.Request{
+		{Modality: "llm", Provider: "stub", Model: "stub-llm", InputTokens: 900, CachedInputTokens: 400,
+			OutputTokens: 150, InputParts: store.InputParts{InstructionTokens: 300, MessageTokens: 100, ToolDefinitionTokens: 500}},
+		{Modality: "llm", Provider: "stub", Model: "stub-llm", InputTokens: 100, OutputTokens: 10,
+			InputParts: store.InputParts{MessageTokens: 40, ImageTokens: 60}},
+		{Modality: "llm", Provider: "vision", Model: "vision-model", InputTokens: 50, OutputTokens: 5,
+			InputParts: store.InputParts{VideoTokens: 50}},
+		{Modality: "tts", Provider: "stub", Model: "stub-tts", Characters: 80},
+	} {
+		request.CustomerID, request.AgentID = s.customerID(), call.AgentID
+		request.StartedAt, request.Success = s.base.Add(time.Second), true
+		s.Require().NoError(s.store.RecordRequest(context.Background(), &request))
+	}
+
+	var spent CallTokens
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/calls/"+call.ID+"/tokens", nil, &spent))
+	s.Equal(int64(1050), spent.InputTokens)
+	s.Equal(int64(400), spent.CachedInputTokens)
+	s.Equal(int64(165), spent.OutputTokens)
+	s.Equal(InputParts{Instructions: 300, Messages: 140, ToolDefinitions: 500, Images: 60, Video: 50}, spent.InputParts)
+	s.Require().Len(spent.Models, 3, "a voice is a model too, though it reads no tokens")
+	s.Equal("stub-llm", spent.Models[0].Model, "the busiest first")
+	s.Equal(int64(2), spent.Models[0].Requests)
+	s.Equal(InputParts{Video: 50}, spent.Models[1].InputParts)
+}
+
+func (s *CallsSuite) TestACallsCostIsSplitByWhereItCameFrom() {
+	call := s.started(store.Call{})
+	for _, request := range []store.Request{
+		{Modality: "llm", Provider: "stub", Model: "stub-llm", InputTokens: 1000, OutputTokens: 100,
+			CostMicros: 1500, OutputCostMicros: 500,
+			InputParts: store.InputParts{InstructionTokens: 200, ToolDefinitionTokens: 799, MessageTokens: 1}},
+		{Modality: "llm", Provider: "stub", Model: "stub-llm", InputTokens: 1000, CostMicros: 1000},
+		{Modality: "tts", Provider: "stub", Model: "stub-tts", Characters: 80, CostMicros: 300},
+	} {
+		request.CustomerID, request.AgentID = s.customerID(), call.AgentID
+		request.StartedAt, request.Success = s.base.Add(time.Second), true
+		s.Require().NoError(s.store.RecordRequest(context.Background(), &request))
+	}
+
+	var spent CallTokens
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/calls/"+call.ID+"/tokens", nil, &spent))
+	s.Equal(int64(2800), spent.CostMicros)
+	s.Equal([]CostSource{
+		{Source: "input", CostMicros: 1000},
+		{Source: "tool_definitions", CostMicros: 799},
+		{Source: "output", CostMicros: 500},
+		{Source: "tts", CostMicros: 300},
+		{Source: "instructions", CostMicros: 200},
+		{Source: "messages", CostMicros: 1},
+	}, spent.CostSources, "the prompt recorded without a split is input")
+}
+
+func (s *CallsSuite) TestAConversationRecordsWhatItsPromptsWereMadeOf() {
+	request := textSession(nil)
+	request.Llm, request.Instructions = pointerTo("counted/counted-model"), pointerTo("Answer about "+s.utils.uuid())
+	opened := s.serverClient.createSession(request)
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "How many tokens is this?"}, nil))
+
+	var spent CallTokens
+	s.Require().Eventually(func() bool {
+		return s.serverClient.do(http.MethodGet, "/v1/agents/calls/"+opened.Id+"/tokens", nil, &spent) == http.StatusOK &&
+			spent.InputTokens >= 1000
+	}, settleFor, 20*time.Millisecond, "the turn's request is recorded")
+	parts := spent.InputParts
+	s.Equal(spent.InputTokens, parts.Instructions+parts.Messages+parts.ToolDefinitions+parts.ToolUse+parts.Images+parts.Video,
+		"the parts add up to what the provider counted")
+	s.Positive(parts.Instructions)
+	s.Positive(parts.Messages)
+}
+
 func (s *CallsSuite) TestAnotherAppsCallIsNotFound() {
 	call := s.started(store.Call{})
 

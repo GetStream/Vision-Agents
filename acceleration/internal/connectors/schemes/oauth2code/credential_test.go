@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -539,8 +540,26 @@ func (s *OAuth2CodeSuite) TestClassifyMakesARefusedGrantInvalidGrant() {
 			srv.Advance(fakeprovider.AccessTTL)
 			return s.mcpAnswer(srv, access)
 		}},
+		{"a bare 401 from an MCP server, resource_metadata and no error", func() (*http.Response, []byte, error) {
+			srv := fakeprovider.New(s.T(), fakeprovider.BareChallenge)
+			access := s.connectedToken(srv)["access_token"]
+			srv.Advance(fakeprovider.AccessTTL)
+			return s.mcpAnswer(srv, access)
+		}},
+		{"a 401 with no challenge to a request that carried a bearer token", func() (*http.Response, []byte, error) {
+			return s.bare401(http.Header{"Authorization": {"bearer any"}})
+		}},
 		{"a Bearer invalid_token after another scheme's padded token68", func() (*http.Response, []byte, error) {
 			return s.synthetic(http.StatusUnauthorized, http.Header{"Www-Authenticate": {`Newauth abc==, Bearer error="invalid_token"`}}, "")
+		}},
+		{"Slack's chat.postMessage invalid_auth with 200", func() (*http.Response, []byte, error) {
+			return s.synthetic(http.StatusOK, nil, `{"ok":false,"error":"invalid_auth"}`)
+		}},
+		{"Slack's token_revoked with 200", func() (*http.Response, []byte, error) {
+			return s.synthetic(http.StatusOK, nil, `{"ok":false,"error":"token_revoked"}`)
+		}},
+		{"Slack's account_inactive with 200", func() (*http.Response, []byte, error) {
+			return s.synthetic(http.StatusOK, nil, `{"ok":false,"error":"account_inactive"}`)
 		}},
 	} {
 		s.Equal(core.Outcome{Kind: core.OutcomeInvalidGrant}, s.classify(row.answer), row.name)
@@ -693,6 +712,19 @@ func (s *OAuth2CodeSuite) TestClassifyLeavesAnAnswerWithNothingForTheCoreOK() {
 		}},
 		{"a 400 whose body was cut off", func() (*http.Response, []byte, error) {
 			return s.cutOff(http.StatusBadRequest, nil)
+		}},
+		{"a bare 401 to an MCP request that carried no token", func() (*http.Response, []byte, error) {
+			srv := fakeprovider.New(s.T(), fakeprovider.BareChallenge)
+			return s.read(srv.Client().Do(s.toolCall(srv)))
+		}},
+		// The token endpoint's request authenticates the client (RFC 6749 section 2.3.1), so
+		// its bare 401 is the refusal redeem makes Transient, as before. The Basic credentials
+		// are RFC 7617 section 2's example.
+		{"a bare 401 from a token endpoint, to client_secret_basic", func() (*http.Response, []byte, error) {
+			return s.bare401(http.Header{"Authorization": {"Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=="}})
+		}},
+		{"a bare 401 from a token endpoint, to client_secret_post", func() (*http.Response, []byte, error) {
+			return s.bare401(nil)
 		}},
 	} {
 		s.Equal(core.Outcome{Kind: core.OutcomeOK}, s.classify(row.answer), row.name)
@@ -883,6 +915,15 @@ func (s *OAuth2CodeSuite) read(response *http.Response, err error) (*http.Respon
 func (s *OAuth2CodeSuite) cutOff(status int, header http.Header) (*http.Response, []byte, error) {
 	response, _, _ := s.synthetic(status, header, "")
 	return response, nil, io.ErrUnexpectedEOF
+}
+
+// bare401 is a 401 with no challenge and no body to a request with header, which net/http
+// puts on the response it reads (http.Response.Request).
+func (s *OAuth2CodeSuite) bare401(header http.Header) (*http.Response, []byte, error) {
+	response, body, err := s.synthetic(http.StatusUnauthorized, nil, "")
+	response.Request = httptest.NewRequest(http.MethodPost, "https://provider.example/", nil)
+	maps.Copy(response.Request.Header, header)
+	return response, body, err
 }
 
 // synthetic is an answer no fake personality gives, built as a provider would send it.

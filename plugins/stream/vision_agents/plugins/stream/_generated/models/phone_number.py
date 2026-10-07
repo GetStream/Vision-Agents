@@ -29,6 +29,8 @@ class PhoneNumber:
         purchased_at (datetime.datetime):
         vendor (str):
         released_at (datetime.datetime | None | Unset):
+        sip_trunk_id (str | Unset): The customer's own SIP trunk calls from this number are dialled through. Present
+            only for vendor sip_trunk.
         stream_trunk_id (str | Unset): The SIP trunk calls to this number arrive on. Absent until attached.
         tags (PhoneNumberTags | Unset): The customer's own cost labels.
     """
@@ -40,6 +42,7 @@ class PhoneNumber:
     purchased_at: datetime.datetime
     vendor: str
     released_at: datetime.datetime | None | Unset = UNSET
+    sip_trunk_id: str | Unset = UNSET
     stream_trunk_id: str | Unset = UNSET
     tags: PhoneNumberTags | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -68,6 +71,8 @@ class PhoneNumber:
         else:
             released_at = self.released_at
 
+        sip_trunk_id = self.sip_trunk_id
+
         stream_trunk_id = self.stream_trunk_id
 
         tags: dict[str, Any] | Unset = UNSET
@@ -88,6 +93,8 @@ class PhoneNumber:
         )
         if released_at is not UNSET:
             field_dict["released_at"] = released_at
+        if sip_trunk_id is not UNSET:
+            field_dict["sip_trunk_id"] = sip_trunk_id
         if stream_trunk_id is not UNSET:
             field_dict["stream_trunk_id"] = stream_trunk_id
         if tags is not UNSET:
@@ -134,6 +141,8 @@ class PhoneNumber:
 
         released_at = _parse_released_at(d.pop("released_at", UNSET))
 
+        sip_trunk_id = d.pop("sip_trunk_id", UNSET)
+
         stream_trunk_id = d.pop("stream_trunk_id", UNSET)
 
         _tags = d.pop("tags", UNSET)
@@ -151,6 +160,7 @@ class PhoneNumber:
             purchased_at=purchased_at,
             vendor=vendor,
             released_at=released_at,
+            sip_trunk_id=sip_trunk_id,
             stream_trunk_id=stream_trunk_id,
             tags=tags,
         )

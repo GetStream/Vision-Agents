@@ -5,6 +5,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -95,6 +96,9 @@ func reasoningConfig() routing.ModalityConfig {
 		routing.ProviderConfig{Provider: "noted", Model: "noted-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "tooling", Model: "tool-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "slow", Model: "slow-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "recites", Model: "recites-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "counted", Model: "counted-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "summarising", Model: "summarising-model", Languages: []string{"la"}},
 	)
 	// Where a socket that names no target goes.
 	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}}
@@ -125,12 +129,20 @@ type scriptedLLM struct {
 	// echoes answers with the instructions the model was given instead of reply, which is
 	// how a test reads back what a session knew before anybody spoke.
 	echoes bool
+	// recites answers with every message it was handed, one per line in the order it was
+	// handed them, which is how a test reads back the history a session was opened with.
+	recites bool
 	// held, when set, makes each reply wait for the test to let it through, which is what
 	// stopping a command mid-answer needs.
 	held chan struct{}
 	// takes, when set, is how long each reply is in the writing. A command is only
 	// stoppable while it is still being answered.
 	takes time.Duration
+	// usage is what each reply reports the model read and wrote.
+	usage llm.Usage
+	// summarises answers a request for JSON as a reviewer would, with a summary that is the
+	// whole of what it was given to read. Any other request is answered with reply.
+	summarises bool
 }
 
 func (s *scriptedLLM) Start(context.Context) error { return nil }
@@ -143,6 +155,17 @@ func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*l
 	reply := s.reply
 	if s.echoes {
 		reply = params.Instructions
+	}
+	if s.recites {
+		handed := make([]string, 0, len(params.Input))
+		for _, message := range params.Input {
+			handed = append(handed, string(message.Role)+": "+message.Content)
+		}
+		reply = strings.Join(handed, "\n")
+	}
+	if s.summarises && params.Text.Format == llm.FormatJSONObject && len(params.Input) > 0 {
+		summary, _ := json.Marshal(map[string]string{"summary": params.Input[0].Content})
+		reply = string(summary)
 	}
 	held := s.held
 	var calls []llm.ToolCall
@@ -172,6 +195,9 @@ func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*l
 		Model:      s.Model(),
 	})
 	script.OutputText(reply)
+	if s.usage != (llm.Usage{}) {
+		script.Usage(s.usage)
+	}
 	if len(calls) > 0 {
 		script.ToolCalls(calls...)
 	}

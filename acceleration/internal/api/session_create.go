@@ -22,6 +22,12 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
 	}
+	// What the model is told is the backend's to decide, as instructions are on an update:
+	// an assistant message in a device's history would be the agent having said it.
+	if request.Body.History != nil && !ServerSideFrom(ctx) {
+		return nil, forbidden("history is sent server-side: an assistant message in it is " +
+			"what the agent said, which a device cannot vouch for")
+	}
 
 	// A config is read before the session is created rather than inside it, so a caller
 	// naming one that is not theirs is told so instead of getting a session that quietly
@@ -32,6 +38,7 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 	}
 
 	spec := specOf(*request.Body, customerID, config)
+	ctx = s.threadConversation(ctx, customerID, &spec)
 	// Who asked comes from the credential rather than from specOf, which merges the request
 	// with the config and so only ever sees what the caller was willing to say about
 	// themselves. Both halves are recorded, because the name is only worth what the kind
@@ -74,7 +81,7 @@ func (s *Server) registerSessionCreate(api huma.API) {
 			"201": {Description: "The agent is in the call"},
 			"409": errorResponse("A session with that id already exists"),
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.createSession)
 }
 

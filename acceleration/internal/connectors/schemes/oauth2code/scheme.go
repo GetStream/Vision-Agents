@@ -205,7 +205,7 @@ func (s *Scheme) Begin(ctx context.Context, in core.BeginInput) (core.BeginOutpu
 	if err := server.checkPKCE(); err != nil {
 		return core.BeginOutput{}, err
 	}
-	c, err := s.pickClient(ctx, in.Ref, in.Manifest, server, in.RedirectURI)
+	c, err := s.pickClient(ctx, in.Ref, in.Manifest, server, in.RedirectURI, registrationOrder)
 	if err != nil {
 		return core.BeginOutput{}, err
 	}
@@ -270,6 +270,9 @@ func (s *Scheme) Begin(ctx context.Context, in core.BeginInput) (core.BeginOutpu
 // Complete checks the callback against the attempt, redeems the code and applies the
 // resolved manifest's capture and identity rules to the callback and the token response.
 func (s *Scheme) Complete(ctx context.Context, in core.CompleteInput) (core.StoredCredentials, core.AccountInfo, error) {
+	if in.State == nil && in.Supplied != nil {
+		return s.importGrant(ctx, in)
+	}
 	var a attempt
 	if err := json.Unmarshal(in.State, &a); err != nil || a.State == "" {
 		return core.StoredCredentials{}, core.AccountInfo{}, ErrUnknownState

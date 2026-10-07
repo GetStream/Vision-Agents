@@ -81,6 +81,11 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 	}
 	token := s.access[presented]
 	if token == nil || token.grant.revoked || s.now().After(token.expires) {
+		if s.is(BareChallenge) {
+			w.Header().Set("WWW-Authenticate", "Bearer "+metadata)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		// RFC 6750 §3.1: «expired, revoked, malformed, or invalid for other reasons».
 		w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token", `+metadata)
 		w.WriteHeader(http.StatusUnauthorized)

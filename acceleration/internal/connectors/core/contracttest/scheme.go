@@ -1,6 +1,7 @@
 // Package contracttest holds the suites every adapter of one kind runs, so what the core
 // relies on is proved once and checked for each adapter. SchemeContract is the one for
-// core.Scheme. It is test code: import it only from _test.go files.
+// core.Scheme, SourceContract the one for core.ToolSource. It is test code: import it only
+// from _test.go files.
 package contracttest
 
 import (
@@ -351,6 +352,27 @@ func (s *SchemeContract) TestClassifyMakesAnInvalidTokenChallengeInvalidGrant() 
 	s.Equal(core.Outcome{Kind: core.OutcomeInvalidGrant}, s.classify(s.answer("/invalid-token")))
 }
 
+// A 401 to a request that carried the scheme's own credential, with a challenge that names
+// no error: what an MCP server answers a token it does not take («Invalid or expired tokens
+// MUST receive a HTTP 401 response», with resource_metadata in WWW-Authenticate; MCP
+// 2026-07-28, Authorization, «Token Handling» and the example under «Scope Selection
+// Strategy»). The provider refused the credential, so only a renewed or new one helps.
+func (s *SchemeContract) TestClassifyMakesABare401ToTheCredentialInvalidGrant() {
+	credential, _ := s.retrieve(s.connect())
+	server := httptest.NewServer(http.HandlerFunc(answers))
+	s.T().Cleanup(server.Close)
+	request, err := http.NewRequestWithContext(s.ctx, http.MethodPost, server.URL+"/bare-challenge", strings.NewReader(`{}`))
+	s.Require().NoError(err)
+	// A connection of its own, as answer has it.
+	client := &http.Client{Transport: s.subject.Scheme.Wrap(&http.Transport{DisableKeepAlives: true}, credential)}
+	response, err := client.Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+
+	s.Equal(core.Outcome{Kind: core.OutcomeInvalidGrant}, s.classify(response, body, err))
+}
+
 // RFC 6750 section 3.1: insufficient_scope means «the request requires higher privileges
 // than provided by the access token», answered with 403, and scope names what is needed.
 func (s *SchemeContract) TestClassifyMakesAnInsufficientScopeChallengeScopeRequired() {
@@ -501,6 +523,11 @@ func answers(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	case "/invalid-token":
 		w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	case "/bare-challenge":
+		// MCP 2026-07-28's 401 shape, the resource metadata alone: RFC 9728 section 5.1's
+		// example challenge.
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="https://resource.example.com/.well-known/oauth-protected-resource"`)
 		w.WriteHeader(http.StatusUnauthorized)
 	case "/insufficient-scope":
 		w.Header().Set("WWW-Authenticate", `Bearer error="insufficient_scope", scope="files:read files:write"`)

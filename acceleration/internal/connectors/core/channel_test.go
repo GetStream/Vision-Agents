@@ -112,6 +112,25 @@ func (s *ChannelSuite) TestAChannelManifestStoredAsJSONReadsBackTheSame() {
 	}
 }
 
+func (s *ChannelSuite) TestSubscriptionsAreKeptInTheirOrder() {
+	m, err := ParseManifest(minimal(baseChannel + "  subscriptions: [message.channels, message.im, tokens_revoked]\n"))
+
+	s.Require().NoError(err)
+	s.Equal([]string{"message.channels", "message.im", "tokens_revoked"}, m.Channel.Subscriptions)
+}
+
+func (s *ChannelSuite) TestASubscriptionThatIsNotAnEventTypeIsRefusedWithItsField() {
+	_, err := ParseManifest(minimal(baseChannel + "  subscriptions: [message.im, \"Message IM\"]\n"))
+
+	s.ErrorContains(err, `channel.subscriptions[1]: "Message IM" is not a lowercase event type such as message.im`)
+}
+
+func (s *ChannelSuite) TestASubscriptionListedTwiceIsRefused() {
+	_, err := ParseManifest(minimal(baseChannel + "  subscriptions: [message.im, message.im]\n"))
+
+	s.ErrorContains(err, `channel.subscriptions[1]: "message.im" is listed twice`)
+}
+
 func (s *ChannelSuite) TestAnUnknownVerifierKindIsRefusedWithItsField() {
 	err := s.variant("kind: secret_header", "kind: jwt_set")
 	s.ErrorContains(err, `channel.verifier.kind: "jwt_set" is not one of [hmac_header secret_header standard_webhooks]`)
@@ -576,6 +595,78 @@ func (s *ChannelSuite) TestABlockWithNeitherMessagesNorSignalsIsRefused() {
 func (s *ChannelSuite) TestAReplyWithoutMessagesIsRefused() {
 	err := s.signalsVariant("  signals:", "  reply:\n    url: https://api.example.com/messages\n    body:\n      text: \"{text}\"\n  signals:")
 	s.ErrorContains(err, "channel.messages: is empty: a reply goes back to the thread a message came from")
+}
+
+// signalsWithAt is signalsOnly whose uninstall says when it happened, as Slack's envelope
+// does: «event_time: The epoch timestamp in seconds indicating when this event was
+// dispatched» (https://docs.slack.dev/apis/events-api/).
+func (s *ChannelSuite) signalsWithAt() Manifest {
+	m, err := ParseManifest(minimal(strings.Replace(signalsOnly,
+		"        $.event.type: app_uninstalled\n", "        $.event.type: app_uninstalled\n      at: $.event_time\n", 1)))
+	s.Require().NoError(err)
+	return m
+}
+
+func (s *ChannelSuite) TestASignalSaysWhenTheEventHappened() {
+	m := s.signalsWithAt()
+
+	read, err := m.Channel.Read(m.ID, s.recorded("slack_bot.app_uninstalled.json"))
+
+	s.Require().NoError(err)
+	s.Require().Len(read.Signals, 1)
+	s.Equal(time.Unix(1759740000, 0).UTC(), read.Signals[0].At)
+}
+
+func (s *ChannelSuite) TestASignalRuleWithoutATimeSaysNothingOfWhen() {
+	read := s.readSignalsOnly("slack_bot.app_uninstalled.json")
+
+	s.Require().Len(read.Signals, 1)
+	s.True(read.Signals[0].At.IsZero())
+}
+
+func (s *ChannelSuite) TestASignalTimeThatIsNotWholeSecondsIsNotTheBlocksShape() {
+	m := s.signalsWithAt()
+
+	_, err := m.Channel.Read(m.ID, []byte(`{"team_id":"T0000TEAM","event":{"type":"app_uninstalled"},"event_time":"yesterday"}`))
+
+	s.ErrorContains(err, `$.event_time: "yesterday" is not whole Unix seconds`)
+}
+
+func (s *ChannelSuite) TestASignalTimeWithAWildcardIsRefused() {
+	err := s.signalsVariant("      each: $.event.tokens.oauth[*]\n", "      each: $.event.tokens.oauth[*]\n      at: $.event.tokens.oauth[*]\n")
+	s.ErrorContains(err, "channel.signals[0].at: an event happened once, so it has no [*]")
+}
+
+// Slack answers a refused chat.postMessage with HTTP 200 and «"ok": false»
+// (https://docs.slack.dev/reference/methods/chat.postMessage).
+func (s *ChannelSuite) TestAReplyIsSentOnlyWhenTheAnswerHasTheAcceptedValues() {
+	m, err := ParseManifest(minimal(strings.Replace(baseChannel, "      text: \"{text}\"\n", "      text: \"{text}\"\n    accepted:\n      $.ok: \"true\"\n", 1)))
+	s.Require().NoError(err)
+
+	sent, err := m.Channel.Reply.Accepts([]byte(`{"ok":true,"ts":"1759740000.000500"}`))
+	s.Require().NoError(err)
+	s.True(sent)
+	sent, err = m.Channel.Reply.Accepts([]byte(`{"ok":false,"error":"invalid_auth"}`))
+	s.Require().NoError(err)
+	s.False(sent)
+	sent, err = m.Channel.Reply.Accepts([]byte(`{"error":"invalid_auth"}`))
+	s.Require().NoError(err)
+	s.False(sent, "a value that is absent is not the accepted one")
+}
+
+func (s *ChannelSuite) TestAReplyWithoutAcceptedValuesIsSentOnAny2xx() {
+	m, err := ParseManifest(minimal(baseChannel))
+	s.Require().NoError(err)
+
+	sent, err := m.Channel.Reply.Accepts([]byte(`not json`))
+
+	s.Require().NoError(err)
+	s.True(sent)
+}
+
+func (s *ChannelSuite) TestAnEmptyAcceptedValueIsRefused() {
+	err := s.variant("      text: \"{text}\"\n", "      text: \"{text}\"\n    accepted:\n      $.ok: \"\"\n")
+	s.ErrorContains(err, "channel.reply.accepted.$.ok: is empty")
 }
 
 func (s *ChannelSuite) TestASignalWithoutAMatchIsRefused() {

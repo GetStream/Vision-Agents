@@ -1311,6 +1311,24 @@ Only Twilio and Telnyx also `attach`, which is the inbound direction: pointing a
 trunk so calling it reaches an agent. For the other five that is a per-vendor application
 rather than a property of the number, and it is declared missing rather than half-done.
 
+A customer who already has numbers and a SIP trunk at their own carrier can call out from
+them without buying anything here. `POST /v1/phone/trunks` stores the trunk (host, port,
+transport, username, codecs, and whether it accepts an INVITE without SDP); the password is
+sealed under the deployment's key encryption key and never returned, and without such a key
+the trunk paths answer 400 `not_configured`. `POST /v1/phone/trunks/{id}/numbers` records a number on it with
+vendor `sip_trunk`. A call from that number is then placed by the router itself: it opens one
+SIP dialog to the customer's trunk and one to the Stream trunk made for the call, and copies
+SDP between them, so the audio goes from the carrier to Stream directly. `POST
+/v1/phone/calls` answers `queued` at once, as with every vendor. A wrong password, host or
+caller ID does not show in that answer. It shows only in the router's logs, under the call's
+`vendor_call_id`. Behind NAT, the trunk must challenge the INVITE with 401 or 407: the router
+corrects its Contact from the challenge, and without it the trunk's requests in the call,
+such as its BYE, never reach the router. The node that placed a call
+holds it until it ends and hangs it up if it stops, so a deploy ends calls in progress.
+Initial digits, pressing digits and custom headers are refused for these numbers, and so is
+`attach`: inbound calls to them reach the customer's own switch. `sip_trunk` is not in the
+vendor registry, so it is never offered in `GET /v1/phone/vendors` or a number search.
+
 Vendors also disagree about how a search can be narrowed. Telnyx filters by US state and
 Sinch does not; Plivo matches digits only at the front of a number and Vonage matches at
 either end but not both at once. So a provider declares which filters it can express, and

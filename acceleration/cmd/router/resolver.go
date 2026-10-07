@@ -21,3 +21,14 @@ func newConnectorResolver(registry core.Registry, db *store.Store, sealer *auth.
 	}
 	return resolver.New(resolver.Config{Store: db, Credentials: credentials, Schemes: registry.Schemes})
 }
+
+// newConnectorTransports builds each connection's outbound client with egress.NewClient over
+// connectors (core.Transports): every request asks it for the access credential. One request,
+// redirects included, is bounded by connectorHTTPTimeout, the bound the schemes' own requests
+// have. It is nil when there is no resolver, which is when connectors are off.
+func newConnectorTransports(connectors *resolver.Resolver) (*core.Transports, error) {
+	if connectors == nil {
+		return nil, nil
+	}
+	return core.NewTransports(core.TransportsConfig{Resolver: connectors, Timeout: connectorHTTPTimeout})
+}

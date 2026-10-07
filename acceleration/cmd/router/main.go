@@ -26,6 +26,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
@@ -35,12 +36,15 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2cc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/slackapps"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	dlctelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/dlc/telnyx"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eotdefaults"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
@@ -52,6 +56,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -63,6 +68,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
@@ -101,6 +107,11 @@ const (
 	sentryFlushTimeout = 2 * time.Second
 	// traceFlushTimeout bounds the same thing for spans, on the same reasoning.
 	traceFlushTimeout = 2 * time.Second
+	// phoneHangupGrace bounds hanging up the calls this node holds through customers' own
+	// SIP trunks. A BYE is one round trip, so this is generous. On a signal the hangup runs
+	// first, and the HTTP drain gets the rest of shutdownGrace, so both fit inside the
+	// orchestrator's termination grace period.
+	phoneHangupGrace = 5 * time.Second
 )
 
 // usage is what the binary does besides serving.
@@ -220,9 +231,9 @@ func logLevel(settings config.Config) slog.Level {
 }
 
 // newSecretSealer builds the keyring the secrets the router holds for its customers are
-// sealed under: connector credentials, Stream app keys and channel credentials. Connectors
-// and app mode refuse to start without one; channels use it when it is set and are off
-// otherwise, so it is nil only when nothing requires it and no key is set. It does not
+// sealed under: connector credentials, Stream app keys, channel credentials and the
+// passwords of customers' own SIP trunks. Connectors and app mode refuse to start without
+// one; channels and SIP trunks use it when it is set and are off otherwise, so it is nil only when nothing requires it and no key is set. It does not
 // depend on auth.mode: a proxy deployment holds them as much as an api_key one does.
 //
 // The keyring is every ROUTER_AUTH_KEK_V1, _V2 and so on that is set, with
@@ -296,8 +307,8 @@ func loadKeyring(settings config.Config, needs string) (*auth.Sealer, error) {
 			continue
 		}
 		if version == 1 && keys[1] != "" && keys[1] != key {
-			return nil, fmt.Errorf("%s and %s_V1 are both version 1 and differ: set one of them",
-				authKEKEnvVar, authKEKEnvVar)
+			return nil, stack.Wrap(fmt.Errorf("%s and %s_V1 are both version 1 and differ: set one of them",
+				authKEKEnvVar, authKEKEnvVar))
 		}
 		keys[version] = key
 	}
@@ -353,7 +364,12 @@ func newConnectorRegistry(settings config.Config, clients oauth2code.ClientLooku
 	for _, verifier := range []core.Verifier{hmacheader.New()} {
 		verifiers[verifier.Name()] = verifier
 	}
-	return core.Registry{Schemes: schemes, Verifiers: verifiers}, nil
+	// The tool sources a manifest's sources[].kind may name; a new one is one more entry.
+	sources := map[string]core.ToolSource{}
+	for _, source := range []core.ToolSource{mcp.New()} {
+		sources[source.Kind()] = source
+	}
+	return core.Registry{Schemes: schemes, Verifiers: verifiers, ToolSources: sources}, nil
 }
 
 // connectorSchemeConfig is the oauth2code.Config newConnectorRegistry starts the scheme with.
@@ -459,9 +475,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	// Nothing asks it for a credential yet: the session's dispatcher will (T21, AI-851). The
-	// events endpoint revokes through it.
+	// The validate endpoint asks it for a credential, and the session's dispatcher will (T21,
+	// AI-851). The events endpoint revokes through it.
 	connectorResolver, err := newConnectorResolver(connectors, pgStore, connectorSecrets)
+	if err != nil {
+		return err
+	}
+	connectorTransports, err := newConnectorTransports(connectorResolver)
 	if err != nil {
 		return err
 	}
@@ -782,10 +802,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if registrations != nil {
 		go registrations.Run(ctx, dlcPollEvery)
 	}
-	telephony, err := buildPhone(settings, pgStore, liveClient, streamClients, dlcGate, logger)
+	telephony, err := buildPhone(settings, pgStore, liveClient, streamClients, dlcGate, secrets, logger)
 	if err != nil {
 		return err
 	}
+	defer closePhone(telephony, logger)
 
 	// Without a turbopuffer key an agent knows only what its instructions say: the lookup
 	// tool is offered to no session, and there is nothing to fill either.
@@ -997,7 +1018,45 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// stays absent, and the events endpoint takes no events without it.
 	if connectorResolver != nil {
 		options.ConnectorResolver = connectorResolver
+		options.ConnectorTransports = connectorTransports
 		options.ConnectorEventSecrets = api.ConnectorEventSecrets(os.Getenv)
+		// The events endpoint hands it a provider app's messages; the conversation held on a
+		// thread channel, the agent's finished replies to them.
+		bridge, err := channelbridge.New(channelbridge.Options{
+			Store: pgStore, Stream: streamClients, Schemes: connectors.Schemes, Transports: connectorTransports,
+			Resolver: connectorResolver, Logger: logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer bridge.Close()
+		options.ChannelBridge = bridge
+		if sessions != nil {
+			if conversations, err := sessions.Conversations(); err == nil {
+				conversations.OnFinishedReply(bridge.Reply)
+			}
+		}
+	}
+	// The customer's Slack app (managed) and Stream's own (operator) are written only where
+	// connector secrets can be sealed. Slack is reached through egress, as every scheme is.
+	if connectorSecrets != nil {
+		options.SlackApps, err = slackapps.New(slackapps.Config{HTTP: egress.NewClient(connectorHTTPTimeout, nil)})
+		if err != nil {
+			return err
+		}
+		options.OperatorProviderApps = api.ConnectorOperatorApps(os.Getenv)
+	}
+	// A provider app's events go on to the customer's event destinations, whose secrets are
+	// sealed under the connector keyring. Every router runs the worker that sends them; a
+	// forward is taken by one router at a time. Its client is egress's, as every scheme's is.
+	if connectorSecrets != nil && pgStore != nil {
+		forwarder, err := eventforward.New(eventforward.Options{Store: pgStore, Secrets: connectorSecrets, Logger: logger})
+		if err != nil {
+			return err
+		}
+		forwarder.Start()
+		defer forwarder.Close()
+		options.EventForwarder = forwarder
 	}
 	if streamClients.PerApp() {
 		// Each registered app signs its own hooks and mints its own tokens, so only work in
@@ -1077,10 +1136,18 @@ func run(settings config.Config, logger *slog.Logger) error {
 		return err
 	case <-ctx.Done():
 		logger.Info("shutting down")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
-		defer cancel()
-		return httpServer.Shutdown(shutdownCtx)
+		return stopServing(httpServer, telephony, logger, shutdownGrace)
 	}
+}
+
+// stopServing hangs up the calls through customers' own SIP trunks, then drains HTTP. Both
+// fit in grace from now: the drain gets whatever the hangup left of it.
+func stopServing(httpServer *http.Server, telephony *phone.Service, logger *slog.Logger, grace time.Duration) error {
+	deadline := time.Now().Add(grace)
+	closePhone(telephony, logger)
+	shutdownCtx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	return httpServer.Shutdown(shutdownCtx)
 }
 
 // pruneDataChanges drops the recorded changes nobody can resume from any more, hourly
@@ -1386,6 +1453,7 @@ func buildPhone(
 	liveClient *live.Client,
 	stream *streamapp.Clients,
 	gate *dlc.Gate,
+	secrets *auth.Sealer,
 	logger *slog.Logger,
 ) (*phone.Service, error) {
 	vendorConfig, err := phone.LoadConfig(settings.PhoneConfig)
@@ -1401,6 +1469,15 @@ func buildPhone(
 		recorder = routing.NewRecorder(routing.Phone, pgStore, liveClient, logger)
 	}
 
+	// Passwords of customers' own SIP trunks are sealed under the router's keyring. Without
+	// a key those trunks are off, rather than their passwords stored in the clear.
+	var trunks phone.Provider
+	if secrets != nil {
+		trunks = siptrunk.New(siptrunk.Options{Logger: logger})
+	} else {
+		logger.Info("no key encryption key, calls through customers' own sip trunks are off")
+	}
+
 	return phone.NewService(phone.ServiceOptions{
 		Registry:  vendors.Registry(vendorConfig),
 		Store:     pgStore,
@@ -1409,7 +1486,20 @@ func buildPhone(
 		Gate:      gate,
 		PublicURL: settings.PublicURL,
 		Logger:    logger,
+		Sealer:    secrets,
+		SIPTrunks: trunks,
 	})
+}
+
+// closePhone hangs up the calls this node holds through customers' own SIP trunks. Their
+// signalling runs through this process, so stopping without a BYE would leave both ends of
+// each call connected to nothing.
+func closePhone(telephony *phone.Service, logger *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), phoneHangupGrace)
+	defer cancel()
+	if err := telephony.Close(ctx); err != nil {
+		logger.Error("could not hang up every call through a customer's sip trunk", "error", err)
+	}
 }
 
 // dlcPollEvery is how often the use cases a vendor holds are asked after, for the reports
