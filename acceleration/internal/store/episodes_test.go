@@ -30,7 +30,7 @@ func (s *StoreSuite) TestTheFirstMessageOfAThreadOpensAnEpisodeInProgress() {
 
 	s.Require().NoError(err)
 	s.True(opened)
-	s.Equal(EpisodeInProgress, episode.Status)
+	s.Equal(episodeInProgress, episode.Status)
 	s.Equal("episode-"+episode.ID, episode.CardMessageID)
 	s.Equal(s.base, episode.StartedAt)
 }

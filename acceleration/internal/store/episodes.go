@@ -19,9 +19,9 @@ const (
 	EpisodeSlack = "slack"
 )
 
-// EpisodeInProgress is an episode not closed yet, the status its card is written with. T55
+// episodeInProgress is an episode not closed yet, the status its card is written with. T55
 // adds the statuses that close it.
-const EpisodeInProgress = "in_progress"
+const episodeInProgress = "in_progress"
 
 // Episode is one call, or one run of messages on one external thread, and its card in the
 // person's omni-channel (20261007040100_episodes.sql).
@@ -67,7 +67,7 @@ func (s *Store) OpenEpisode(ctx context.Context, episode *Episode) (opened bool,
 	if episode.CardMessageID == "" {
 		episode.CardMessageID = "episode-" + episode.ID
 	}
-	episode.Status = EpisodeInProgress
+	episode.Status = episodeInProgress
 	if episode.StartedAt.IsZero() {
 		episode.StartedAt = time.Now()
 	}
@@ -88,7 +88,7 @@ func (s *Store) OpenEpisode(ctx context.Context, episode *Episode) (opened bool,
 		query = query.Where("session_id = ?", episode.SessionID)
 	} else {
 		query = query.Where("thread_channel = ?", episode.ThreadChannel).
-			Where("status = ?", EpisodeInProgress).Where("session_id IS NULL")
+			Where("status = ?", episodeInProgress).Where("session_id IS NULL")
 	}
 	if err := query.Scan(ctx); err != nil {
 		return false, stack.Wrap(fmt.Errorf("store: open episode: %w", err))
