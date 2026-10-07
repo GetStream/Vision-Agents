@@ -32,6 +32,9 @@ const (
 	// summaryTimeout bounds one summary: the agent config, one Stream Chat read, one LLM
 	// response and two Stream Chat writes.
 	summaryTimeout = time.Minute
+	// cardWriteTimeout bounds one update of a card: chatlog's writeTimeout for one Stream
+	// Chat write, 10 s.
+	cardWriteTimeout = 10 * time.Second
 	// summaryLease is how long the router that closed an episode has to summarize it before
 	// another router's sweep takes it: longer than summaryTimeout, so a router still writing
 	// one keeps it.
@@ -220,14 +223,16 @@ func (c *Closer) summarize(parent context.Context, episode store.ClosedEpisode) 
 	if parent.Err() != nil {
 		return
 	}
+	// What is left is recorded under parent, not under the summary's own time, which a
+	// summary that took too long has used up.
 	if err != nil {
 		status = store.EpisodeSummaryFailed
 		c.logger.Error("could not summarize an episode", "episode", episode.ID, "customer", episode.CustomerID, "error", err)
-		if err := c.mark(ctx, episode, map[string]any{statusField: status}); err != nil {
+		if err := c.mark(parent, episode, map[string]any{statusField: status}); err != nil {
 			c.logger.Error("could not set an episode's card summary_failed", "episode", episode.ID, "error", err)
 		}
 	}
-	if err := c.store.FinishEpisodeSummary(ctx, episode.CustomerID, episode.ID, status); err != nil {
+	if err := c.store.FinishEpisodeSummary(parent, episode.CustomerID, episode.ID, status); err != nil {
 		c.logger.Error("could not record an episode's summary", "episode", episode.ID, "error", err)
 	}
 }
@@ -300,6 +305,8 @@ func (c *Closer) ask(ctx context.Context, config store.AgentConfig, episode stor
 // mark sets fields of an episode's card with a partial update, as the card's author: the
 // omni-channel's agent user, whose id is the channel's (Write).
 func (c *Closer) mark(ctx context.Context, episode store.ClosedEpisode, set map[string]any) error {
+	ctx, cancel := context.WithTimeout(ctx, cardWriteTimeout)
+	defer cancel()
 	bound, err := c.stream.ForApp(ctx, episode.CustomerID, episode.StreamAppPK)
 	if err != nil {
 		return err
