@@ -2157,6 +2157,66 @@ llm:
         per_million_cached_input_tokens: 0.20
         per_million_output_tokens: 20.00
 
+    # Anthropic's middle model, second on the Artificial Analysis Intelligence Index at 56 -
+    # at max effort. The provider reaches it over Anthropic's OpenAI-compatible endpoint,
+    # which ignores reasoning_effort, so it thinks at the high effort it defaults to, where
+    # that index puts it at 47. Thinking is adaptive and counts against max_output_tokens.
+    # Forced tool use is a 400 on this model, so a request with tool_choice required fails
+    # if it is routed here.
+    #
+    # Cache reads are 5% of input since Anthropic halved them on 7 October 2026, but the
+    # compatibility endpoint does not cache, so that rate is what Anthropic bill rather than
+    # one this route reaches.
+    - provider: anthropic
+      model: claude-sonnet-5-5
+      description: "Anthropic's Sonnet 5.5, faster than Opus 5.5 at half the price. Reads images."
+      benchmark: { intelligence_index: 47, output_tokens_per_second: 107 }
+      context_window: 1000000
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      # Anthropic's Commercial Terms say they "may not train models on Customer Content",
+      # and API inputs and outputs are deleted "within 30 days of receipt or generation".
+      # Sonnet 5.5 is not one of the Covered Models that require 30-day retention, so a zero
+      # retention agreement would make this none; nothing in this deployment says we have one.
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
+      price:
+        per_million_input_tokens: 2.00
+        per_million_cached_input_tokens: 0.10
+        per_million_output_tokens: 10.00
+
+    # Anthropic's fastest model, and the first Haiku with an effort setting. It is not on the
+    # Artificial Analysis Intelligence Index yet. The provider reaches it over Anthropic's
+    # OpenAI-compatible endpoint, which ignores reasoning_effort, so it thinks at the medium
+    # effort it defaults to; low effort, or thinking off, which Haiku allows at high effort
+    # and below, cannot be asked for from here. Thinking counts against max_output_tokens.
+    #
+    # Prompts over 100k tokens are billed at five times these rates for the whole request,
+    # cache reads included. The compatibility endpoint does not cache, so the cached rate is
+    # what Anthropic bill rather than one this route reaches.
+    - provider: anthropic
+      model: claude-haiku-5-5
+      description: "Anthropic's Haiku 5.5, their fastest and cheapest model. Reads images, and thinks before it answers."
+      context_window: 1000000
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      input_modalities: [image]
+      # Anthropic's Commercial Terms say they "may not train models on Customer Content",
+      # and API inputs and outputs are deleted "within 30 days of receipt or generation".
+      # Haiku 5.5 is not one of the Covered Models that require 30-day retention, so a zero
+      # retention agreement would make this none; nothing in this deployment says we have one.
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
+      price:
+        per_million_input_tokens: 0.10
+        per_million_cached_input_tokens: 0.01
+        per_million_output_tokens: 0.50
+
     # xAI's Grok 4.7 over their OpenAI-compatible chat completions, with a 500k context.
     # It cannot be told not to think: none is a 400, and xAI default it to high, so the
     # provider asks for low when a request names no effort. Prompts of 200k tokens or more
