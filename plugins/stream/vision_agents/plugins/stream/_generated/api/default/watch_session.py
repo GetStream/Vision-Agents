@@ -100,8 +100,8 @@ def sync_detailed(
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, not_connected, open_failed,
-    tool_unavailable and selection_dropped (a fork's selection for an alias its config no longer
-    declares). Every watcher is sent each one when it attaches.
+    tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its
+    config no longer declares). Every watcher is sent each one when it attaches.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
@@ -199,8 +199,8 @@ def sync(
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, not_connected, open_failed,
-    tool_unavailable and selection_dropped (a fork's selection for an alias its config no longer
-    declares). Every watcher is sent each one when it attaches.
+    tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its
+    config no longer declares). Every watcher is sent each one when it attaches.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
@@ -293,8 +293,8 @@ async def asyncio_detailed(
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, not_connected, open_failed,
-    tool_unavailable and selection_dropped (a fork's selection for an alias its config no longer
-    declares). Every watcher is sent each one when it attaches.
+    tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its
+    config no longer declares). Every watcher is sent each one when it attaches.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
@@ -390,8 +390,8 @@ async def asyncio(
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, not_connected, open_failed,
-    tool_unavailable and selection_dropped (a fork's selection for an alias its config no longer
-    declares). Every watcher is sent each one when it attaches.
+    tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its
+    config no longer declares). Every watcher is sent each one when it attaches.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each

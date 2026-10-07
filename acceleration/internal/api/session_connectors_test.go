@@ -182,6 +182,28 @@ func (s *SessionConnectorsSuite) TestAStoppedChatReopensWithTheCallersConnection
 	s.JSONEq(`[{"name": "crm", "connection_id": "`+mine+`"}]`, s.storedSelections(opened.Id))
 }
 
+// TestAStoppedChatWhoseConfigDroppedTheBindingIsStillAnswered: the config no longer declares
+// the alias the caller chose, so the reopened chat drops that selection, says so, and answers,
+// as it did before the reopen carried selections.
+func (s *SessionConnectorsSuite) TestAStoppedChatWhoseConfigDroppedTheBindingIsStillAnswered() {
+	connector := s.connector()
+	mine, echo := s.connection(s.client, connector)
+	config := s.config(s.binding("crm", connector, "session", "", echo))
+	opened := s.client.createSession(s.session(config, map[string]string{"crm": mine}))
+	s.storedSelections(opened.Id)
+	s.client.stopSession(opened.Id)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+config,
+		map[string]any{"connectors": []map[string]any{}}, nil))
+
+	status, failure := s.serverClient.actingFor(s.client).failure(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond",
+		RespondRequest{Text: "ask the crm", CommandId: pointerTo(s.utils.uuid())})
+
+	s.Require().Equal(http.StatusOK, status, failure)
+	dropped := s.await(s.client.opens("/v1/agents/sessions/"+opened.Id+"/events"), "connector_unavailable")
+	s.Equal("crm", dropped["name"])
+	s.Equal("selection_dropped", dropped["reason"])
+}
+
 // TestAForkWhoseConfigCannotBeReadFails: the fork does not go ahead without the bindings it
 // could not read. The config's row is broken so that reading it fails.
 func (s *SessionConnectorsSuite) TestAForkWhoseConfigCannotBeReadFails() {

@@ -64,8 +64,8 @@ const (
 	// unavailableTool: the provider no longer offers a granted tool with the schema it was
 	// granted against. The tools it still offers are kept.
 	unavailableTool = "tool_unavailable"
-	// unavailableDropped: a fork's selection for an alias its config no longer declares as a
-	// session binding.
+	// unavailableDropped: a fork's or a reopened chat's selection for an alias its config no
+	// longer declares as a session binding.
 	unavailableDropped = "selection_dropped"
 )
 
@@ -88,9 +88,11 @@ var unavailableWhy = map[string]string{
 // the config binds nothing.
 //
 // A selection for an alias the config does not declare as a session binding fails the session,
-// since the caller asked for something it cannot have. A fork drops it from spec instead,
-// with an event, so the fork's row does not keep it: a fork re-resolves its parent's
-// selections against the config as it is now, and the principal asking for the fork.
+// since the caller asked for something it cannot have. A fork, or a chat reopened from what
+// it chose before (Spec.Reopened), drops it from spec instead, with an event, so the new row
+// does not keep it: both re-resolve the earlier selections against the config as it is now
+// and the principal asking. Example: a chat opened with crm, whose config dropped crm since,
+// is answered without it.
 func (m *Manager) attachConnectors(ctx context.Context, spec *Spec) (*dispatcher, []harness.Tool, []ConnectorUnavailable, error) {
 	selected, unavailable, err := selections(*spec)
 	if err != nil {
@@ -134,7 +136,8 @@ func (m *Manager) attachConnectors(ctx context.Context, spec *Spec) (*dispatcher
 }
 
 // selections are the caller's connections by alias. One for an alias the config does not
-// declare as a session binding is refused, and on a fork dropped with an event.
+// declare as a session binding is refused, and on a fork or a reopened chat dropped with an
+// event.
 func selections(spec Spec) (map[string]string, []ConnectorUnavailable, error) {
 	selected := make(map[string]string, len(spec.ConnectorSelections))
 	var dropped []ConnectorUnavailable
@@ -151,7 +154,7 @@ func selections(spec Spec) (map[string]string, []ConnectorUnavailable, error) {
 			continue
 		}
 		switch {
-		case spec.ForkedFrom != "":
+		case spec.ForkedFrom != "" || !spec.Reopened.IsZero():
 			connectorID := ""
 			if index >= 0 {
 				connectorID = spec.ConnectorBindings[index].ConnectorID
