@@ -3,9 +3,13 @@
 package api
 
 import (
+	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // SessionVerbsSuite covers what can be done to a session once it is open: speaking,
@@ -171,6 +175,57 @@ func (s *SessionVerbsSuite) TestAResponseWithNothingToAnswerIsRefused() {
 	s.Equal(http.StatusBadRequest, status)
 }
 
+func (s *SessionVerbsSuite) TestAChatWhoseSessionEndedIsCarriedOnUnderTheSameId() {
+	opened := s.serverClient.createSession(textSession(nil))
+	s.serverClient.stopSession(opened.Id)
+	s.Require().Eventually(func() bool { return s.closed(opened.Id) },
+		settleFor, 10*time.Millisecond, "the session ended")
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "Still there?"}, nil))
+
+	reopened := s.serverClient.getSession(opened.Id)
+	s.Equal(Live, reopened.State)
+	s.Equal(value(opened.ConversationId), value(reopened.ConversationId))
+	s.True(opened.CreatedAt.Equal(reopened.CreatedAt), "it is the same session, opened when it first was")
+}
+
+func (s *SessionVerbsSuite) TestAReopenedChatIsSummarisedWhole() {
+	// A stopped session is reopened from its row, so the model has to come from a config.
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "summarising", Mode: "text", LLM: "summarising/summarising-model"}
+	s.Require().NoError(s.configs.CreateAgentConfig(context.Background(), &config))
+	request := textSession(nil)
+	request.Llm = nil
+	request.ConfigId = &config.ID
+	opened := s.serverClient.createSession(request)
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "My order is 4417"}, nil))
+	s.serverClient.stopSession(opened.Id)
+	s.Require().Eventually(func() bool { return strings.Contains(s.summary(opened.Id), "4417") },
+		2*settleFor, 10*time.Millisecond, "the chat is summarised when it ends")
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "Still there?"}, nil))
+	s.Require().Eventually(func() bool {
+		_, answered := s.serverClient.call(http.MethodGet, "/v1/agents/sessions/"+opened.Id+"/responses", nil)
+		return strings.Count(string(answered), `"completed"`) == 2
+	}, settleFor, 10*time.Millisecond, "the reopened chat answers")
+	s.serverClient.stopSession(opened.Id)
+
+	s.Require().Eventually(func() bool { return strings.Contains(s.summary(opened.Id), "Still there?") },
+		3*settleFor, 10*time.Millisecond, "the reopened chat is summarised again when it ends")
+	s.Contains(s.summary(opened.Id), "4417", "of all of it, not only what was said since it reopened")
+}
+
+// summary is what the reviewer made of a call so far.
+func (s *SessionVerbsSuite) summary(id string) string {
+	var call Call
+	if s.serverClient.do(http.MethodGet, "/v1/agents/calls/"+id, nil, &call) != http.StatusOK {
+		return ""
+	}
+	return value(call.Summary)
+}
+
 func (s *SessionVerbsSuite) TestAnotherAppCannotAskASessionAnything() {
 	opened := s.serverClient.createSession(textSession(nil))
 
@@ -249,6 +304,12 @@ func (s *SessionVerbsSuite) TestAnotherAppCannotRewindASession() {
 }
 
 // onACall is a session with an agent in a call, which is the one that can speak.
+// closed reports whether a session's row says it ended.
+func (s *SessionVerbsSuite) closed(id string) bool {
+	stored, err := s.store.StoredSession(context.Background(), s.customerID(), id)
+	return err == nil && stored.State == store.SessionClosed
+}
+
 func (s *SessionVerbsSuite) onACall() Session {
 	call := s.utils.callID()
 	return s.serverClient.createSession(CreateSessionRequest{CallId: &call})

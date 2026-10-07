@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 )
 
@@ -169,6 +170,7 @@ func (s *Session) observe(startedAt time.Time, params llm.ResponseParams, event 
 	s.quota.Debit(context.Background(), s.owner.CustomerID, s.owner.Caller,
 		response.Usage.InputTokens+response.Usage.OutputTokens)
 
+	composed := llm.Compose(params).Scaled(response.Usage.InputTokens)
 	s.recorder.Record(s.config, routing.Stat{
 		Owner:       s.owner,
 		StartedAt:   startedAt,
@@ -180,6 +182,14 @@ func (s *Session) observe(startedAt time.Time, params llm.ResponseParams, event 
 			InputTokens:       response.Usage.InputTokens,
 			CachedInputTokens: response.Usage.InputTokensDetails.CachedTokens,
 			OutputTokens:      response.Usage.OutputTokens,
+		},
+		InputParts: store.InputParts{
+			InstructionTokens:    composed.Instructions,
+			MessageTokens:        composed.Messages,
+			ToolDefinitionTokens: composed.ToolDefinitions,
+			ToolUseTokens:        composed.ToolUse,
+			ImageTokens:          composed.Images,
+			VideoTokens:          composed.Video,
 		},
 		// Time to first token is what the caller actually waited for; the rest of the
 		// answer arrives while they are already reading or hearing it.

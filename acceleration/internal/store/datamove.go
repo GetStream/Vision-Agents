@@ -79,6 +79,7 @@ var dataTables = []dataTable{
 	{name: "call_bridges", customer: "customer_id"},
 	{name: "recordings", customer: "customer_id"},
 	{name: "agent_sessions", customer: "customer_id"},
+	{name: "agent_session_tools", parent: "agent_sessions", parentColumn: "session_id"},
 	{name: "agent_responses", customer: "customer_id"},
 	{name: "agent_response_items", parent: "agent_responses", parentColumn: "response_id"},
 	{name: "agent_logs", customer: "customer_id"},

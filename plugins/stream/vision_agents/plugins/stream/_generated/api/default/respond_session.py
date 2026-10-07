@@ -101,6 +101,9 @@ def sync_detailed(
 ) -> Response[Any | CommandReceipt | ErrorResponse]:
     """Answer a piece of text through the model, as though it had been said
 
+     A text session that ended is reopened under the same id, on the config it was opened with: a chat is
+    never over for the person writing in it. A call that ended is not found.
+
     Args:
         id (str): The session, as returned when it was created.
         body (RespondRequest):
@@ -133,6 +136,9 @@ def sync(
 ) -> Any | CommandReceipt | ErrorResponse | None:
     """Answer a piece of text through the model, as though it had been said
 
+     A text session that ended is reopened under the same id, on the config it was opened with: a chat is
+    never over for the person writing in it. A call that ended is not found.
+
     Args:
         id (str): The session, as returned when it was created.
         body (RespondRequest):
@@ -159,6 +165,9 @@ async def asyncio_detailed(
     body: RespondRequest,
 ) -> Response[Any | CommandReceipt | ErrorResponse]:
     """Answer a piece of text through the model, as though it had been said
+
+     A text session that ended is reopened under the same id, on the config it was opened with: a chat is
+    never over for the person writing in it. A call that ended is not found.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -189,6 +198,9 @@ async def asyncio(
     body: RespondRequest,
 ) -> Any | CommandReceipt | ErrorResponse | None:
     """Answer a piece of text through the model, as though it had been said
+
+     A text session that ended is reopened under the same id, on the config it was opened with: a chat is
+    never over for the person writing in it. A call that ended is not found.
 
     Args:
         id (str): The session, as returned when it was created.

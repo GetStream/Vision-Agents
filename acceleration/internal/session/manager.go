@@ -147,7 +147,7 @@ type Manager struct {
 	records *sessionRecorder
 	// reviews says what a finished call went like, onto the row calls wrote.
 	reviews *reviewer
-	// titles names persistent conversations nobody named, on the session row and the channel.
+	// titles names persistent conversations nobody renamed, on the session row and the channel.
 	titles *titler
 	// cards writes each phone call's episode card into the caller's omni-channel. Nil
 	// without a store or Stream clients.
@@ -227,14 +227,15 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		m.mu.Unlock()
 		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
 	}
-	_, live := m.sessions[spec.ID]
+	held, live := m.sessions[spec.ID]
 	m.mu.Unlock()
-	if live {
+	if live && !replaces(spec, held) {
 		return nil, stack.Wrap(ErrSessionExists)
 	}
 	// The id is the row's primary key whoever owns it, so one somebody already used would
-	// write this session over theirs.
-	if m.options.Store != nil {
+	// write this session over theirs. A reopened one is the same session, its owner checked
+	// by whoever reopened it.
+	if m.options.Store != nil && spec.Reopened.IsZero() {
 		taken, err := m.options.Store.SessionExists(ctx, spec.ID)
 		if err != nil {
 			return nil, stack.Wrap(err)
@@ -408,6 +409,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		return nil, stack.Wrap(err)
 	}
 
+	opening := time.Now().UTC()
+	if !spec.Reopened.IsZero() {
+		opening = spec.Reopened.UTC()
+	}
 	created := &Session{
 		logs:      m.logs,
 		persisted: conv,
@@ -415,7 +420,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		spec:      spec,
 		// Postgres keeps microseconds. The live session sorts by the same instant as its
 		// row, or a cursor taken from one would hand the other back on the next page.
-		created:       time.Now().UTC().Truncate(time.Microsecond),
+		created:       opening.Truncate(time.Microsecond),
 		logger:        m.logger,
 		watchers:      map[uint64]*watcher{},
 		detachedGrace: m.options.DetachedGrace,
@@ -568,11 +573,17 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			"turns", len(previous), "truncated", spec.ContextTruncated)
 	}
 	created.voiceAgent.RestoreHistory(previous)
+	// A reopened chat is reviewed again when it ends, and its summary is of all of it.
+	if !spec.Reopened.IsZero() {
+		earlier := spokenOf(previous)
+		created.said = earlier[:min(len(earlier), reviewLimit)]
+	}
 	if conv != nil {
 		conv.Attach(func(update persistent.Updated) { created.broadcast(update) })
 		created.closers = append(created.closers, conv.Release)
-		// A caller that named the conversation named it; only an unnamed one is named here.
-		if service, err := m.Conversations(); err == nil && spec.Title == "" && spec.Description == "" {
+		// A title the conversation opened with is a placeholder: what was said names it,
+		// until somebody renames it.
+		if service, err := m.Conversations(); err == nil {
 			created.naming = &naming{titles: m.titles, service: service, earlier: spokenOf(previous)}
 		}
 	}
@@ -629,7 +640,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		created.closers = append(created.closers, func() {
 			m.records.Closed(created.id, time.Now().UTC())
 		})
-		m.records.Opened(sessionRow(created))
+		m.records.Opened(sessionRow(created), toolRows(created))
 	}
 
 	m.mu.Lock()
@@ -638,7 +649,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		created.Close()
 		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
 	}
-	if _, raced := m.sessions[created.id]; raced {
+	if held, raced := m.sessions[created.id]; raced && !replaces(spec, held) {
 		m.mu.Unlock()
 		created.Close()
 		return nil, stack.Wrap(ErrSessionExists)
@@ -658,6 +669,12 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		"session", created.id, "call", spec.CallID, "customer", spec.CustomerID)
 	opened = true
 	return created, nil
+}
+
+// replaces reports whether a session being reopened may take the place of the one held under
+// its id, which it may once that one has ended.
+func replaces(spec Spec, held *Session) bool {
+	return !spec.Reopened.IsZero() && held.State() == Ended
 }
 
 // supersede ends whatever this agent was already doing in this call, before the new one

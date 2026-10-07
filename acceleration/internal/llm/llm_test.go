@@ -11,6 +11,33 @@ import (
 
 var errUnauthorized = errors.New("unauthorized")
 
+func (s *LLMSuite) TestAPromptIsSplitByWhatItCarried() {
+	composed := Compose(ResponseParams{
+		Instructions: "Be brief.",
+		Tools:        []Tool{{Name: "lookup_order", Description: "Finds an order by its number."}},
+		Input: []Message{
+			{Role: User, Parts: []ContentPart{{Text: "What is this?"}, {Image: &ImagePart{Detail: "low"}}}},
+			{Role: Assistant, ToolCalls: []ToolCall{{Name: "get_video_frames", Arguments: `{"limit":1}`}}},
+			{Role: ToolResult, Parts: []ContentPart{{Text: "one frame"}, {Image: &ImagePart{Video: true}}}},
+		},
+	})
+
+	s.Positive(composed.Instructions)
+	s.Positive(composed.Messages)
+	s.Positive(composed.ToolDefinitions)
+	s.Positive(composed.ToolUse)
+	s.Equal(int64(lowDetailImageTokens), composed.Images)
+	s.Equal(int64(imageTokens), composed.Video)
+}
+
+func (s *LLMSuite) TestAScaledPromptSumsToWhatTheProviderCounted() {
+	scaled := Composition{Instructions: 3, Messages: 3, Images: 3}.Scaled(100)
+
+	s.Equal(int64(100), scaled.Total())
+	s.Equal(int64(33), scaled.Messages)
+	s.Equal(Composition{}, Composition{}.Scaled(100), "nothing estimated has nothing to share out")
+}
+
 // chunk is one thing a scripted provider does when its stream is advanced.
 type chunk func(w *ResponseWriter)
 

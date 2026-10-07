@@ -28,12 +28,13 @@ const maxVideos = 2
 // following a particular answer has to watch every event on the socket and work out which
 // belong to the turn it asked for; with one it can ask for that turn's items instead.
 func (s *Server) createResponse(ctx context.Context, request *createResponseRequest) (*createResponseResponse, error) {
-	// A response is asked of a running session rather than a stored one: a conversation that
-	// ended can be read and forked, but not talked to.
-	found, failure := s.session(ctx, request.Id)
+	// A response is asked of a running session rather than a stored one: a call that ended
+	// can be read and forked, but not talked to. A chat that ended is reopened.
+	found, sent, failure := s.sessionToAnswer(ctx, request.Id)
 	if failure != nil {
 		return nil, failure
 	}
+	defer sent()
 	if request.Body == nil || request.Body.Text == "" {
 		return nil, invalidRequest("there is nothing to answer")
 	}
