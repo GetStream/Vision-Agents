@@ -48,7 +48,9 @@ type dataTable struct {
 // connector_oauth_clients: a client's secret is sealed under this deployment's key, and a
 // client without it cannot authenticate, so the app puts it again where it moved to. And
 // connector_config_tokens, sealed under this deployment's key for the provider app whose
-// events URL is this deployment's.
+// events URL is this deployment's. And channel_threads, contact_map and episodes: the thread
+// channels, omni-channels and cards they point at live in the Stream app, which a move does
+// not carry either.
 var dataTables = []dataTable{
 	{name: "agent_configs", customer: "customer_id"},
 	{name: "skills", customer: "customer_id"},
