@@ -182,7 +182,8 @@ type Options struct {
 	AppID string
 	// SessionID is the session memories are learned in.
 	SessionID string
-	// Incognito recalls memories but writes none: what is said here is not kept anywhere.
+	// Incognito recalls memories but writes none, and records no turn timings or
+	// decisions: what is said here is not kept anywhere.
 	Incognito bool
 	// MemoryUserID is who the memories are about. Empty means the customer, which is
 	// what a caller with no user of its own to scope by gets.
@@ -499,12 +500,13 @@ func New(options Options) (*Agent, error) {
 	}
 
 	// Turns are keyed by agent id and decisions by call id, so an agent missing either is
-	// still measured and still reports itself, it is just not kept.
-	if options.Store != nil && options.AgentID != "" {
+	// still measured and still reports itself, it is just not kept. Neither is kept for an
+	// incognito session: a decision holds what was heard, and a turn names the agent.
+	if options.Store != nil && options.AgentID != "" && !options.Incognito {
 		agent.turnStore = newTurnRecorder(options.Store, owner, logger)
 	}
 	var record func(Decided)
-	if options.Store != nil && options.CallID != "" {
+	if options.Store != nil && options.CallID != "" && !options.Incognito {
 		agent.decisionStore = newDecisionRecorder(options.Store, owner, logger)
 		record = agent.decisionStore.Record
 	}
