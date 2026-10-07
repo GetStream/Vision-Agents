@@ -448,6 +448,23 @@ func TestSyncSendsTheMCPServersNamedByURL(t *testing.T) {
 	}
 }
 
+func TestSyncSendsWhetherToolsAreOfferedProgressively(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "progressive_tools: true\n")
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if sent := router.syncs[0].ProgressiveTools; sent == nil || !*sent {
+		t.Errorf("progressive_tools went as %v", sent)
+	}
+}
+
 func TestSyncSendsWhoLogsIntoEachMCPServer(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
 	write(t, root, "agent.yaml", `mcp_servers:

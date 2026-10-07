@@ -5,6 +5,8 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // AgentConfigPatch is what changes about an agent config. Every field is optional, and one
@@ -38,6 +40,7 @@ type AgentConfigPatch struct {
 	Harness            *Harness                 `json:"harness,omitempty"`
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
 	EpisodeCards       *bool                    `json:"episode_cards,omitempty"`
+	ProgressiveTools   *bool                    `json:"progressive_tools,omitempty"`
 	Tags               *map[string]string       `json:"tags,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
 }
@@ -114,6 +117,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if err != nil {
 		return nil, errUnknownConfig
 	}
+	existing := agentConfigOf(config)
 	before := config.MCPServers
 
 	patch := request.Body
@@ -188,6 +192,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	}
 	applyDispatch(&config, patch.Dispatch)
 	config.EpisodeCards = override(config.EpisodeCards, patch.EpisodeCards)
+	config.ProgressiveTools = override(config.ProgressiveTools, patch.ProgressiveTools)
 	config.Tags = override(config.Tags, patch.Tags)
 	if patch.Video != nil {
 		config.VideoSource = override(config.VideoSource, patch.Video.Source)
@@ -223,6 +228,11 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
+	stored := agentConfigOf(config)
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditAgentConfig, ResourceID: config.ID, ResourceName: config.Name,
+		Action: store.AuditUpdated, Changes: auditDiff(existing, stored),
+	})
 	s.pluginEvents.Changed(customerID, config.ID)
-	return &agentConfigResponse{Body: agentConfigOf(config)}, nil
+	return &agentConfigResponse{Body: stored}, nil
 }

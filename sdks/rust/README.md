@@ -145,11 +145,19 @@ worker with the running session's `session_id` and its `command_id`. `answer` ha
 answer it on that session, with the worker's own credential acting for the user who wrote it.
 `get_or_create_agent` refuses such a message.
 
-A worker can also host functions for every session opened under an agent id, including ones
-opened from a browser. The router offers them to each session and sends every call here:
+A worker can also host an agent's functions for every session opened under its name,
+including ones opened from a browser. The router offers them to each session and sends every
+call here:
 
 ```rust
-dispatch.host("my-agent", tools, None); // None: the router's default timeout per call
+let agent = client.agent("my-agent");
+agent.tools.register(
+    "get_weather",
+    "The weather in a city",
+    json!({"type": "object", "properties": {"city": {"type": "string"}}}),
+    async |arguments| Ok::<_, String>(format!("sunny in {}", arguments["city"])),
+);
+dispatch.host(&agent, None); // None: the router waits its default two minutes for each tool call
 dispatch.run().await?;
 ```
 

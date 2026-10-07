@@ -195,6 +195,10 @@ class Settings:
     mcp_servers: list[MCPServerSettings] = field(default_factory=list)
     """MCP servers outside the catalog, opened by the router by their URL, with a login
     when the server asks for one."""
+    progressive_tools: bool | None = None
+    """Offer plugin, MCP server and connector tools by a summary, the first call to each
+    returning its full description instead of running it. None when the file says nothing
+    about it."""
     channels: ChannelsSettings | None = None
     """Lines the agent answers on besides Stream Chat. The provider's credentials live on
     the router, connected once for the app; this only names the numbers."""
@@ -442,6 +446,12 @@ def _declare(path: Path) -> Settings:
             settings.user_plugins = _plugins(path, field_name, value)
         elif field_name == "mcp_servers":
             settings.mcp_servers = _mcp_servers(path, value)
+        elif field_name == "progressive_tools":
+            if value is not None and not isinstance(value, bool):
+                raise ValueError(
+                    f"{path} should give progressive_tools as true or false"
+                )
+            settings.progressive_tools = value
         elif field_name == "channels":
             settings.channels = _channels(path, value)
         elif field_name == "keyterms":

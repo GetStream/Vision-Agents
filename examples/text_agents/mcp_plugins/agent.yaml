@@ -2,6 +2,11 @@ name: mcp_plugins
 description: Reads the team's issues and your own calendar and files, and makes 3D renders with Blender.
 mode: text
 llm: llm-fast
+# This agent has dozens of tools, and some servers write a page of instructions and examples
+# into a tool's description. progressive_tools offers each tool by the first line of its
+# description instead, and the first call to a tool returns the rest without running it,
+# which costs one more model turn per tool used. Off when left out.
+progressive_tools: true
 # The company's accounts: connected once each, on the dashboard, for every conversation.
 agent_plugins:
   - name: sentry

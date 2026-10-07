@@ -102,6 +102,15 @@ func waiting(t *testing.T, router *pool, options DispatchOptions) *Dispatch {
 	return worker
 }
 
+// hostedAgent is an agent to host, standing in for a client.Agent this package cannot import.
+type hostedAgent struct {
+	name      string
+	functions *tools.Registry
+}
+
+func (a hostedAgent) Name() string           { return a.name }
+func (a hostedAgent) Tools() *tools.Registry { return a.functions }
+
 // run waits for work in the background and returns what Run said once it stops.
 func run(t *testing.T, ctx context.Context, worker *Dispatch) func() error {
 	t.Helper()
@@ -417,7 +426,7 @@ func TestAHostedToolCallIsNotCountedAsWorkTheRouterHandedOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	worker := waiting(t, router, DispatchOptions{})
-	worker.Host("stream-support", functions, time.Minute)
+	worker.Host(hostedAgent{"stream-support", functions}, time.Minute)
 
 	ctx, stop := context.WithCancel(t.Context())
 	defer stop()
@@ -531,7 +540,7 @@ func TestAHostedFunctionIsDeclaredAndAnsweredOverTheDispatchSocket(t *testing.T)
 		t.Fatal(err)
 	}
 	worker := waiting(t, router, DispatchOptions{})
-	worker.Host("stream-support", functions, time.Minute)
+	worker.Host(hostedAgent{"stream-support", functions}, time.Minute)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	stopped := run(t, ctx, worker)
@@ -573,7 +582,7 @@ func TestAWorkerTheRouterDropsReconnectsAndHostsAgain(t *testing.T) {
 	}
 	worker := waiting(t, router, DispatchOptions{})
 	worker.firstRetry = 10 * time.Millisecond
-	worker.Host("stream-support", functions, 0)
+	worker.Host(hostedAgent{"stream-support", functions}, 0)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	stopped := run(t, ctx, worker)
@@ -610,7 +619,7 @@ func TestAWorkerWhoseToolsAreRefusedStopsWaiting(t *testing.T) {
 		t.Fatal(err)
 	}
 	worker := waiting(t, router, DispatchOptions{})
-	worker.Host("stream-support", functions, 0)
+	worker.Host(hostedAgent{"stream-support", functions}, 0)
 
 	if err := run(t, t.Context(), worker)(); err == nil {
 		t.Fatal("a worker nobody will call kept waiting")
