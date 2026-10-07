@@ -166,6 +166,30 @@ func (s *ConfigSuite) TestConnectorsAreOffUnlessAskedFor() {
 	s.True(config.Connectors.Enabled)
 }
 
+func (s *ConfigSuite) TestAnEpisodeIsIdleAfterAnHourUnlessAskedFor() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(time.Hour, config.Episodes.IdleAfter)
+
+	s.T().Setenv("ROUTER_EPISODES_IDLE_AFTER", "30m")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(30*time.Minute, config.Episodes.IdleAfter)
+}
+
+// WhatsApp's window is 24 hours from the person's last message, so an episode closes inside
+// it; and an episode that closes at once would summarize every message alone.
+func (s *ConfigSuite) TestAnEpisodeIdlePeriodOfADayOrOfNothingIsRefused() {
+	for _, idle := range []string{"24h", "0s"} {
+		s.T().Setenv("ROUTER_EPISODES_IDLE_AFTER", idle)
+		_, _, err := Load("")
+		s.ErrorContains(err, "episodes.idle_after", idle)
+	}
+	s.T().Setenv("ROUTER_EPISODES_IDLE_AFTER", "23h59m")
+	_, _, err := Load("")
+	s.NoError(err)
+}
+
 func (s *ConfigSuite) TestTheProxyDeclaresNoKindUnlessAskedFor() {
 	config, _, err := Load("")
 	s.Require().NoError(err)
