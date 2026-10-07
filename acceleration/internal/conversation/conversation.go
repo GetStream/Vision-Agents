@@ -237,6 +237,23 @@ func RouterOpensThread(ctx context.Context, cid string) context.Context {
 	return context.WithValue(ctx, threadOpen{}, cid)
 }
 
+// threadBarred is the context key BarThread keeps its channel under.
+type threadBarred struct{}
+
+// BarThread is ctx carrying the Router's word that cid is a thread channel the caller may not
+// write in: an end user's device named it by its agent id (internal/api/threadhooks.go). A
+// session it opens writes no transcript there (Barred), as a request naming it opens no
+// conversation there (Openable).
+func BarThread(ctx context.Context, cid string) context.Context {
+	return context.WithValue(ctx, threadBarred{}, cid)
+}
+
+// Barred is whether ctx bars the caller from writing in the channel cid (BarThread).
+func Barred(ctx context.Context, cid string) bool {
+	barred, _ := ctx.Value(threadBarred{}).(string)
+	return barred != "" && barred == cid
+}
+
 // Openable is whether a conversation may be opened on cid: a session command channel, or the
 // thread channel ctx says the Router opens (RouterOpensThread).
 func Openable(ctx context.Context, cid string) bool {
@@ -264,8 +281,12 @@ type FinishedReply struct {
 // final text is written. It is the one place a reply leaves for an external thread: the final
 // text is written with UpdateMessagePartial, which sends no webhook. A message written again,
 // such as one a login later marks, is told again, so fn drops one it has seen. Set it before
-// any conversation is opened.
+// any conversation is opened. A nil fn clears it.
 func (s *Service) OnFinishedReply(fn func(FinishedReply)) {
+	if fn == nil {
+		s.finished.Store(nil)
+		return
+	}
 	s.finished.Store(&fn)
 }
 
