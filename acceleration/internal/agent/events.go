@@ -270,6 +270,9 @@ type ToolStarted struct {
 	// Arguments are the model's, as JSON. Only a tool a person's device runs shows them.
 	Arguments string
 	StartedAt time.Time
+	// PreSpeech is what the tool's connector binding asks to be said while it runs
+	// (Options.PreSpeech), so a client can show it. Empty for none.
+	PreSpeech string
 }
 
 func (ToolStarted) isAgentEvent() {}

@@ -510,6 +510,12 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if conv != nil {
 		toolStarted = func(event agent.ToolStarted) { conv.Observe(event) }
 	}
+	// Only a connector binding's policy names a phrase; a session without one says the
+	// agent's own, as it always has.
+	var preSpeech func(string) string
+	if connectors != nil {
+		preSpeech = connectors.preSpeech
+	}
 	screening, err := m.guardrail(ctx, spec, stream.Identity)
 	if err != nil {
 		return nil, stack.Wrap(err)
@@ -524,6 +530,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	created.voiceAgent, err = agent.New(agent.Options{
 		OnToolStarted: toolStarted,
+		PreSpeech:     preSpeech,
 		Edge:          edge,
 		Text:          spec.Text,
 		Instructions:  spec.prompt(),

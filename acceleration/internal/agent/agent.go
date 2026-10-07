@@ -130,6 +130,10 @@ type Options struct {
 	// which is how a caller outside this process owns its own tools.
 	ToolRunner    ToolRunner
 	OnToolStarted func(ToolStarted)
+	// PreSpeech is what to say while the tool named runs, in place of a phrase the agent
+	// picks itself (workingPhrases), and what ToolStarted carries. Nil, or empty for a
+	// tool, says the agent's own.
+	PreSpeech func(tool string) string
 	// Tools are what the voice model may do rather than say. Each is only offered when
 	// something on this call can run it: the telephony pair needs Telephony, and every
 	// other tool needs a ToolRunner.
@@ -1915,7 +1919,10 @@ func (a *Agent) finish(response llm.Response) {
 		// been cut off. Prompting for it is not enough: the models that do it reliably
 		// are not the ones fast enough to hold a conversation.
 		if fillsPause(response.ID, calls) && strings.TrimSpace(a.spoken.String()) == "" {
-			filler := a.duplex.Working()
+			filler := a.preSpeech(calls)
+			if filler == "" {
+				filler = a.duplex.Working()
+			}
 			a.spoken.WriteString(filler)
 			if err := a.speakSentence(response.ID, filler); err != nil {
 				a.fail(err, "tts")
@@ -1993,6 +2000,20 @@ func (a *Agent) finish(response llm.Response) {
 	a.respondQueued()
 	// A note that landed while this reply was being written waited for it to finish.
 	a.followUp()
+}
+
+// preSpeech is what the first of calls that names one asks to be said while it runs
+// (Options.PreSpeech), or empty for none.
+func (a *Agent) preSpeech(calls []llm.ToolCall) string {
+	if a.options.PreSpeech == nil {
+		return ""
+	}
+	for _, call := range calls {
+		if phrase := a.options.PreSpeech(call.Name); phrase != "" {
+			return phrase
+		}
+	}
+	return ""
 }
 
 // fillsPause reports whether a turn that said nothing should say something before the

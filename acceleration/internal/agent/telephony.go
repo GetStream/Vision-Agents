@@ -125,6 +125,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	defer func() { cancel(); a.mu.Lock(); delete(a.toolCancels, requested.Call.ID); a.mu.Unlock() }()
 	started := ToolStarted{ID: requested.Call.ID, TurnID: requested.TurnID, Tool: requested.Call.Name, Arguments: requested.Call.Arguments, StartedAt: time.Now().UTC()}
 	started.Product, started.SDK = toolScope(requested.Call)
+	started.PreSpeech = a.preSpeech([]llm.ToolCall{requested.Call})
 	if a.options.OnToolStarted != nil {
 		a.options.OnToolStarted(started)
 	}

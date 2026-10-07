@@ -538,7 +538,13 @@ func frameOf(event session.Event) (frame, bool) {
 	case conversation.Updated:
 		return frame{"type": "conversation_updated", "conversation_id": typed.CID, "message": typed.Message}, true
 	case agent.ToolStarted:
-		return frame{"type": "tool_started", "tool_call_id": typed.ID, "tool": typed.Tool, "turn_id": typed.TurnID, "started_at": typed.StartedAt}, true
+		started := frame{"type": "tool_started", "tool_call_id": typed.ID, "tool": typed.Tool, "turn_id": typed.TurnID, "started_at": typed.StartedAt}
+		// Only a connector binding whose policy sets pre_speech adds it, so every other
+		// tool_started is the frame it always was.
+		if typed.PreSpeech != "" {
+			started["pre_speech"] = typed.PreSpeech
+		}
+		return started, true
 	case agent.ToolRan:
 		return frame{
 			"type":         "tool_ran",

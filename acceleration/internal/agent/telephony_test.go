@@ -480,6 +480,74 @@ func (s *AgentSuite) TestATurnThatSpokeForItselfIsNotGivenAFiller() {
 	s.False(s.spokenText("One moment"), "the agent stacked a filler on top of its own words")
 }
 
+func (s *AgentSuite) TestAToolsPreSpeechIsSaidInsteadOfTheAgentsOwnFiller() {
+	// A connector binding's policy names what to say while its tool runs; the agent says
+	// it where it would have picked a phrase itself, and tool_started carries it.
+	s.ownsTools("order 12 ships tomorrow")
+	s.preSpeech = func(tool string) string {
+		if tool == "lookup_order" {
+			return "Let me pull up your order."
+		}
+		return ""
+	}
+	s.join(false)
+	s.model.reply = []string{}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return s.spokenText("Let me pull up your order.") },
+		"the binding's phrase was not said while its tool ran")
+	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the answer never followed")
+	for _, phrase := range workingPhrases {
+		s.False(s.spokenText(phrase), "the agent said its own filler as well: %q", phrase)
+	}
+	started, ok := firstOf[ToolStarted](s.reported())
+	s.Require().True(ok)
+	s.Equal("Let me pull up your order.", started.PreSpeech)
+}
+
+func (s *AgentSuite) TestAToolWithoutPreSpeechGetsTheAgentsOwnFillerAsBefore() {
+	// A tool its binding names no phrase for, or a session with no bindings at all, is
+	// TestAToolReachedForWithoutAWordStillTellsTheCallerToWait.
+	s.ownsTools("order 12 ships tomorrow")
+	s.preSpeech = func(string) string { return "" }
+	s.join(false)
+	s.model.reply = []string{}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return s.spokenText(workingPhrases[0]) }, "the agent's own filler was not said")
+	started, ok := firstOf[ToolStarted](s.reported())
+	s.Require().True(ok)
+	s.Empty(started.PreSpeech)
+}
+
+func (s *AgentSuite) TestATurnThatSpokeForItselfIsNotGivenPreSpeechEither() {
+	// pre_speech takes the filler's place, so it follows the filler's rule: a model that
+	// already said what it was doing is not given more words on top.
+	s.ownsTools("order 12 ships tomorrow")
+	s.preSpeech = func(string) string { return "Let me pull up your order." }
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the tool answer never came")
+	s.False(s.spokenText("Let me pull up your order."), "the agent stacked pre_speech on top of its own words")
+}
+
 func (s *AgentSuite) TestPressingAMenuOptionLeavesTheLineQuietForTheMenu() {
 	// The digits are the whole point of the tool and the menu is what answers next, so
 	// talking over it would be talking to nobody.
