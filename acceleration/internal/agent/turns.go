@@ -338,6 +338,17 @@ func (t *turnTracker) completed(turnID string, timeToFirstTokenMs float64, synth
 	t.report(finished)
 }
 
+// interrupting records that a turn is being abandoned, ahead of interrupt closing it. What
+// abandoning it sets going, such as a held reply being given up, can complete the turn before
+// interrupt is reached, and a turn completed by then is reported as one nobody interrupted.
+func (t *turnTracker) interrupting(turnID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil {
+		current.interrupted = true
+	}
+}
+
 // interrupt closes a turn a participant talked over. Whatever was measured before the
 // interruption still happened and is still worth reporting.
 func (t *turnTracker) interrupt(turnID string) {

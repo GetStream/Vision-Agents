@@ -3840,6 +3840,7 @@ func (a *Agent) stopTurn(
 		done:        make(chan struct{}),
 	}
 	a.interruptDone = stopped.done
+	a.turns.interrupting(turnID)
 	a.cancelPlayoutLocked()
 	// Every synthesis in the canceled epoch has ended from the listener's point of view.
 	// Keep its canceled context by ID until its terminal event, so a late completion can

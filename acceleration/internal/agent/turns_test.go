@@ -323,6 +323,24 @@ func (s *TurnRecorderSuite) TestAnInterruptionClosesATurnWaitingOnTheTrack() {
 	s.Zero(turns[0].FirstAudibleFrameMs, "speech heard after the turn was closed is not part of it")
 }
 
+func (s *TurnRecorderSuite) TestATurnCompletedWhileItIsBeingAbandonedIsReportedInterrupted() {
+	// Giving up a held reply settles its synthesis, which can complete the turn before the
+	// interruption reaches it.
+	base := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	var done reported
+	tracker := newTurnTracker(done.add)
+	tracker.begin("turn-1", stt.Participant{}, base.Add(350*time.Millisecond), base, 120)
+	tracker.completed("turn-1", 280, 1)
+
+	tracker.interrupting("turn-1")
+	tracker.spoke("turn-1", 160, 300)
+	tracker.interrupt("turn-1")
+
+	turns := done.all()
+	s.Require().Len(turns, 1, "a turn closes exactly once")
+	s.True(turns[0].Interrupted)
+}
+
 func (s *TurnRecorderSuite) TestAReportThatOutlivesItsTurnIsDropped() {
 	// The marks belong to one turn, so what an edge says late about the speech it was given
 	// for a closed turn cannot stamp the one that followed.
