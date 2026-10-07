@@ -168,6 +168,20 @@ func (s *RateLimitSuite) TestWithoutRedisNothingIsHeld() {
 	s.Equal(2, s.provider.calls("primary"))
 }
 
+// TestAnAbsurdRetryAfterIsCappedInWhatTheModelReads: the model is told the wait the router
+// holds for, not the provider's raw number.
+func (s *RateLimitSuite) TestAnAbsurdRetryAfterIsCappedInWhatTheModelReads() {
+	s.limitPer(core.RateLimitPerApp)
+	primary := s.connection("", "primary")
+	d := s.attachWith(s.limitedManager(nil), s.fixed("crm", primary, "whoami"))
+	s.provider.limit("primary", "4294967295")
+
+	refused, err := s.call(d, "crm__whoami", "{}")
+
+	s.Require().NoError(err)
+	s.Contains(refused, "retry_after_seconds: 3600.")
+}
+
 // TestA429WithoutRetryAfterHoldsNothing: the router never makes up a wait the provider did
 // not ask for.
 func (s *RateLimitSuite) TestA429WithoutRetryAfterHoldsNothing() {
