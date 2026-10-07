@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -179,6 +180,17 @@ type Options struct {
 	// passed. Nil leaves it at one second, and it must be longer than zero while ReplySilence
 	// is on.
 	ReplySilenceMax *time.Duration
+	// ReplySilenceConfident is how long a caller must have been quiet, in place of ReplySilence,
+	// when their turn was decided by a successful acoustic end-of-turn score of at least
+	// ReplyConfidentScore: the silence is there for endings that are in doubt, and a score that
+	// high says this one is not. The normal silence applies to every other turn, including one the
+	// flow controller decided. Nil leaves it at 300ms, and a pointer to zero lets such a reply
+	// out as soon as it is ready.
+	ReplySilenceConfident *time.Duration
+	// ReplyConfidentScore is the acoustic end-of-turn score from which the turn is taken to have
+	// ended for sure. It must be between 0 and 1. Nil leaves it at 0.9, and a pointer to zero
+	// turns the shorter silence off.
+	ReplyConfidentScore *float64
 	// PreviewDebounce is how long a caller's words have to hold still before the reply to them
 	// is started, ahead of the wait that decides whether they have finished, so the model has
 	// been working for part of that wait. Words that change again restart it, and words that
@@ -298,6 +310,13 @@ type Agent struct {
 	// replySilenceMax is the longest that first audio is held for it once it is ready, so a
 	// line that never goes quiet cannot stop a reply from being heard.
 	replySilenceMax time.Duration
+	// replySilenceConfident is the silence a reply is held for instead when the acoustic
+	// end-of-turn score that decided its turn was at least replyConfidentScore.
+	replySilenceConfident time.Duration
+	replyConfidentScore   float64
+	// confident are the candidates whose turn such a score decided, until the ruling has been
+	// carried out.
+	confident map[string]struct{}
 	// generatingCancel abandons a conversation Create that has not returned a stream yet.
 	// Interrupt used to Close only an existing stream, so a reply waiting on headers kept
 	// the event loop and the floor until Cerebras answered.
@@ -534,6 +553,20 @@ func New(options Options) (*Agent, error) {
 	if replySilence > 0 && replySilenceMax == 0 {
 		return nil, stack.Wrap(errors.New("agent: the longest hold of a reply must be longer than zero while the reply silence is on"))
 	}
+	replySilenceConfident := defaultReplySilenceConfident
+	if options.ReplySilenceConfident != nil {
+		replySilenceConfident = *options.ReplySilenceConfident
+	}
+	if replySilenceConfident < 0 {
+		return nil, stack.Wrap(errors.New("agent: the reply silence for a confident ending cannot be negative"))
+	}
+	replyConfidentScore := defaultReplyConfidentScore
+	if options.ReplyConfidentScore != nil {
+		replyConfidentScore = *options.ReplyConfidentScore
+	}
+	if math.IsNaN(replyConfidentScore) || replyConfidentScore < 0 || replyConfidentScore > 1 {
+		return nil, stack.Wrap(errors.New("agent: the confident score must be between 0 and 1"))
+	}
 	previewDebounce := defaultPreviewDebounce
 	if options.PreviewDebounce != nil {
 		previewDebounce = *options.PreviewDebounce
@@ -614,6 +647,10 @@ func New(options Options) (*Agent, error) {
 		duplex:           listening,
 		replySilence:     replySilence,
 		replySilenceMax:  replySilenceMax,
+
+		replySilenceConfident: replySilenceConfident,
+		replyConfidentScore:   replyConfidentScore,
+		confident:             map[string]struct{}{},
 	}
 	settling.previewing = agent.previewsEarly
 	// Only a call has a caller's audio to tell silence from, and it is listened to for the hold a
@@ -1476,6 +1513,9 @@ func (a *Agent) act(actions []Action) {
 func (a *Agent) rule(ruling harness.Decided) {
 	a.act(a.converse.Ruled(ruling, a.floor()))
 	a.releasePreview(ruling.CandidateID)
+	a.mu.Lock()
+	delete(a.confident, ruling.CandidateID)
+	a.mu.Unlock()
 }
 
 // rulePrimaryEOTLow is rule for the Wait an acoustic score below its threshold makes, which
@@ -2011,7 +2051,8 @@ func (a *Agent) respondCandidate(ready candidate, note string) error {
 		// What this reply says is for somebody who has just finished talking, so its first
 		// audio waits for them to have been quiet long enough to have meant it.
 		a.mu.Lock()
-		a.gated = heldReply{turn: ready.ID, participant: ready.Participant}
+		_, confident := a.confident[ready.ID]
+		a.gated = heldReply{turn: ready.ID, participant: ready.Participant, confident: confident}
 		a.mu.Unlock()
 	}
 	return a.respondTurn(ready.ID, ready.Participant, ready.Text, heard{

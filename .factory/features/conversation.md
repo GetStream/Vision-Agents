@@ -146,6 +146,16 @@ The two reasons to ask a question rather than answer are told to the model separ
 `ambiguousNote` for a clear sentence with an unclear intent, which is the controller's own
 `clarify` ruling, and `unfinishedNote` for a thought that never arrived.
 
+## Words that stop mid-thought wait longer
+
+A transcript that ends where the caller is plainly about to say more is waited on for
+`defaultCadenceRetry` rather than the usual gap or the short wait for a final, and a final that
+ends that way is not expedited to the acoustic scorer. `visiblyUnfinished` in
+[cadence.go](../../acceleration/internal/agent/cadence.go) decides it: a trailing comma in any
+language, even before a closing quotation mark, or, for a transcript in English or with no
+language, a last word that is `and`, `or`, `but`, `because`, `um`, `uh` or `er`. `so` is not one:
+it ends a sentence as often as it joins one.
+
 ## An overlap buys the next turn 150ms
 
 Whenever somebody was talked over, whichever of them gives way, `cadence.Grace` gives the next

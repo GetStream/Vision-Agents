@@ -10,8 +10,10 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 )
 
 func TestParseOptionsLoadsDotEnvBeforeEnvironmentFlagDefaults(t *testing.T) {
@@ -134,6 +136,37 @@ func TestParseOptionsRequiresIdleCheckInOptIn(t *testing.T) {
 	}
 	if !parsed.checkIn || parsed.duplex().DisableIdleCheckIn {
 		t.Fatal("-check-in=true should opt in to idle prompts")
+	}
+}
+
+func TestParseOptionsExposesTheReplyTimingSettings(t *testing.T) {
+	t.Chdir(t.TempDir())
+	clearEnvironmentForTest(t, demoEOTURLVar, demoEOTModeVar, demoEOTThresholdVar, demoEOTTokenFileVar)
+
+	parsed, _, err := parseOptions([]string{"-call", "demo-call"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults := config.Defaults().Agent
+	if parsed.replySilence != defaults.ReplySilence || parsed.replySilenceMax != defaults.ReplySilenceMax ||
+		parsed.replySilenceConfident != defaults.ReplySilenceConfident ||
+		parsed.replyConfidentScore != defaults.ReplyConfidentScore ||
+		parsed.previewDebounce != defaults.PreviewDebounce || parsed.previewQuiet != defaults.PreviewQuiet {
+		t.Fatalf("the CLI should start from the router's defaults, got %+v", parsed)
+	}
+
+	parsed, _, err = parseOptions([]string{
+		"-call", "demo-call",
+		"-reply-silence=400ms", "-reply-silence-max=2s", "-reply-silence-confident=150ms",
+		"-reply-confident-score=0.8", "-preview-debounce=0s", "-preview-quiet=0s",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.replySilence != 400*time.Millisecond || parsed.replySilenceMax != 2*time.Second ||
+		parsed.replySilenceConfident != 150*time.Millisecond || parsed.replyConfidentScore != 0.8 ||
+		parsed.previewDebounce != 0 || parsed.previewQuiet != 0 {
+		t.Fatalf("the flags were not read: %+v", parsed)
 	}
 }
 

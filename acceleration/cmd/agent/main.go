@@ -23,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent/streamedge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -125,6 +126,19 @@ func parseOptions(args []string) (options, bool, error) {
 		"how sure the transcriber must be for the agent to answer rather than check what was meant")
 	flags.BoolVar(&parsed.demo, "demo", true,
 		"open a browser on a link that joins the call, so there is somebody for the agent to talk to")
+	timing := config.Defaults().Agent
+	flags.DurationVar(&parsed.replySilence, "reply-silence", timing.ReplySilence,
+		"how long the caller must have been quiet before the first sound of a reply is let out, 0 lets it out as soon as it is ready")
+	flags.DurationVar(&parsed.replySilenceMax, "reply-silence-max", timing.ReplySilenceMax,
+		"the longest the first sound of a reply is held for that silence, longer than zero while it is on")
+	flags.DurationVar(&parsed.replySilenceConfident, "reply-silence-confident", timing.ReplySilenceConfident,
+		"the silence instead for a turn the acoustic end-of-turn score was sure had ended")
+	flags.Float64Var(&parsed.replyConfidentScore, "reply-confident-score", timing.ReplyConfidentScore,
+		"the acoustic end-of-turn score from which a turn is taken to have ended for sure, 0 turns the shorter silence off")
+	flags.DurationVar(&parsed.previewDebounce, "preview-debounce", timing.PreviewDebounce,
+		"how long the caller's words must hold still before the reply to them is started ahead of the wait, 0 starts it with the wait")
+	flags.DurationVar(&parsed.previewQuiet, "preview-quiet", timing.PreviewQuiet,
+		"how long the caller's audio must also have been quiet before that, 0 looks at the words alone")
 	verbose := flags.Bool("verbose", false, "log lifecycle events")
 	if err := flags.Parse(args); err != nil {
 		return options{}, false, err
@@ -156,6 +170,13 @@ type options struct {
 	checkIn        bool
 	minConfidence  float64
 	demo           bool
+
+	replySilence          time.Duration
+	replySilenceMax       time.Duration
+	replySilenceConfident time.Duration
+	replyConfidentScore   float64
+	previewDebounce       time.Duration
+	previewQuiet          time.Duration
 
 	number       string
 	vendor       string
@@ -298,6 +319,13 @@ func run(options options, logger *slog.Logger) error {
 		EOT:            eotClient,
 		EOTMode:        eotSettings.mode,
 		EOTThreshold:   eotSettings.threshold,
+
+		ReplySilence:          &options.replySilence,
+		ReplySilenceMax:       &options.replySilenceMax,
+		ReplySilenceConfident: &options.replySilenceConfident,
+		ReplyConfidentScore:   &options.replyConfidentScore,
+		PreviewDebounce:       &options.previewDebounce,
+		PreviewQuiet:          &options.previewQuiet,
 	})
 	if err != nil {
 		return err

@@ -564,6 +564,11 @@ type AgentSuite struct {
 	// their words is started early, and is nil, which leaves the default, unless a test says
 	// otherwise.
 	previewQuiet *time.Duration
+	// replySilenceConfident and replyConfidentScore are the silence a reply to a sure ending is
+	// held for and the score that makes it one, and are nil, which leaves the defaults, unless a
+	// test says otherwise.
+	replySilenceConfident *time.Duration
+	replyConfidentScore   *float64
 	// remembers is the memory store the agent joins with, when a test gives it one.
 	remembers *stubMemory
 	// incognito holds the session off the record.
@@ -621,6 +626,8 @@ func (s *AgentSuite) SetupTest() {
 	s.replySilenceMax = nil
 	s.previewDebounce = nil
 	s.previewQuiet = nil
+	s.replySilenceConfident = nil
+	s.replyConfidentScore = nil
 	s.performing = ""
 	if s.agentID == "" {
 		s.agentID = "agent-1"
@@ -821,6 +828,9 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		EOTMode:            s.eotMode,
 		EOTThreshold:       0.5,
 		Logger:             logger,
+
+		ReplySilenceConfident: s.replySilenceConfident,
+		ReplyConfidentScore:   s.replyConfidentScore,
 	})
 	s.Require().NoError(err)
 	s.agent = agent

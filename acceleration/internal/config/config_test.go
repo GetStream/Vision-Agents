@@ -339,6 +339,41 @@ func (s *ConfigSuite) TestAReplyIsStartedWhenTheWordsHaveHeldStillUnlessTurnedOf
 	s.Contains(err.Error(), "agent.preview_debounce")
 }
 
+func (s *ConfigSuite) TestAConfidentEndingIsHeldForAShorterSilence() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(300*time.Millisecond, config.Agent.ReplySilenceConfident)
+	s.Equal(0.9, config.Agent.ReplyConfidentScore)
+
+	s.T().Setenv("ROUTER_REPLY_SILENCE_CONFIDENT", "250ms")
+	s.T().Setenv("ROUTER_REPLY_CONFIDENT_SCORE", "0.95")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(250*time.Millisecond, config.Agent.ReplySilenceConfident)
+	s.Equal(0.95, config.Agent.ReplyConfidentScore)
+	s.Equal("250ms", os.Getenv("ROUTER_REPLY_SILENCE_CONFIDENT"), "what is exported says the same")
+
+	s.T().Setenv("ROUTER_REPLY_SILENCE_CONFIDENT", "0")
+	s.T().Setenv("ROUTER_REPLY_CONFIDENT_SCORE", "0")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Zero(config.Agent.ReplySilenceConfident, "zero lets the reply out at once rather than falling back to the default")
+	s.Zero(config.Agent.ReplyConfidentScore, "zero turns the shorter silence off rather than falling back to the default")
+
+	s.T().Setenv("ROUTER_REPLY_SILENCE_CONFIDENT", "-1s")
+	_, _, err = Load("")
+	s.Require().Error(err)
+	s.Contains(err.Error(), "agent.reply_silence_confident")
+
+	s.T().Setenv("ROUTER_REPLY_SILENCE_CONFIDENT", "300ms")
+	for _, value := range []string{"-0.1", "1.1", "NaN"} {
+		s.T().Setenv("ROUTER_REPLY_CONFIDENT_SCORE", value)
+		_, _, err = Load("")
+		s.Require().Error(err, "a score of %s is not a probability", value)
+		s.Contains(err.Error(), "agent.reply_confident_score")
+	}
+}
+
 func (s *ConfigSuite) TestAReplyIsStartedAheadOfTheWaitOnlyOnceTheCallerHasBeenQuietUnlessTurnedOff() {
 	config, _, err := Load("")
 	s.Require().NoError(err)

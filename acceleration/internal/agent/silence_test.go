@@ -3,7 +3,9 @@ package agent
 import (
 	"context"
 	"log/slog"
+	"math"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -286,6 +288,33 @@ func TestACoughWhileAReplyIsHeldDelaysItAndDoesNotDropIt(t *testing.T) {
 	require.GreaterOrEqual(t, time.Since(coughAt), window, "the silence was counted from before the cough")
 }
 
+func TestAConfidentEndingIsHeldForTheShorterOfTheTwoSilences(t *testing.T) {
+	a := &Agent{replySilence: 700 * time.Millisecond, replySilenceConfident: 300 * time.Millisecond}
+
+	require.Equal(t, 700*time.Millisecond, a.silenceFor(heldReply{}))
+	require.Equal(t, 300*time.Millisecond, a.silenceFor(heldReply{confident: true}))
+
+	a.replySilenceConfident = 2 * time.Second
+	require.Equal(t, 700*time.Millisecond, a.silenceFor(heldReply{confident: true}),
+		"a sure ending is never waited on for longer than one that is in doubt")
+	a.replySilenceConfident = 0
+	require.Zero(t, a.silenceFor(heldReply{confident: true}), "zero lets a sure ending out at once")
+}
+
+func TestAReplyToAConfidentEndingIsLetOutAfterTheShorterSilence(t *testing.T) {
+	a, p := gateFixture(t, 5*time.Second, 10*time.Second)
+	a.replySilenceConfident = 100 * time.Millisecond
+	voicedAt := time.Now()
+	a.voiced.observe("alice", chunkAt(3000), voicedAt)
+	a.gated = heldReply{turn: "turn-1", participant: stt.Participant{ID: "alice"}, confident: true}
+
+	require.True(t, a.admitFirstFrame(p, context.Background(), "turn-1"))
+
+	held := time.Since(voicedAt)
+	require.GreaterOrEqual(t, held, 100*time.Millisecond)
+	require.Less(t, held, time.Second, "a sure ending was waited on for the reply silence")
+}
+
 func TestAHeldReplyIsLetGoOfWhenItIsAbandonedOrThePipelineStops(t *testing.T) {
 	a, p := gateFixture(t, 5*time.Second, 10*time.Second)
 	a.voiced.observe("alice", chunkAt(3000), time.Now())
@@ -353,6 +382,36 @@ func TestHearingAndAdmittingAudioDoNotAllocate(t *testing.T) {
 			t.Error("a reply held to the longest hold was dropped")
 		}
 	}), "a reply held to the longest hold by a line that does not go quiet")
+}
+
+func TestAConfidentEndingIsHeldForThreeHundredMillisecondsUnlessTheScoreAndTheSilenceAreSet(t *testing.T) {
+	options := func(silence *time.Duration, score *float64) Options {
+		return Options{
+			CustomerID: "acme", Edge: newLoopbackEdge(), LLM: &llmrouter.Router{},
+			STT: &sttrouter.Router{}, TTS: &ttsrouter.Router{},
+			ReplySilenceConfident: silence, ReplyConfidentScore: score,
+		}
+	}
+	silence := func(d time.Duration) *time.Duration { return &d }
+	score := func(f float64) *float64 { return &f }
+
+	left, err := New(options(nil, nil))
+	require.NoError(t, err)
+	require.Equal(t, 300*time.Millisecond, left.replySilenceConfident)
+	require.Equal(t, 0.9, left.replyConfidentScore)
+
+	set, err := New(options(silence(0), score(0)))
+	require.NoError(t, err)
+	require.Zero(t, set.replySilenceConfident)
+	require.Zero(t, set.replyConfidentScore)
+
+	for _, invalid := range []Options{
+		options(silence(-time.Millisecond), nil), options(nil, score(-0.1)),
+		options(nil, score(1.1)), options(nil, score(math.NaN())),
+	} {
+		_, err = New(invalid)
+		require.Error(t, err)
+	}
 }
 
 func TestTheReplySilenceDefaultsToSevenHundredMillisecondsAndCanBeTurnedOff(t *testing.T) {
@@ -513,6 +572,64 @@ func (s *AgentSuite) TestACoughWhileTheReplyIsHeldDelaysItAndDoesNotDropIt() {
 	queuedAt := turn.StartedAt.Add(time.Duration(turn.FirstFrameQueuedMs * float64(time.Millisecond)))
 	s.GreaterOrEqual(queuedAt.Sub(coughedAt), window-time.Millisecond,
 		"the reply was let out before the caller had been quiet since the cough")
+}
+
+// answersAfterAScoreOf has a caller speak, and the acoustic end-of-turn score of their words be
+// the given one, and returns when the first frame of the reply to them was queued, counted from
+// when the caller was last heard to voice anything.
+func (s *AgentSuite) answersAfterAScoreOf(score float64) time.Duration {
+	var requests atomic.Int64
+	s.primaryEOTServer(primaryScoreHandler(s, score, &requests))
+	longest := 5 * time.Second
+	s.replySilenceMax = &longest
+	var edge *markedEdge
+	s.edgeFactory = func(base *loopbackEdge) Edge {
+		edge = &markedEdge{loopbackEdge: base, trackDelay: 30 * time.Millisecond}
+		return edge
+	}
+	s.join(false)
+	alice := stt.Participant{ID: "alice"}
+	heardAt := s.speakAloud(alice)
+
+	s.primaryCandidate(alice, "please find a table")
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply was never let out")
+	s.Empty(s.flow.requests(), "the acoustic score decided the turn")
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
+	turn, _ := firstOf[Turn](s.reported())
+	queuedAt := turn.StartedAt.Add(time.Duration(turn.FirstFrameQueuedMs * float64(time.Millisecond)))
+	return queuedAt.Sub(heardAt)
+}
+
+func (s *AgentSuite) TestAReplyToAnEndingTheAcousticScoreWasSureOfIsHeldForTheShorterSilence() {
+	window, confident := 1500*time.Millisecond, 50*time.Millisecond
+	s.replySilence = &window
+	s.replySilenceConfident = &confident
+
+	queued := s.answersAfterAScoreOf(0.95)
+
+	s.Less(queued, window-300*time.Millisecond, "a sure ending was waited on for the reply silence")
+}
+
+func (s *AgentSuite) TestAReplyToAnEndingTheAcousticScoreWasNotSureOfKeepsTheReplySilence() {
+	window, confident := 1500*time.Millisecond, 50*time.Millisecond
+	s.replySilence = &window
+	s.replySilenceConfident = &confident
+
+	queued := s.answersAfterAScoreOf(0.7)
+
+	s.GreaterOrEqual(queued, window-time.Millisecond, "an ending that was in doubt was let out before the silence")
+}
+
+func (s *AgentSuite) TestTheShorterSilenceCanBeTurnedOffByTheScoreItNeeds() {
+	window, confident, never := 1500*time.Millisecond, 50*time.Millisecond, 0.0
+	s.replySilence = &window
+	s.replySilenceConfident = &confident
+	s.replyConfidentScore = &never
+
+	queued := s.answersAfterAScoreOf(0.99)
+
+	s.GreaterOrEqual(queued, window-time.Millisecond, "a score of zero turned the shorter silence on for every ending")
 }
 
 func (s *AgentSuite) TestNewWordsWhileTheReplyIsHeldCancelItUnheardAndLeaveNothingInTheHistory() {

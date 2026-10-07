@@ -109,6 +109,13 @@ type ManagerOptions struct {
 	// ReplySilenceMax is the longest the first audio of a reply is held for that silence, for
 	// every agent. Nil leaves it at the agent's default.
 	ReplySilenceMax *time.Duration
+	// ReplySilenceConfident is the silence that applies instead for a reply to a turn decided by
+	// an acoustic end-of-turn score of at least ReplyConfidentScore, for every agent. Nil leaves
+	// it at the agent's default.
+	ReplySilenceConfident *time.Duration
+	// ReplyConfidentScore is the acoustic end-of-turn score from which a turn is taken to have
+	// ended for sure, for every agent. Nil leaves it at the agent's default.
+	ReplyConfidentScore *float64
 	// PreviewDebounce is how long a caller's words have to hold still before every agent starts
 	// the reply to them, ahead of the wait that decides whether they have finished. Nil leaves
 	// it at the agent's default, and a pointer to zero starts the reply when that wait is over.
@@ -537,6 +544,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		Store:              m.options.Store,
 		Live:               m.options.Live,
 		Logger:             m.logger,
+
+		ReplySilenceConfident: m.options.ReplySilenceConfident,
+		ReplyConfidentScore:   m.options.ReplyConfidentScore,
 	})
 	if err != nil {
 		return nil, stack.Wrap(err)

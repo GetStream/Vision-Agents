@@ -737,15 +737,31 @@ held for at most `ROUTER_REPLY_SILENCE_MAX` after it is ready, `1s` by default,
 and plays when that has passed. It must be longer than zero while `ROUTER_REPLY_SILENCE` is
 on, and the agent option `ReplySilenceMax` is the same setting.
 
+### A reply to an ending that is sure is held for less: `ROUTER_REPLY_SILENCE_CONFIDENT`, `ROUTER_REPLY_CONFIDENT_SCORE`
+
+The silence is there for the endings that are in doubt. When a turn was decided by a successful
+acoustic end-of-turn score of at least `ROUTER_REPLY_CONFIDENT_SCORE`, `0.9` by default, the reply
+to it is held for `ROUTER_REPLY_SILENCE_CONFIDENT` instead, `300ms` by default, or for
+`ROUTER_REPLY_SILENCE` if that is shorter, and the longest hold still applies. A lower score, a turn the flow
+controller decided and a score that could not be read keep `ROUTER_REPLY_SILENCE`. A score of `0`
+for `ROUTER_REPLY_CONFIDENT_SCORE` turns the shorter silence off, `0` for
+`ROUTER_REPLY_SILENCE_CONFIDENT` lets such a reply out as soon as it is ready, and the agent
+options `ReplyConfidentScore` and `ReplySilenceConfident` are the same settings. The reply
+silence settings are also flags of `cmd/agent`: `-reply-silence`, `-reply-silence-max`,
+`-reply-silence-confident`, `-reply-confident-score`, `-preview-debounce` and `-preview-quiet`.
+
 ### A reply starts when the words hold still, not after the wait: `ROUTER_PREVIEW_DEBOUNCE`
 
 The reply to a caller's words used to be started when they became a candidate, which is after
 the cadence wait that decides whether the caller has finished, so the model began late. It is
 now started once a transcript revision has held still for `ROUTER_PREVIEW_DEBOUNCE`, `60ms`
 by default, and the candidate for the same words takes it over through the adoption a kept
-reply already uses, so there is still one model call for it. Words that change again restart
-the debounce, so revisions arriving closer together than it are started once, for the last of
-them, and a debounce that fires for words that have since changed does nothing. Words that end
+reply already uses, and takes the id it was started under, so what the reply cost is reported
+against the turn it became. It is not one model call per turn: a reply started for words that
+then change is thrown away, and the reply for the words that were answered is a second call.
+Words that change again restart the debounce, so revisions arriving closer together than it
+are started once, for the last of them, and a debounce that fires for words that have since
+changed does nothing. Words that end
 on a comma, a joining word or a hesitation, or in digits that may still be growing, are not
 started at all. There is never more than one for a participant:
 new words let go of the reply for the old ones, and every other cause that lets go of a kept
@@ -768,6 +784,19 @@ started with the candidate. No debounce is armed at all when replies are not pre
 conversation, for a speech-to-speech model, or while the next turn is being given longer to
 settle after an overlap. `0` looks at the words alone, and the agent option `PreviewQuiet` is the
 same setting.
+
+### Words that stop mid-thought are waited on longer
+
+A transcript that ends where the caller is plainly about to say more is a pause in the middle
+of a turn, a list being read out or a clause being joined on, far more often than the end of
+one. Such words wait the retry gap, `700ms`, instead of the usual gap or the short wait for a
+transcript the provider finalized, and a final that ends that way is not sent to the acoustic
+scorer ahead of its wait, as one ending in digits that may still be growing already was. They
+are words ending on a comma, matched as a character in any language (the fullwidth, ideographic
+and Arabic commas too, and a comma that a closing quotation mark follows), and, in a transcript
+that is in English or does not say what language it is in, on `and`, `or`, `but`, `because`,
+`um`, `uh` or `er`, matched as whole words ignoring case and the punctuation after them. `so` is
+not one of them: it ends a sentence as often as it joins one.
 
 ### A low acoustic score is asked again sooner, and patience is shorter
 

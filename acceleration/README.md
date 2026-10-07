@@ -115,6 +115,8 @@ the other commands that read them there.
 | `ROUTER_SPECULATIVE_REPLIES` | Each reply starts while the flow controller is still deciding whether the words were meant for the agent, and is held until the ruling says to answer. Saves the ruling's round trip on answered turns and pays for the replies a ruling drops. On by default; `false` asks for each reply only once the ruling is in |
 | `ROUTER_REPLY_SILENCE` | How long a caller must have been quiet, judged on their audio rather than their words, before the first sound of the reply to them is let out. Words are settled on a pause, which is sometimes a breath in the middle of a turn, so a reply that is ready sooner waits for the silence to be confirmed. A voice while it waits, a cough or a word, only restarts the count: the wait delays the reply and never drops it, and a caller who really goes on cancels it with their words like any other turn. Defaults to `700ms`; `0` lets a reply start the moment it is ready. Later frames of a reply, a greeting, a murmur and a turn the agent takes unprompted are not held |
 | `ROUTER_REPLY_SILENCE_MAX` | The longest the first sound of a reply is held for `ROUTER_REPLY_SILENCE` once it is ready. A line that never goes quiet, because somebody is talking in the room or there is a steady babble, would otherwise hold the reply for as long as that lasts; when this has passed the reply plays. Defaults to `1s`; must be longer than zero while `ROUTER_REPLY_SILENCE` is on |
+| `ROUTER_REPLY_SILENCE_CONFIDENT` | The silence that applies instead of `ROUTER_REPLY_SILENCE`, or that if it is shorter, to a reply to a turn that a successful acoustic end-of-turn score of at least `ROUTER_REPLY_CONFIDENT_SCORE` decided. The silence is there for endings that are in doubt, and a score that high says this one is not. A lower score, the flow controller's decisions and a score that could not be read keep `ROUTER_REPLY_SILENCE`. Defaults to `300ms`; `0` lets such a reply out as soon as it is ready |
+| `ROUTER_REPLY_CONFIDENT_SCORE` | The acoustic end-of-turn score from which a turn is taken to have ended for sure. Between `0` and `1`, defaults to `0.9`; `0` turns the shorter silence off |
 | `ROUTER_PREVIEW_DEBOUNCE` | How long a caller's words have to hold still before the reply to them is started, ahead of the wait that decides whether they have finished, so the model is already working for part of that wait. Words that change again restart it, and words that end on a comma, a joining word or a hesitation are not previewed. The candidate for the same words takes the reply over, so it is still one model call, and a reply for words that are never answered is paid for like any other dropped one. Applies wherever `ROUTER_SPECULATIVE_REPLIES` does. Defaults to `60ms`; `0` starts the reply when the wait is over |
 | `ROUTER_PREVIEW_QUIET` | How long the caller's audio, as well as their words, has to have been quiet before the reply to them is started ahead of that wait. Words hold still while a caller is still voiced, in a breath or a sound that is not speech, and a reply started then is thrown away and paid for. It is looked at again when `ROUTER_PREVIEW_DEBOUNCE` runs out, and at most three replies are started this way for one run of the caller's words, after which the reply starts with the candidate. Defaults to `120ms`; `0` looks at the words alone |
 | `ROUTER_TRUSTED_PROXIES` | CIDR ranges your own proxies sit in, comma separated, e.g. `10.0.0.0/8`. Decides how much of `X-Forwarded-For` is believed. Unset means none of it is, and the connection's address is used |
@@ -712,7 +714,7 @@ flowchart LR
   ttsSession -->|"PCM chunks"| out["Edge audio track"]
 ```
 
-Three decisions are worth knowing about:
+Four decisions are worth knowing about:
 
 - **Primary EOT decides eligible quiet turns.** A finalized transcript with valid caller
   audio goes straight to the acoustic scorer without the added 350 ms settling timer.
@@ -723,6 +725,16 @@ Three decisions are worth knowing about:
   words; the flow controller's waits keep the 700 ms retry. Ineligible or active-floor
   candidates, explicit `gate` mode, and unavailable scores use the semantic flow controller.
   New words cancel stale decisions, and the reply kept for them, in both paths.
+- **Words that stop mid-thought are waited on longer.** A transcript that ends on a comma, on
+  `and`, `or`, `but` or `because`, or on a filled hesitation (`um`, `uh`, `er`) is a caller
+  part way through a list or a clause far more often than one who has finished. It waits the
+  700 ms retry instead of the usual gap or the short wait for a final, whether or not the
+  provider finalized it, and a final that ends that way is not sent to the acoustic scorer
+  ahead of that wait. The comma is matched as a character in any language, including the
+  fullwidth, ideographic and Arabic ones and a comma followed by a closing quotation mark. The
+  words are English, matched whole and ignoring case and trailing punctuation, and only in a
+  transcript whose language is English or empty. `so` is not one of them: it ends a sentence
+  as often as it joins one.
 - **The reply is spoken sentence by sentence.** A model emits a few characters at a time,
   and a voice given two words at a time pauses in the wrong places. A streaming voice takes
   a turn's sentences as deltas of one utterance, so one turn stays one billed synthesis; a
@@ -731,7 +743,7 @@ Three decisions are worth knowing about:
   shortens the current answer after speech already queued, and an acknowledgement lets it
   continue. Audio from an abandoned turn is still dropped at publication.
 
-Those three decisions are where a call goes wrong, so `ROUTER_LOG_LEVEL=debug` narrates
+Those decisions are where a call goes wrong, so `ROUTER_LOG_LEVEL=debug` narrates
 them: every transcript revision, when the words held still, the EOT attempt count and
 decision, what the flow controller answered when used, and why the agent spoke, waited, murmured, queued the turn
 or stopped mid-reply. A quiet agent is usually one of `ignore`, `wait` on repeat, or a turn
@@ -836,6 +848,12 @@ Cadence and floor control are always part of the agent. `-backchannel` defaults 
 short listening noise during long speech or delegated work; pass `-backchannel=false` to turn
 it off. `-min-confidence` additionally makes the agent clarify a doubtful transcript. The
 flow controller also asks for clarification when the words are clear but the intent is not.
+
+`cmd/agent` takes the timing of a reply as flags, starting from the router's defaults:
+`-reply-silence`, `-reply-silence-max`, `-reply-silence-confident`, `-reply-confident-score`,
+`-preview-debounce` and `-preview-quiet` are `ROUTER_REPLY_SILENCE`,
+`ROUTER_REPLY_SILENCE_MAX`, `ROUTER_REPLY_SILENCE_CONFIDENT`, `ROUTER_REPLY_CONFIDENT_SCORE`,
+`ROUTER_PREVIEW_DEBOUNCE` and `ROUTER_PREVIEW_QUIET`.
 
 ### Voices that act a direction
 

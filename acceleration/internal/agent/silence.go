@@ -23,6 +23,13 @@ const (
 	// would wait for as long as that lasts. When this has passed the reply plays, and a caller
 	// who really is talking over it is dealt with the way any interruption is.
 	defaultReplySilenceMax = time.Second
+	// defaultReplySilenceConfident is how long the caller must have been quiet instead, for a
+	// reply to a turn that the acoustic end-of-turn model was sure had ended. The silence is there
+	// for the endings that are in doubt, and a score that high is the model saying this one is not.
+	defaultReplySilenceConfident = 300 * time.Millisecond
+	// defaultReplyConfidentScore is the acoustic end-of-turn score from which it is taken to be
+	// sure.
+	defaultReplyConfidentScore = 0.9
 	// voicedFloor is the quietest level, as RMS on the 16-bit scale, that a chunk of audio can
 	// have and still be taken for a voice: about -42 dBFS, above the hiss of a quiet line and
 	// below a soft voice.
@@ -189,6 +196,9 @@ func (v *voiceActivity) wait(d time.Duration, first, second context.Context) {
 type heldReply struct {
 	turn        string
 	participant stt.Participant
+	// confident says the turn was decided by an acoustic end-of-turn score high enough to be
+	// sure of, which shortens the silence the caller is waited for.
+	confident bool
 	// readyAt is when the first audio of the reply arrived and the hold began. Zero before.
 	readyAt time.Time
 	// committed is how long the history was once the reply's own entry had been added to it, so
@@ -196,11 +206,22 @@ type heldReply struct {
 	committed int
 }
 
+// silenceFor is how long the caller must have been quiet for a held reply to be let out. A turn
+// the acoustic end-of-turn model was sure had ended is waited on for the confident silence, if
+// that is shorter, and any other for the reply silence.
+func (a *Agent) silenceFor(held heldReply) time.Duration {
+	if held.confident {
+		return min(a.replySilence, a.replySilenceConfident)
+	}
+	return a.replySilence
+}
+
 // admitFirstFrame says whether the first frame of a turn's audio may be published now.
 //
 // A reply that answers a caller's words is only let out once the caller has been silent for
 // the reply silence since they were last heard to voice anything, however ready it is, because
-// the words it answers were settled on a pause that may turn out to be a breath. A caller who
+// the words it answers were settled on a pause that may turn out to be a breath. The silence is
+// shorter for a turn that the acoustic end-of-turn model was sure had ended. A caller who
 // has been quiet for that long is not waited for. One who has not is waited on until they have,
 // but never for longer than the longest hold after the reply was ready: a line that does not go
 // quiet, because of a conversation in the room or a steady babble, would otherwise keep it for as
@@ -223,7 +244,7 @@ func (a *Agent) admitFirstFrame(p *pipeline, publishCtx context.Context, turnID 
 	}
 	readyAt := time.Now()
 	a.gated.readyAt = readyAt
-	window, longest := a.replySilence, a.replySilenceMax
+	window, longest := a.silenceFor(held), a.replySilenceMax
 	a.mu.Unlock()
 
 	voiced := a.voiced
@@ -252,7 +273,8 @@ func (a *Agent) admitFirstFrame(p *pipeline, publishCtx context.Context, turnID 
 			waited = true
 			if a.logger.Enabled(publishCtx, slog.LevelDebug) {
 				a.logger.Debug("holding the reply until the caller has been quiet",
-					"turn", turnID, "participant", held.participant.ID, "window", window, "longest", longest)
+					"turn", turnID, "participant", held.participant.ID, "window", window, "longest", longest,
+					"confident", held.confident)
 			}
 		}
 		voiced.wait(left, publishCtx, p.ctx)

@@ -1248,6 +1248,9 @@ func buildSessions(
 		Configs:            configs,
 		Directory:          directory,
 		PluginAuth:         pluginAuth,
+
+		ReplySilenceConfident: &settings.Agent.ReplySilenceConfident,
+		ReplyConfidentScore:   &settings.Agent.ReplyConfidentScore,
 	})
 }
 

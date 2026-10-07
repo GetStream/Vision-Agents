@@ -642,6 +642,13 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 			Floor:       harness.Continue,
 			TookMs:      float64(result.latency) / float64(time.Millisecond),
 		}
+		// A score this high is the model sure the caller has finished, so the reply to them is
+		// held for a shorter silence. It is only remembered until the ruling has been carried out.
+		if a.replyConfidentScore > 0 && result.score.Probability >= a.replyConfidentScore {
+			a.mu.Lock()
+			a.confident[gate.candidateID] = struct{}{}
+			a.mu.Unlock()
+		}
 		a.rule(decision)
 		return
 	}

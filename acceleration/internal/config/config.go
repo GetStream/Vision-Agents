@@ -207,6 +207,15 @@ type Agent struct {
 	// babble, does not confirm the silence, so the reply is let out when this has passed.
 	// 1s by default; it must be longer than zero while reply_silence is on.
 	ReplySilenceMax time.Duration `koanf:"reply_silence_max"`
+	// ReplySilenceConfident is the silence that applies instead of reply_silence when the reply
+	// is to a turn decided by an acoustic end-of-turn score of at least reply_confident_score:
+	// the silence is there for endings in doubt, and a score that high says this one is not. The
+	// flow controller's decisions and lower scores keep reply_silence. 300ms by default; 0 lets
+	// such a reply out as soon as it is ready.
+	ReplySilenceConfident time.Duration `koanf:"reply_silence_confident"`
+	// ReplyConfidentScore is the acoustic end-of-turn score from which the turn is taken to have
+	// ended for sure. Between 0 and 1, 0.9 by default; 0 turns the shorter silence off.
+	ReplyConfidentScore float64 `koanf:"reply_confident_score"`
 	// PreviewDebounce is how long a caller's words have to hold still before the reply to them
 	// is started, ahead of the wait that decides whether they have finished. Words that change
 	// again restart it. It applies wherever SpeculativeReplies does. 60ms by default; 0 starts
@@ -285,13 +294,15 @@ var variables = map[string]string{
 	"rate_limit.messages_per_day": "ROUTER_RATE_LIMIT_MESSAGES_PER_DAY",
 	"rate_limit.tokens_per_day":   "ROUTER_RATE_LIMIT_TOKENS_PER_DAY",
 
-	"agent.speculative_replies": "ROUTER_SPECULATIVE_REPLIES",
-	"agent.reply_silence":       "ROUTER_REPLY_SILENCE",
-	"agent.reply_silence_max":   "ROUTER_REPLY_SILENCE_MAX",
-	"agent.preview_debounce":    "ROUTER_PREVIEW_DEBOUNCE",
-	"agent.preview_quiet":       "ROUTER_PREVIEW_QUIET",
-	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
-	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
+	"agent.speculative_replies":     "ROUTER_SPECULATIVE_REPLIES",
+	"agent.reply_silence":           "ROUTER_REPLY_SILENCE",
+	"agent.reply_silence_max":       "ROUTER_REPLY_SILENCE_MAX",
+	"agent.reply_silence_confident": "ROUTER_REPLY_SILENCE_CONFIDENT",
+	"agent.reply_confident_score":   "ROUTER_REPLY_CONFIDENT_SCORE",
+	"agent.preview_debounce":        "ROUTER_PREVIEW_DEBOUNCE",
+	"agent.preview_quiet":           "ROUTER_PREVIEW_QUIET",
+	"auth.proxy_declares_kind":      "ROUTER_AUTH_PROXY_DECLARES_KIND",
+	"connectors.enabled":            "ROUTER_CONNECTORS_ENABLED",
 
 	"sandbox.enabled":               "ROUTER_SANDBOX_ENABLED",
 	"sandbox.recipients":            "ROUTER_SANDBOX_RECIPIENTS",
@@ -314,11 +325,13 @@ func Defaults() Config {
 		RateLimit: RateLimit{MessagesPerDay: 200, TokensPerDay: 5_000_000},
 		DataMove:  DataMove{Retention: 7 * 24 * time.Hour},
 		Agent: Agent{
-			SpeculativeReplies: true,
-			ReplySilence:       700 * time.Millisecond,
-			ReplySilenceMax:    time.Second,
-			PreviewDebounce:    60 * time.Millisecond,
-			PreviewQuiet:       120 * time.Millisecond,
+			SpeculativeReplies:    true,
+			ReplySilence:          700 * time.Millisecond,
+			ReplySilenceMax:       time.Second,
+			ReplySilenceConfident: 300 * time.Millisecond,
+			ReplyConfidentScore:   0.9,
+			PreviewDebounce:       60 * time.Millisecond,
+			PreviewQuiet:          120 * time.Millisecond,
 		},
 		EOT:     EOT{Endpoint: eotdefaults.HostedDemoEndpoint, Mode: "primary", Threshold: 0.5},
 		Sandbox: Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
@@ -460,6 +473,12 @@ func (c Config) validate() error {
 	if c.Agent.ReplySilence > 0 && c.Agent.ReplySilenceMax == 0 {
 		return errors.New("config: agent.reply_silence_max must be longer than zero while agent.reply_silence is on")
 	}
+	if c.Agent.ReplySilenceConfident < 0 {
+		return fmt.Errorf("config: agent.reply_silence_confident cannot be negative, got %s", c.Agent.ReplySilenceConfident)
+	}
+	if math.IsNaN(c.Agent.ReplyConfidentScore) || c.Agent.ReplyConfidentScore < 0 || c.Agent.ReplyConfidentScore > 1 {
+		return fmt.Errorf("config: agent.reply_confident_score must be between 0 and 1, got %v", c.Agent.ReplyConfidentScore)
+	}
 	if c.Agent.PreviewDebounce < 0 {
 		return fmt.Errorf("config: agent.preview_debounce cannot be negative, got %s", c.Agent.PreviewDebounce)
 	}
@@ -558,6 +577,8 @@ func (c Config) export() error {
 		"agent.speculative_replies":     fmt.Sprint(c.Agent.SpeculativeReplies),
 		"agent.reply_silence":           c.Agent.ReplySilence.String(),
 		"agent.reply_silence_max":       c.Agent.ReplySilenceMax.String(),
+		"agent.reply_silence_confident": c.Agent.ReplySilenceConfident.String(),
+		"agent.reply_confident_score":   fmt.Sprint(c.Agent.ReplyConfidentScore),
 		"agent.preview_debounce":        c.Agent.PreviewDebounce.String(),
 		"agent.preview_quiet":           c.Agent.PreviewQuiet.String(),
 		"connectors.enabled":            fmt.Sprint(c.Connectors.Enabled),
