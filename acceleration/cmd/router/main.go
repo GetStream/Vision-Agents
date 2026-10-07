@@ -1007,16 +1007,22 @@ func run(settings config.Config, logger *slog.Logger) error {
 		options.ConnectorResolver = connectorResolver
 		options.ConnectorTransports = connectorTransports
 		options.ConnectorEventSecrets = api.ConnectorEventSecrets(os.Getenv)
-		// The events endpoint hands it a provider app's messages; the message hook, the
-		// agent's replies to them.
+		// The events endpoint hands it a provider app's messages; the conversation held on a
+		// thread channel, the agent's finished replies to them.
 		bridge, err := channelbridge.New(channelbridge.Options{
-			Store: pgStore, Stream: streamClients, Schemes: connectors.Schemes, Transports: connectorTransports, Logger: logger,
+			Store: pgStore, Stream: streamClients, Schemes: connectors.Schemes, Transports: connectorTransports,
+			Resolver: connectorResolver, Logger: logger,
 		})
 		if err != nil {
 			return err
 		}
 		defer bridge.Close()
 		options.ChannelBridge = bridge
+		if sessions != nil {
+			if conversations, err := sessions.Conversations(); err == nil {
+				conversations.OnFinishedReply(bridge.Reply)
+			}
+		}
 	}
 	if streamClients.PerApp() {
 		// Each registered app signs its own hooks and mints its own tokens, so only work in

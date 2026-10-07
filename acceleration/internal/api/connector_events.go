@@ -69,16 +69,15 @@ func ConnectorEventSecrets(getenv func(string) string) EventSecretLookup {
 // internal/channelbridge). Deliver takes the messages a verified inbound request carried, for
 // the provider app the request's route named: the zero record on a connector's own route,
 // which names no customer. An error makes the endpoint answer 500, so the provider delivers
-// again; a bridge drops a retried message by its ProviderMessageID. Reply takes the agent's
-// reply in a thread channel linked to an external thread, which the message hook hands over,
-// and sends it there; it answers at once, and a reply it cannot send is its own to report.
+// again; a bridge drops a retried message by its ProviderMessageID. Replies do not pass here:
+// the conversation on a thread channel hands its finished replies to the bridge itself
+// (conversation.Service.OnFinishedReply).
 type ChannelBridge interface {
 	Deliver(ctx context.Context, app store.ConnectorOAuthClient, messages []core.InboundMessage) error
-	Reply(ctx context.Context, thread store.ChannelThread, text string)
 }
 
 // droppingBridge is the bridge of a deployment without one: it logs that messages came and
-// drops them, and sends no reply. It logs no text and no author, which are a person's.
+// drops them. It logs no text and no author, which are a person's.
 type droppingBridge struct {
 	logger *slog.Logger
 }
@@ -89,11 +88,6 @@ func (b droppingBridge) Deliver(_ context.Context, _ store.ConnectorOAuthClient,
 			"connector", messages[0].ConnectorID, "messages", len(messages))
 	}
 	return nil
-}
-
-func (b droppingBridge) Reply(_ context.Context, thread store.ChannelThread, _ string) {
-	b.logger.Info("dropped a reply to an external thread: no channel bridge",
-		"connector", thread.ConnectorID, "channel", thread.ChannelID)
 }
 
 // receiveConnectorEvent is the inbound handler for a built-in connector's provider events,

@@ -211,7 +211,7 @@ func (s *ChatLogSuite) TestASavedArtifactIsStoredEvenWithoutASpokenReply() {
 	s.Require().NoError(err)
 	stored := response.Data.Message
 	s.Equal(SourceAgent, stored.Custom[SourceField])
-	s.Equal(false, stored.Custom[GeneratingField])
+	s.Equal(false, stored.Custom[generatingField])
 	s.Require().Len(stored.Attachments, 1)
 	s.Equal("canvas", *stored.Attachments[0].Type)
 	s.Equal("Lilacs", *stored.Attachments[0].Title)
@@ -251,7 +251,7 @@ func (s *ChatLogSuite) TestAnInterruptedReplyIsNotStoredAsFullySpoken() {
 	s.Require().NoError(err)
 	stored := response.Data.Message
 	s.Equal(true, stored.Custom[interruptedField])
-	s.Equal(false, stored.Custom[GeneratingField])
+	s.Equal(false, stored.Custom[generatingField])
 	s.NotEqual(generated, stored.Text, "unplayed model text must not look like a finished spoken reply")
 }
 
@@ -269,7 +269,7 @@ func (s *ChatLogSuite) TestANativePartialAfterInterruptIsKeptAsInterrupted() {
 	stored := response.Data.Messages[0]
 	s.Equal("One,", stored.Text)
 	s.Equal(true, stored.Custom[interruptedField])
-	s.Equal(false, stored.Custom[GeneratingField])
+	s.Equal(false, stored.Custom[generatingField])
 }
 
 func (s *ChatLogSuite) TestSilenceIsNotStored() {
@@ -350,7 +350,7 @@ func (s *ChatLogSuite) TestWhatAParticipantIsSayingIsOneMessageThatSettles() {
 	writer.handle(message{author: alice, text: "where is", kind: hearing, source: SourceSpeech})
 	writer.show()
 	s.Require().Len(s.channel(), 1, "watchers see the words before the turn settles")
-	s.Equal(true, s.channel()[0].Custom[GeneratingField])
+	s.Equal(true, s.channel()[0].Custom[generatingField])
 
 	writer.handle(message{author: alice, text: "where is my order", kind: hearing, source: SourceSpeech})
 	writer.show()
@@ -359,7 +359,7 @@ func (s *ChatLogSuite) TestWhatAParticipantIsSayingIsOneMessageThatSettles() {
 	stored := s.channel()
 	s.Require().Len(stored, 1, "revisions update the message rather than adding one each")
 	s.Equal("Where is my order 1042?", stored[0].Text)
-	s.Equal(false, stored[0].Custom[GeneratingField])
+	s.Equal(false, stored[0].Custom[generatingField])
 	s.Equal(SourceSpeech, stored[0].Custom[SourceField])
 	s.Empty(writer.listening)
 }

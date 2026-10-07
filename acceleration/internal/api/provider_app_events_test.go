@@ -11,14 +11,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -60,7 +60,6 @@ func (s *SlackChannelSuite) SetupSuite() {
 		Verifiers: map[string]core.Verifier{verifier.Name(): verifier},
 	}
 	s.channelProvider = func() string { return strings.TrimPrefix(s.slack.URL, "https://") }
-	s.transcripts = true
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
@@ -207,80 +206,147 @@ func (s *SlackChannelSuite) TestAStaleRetriedTokensRevokedAfterAReconnectDoesNot
 	s.Equal(store.ConnectionConnected, s.status(s.bot))
 }
 
-// The whole loop: Slack's message lands in the thread channel; the message hook wakes the
-// text session running on it; the session's reply, written back into the thread channel,
-// leaves through the manifest's chat.postMessage template, into the same Slack thread, with
-// the bot connection's token.
-func (s *SlackChannelSuite) TestTheSessionsReplyLeavesIntoTheSameSlackThreadWithTheBotToken() {
-	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
-	defer release()
-	s.deliver(s.message("U0000ALICE", "<@U0000BOT> is the build green?", "1759740000.000100", ""), 0)
-	channel := s.threadChannel("C0000CHAN:1759740000.000100")
-	s.written(channel, 1)
+// The production path end to end: Slack's message lands in the thread channel; Stream Chat's
+// message.new reaches the message hook; the Router opens a persistent text session on the
+// thread channel itself; the reply's final text is stored in the thread channel; the
+// conversation hands it to the bridge, which posts it into the same Slack thread with the
+// bot connection's token.
+func (s *SlackChannelSuite) TestTheRoutersSessionAnswersInTheThreadChannelAndTheReplyLeavesIntoTheSameSlackThread() {
+	channel := s.messaged("U0000ALICE", "<@U0000BOT> is the build green?", "1759740000.000100", "")
 
-	// Nothing runs on the thread channel yet, so the hook hands the message to a worker of the
-	// customer's, with the agent the channel names, as for any agent channel.
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
-	select {
-	case handed := <-worker.Messages():
-		s.Equal(channel, handed.ChannelID)
-		s.Equal(s.config.ID, handed.ConfigID)
-		s.Equal("<@U0000BOT> is the build green?", handed.Text)
-	case <-time.After(settleFor):
-		s.Fail("the message never reached the worker")
-	}
 
-	// The worker's session on the thread channel. Opened through the manager, because one
-	// opened through POST /v1/agents/sessions keeps its conversation in a channel of its own.
-	opened, err := s.manager.Create(context.Background(), session.Spec{
-		CustomerID: s.customerID(), ConfigID: s.config.ID, Text: true, AgentID: channel,
-		UserID: "agent-" + s.utils.uuid(), LLMTarget: "en-low-latency",
-	})
-	s.Require().NoError(err)
-	s.T().Cleanup(func() { _, _ = s.manager.Close(opened.ID(), session.OwnerOf(opened.Spec())) })
-
-	// The next message in the thread wakes the session, which answers into the thread
-	// channel with source agent; Stream Chat delivers that too.
-	s.deliver(s.message("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
-	s.written(channel, 2)
-	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 1))
-	replies := s.written(channel, 3)
-	s.Equal("Hello.", replies[2]["text"])
-	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 2))
-
-	s.Require().Eventually(func() bool { return len(s.slack.Posts()) == 1 }, settleFor, 10*time.Millisecond)
-	post := s.slack.Posts()[0]
+	post := s.posted(1)[0]
 	s.Equal("C0000CHAN", post.Channel)
 	s.Equal("1759740000.000100", post.ThreadTS, "the reply goes into the thread the message came from")
-	s.Equal("Hello.", post.Text)
+	s.Equal("Noted.", post.Text)
 	s.True(post.Token == s.botToken, "sent with the bot connection's token")
+	reply := s.agentsReply(channel)
+	s.Equal("Noted.", reply["text"], "the reply is kept in the thread channel, not in a support channel of its own")
+	s.True(s.told("is the build green?"), "the model is told the person's message")
 }
 
-func (s *SlackChannelSuite) TestAnAgentsReplyInAChannelLinkedToNoThreadLeavesNothing() {
-	channel := "chat-" + s.utils.uuid()
+// The session stays on the thread channel for DetachedGrace, so the second message is the
+// same conversation, and the model reads the first one in it.
+func (s *SlackChannelSuite) TestASecondMessageInTheThreadIsAnsweredInTheSameConversation() {
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	s.posted(1)
 
-	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream", s.agentReply(channel, "Hello.", false)))
+	s.deliver(s.message("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
+	stored := s.written(channel, 3)
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, len(stored)-1))
 
-	s.Never(func() bool { return len(s.slack.Posts()) > 0 }, dropped, 20*time.Millisecond)
+	posts := s.posted(2)
+	s.Equal("1759740000.000100", posts[1].ThreadTS)
+	s.True(s.told("is the build green?", "and the deploy?"), "the second turn reads the first message as history")
 }
 
-func (s *SlackChannelSuite) TestAReplyStillBeingWrittenIsNotSent() {
-	s.deliver(s.message("U0000ALICE", "hello", "1759740000.000100", ""), 0)
-	channel := s.threadChannel("C0000CHAN:1759740000.000100")
+// Stream may deliver one message.new twice; the session answers it once.
+func (s *SlackChannelSuite) TestAMessageStreamDeliversTwiceIsAnsweredOnce() {
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 
-	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream", s.agentReply(channel, "Hel", true)))
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 
-	s.Never(func() bool { return len(s.slack.Posts()) > 0 }, dropped, 20*time.Millisecond)
+	s.posted(1)
+	s.Never(func() bool { return len(s.slack.Posts()) > 1 }, dropped, 20*time.Millisecond)
 }
 
-func (s *SlackChannelSuite) TestAFinishedReplyInAThreadChannelIsSent() {
-	s.deliver(s.message("U0000ALICE", "hello", "1759740000.000100", ""), 0)
-	channel := s.threadChannel("C0000CHAN:1759740000.000100")
+// A finished reply is handed over each time it is written; a message a login later marks is
+// written again (conversation.Service.OnFinishedReply). It leaves once.
+func (s *SlackChannelSuite) TestAFinishedReplyHandedOverTwiceIsSentOnce() {
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	s.posted(1)
+	reply := s.agentsReply(channel)
 
-	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream", s.agentReply(channel, "Hi there.", false)))
+	s.bridge.(*channelbridge.Bridge).Reply(conversation.FinishedReply{
+		Customer: s.customerID(), CID: "agent:" + channel, MessageID: reply["id"].(string), Text: "Noted.",
+	})
 
-	s.Require().Eventually(func() bool { return len(s.slack.Posts()) == 1 }, settleFor, 10*time.Millisecond)
-	s.Equal("Hi there.", s.slack.Posts()[0].Text)
+	s.Never(func() bool { return len(s.slack.Posts()) > 1 }, dropped, 20*time.Millisecond)
+}
+
+// A worker that opens a session for a thread channel through POST /v1/agents/sessions names
+// it by agent_id, as the Go SDK's Dispatch.Conversation does; the session keeps its
+// conversation in the thread channel, where the hook's turns and the bridge find it.
+func (s *SlackChannelSuite) TestASessionOpenedThroughTheAPIForAThreadChannelHoldsItsConversationThere() {
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+
+	opened := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel, Text: pointerTo(true)})
+
+	s.Equal("agent:"+channel, value(opened.ConversationId))
+	s.Equal(channel, opened.AgentId, "the conversation names its agent, the channel's")
+}
+
+// Slack refuses a revoked bot token with HTTP 200 and «"ok": false, "error": "invalid_auth"»
+// (https://docs.slack.dev/reference/methods/chat.postMessage), which the transport does not
+// read; the bridge has the scheme classify it and the resolver end the grant.
+func (s *SlackChannelSuite) TestAReplySlackRefusesForItsTokenMovesTheConnection() {
+	s.slack.RevokeBot(s.botToken)
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+
+	s.Require().Eventually(func() bool {
+		return s.status(s.bot) == store.ConnectionNeedsReauthorization
+	}, settleFor, 10*time.Millisecond)
+	s.Empty(s.slack.Posts())
+}
+
+// messaged is the thread channel a Slack message lands in, once the bridge wrote it there.
+func (s *SlackChannelSuite) messaged(user, text, ts, threadTS string) string {
+	s.deliver(s.message(user, text, ts, threadTS), 0)
+	channel := s.threadChannel("C0000CHAN:" + firstNonEmpty(threadTS, ts))
+	s.written(channel, 1)
+	return channel
+}
+
+// posted waits until Slack took count replies, and returns them.
+func (s *SlackChannelSuite) posted(count int) []fakeprovider.Post {
+	s.Require().Eventually(func() bool { return len(s.slack.Posts()) >= count }, settleFor, 10*time.Millisecond,
+		"Slack took %d replies, not %d", len(s.slack.Posts()), count)
+	return s.slack.Posts()
+}
+
+// agentsReply is the agent's reply in a thread channel, written as the channel's own agent.
+func (s *SlackChannelSuite) agentsReply(channel string) map[string]any {
+	for _, stored := range s.chat.Stored(channel) {
+		if stored["user_id"] == channel {
+			return stored
+		}
+	}
+	s.FailNow("the thread channel holds no reply of its agent")
+	return nil
+}
+
+// told is whether one request to a model of the suite's held every text in its input.
+func (s *SlackChannelSuite) told(texts ...string) bool {
+	s.notedMu.Lock()
+	defer s.notedMu.Unlock()
+	for _, model := range s.noted {
+		for _, request := range model.requests() {
+			input := fmt.Sprint(request.Input)
+			held := true
+			for _, text := range texts {
+				held = held && strings.Contains(input, text)
+			}
+			if held {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // providerApp is a Slack app of the test's customer, its record written as T40's store
@@ -328,7 +394,7 @@ func (s *SlackChannelSuite) connectedBot(team, token string) core.ConnectionRef 
 // agent that answers in the workspace.
 func (s *SlackChannelSuite) answering(connectionID string) store.AgentConfig {
 	config := store.AgentConfig{
-		CustomerID: s.customerID(), Name: "slack-" + s.utils.uuid(), Mode: store.AgentModeText, LLM: "en-low-latency",
+		CustomerID: s.customerID(), Name: "slack-" + s.utils.uuid(), Mode: store.AgentModeText, LLM: "noted/noted-model",
 		Connectors: []store.ConnectorBinding{{
 			Name: "slack", ConnectorID: "slack_bot",
 			Connection: store.ConnectionBinding{Type: "fixed", ConnectionID: connectionID},
@@ -416,20 +482,6 @@ func (s *SlackChannelSuite) streamDelivers(channel string, index int) int {
 	})
 	s.Require().NoError(err)
 	return s.signedly("/v1/chat/hooks/stream", string(payload))
-}
-
-// agentReply is the message.new for an agent's written reply in a channel, as chatlog writes
-// it: source agent, and generating while it is still being written.
-func (s *SlackChannelSuite) agentReply(channel, text string, generating bool) string {
-	payload, err := json.Marshal(map[string]any{
-		"type": "message.new", "cid": "agent:" + channel, "channel_id": channel, "channel_type": "agent",
-		"message": map[string]any{
-			"id": s.utils.uuid(), "text": text, "user": map[string]string{"id": "agent", "name": "Agent"},
-			"custom": map[string]any{"source": "agent", "generating": generating, "interrupted": false},
-		},
-	})
-	s.Require().NoError(err)
-	return string(payload)
 }
 
 // status is a connection's status as stored.

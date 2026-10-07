@@ -89,15 +89,10 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 			writeError(w, invalidRequest("could not read that message event"))
 			return
 		}
-		// Every message in the app arrives here; only one written to an agent, or an agent's
-		// reply bound for an external thread, is worth recording as delivered.
-		switch {
-		case addressed(event):
-			if s.acting(r.Context(), origin, eventType, payload) {
-				s.routeArrivingMessage(r, origin, payload, event)
-			}
-		case replied(event):
-			s.handOffReply(r.Context(), origin, eventType, payload, event)
+		// Every message in the app arrives here; only one written to an agent is worth
+		// recording as delivered.
+		if addressed(event) && s.acting(r.Context(), origin, eventType, payload) {
+			s.routeArrivingMessage(r, origin, payload, event)
 		}
 	} else {
 		s.logger.Debug("ignoring a message event", "type", eventType)
@@ -128,53 +123,18 @@ func addressed(event messageEvent) bool {
 	return !written
 }
 
-// replied reports whether a message is an agent's finished written reply in an agent
-// channel: the one message chatlog.Log.Reply writes for an answer, with its text, source agent
-// and generating false (internal/chatlog/chatlog.go, writer.send). A reply still being
-// written (generating true) is left alone, so a half-written one never leaves.
-func replied(event messageEvent) bool {
-	if event.ChannelType != chatlog.ChannelType || event.ChannelID == "" || event.Message.Text == "" {
-		return false
-	}
-	if generating, _ := event.Message.Custom[chatlog.GeneratingField].(bool); generating {
-		return false
-	}
-	return event.Message.Custom[chatlog.SourceField] == chatlog.SourceAgent
-}
-
-// handOffReply gives the channel bridge an agent's reply in a thread channel linked to an
-// external thread, such as a Slack thread, for the bridge to send there (channels.md on
-// connectors/planning, «Who moves messages: the channel bridge», step 7). A channel linked to
-// nothing is a plain Stream Chat conversation, and nothing leaves it. A thread is acted on
-// only from a hook of the app it is pinned to, and only once per delivery.
-func (s *Server) handOffReply(ctx context.Context, origin hookOrigin, eventType string, payload []byte, event messageEvent) {
-	if s.store == nil {
-		return
-	}
-	thread, err := s.store.ChannelThread(ctx, event.ChannelID)
-	if errors.Is(err, store.ErrNoChannelThread) {
-		return
-	}
-	if err != nil {
-		s.logger.Error("could not tell whether a reply goes to an external thread", "channel", event.ChannelID, "error", err)
-		return
-	}
-	if !origin.owns(thread.CustomerID, thread.StreamAppPK) {
-		s.logger.Info("ignoring a reply in a thread channel of another app", "channel", event.ChannelID, "stream_app", origin.app)
-		return
-	}
-	if !s.acting(ctx, origin, eventType, payload) {
-		return
-	}
-	s.channelBridge.Reply(ctx, thread, event.Message.Text)
-}
-
 // routeArrivingMessage answers a message from the session running on its channel, or hands
 // it to a worker to start one.
 //
 // The body is carried in rather than read again because the session may be running on
 // another node, which has to be handed the delivery exactly as Stream signed it.
 func (s *Server) routeArrivingMessage(r *http.Request, origin hookOrigin, body []byte, event messageEvent) {
+	// A thread channel holds an external thread, such as a Slack thread, which the Router
+	// answers itself: nobody watches it to hand the message to a worker.
+	if thread, linked := s.linkedThread(r.Context(), origin, event.ChannelID); linked {
+		go s.answerThread(origin, thread, event)
+		return
+	}
 	if s.sessions != nil {
 		// A session running on a channel of the same name in another app is somebody
 		// else's conversation.

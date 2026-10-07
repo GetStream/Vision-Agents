@@ -413,9 +413,6 @@ func (d *deliveries) Deliver(_ context.Context, _ store.ConnectorOAuthClient, me
 	return nil
 }
 
-// Reply sends nothing: no thread channel is linked in this suite.
-func (d *deliveries) Reply(context.Context, store.ChannelThread, string) {}
-
 // of is the messages delivered for one provider unit.
 func (d *deliveries) of(unit string) []core.InboundMessage {
 	d.mu.Lock()

@@ -116,11 +116,11 @@ func (s *StoreSuite) TestARetriedMessageIsClaimedOnce() {
 	_, err := s.store.LinkChannelThread(s.ctx, thread("thread-one", "C0000CHAN:1"))
 	s.Require().NoError(err)
 
-	first, err := s.store.ClaimChannelThreadMessage(s.ctx, "thread-one", "1759740000.000200")
+	first, err := s.store.ClaimChannelThreadMessage(s.ctx, "thread-one", ClaimInbound, "1759740000.000200")
 	s.Require().NoError(err)
-	again, err := s.store.ClaimChannelThreadMessage(s.ctx, "thread-one", "1759740000.000200")
+	again, err := s.store.ClaimChannelThreadMessage(s.ctx, "thread-one", ClaimInbound, "1759740000.000200")
 	s.Require().NoError(err)
-	next, err := s.store.ClaimChannelThreadMessage(s.ctx, "thread-one", "1759740000.000300")
+	next, err := s.store.ClaimChannelThreadMessage(s.ctx, "thread-one", ClaimInbound, "1759740000.000300")
 	s.Require().NoError(err)
 
 	s.True(first)
@@ -128,15 +128,30 @@ func (s *StoreSuite) TestARetriedMessageIsClaimedOnce() {
 	s.True(next)
 }
 
+// A Stream Chat id and a provider's id can be the same string; each step claims its own.
+func (s *StoreSuite) TestEachStepClaimsAMessageOnce() {
+	_, err := s.store.LinkChannelThread(s.ctx, thread("thread-one", "C0000CHAN:1"))
+	s.Require().NoError(err)
+
+	for _, kind := range []string{ClaimInbound, ClaimTurn, ClaimReply} {
+		first, err := s.store.ClaimChannelThreadMessage(s.ctx, "thread-one", kind, "same-id")
+		s.Require().NoError(err)
+		again, err := s.store.ClaimChannelThreadMessage(s.ctx, "thread-one", kind, "same-id")
+		s.Require().NoError(err)
+		s.True(first, kind)
+		s.False(again, kind)
+	}
+}
+
 func (s *StoreSuite) TestAMessageIdOlderThanTheKeepIsForgotten() {
 	_, err := s.store.LinkChannelThread(s.ctx, thread("thread-one", "C0000CHAN:1"))
 	s.Require().NoError(err)
-	_, err = s.store.ClaimChannelThreadMessage(s.ctx, "thread-one", "old")
+	_, err = s.store.ClaimChannelThreadMessage(s.ctx, "thread-one", ClaimInbound, "old")
 	s.Require().NoError(err)
 	_, err = s.store.DB().ExecContext(s.ctx, "UPDATE channel_thread_messages SET created_at = ?", time.Now().Add(-channelMessageKeep-time.Minute))
 	s.Require().NoError(err)
 
-	_, err = s.store.ClaimChannelThreadMessage(s.ctx, "thread-one", "new")
+	_, err = s.store.ClaimChannelThreadMessage(s.ctx, "thread-one", ClaimInbound, "new")
 	s.Require().NoError(err)
 
 	var kept int

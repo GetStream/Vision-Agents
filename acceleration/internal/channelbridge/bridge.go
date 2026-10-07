@@ -20,6 +20,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,12 +40,16 @@ import (
 // ran on. The value is the hook's; the bridge cannot import the api package, which serves it.
 const configField = "agent_config_id"
 
-// threadChannelPrefix starts every thread channel's id, so one reads as a thread channel in a
-// list of agent channels. Never support-, which durable session commands own
-// (conversation.SessionCommandChannel), and short enough that the id with a UUID after it is
-// within Stream's «max length 64 characters» for a channel id
+// agentField is the channel custom field a persistent conversation reads its agent from
+// (conversation.ownedBy, support_agent_id).
+const agentField = "support_agent_id"
+
+// threadChannelPrefix starts every thread channel's id: conversation.ThreadChannelPrefix,
+// the prefix a persistent conversation may be held on. Never support-, which durable session
+// commands own and the message hook ignores (conversation.SessionCommandChannel). With a UUID
+// after it the id is within Stream's «max length 64 characters» for a channel id
 // (https://getstream.io/chat/docs/go-golang/creating_channels/).
-const threadChannelPrefix = "thread-"
+const threadChannelPrefix = conversation.ThreadChannelPrefix
 
 // writeTimeout bounds writing one inbound message into Stream Chat, off the request path. It
 // is chatlog's writeTimeout for one write, 10 s, for three of them in a row (the author, the
@@ -72,7 +77,10 @@ type Options struct {
 	Schemes map[string]core.Scheme
 	// Transports builds each connection's outbound client, through which every reply leaves.
 	Transports *core.Transports
-	Logger     *slog.Logger
+	// Resolver is told when the provider refuses a reply's credential in an answer the
+	// transport does not read, such as Slack's HTTP 200 invalid_auth.
+	Resolver core.Resolver
+	Logger   *slog.Logger
 }
 
 // Bridge is the channel bridge. Its writes into Stream Chat and its replies run off the
@@ -82,6 +90,7 @@ type Bridge struct {
 	stream     *streamapp.Clients
 	schemes    map[string]core.Scheme
 	transports *core.Transports
+	resolver   core.Resolver
 	logger     *slog.Logger
 
 	working sync.WaitGroup
@@ -91,8 +100,8 @@ type Bridge struct {
 
 // New validates the options and returns a Bridge.
 func New(options Options) (*Bridge, error) {
-	if options.Store == nil || options.Stream == nil || options.Transports == nil {
-		return nil, stack.Wrap(errors.New("channelbridge: a store, Stream clients and transports are required"))
+	if options.Store == nil || options.Stream == nil || options.Transports == nil || options.Resolver == nil {
+		return nil, stack.Wrap(errors.New("channelbridge: a store, Stream clients, transports and a resolver are required"))
 	}
 	logger := options.Logger
 	if logger == nil {
@@ -103,6 +112,7 @@ func New(options Options) (*Bridge, error) {
 		stream:     options.Stream,
 		schemes:    options.Schemes,
 		transports: options.Transports,
+		resolver:   options.Resolver,
 		logger:     logger,
 		turns:      map[string]*holder{},
 	}, nil
@@ -142,53 +152,73 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 	return nil
 }
 
-// Reply sends text, the agent's reply in a linked thread channel, to its external thread, off
-// the caller's request: the message hook that hands it over answers Stream at once. A reply
-// that cannot be sent is logged.
-func (b *Bridge) Reply(_ context.Context, thread store.ChannelThread, text string) {
+// Reply sends an agent's finished reply in a thread channel to its external thread. The
+// persistent conversation holding the channel calls it once the final text is stored
+// (conversation.Service.OnFinishedReply), the one place a reply leaves. It claims the reply
+// by its Stream Chat id first, so a reply written, and so told, again is sent once. It runs
+// off the caller, which is the conversation's writer; a reply it cannot send is logged.
+func (b *Bridge) Reply(reply conversation.FinishedReply) {
 	b.working.Add(1)
 	go func() {
 		defer b.working.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 		defer cancel()
-		if err := b.send(ctx, thread, text); err != nil {
-			b.logger.Error("could not send a reply to its external thread",
-				"connector", thread.ConnectorID, "channel", thread.ChannelID, "error", err)
+		if err := b.reply(ctx, reply); err != nil {
+			b.logger.Error("could not send a reply to its external thread", "conversation", reply.CID, "error", err)
 		}
 	}()
 }
 
+// reply finds the thread a finished reply is in, claims it, and sends it.
+func (b *Bridge) reply(ctx context.Context, reply conversation.FinishedReply) error {
+	thread, err := b.store.ChannelThread(ctx, strings.TrimPrefix(reply.CID, chatlog.ChannelType+":"))
+	if errors.Is(err, store.ErrNoChannelThread) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if thread.CustomerID != reply.Customer {
+		return stack.Wrap(fmt.Errorf("channelbridge: %s is another customer's thread channel", reply.CID))
+	}
+	fresh, err := b.store.ClaimChannelThreadMessage(ctx, thread.ChannelID, store.ClaimReply, reply.MessageID)
+	if err != nil || !fresh {
+		return err
+	}
+	return b.send(ctx, thread, reply.Text)
+}
+
 // take finds who a message is for and claims it. fresh is false for a message nobody answers
 // and for one already taken.
-func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, message core.InboundMessage) (store.ChannelThread, string, bool, error) {
+func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, message core.InboundMessage) (store.ChannelThread, store.AgentConfig, bool, error) {
 	if app.CustomerID == "" || message.ProviderUnitID == "" {
 		b.logger.Info("dropped an inbound message that names no provider app or no provider unit",
 			"connector", message.ConnectorID)
-		return store.ChannelThread{}, "", false, nil
+		return store.ChannelThread{}, store.AgentConfig{}, false, nil
 	}
 	connection, err := b.store.AppConnectionByAccount(ctx, app.CustomerID, message.ConnectorID, message.ProviderUnitID)
 	if errors.Is(err, store.ErrNoConnectorConnection) {
 		b.logger.Info("dropped an inbound message: the provider app has no connection of its provider unit",
 			"connector", message.ConnectorID, "customer", app.CustomerID, "provider_unit", message.ProviderUnitID)
-		return store.ChannelThread{}, "", false, nil
+		return store.ChannelThread{}, store.AgentConfig{}, false, nil
 	}
 	if err != nil {
-		return store.ChannelThread{}, "", false, err
+		return store.ChannelThread{}, store.AgentConfig{}, false, err
 	}
 	configs, err := b.store.AgentConfigsBindingConnection(ctx, app.CustomerID, connection.ID)
 	if err != nil {
-		return store.ChannelThread{}, "", false, err
+		return store.ChannelThread{}, store.AgentConfig{}, false, err
 	}
 	if len(configs) != 1 {
 		// Two agents answering one thread would talk over each other, and none answers a
 		// thread nobody bound. Either is the customer's agent configs to fix.
 		b.logger.Warn("dropped an inbound message: one agent config must bind the connection it came in on",
 			"connector", message.ConnectorID, "customer", app.CustomerID, "connection", connection.ID, "configs", len(configs))
-		return store.ChannelThread{}, "", false, nil
+		return store.ChannelThread{}, store.AgentConfig{}, false, nil
 	}
 	parts, err := b.threadParts(ctx, connection, message)
 	if err != nil {
-		return store.ChannelThread{}, "", false, err
+		return store.ChannelThread{}, store.AgentConfig{}, false, err
 	}
 	thread := store.ChannelThread{
 		ChannelID:      threadChannelPrefix + uuid.NewString(),
@@ -201,16 +231,16 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 		StreamAppPK:    app.StreamAppPK,
 	}
 	if _, err := b.store.LinkChannelThread(ctx, &thread); err != nil {
-		return store.ChannelThread{}, "", false, err
+		return store.ChannelThread{}, store.AgentConfig{}, false, err
 	}
-	fresh, err := b.store.ClaimChannelThreadMessage(ctx, thread.ChannelID, message.ProviderMessageID)
+	fresh, err := b.store.ClaimChannelThreadMessage(ctx, thread.ChannelID, store.ClaimInbound, message.ProviderMessageID)
 	if err != nil {
-		return store.ChannelThread{}, "", false, err
+		return store.ChannelThread{}, store.AgentConfig{}, false, err
 	}
 	if !fresh {
 		b.logger.Debug("dropped a retried inbound message", "connector", message.ConnectorID, "channel", thread.ChannelID)
 	}
-	return thread, configs[0].ID, fresh, nil
+	return thread, configs[0], fresh, nil
 }
 
 // threadParts are the named parts of a message's thread key, which its replies name. The
@@ -240,38 +270,45 @@ func (b *Bridge) threadParts(ctx context.Context, connection store.ConnectorConn
 // write writes one claimed message into its thread channel as its author, creating the
 // channel the first time, with the agent config that answers it. One thread's messages are
 // written one at a time, in the order they were taken as far as the lock keeps it.
-func (b *Bridge) write(thread store.ChannelThread, configID string, message core.InboundMessage) {
+func (b *Bridge) write(thread store.ChannelThread, config store.AgentConfig, message core.InboundMessage) {
 	release := b.hold(thread.ChannelID)
 	defer release()
 	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 	defer cancel()
 
-	if err := b.writeInto(ctx, thread, configID, message); err != nil {
+	if err := b.writeInto(ctx, thread, config, message); err != nil {
 		b.logger.Error("could not write an inbound message into its thread channel",
 			"connector", thread.ConnectorID, "channel", thread.ChannelID, "error", err)
 	}
 }
 
-func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, configID string, message core.InboundMessage) error {
+func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, config store.AgentConfig, message core.InboundMessage) error {
 	bound, err := b.stream.ForApp(ctx, thread.CustomerID, thread.StreamAppPK)
 	if err != nil {
 		return err
 	}
 	author := authorUserID(thread.CustomerID, thread.ConnectorID, thread.ProviderUnitID, message.AuthorID)
-	name := message.AuthorID
+	name, agentName := message.AuthorID, config.Name
+	// The agent of a thread channel writes as a user of the channel's own id: the
+	// conversation held on the channel writes as support_agent_id, and the message hook
+	// finds the session answering in the channel by that agent id (Manager.ByAgentWhere).
 	if err := conversation.CreateMissingUsers(ctx, bound.Client, map[string]getstream.UserRequest{
-		author: {ID: author, Name: &name},
+		author:           {ID: author, Name: &name},
+		thread.ChannelID: {ID: thread.ChannelID, Name: &agentName},
 	}); err != nil {
 		return stack.Wrap(err)
 	}
 	// The data creates the channel on the thread's first message; the agent channel type
-	// refuses a server-side create without a creator.
+	// refuses a server-side create without a creator. The stamps are the ones a persistent
+	// conversation is opened by (conversation.ownedBy): the customer and the agent, and no
+	// owner, since no one end user owns a thread several people write in.
 	_, err = bound.Client.Chat().GetOrCreateChannel(ctx, chatlog.ChannelType, thread.ChannelID, &getstream.GetOrCreateChannelRequest{
 		Data: &getstream.ChannelInput{
 			CreatedByID: &author,
 			Custom: map[string]any{
-				configField:                configID,
+				configField:                config.ID,
 				conversation.CustomerField: thread.CustomerID,
+				agentField:                 thread.ChannelID,
 			},
 		},
 	})
@@ -335,9 +372,30 @@ func (b *Bridge) send(ctx context.Context, thread store.ChannelThread, text stri
 		return stack.Wrap(fmt.Errorf("channelbridge: %s answered a reply with a body it does not read: %w", connection.ConnectorID, err))
 	}
 	if !sent {
+		b.refused(ctx, ref, scheme, response, answer)
 		return stack.Wrap(fmt.Errorf("channelbridge: %s refused a reply in a %d answer", connection.ConnectorID, response.StatusCode))
 	}
 	return nil
+}
+
+// refused tells the resolver when the provider refused a reply's credential in an answer the
+// transport does not read: it reads only a 401, and Slack refuses a revoked token with HTTP
+// 200 and «"ok": false, "error": "invalid_auth"» (chat.postMessage). The scheme's own
+// Classify reads the answer, as it does any provider answer. The credential is the one the
+// resolver hands out now, the same one the reply was sent with unless another router
+// renewed it meanwhile, in which case Invalidate leaves the connection as it is.
+func (b *Bridge) refused(ctx context.Context, ref core.ConnectionRef, scheme core.Scheme, response *http.Response, answer []byte) {
+	outcome := scheme.Classify(response, answer, nil)
+	if outcome.Kind != core.OutcomeInvalidGrant && outcome.Kind != core.OutcomeScopeRequired {
+		return
+	}
+	sent, err := b.resolver.Resolve(ctx, ref, core.CredentialRequest{})
+	if err != nil {
+		return
+	}
+	if err := b.resolver.Invalidate(ctx, ref, sent, outcome); err != nil {
+		b.logger.Error("could not mark a connection whose reply was refused", "connection", ref.ConnectionID, "error", err)
+	}
 }
 
 // authorUserID is the Stream Chat user an external author writes as in a thread channel: one

@@ -37,7 +37,7 @@ func (s *BridgeSuite) TestAnAuthorUserIDKeepsToLettersDigitsUnderscoreAndHyphen(
 	s.Regexp(regexp.MustCompile(`^[A-Za-z0-9_-]+$`), authorUserID("acme", "linq", "+12025550100", "+12025550199"))
 }
 
-func (s *BridgeSuite) TestABridgeNeedsAStoreStreamAndTransports() {
+func (s *BridgeSuite) TestABridgeNeedsAStoreStreamTransportsAndAResolver() {
 	_, err := New(Options{})
-	s.ErrorContains(err, "a store, Stream clients and transports are required")
+	s.ErrorContains(err, "a store, Stream clients, transports and a resolver are required")
 }

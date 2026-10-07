@@ -38,7 +38,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
@@ -178,6 +177,10 @@ type RouterSuite struct {
 	ears      *quietSTT
 	knowledge *knowledgeBase
 	memories  *keptMemories
+	// noted are the "noted" models opened so far, one per session, newest last, for a test
+	// whose sessions each need a model of their own to read back.
+	notedMu sync.Mutex
+	noted   []*scriptedLLM
 
 	// chat is the Stream Chat the conversations are written to and transcripts read from:
 	// the deployment's own app. apps gives a customer an app of its own instead, and
@@ -211,10 +214,6 @@ type RouterSuite struct {
 	// it returns at the time, whatever host a manifest's reply names: the test's own fake
 	// provider. Nil leaves bridge as the suite set it.
 	channelProvider func() string
-	// transcripts, set by a suite before it starts the harness, writes a session's
-	// conversation into its agent channel in the suite's Stream Chat through chatlog, as
-	// cmd/router's transcriptFor does. Off, a session keeps no transcript.
-	transcripts bool
 	// resolver is the router's connector resolver over the suite's store and sealer, with
 	// connectors' schemes, set by SetupSuite.
 	resolver *resolver.Resolver
@@ -438,10 +437,12 @@ func (s *RouterSuite) channelBridge(logger *slog.Logger) *channelbridge.Bridge {
 	})
 	s.Require().NoError(err)
 	bridge, err := channelbridge.New(channelbridge.Options{
-		Store: s.store, Stream: s.stream, Schemes: s.connectors.Schemes, Transports: transports, Logger: logger,
+		Store: s.store, Stream: s.stream, Schemes: s.connectors.Schemes, Transports: transports, Resolver: s.resolver, Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(bridge.Close)
+	// As cmd/router hands it the finished replies of the conversations on thread channels.
+	s.conversations.OnFinishedReply(bridge.Reply)
 	return bridge
 }
 
@@ -555,7 +556,13 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.vision = &scriptedLLM{reply: "Two roses.", sees: true}
 	reasoning.Register("vision", func(routing.Spec) (llmrouter.Provider, error) { return s.vision, nil })
 	reasoning.Register("echo", func(routing.Spec) (llmrouter.Provider, error) { return &scriptedLLM{echoes: true}, nil })
-	reasoning.Register("noted", func(routing.Spec) (llmrouter.Provider, error) { return &scriptedLLM{reply: "Noted."}, nil })
+	reasoning.Register("noted", func(routing.Spec) (llmrouter.Provider, error) {
+		opened := &scriptedLLM{reply: "Noted."}
+		s.notedMu.Lock()
+		defer s.notedMu.Unlock()
+		s.noted = append(s.noted, opened)
+		return opened, nil
+	})
 
 	// A model that is a while in the writing, for a command that has to still be running
 	// when the test asks it to stop.
@@ -653,18 +660,7 @@ func (s *RouterSuite) sessionManager(
 	if s.memoryStore != nil {
 		remembering = s.memoryStore
 	}
-	var transcripts session.TranscriptFactory
-	if s.transcripts {
-		transcripts = func(_ context.Context, spec session.Spec, stream streamapp.Bound, logger *slog.Logger) (session.Transcript, error) {
-			return chatlog.New(chatlog.Options{
-				AgentID: spec.AgentID, CustomerID: spec.CustomerID,
-				Agent:  chatlog.User{ID: spec.UserID, Name: spec.UserName},
-				Client: stream.Client, Logger: logger,
-			})
-		}
-	}
 	sessions, err := session.NewManager(session.ManagerOptions{
-		Transcript:    transcripts,
 		LLM:           streams.LLM,
 		STT:           streams.STT,
 		TTS:           streams.TTS,

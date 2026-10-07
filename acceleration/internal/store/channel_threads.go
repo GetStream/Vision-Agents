@@ -87,12 +87,25 @@ func (s *Store) ChannelThread(ctx context.Context, channelID string) (ChannelThr
 	return thread, nil
 }
 
-// ClaimChannelThreadMessage records an inbound message of a thread channel by the provider's id
-// for it. False is one already taken: a provider retrying a delivery sends it again. Ids kept
-// longer than channelMessageKeep are dropped first, so the table holds a day of messages.
-func (s *Store) ClaimChannelThreadMessage(ctx context.Context, channelID, providerMessageID string) (bool, error) {
-	if channelID == "" || providerMessageID == "" {
-		return false, stack.Wrap(errors.New("store: a channel and a provider message id are required"))
+// What a claimed message of a thread channel is, each with its own ids
+// (20261006235100_channel_threads.sql).
+const (
+	// ClaimInbound is a provider's message the channel bridge took, by the provider's id.
+	ClaimInbound = "inbound"
+	// ClaimTurn is a person's message the message hook handed to the session, by its Stream
+	// Chat id.
+	ClaimTurn = "turn"
+	// ClaimReply is an agent's reply the bridge sent to the external thread, by its Stream
+	// Chat id.
+	ClaimReply = "reply"
+)
+
+// ClaimChannelThreadMessage records a message of a thread channel as acted on by one step,
+// kind, by that step's id for it. False is one already taken: delivered or told again. Ids
+// kept longer than channelMessageKeep are dropped first, so the table holds a day of them.
+func (s *Store) ClaimChannelThreadMessage(ctx context.Context, channelID, kind, messageID string) (bool, error) {
+	if channelID == "" || kind == "" || messageID == "" {
+		return false, stack.Wrap(errors.New("store: a channel, a kind and a message id are required"))
 	}
 	now := time.Now().UTC()
 	if _, err := s.db.NewRaw(
@@ -101,9 +114,9 @@ func (s *Store) ClaimChannelThreadMessage(ctx context.Context, channelID, provid
 		return false, stack.Wrap(fmt.Errorf("store: claim channel thread message: %w", err))
 	}
 	result, err := s.db.NewRaw(
-		"INSERT INTO channel_thread_messages (channel_id, provider_message_id, created_at) "+
-			"VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
-		channelID, providerMessageID, now).Exec(ctx)
+		"INSERT INTO channel_thread_messages (channel_id, kind, message_id, created_at) "+
+			"VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+		channelID, kind, messageID, now).Exec(ctx)
 	if err != nil {
 		return false, stack.Wrap(fmt.Errorf("store: claim channel thread message: %w", err))
 	}

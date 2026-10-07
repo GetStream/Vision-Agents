@@ -37,17 +37,24 @@ CREATE TABLE channel_threads (
 CREATE UNIQUE INDEX channel_threads_thread
     ON channel_threads (customer_id, connector_id, provider_unit_id, thread_key);
 
--- channel_thread_messages is every inbound message the bridge took, by the provider's id for
--- it (core.InboundMessage.ProviderMessageID), so a retried delivery is dropped: Slack retries
--- an event three times (https://docs.slack.dev/apis/events-api/, «Retries»). Slack's ts is
--- unique only within a channel («the unique (per-channel) timestamp»,
--- https://docs.slack.dev/reference/events/message), and a thread channel is one Slack channel's
--- thread, so the thread channel and the id together are unique.
+-- channel_thread_messages is every message of a thread channel already acted on, so a
+-- message delivered twice is acted on once (store.ClaimChannelThreadMessage). kind says which
+-- step took it, each with its own id:
+--   - inbound: a provider's message the bridge took, by the provider's id for it
+--     (core.InboundMessage.ProviderMessageID). Slack retries an event three times
+--     (https://docs.slack.dev/apis/events-api/, «Retries»). Slack's ts is unique only within a
+--     channel («the unique (per-channel) timestamp», https://docs.slack.dev/reference/events/message),
+--     and a thread channel is one Slack channel's thread, so with the channel it is unique.
+--   - turn: a person's message the message hook handed to the session, by its Stream Chat id,
+--     since Stream may deliver a message.new more than once.
+--   - reply: an agent reply the bridge sent to the external thread, by its Stream Chat id,
+--     since a finished reply is told again when it is written again.
 CREATE TABLE channel_thread_messages (
     channel_id TEXT NOT NULL REFERENCES channel_threads (channel_id),
-    provider_message_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('inbound', 'turn', 'reply')),
+    message_id TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (channel_id, provider_message_id)
+    PRIMARY KEY (channel_id, kind, message_id)
 );
 
 -- +goose Down

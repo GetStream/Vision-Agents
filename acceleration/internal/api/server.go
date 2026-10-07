@@ -243,9 +243,8 @@ type Options struct {
 	// (ConnectorEventSecrets reads the operator's from the environment). Absent, the
 	// endpoint takes no events.
 	ConnectorEventSecrets EventSecretLookup
-	// ChannelBridge takes the messages a verified provider event carries, and the agent's
-	// replies in the thread channels it linked (internal/channelbridge). Absent, messages are
-	// logged and dropped and no reply leaves.
+	// ChannelBridge takes the messages a verified provider event carries
+	// (internal/channelbridge). Absent, they are logged and dropped.
 	ChannelBridge ChannelBridge
 	// TrustedProxies are the ranges this deployment's own proxies sit in, and they decide
 	// how much of X-Forwarded-For is believed when working out who a request is from.
@@ -319,6 +318,11 @@ type Server struct {
 	upgrader   websocket.Upgrader
 	popularity *popularity
 	logger     *slog.Logger
+
+	// threadTurns is each thread channel's turn (threadhooks.go), so its messages are
+	// answered one at a time.
+	threadsMu   sync.Mutex
+	threadTurns map[string]*threadTurn
 }
 
 // Option adjusts the options a server is built from. It exists for the settings a
