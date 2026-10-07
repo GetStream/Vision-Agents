@@ -820,7 +820,7 @@ The wait for the caller to have been quiet only covered the first sound of a rep
 started to talk in a pause between two of its sentences, or who was talking over the reply when it
 reached the end of one, was spoken into by the next sentence, which went on until their words had
 been read and cancelled it. Each turn now follows the audio it lets out: when it has been silent
-for `ROUTER_REPLY_RESUME_GAP`, `200ms` by default, and the next sound it makes carries a voice, that
+for `ROUTER_REPLY_RESUME_GAP` (off by default: a cough or a second voice in the room is judged as the caller, and holding the next sentence for it makes the reply stop mid-answer; `200ms` is the setting it was measured with), and the next sound it makes carries a voice, that
 sound is held, with the rest of what the voice says of the turn, until the caller's audio has been
 quiet for `ROUTER_REPLY_SILENCE_CONFIDENT`, or for `ROUTER_REPLY_SILENCE` if that is shorter. What
 the turn has let out is counted on the clock it is heard on, so silence inside the audio counts

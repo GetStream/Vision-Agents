@@ -1167,7 +1167,7 @@ func TestDecidingWhetherASentenceAfterAPauseIsHeldDoesNotAllocate(t *testing.T) 
 	}), "a sentence after a pause, once the longest hold is spent")
 }
 
-func TestTheGapThatMakesAReplyResumeDefaultsToTwoHundredMillisecondsAndCanBeTurnedOff(t *testing.T) {
+func TestTheGapThatMakesAReplyResumeIsOffByDefaultAndCanBeTurnedOn(t *testing.T) {
 	options := func(gap *time.Duration) Options {
 		return Options{
 			CustomerID: "acme", Edge: newLoopbackEdge(), LLM: &llmrouter.Router{},
@@ -1177,7 +1177,12 @@ func TestTheGapThatMakesAReplyResumeDefaultsToTwoHundredMillisecondsAndCanBeTurn
 
 	left, err := New(options(nil))
 	require.NoError(t, err)
-	require.Equal(t, 200*time.Millisecond, left.replyResumeGap)
+	require.Zero(t, left.replyResumeGap, "the resume hold is off unless it is set")
+
+	on := 200 * time.Millisecond
+	set, err := New(options(&on))
+	require.NoError(t, err)
+	require.Equal(t, on, set.replyResumeGap)
 
 	off := time.Duration(0)
 	disabled, err := New(options(&off))
@@ -1269,6 +1274,11 @@ func (s *AgentSuite) heldMs(turnID string) float64 {
 // speech, and then goes quiet for the given time on a clock the test moves. The voice has nothing
 // more to say until the test has it say more, and the caller has not been heard.
 func (s *AgentSuite) pausesMidReply(pause time.Duration) (clock *movableClock, caller stt.Participant, replyID string) {
+	if s.replyResumeGap == nil {
+		// The resume hold is off by default; these tests are about it, so they turn it on.
+		gap := 200 * time.Millisecond
+		s.replyResumeGap = &gap
+	}
 	clock = newMovableClock()
 	s.join(true)
 	s.agent.mu.Lock()

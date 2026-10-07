@@ -37,7 +37,12 @@ const (
 	// between two sentences, and the sentence after it would be started into their voice, so it
 	// waits for them the way the first sound of a reply does. A shorter gap is how sentences
 	// follow one another, and nobody takes it for an invitation.
-	defaultReplyResumeGap = 200 * time.Millisecond
+	//
+	// It is off by default. The caller's audio is judged by its level, so a cough or somebody
+	// else talking in the room counts as the caller too, and a reply that holds its next sentence
+	// for them stops mid-answer and starts again inside the noise it should have talked through.
+	// A caller who really takes the floor still cancels the rest of the reply with their words.
+	defaultReplyResumeGap time.Duration = 0
 	// voicedFloor is the quietest level, as RMS on the 16-bit scale, that a chunk of audio can
 	// have and still be taken for a voice: about -42 dBFS, above the hiss of a quiet line and
 	// below a soft voice.

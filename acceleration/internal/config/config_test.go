@@ -374,10 +374,10 @@ func (s *ConfigSuite) TestAConfidentEndingIsHeldForAShorterSilence() {
 	}
 }
 
-func (s *ConfigSuite) TestASentenceAfterAPauseInAReplyWaitsForTheCallerUnlessTheResumeGapIsOff() {
+func (s *ConfigSuite) TestASentenceAfterAPauseInAReplyWaitsForTheCallerOnlyWhenTheResumeGapIsSet() {
 	config, _, err := Load("")
 	s.Require().NoError(err)
-	s.Equal(200*time.Millisecond, config.Agent.ReplyResumeGap)
+	s.Zero(config.Agent.ReplyResumeGap, "the resume gap is off unless it is set")
 
 	s.T().Setenv("ROUTER_REPLY_RESUME_GAP", "350ms")
 	config, _, err = Load("")

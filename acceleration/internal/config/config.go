@@ -349,7 +349,7 @@ func Defaults() Config {
 			ReplySilenceMax:       time.Second,
 			ReplySilenceConfident: 300 * time.Millisecond,
 			ReplyConfidentScore:   0.9,
-			ReplyResumeGap:        200 * time.Millisecond,
+			ReplyResumeGap:        0,
 			PreviewDebounce:       60 * time.Millisecond,
 			PreviewQuiet:          120 * time.Millisecond,
 			ReplyHedge:            1200 * time.Millisecond,
