@@ -63,6 +63,11 @@ type Stat struct {
 	ErrorMessage string
 }
 
+// ErrorCancelled is the ErrorCode of work its caller gave up on before the provider answered:
+// a reply superseded by newer words, or the slower of two hedged requests. It is not
+// successful, but the provider did nothing wrong, so it is kept out of its health.
+const ErrorCancelled = "cancelled"
+
 // Recorder writes stats to Postgres and Redis off the request path. A conversation must
 // never wait on a database, so recording is asynchronous and stats are the thing that
 // gets dropped when the backend cannot keep up.
@@ -191,7 +196,7 @@ func (r *Recorder) write(ctx context.Context, request store.Request) {
 		}
 	}
 
-	if r.live != nil {
+	if r.live != nil && measuresProvider(request) {
 		var latencyMs float64
 		if request.LatencyMs != nil {
 			latencyMs = *request.LatencyMs
@@ -214,4 +219,11 @@ func (r *Recorder) write(ctx context.Context, request store.Request) {
 			r.logger.Error("could not update live counters", "error", err)
 		}
 	}
+}
+
+// measuresProvider reports whether a request says anything about its provider's health and
+// belongs in the live counters. One its caller cancelled before the provider answered does not:
+// it neither failed nor took the time it was given, and it used nothing.
+func measuresProvider(request store.Request) bool {
+	return request.ErrorCode != ErrorCancelled
 }

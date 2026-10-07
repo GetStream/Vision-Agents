@@ -74,6 +74,7 @@ func (s *Session) create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	span.End()
 	if err != nil {
 		durationMs := float64(time.Since(startedAt).Microseconds()) / 1000
+		code := createErrorCode(ctx)
 		s.recorder.Record(s.config, routing.Stat{
 			Owner:        s.owner,
 			StartedAt:    startedAt,
@@ -82,7 +83,7 @@ func (s *Session) create(ctx context.Context, params llm.ResponseParams) (*llm.S
 			TurnID:       params.TurnID,
 			DurationMs:   durationMs,
 			Success:      false,
-			ErrorCode:    "create_failed",
+			ErrorCode:    code,
 			ErrorMessage: err.Error(),
 		})
 		slog.Info("model call timing", "call", s.owner.CallID, "operation", params.ID,
@@ -277,4 +278,13 @@ func (s *Session) releaseChild(child *Session) {
 	s.mu.Lock()
 	delete(s.children, child)
 	s.mu.Unlock()
+}
+
+// createErrorCode says why a request ended before the provider answered it: the caller
+// cancelling it, which is no fault of the provider's, or the provider failing it.
+func createErrorCode(ctx context.Context) string {
+	if ctx.Err() != nil {
+		return routing.ErrorCancelled
+	}
+	return "create_failed"
 }
