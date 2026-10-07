@@ -602,7 +602,8 @@ type DeletedConnection struct {
 // DeleteUserConnectorConnections hard deletes every connection of one user of the
 // customer's, live or already soft deleted, with their attempts and their invocations, so
 // the user's id and their accounts' ids are gone (architecture doc, «Add» item 9: «hard
-// delete of owner_id and account_id on request»). A user with none is not an error.
+// delete of owner_id and account_id on request»). The audit rows of those connections stay,
+// with their session, request and attempt ids emptied. A user with none is not an error.
 //
 // The rows are locked FOR UPDATE before they go, so a credentials write in flight commits
 // first or finds the row gone (ErrConnectorConnectionChanged). A connection the user makes
@@ -647,6 +648,17 @@ func (s *Store) DeleteUserConnectorConnections(ctx context.Context, customerID, 
 			Where("cc.customer_id = ?", customerID).
 			Where("cc.id IN (?)", bun.In(ids)).Exec(ctx); err != nil {
 			return fmt.Errorf("store: delete a user's connector connections: %w", err)
+		}
+		// The audit keeps the connections' rows, which name no user, but its correlation ids
+		// lead back to one: a session id joins agent_sessions.user_id, and a request id and an
+		// attempt id are found in the access log beside the user's requests.
+		if _, err := tx.NewUpdate().Model((*ConnectorAuditEvent)(nil)).
+			Set("session_id = ''").
+			Set("request_id = ''").
+			Set("attempt_id = ''").
+			Where("ca.customer_id = ?", customerID).
+			Where("ca.connection_id IN (?)", bun.In(ids)).Exec(ctx); err != nil {
+			return fmt.Errorf("store: unlink a user's connector audit: %w", err)
 		}
 		return nil
 	})

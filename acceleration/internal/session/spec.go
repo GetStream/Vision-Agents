@@ -106,6 +106,11 @@ type Spec struct {
 	// have kept should not have to trust that a "hidden" flag is honoured everywhere.
 	//
 	// It forces PersistConversation off, because a channel in Stream Chat is a record.
+	//
+	// One exception: each connector tool call still leaves its row in the connection's call
+	// log (store.ConnectorInvocation), with no session id, no arguments and no results, and
+	// the grant changes it causes are audited with no request or session id. The row is the
+	// use of a credential, which its owner is owed; nothing in it names the conversation.
 	Incognito bool
 	// Title and Description are the caller's own names for the conversation, for a list a
 	// person reads. Never shown to the model: what a conversation is called is a label on

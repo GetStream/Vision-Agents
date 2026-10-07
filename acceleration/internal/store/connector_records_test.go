@@ -162,6 +162,35 @@ func (s *StoreSuite) TestDeletingAUsersConnectionsRemovesEveryOneOfThemAndNothin
 	}
 }
 
+// TestDeletingAUsersConnectionsUnlinksTheirAuditFromTheUser: the rows stay, with no id that
+// leads back to the user; another user's keep theirs.
+func (s *StoreSuite) TestDeletingAUsersConnectionsUnlinksTheirAuditFromTheUser() {
+	hers := s.connection("acme-app", userOwned("alice"))
+	his := s.connection("acme-app", userOwned("bob"))
+	for _, connection := range []ConnectorConnection{hers, his} {
+		s.Require().NoError(s.store.RecordConnectorAudit(s.ctx, &ConnectorAuditEvent{
+			CustomerID: "acme-app", ConnectionID: connection.ID, ConnectorID: "acme", OwnerType: OwnerUser,
+			Action: AuditGrantCreated, Reason: AuditReasonConsent, Revision: 2,
+			RequestID: "request", SessionID: "session", AttemptID: "attempt",
+		}))
+	}
+
+	_, err := s.store.DeleteUserConnectorConnections(s.ctx, "acme-app", "alice")
+
+	s.Require().NoError(err)
+	kept, err := s.store.ConnectorAuditEvents(s.ctx, "acme-app", AuditFilter{ConnectionID: hers.ID})
+	s.Require().NoError(err)
+	s.Require().Len(kept, 1, "the row stays")
+	s.Empty(kept[0].RequestID)
+	s.Empty(kept[0].SessionID)
+	s.Empty(kept[0].AttemptID)
+	s.Equal(AuditGrantCreated, kept[0].Action)
+	others, err := s.store.ConnectorAuditEvents(s.ctx, "acme-app", AuditFilter{ConnectionID: his.ID})
+	s.Require().NoError(err)
+	s.Require().Len(others, 1)
+	s.Equal("session", others[0].SessionID)
+}
+
 func (s *StoreSuite) TestDeletingTheConnectionsOfAUserWithNoneDeletesNothing() {
 	s.connection("acme-app", userOwned("bob"))
 

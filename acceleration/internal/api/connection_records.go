@@ -64,9 +64,9 @@ type ConnectorAuditEvent struct {
 	Action       ConnectorAuditAction `json:"action"`
 	Reason       string               `json:"reason,omitempty" doc:"Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked."`
 	Revision     int                  `json:"revision,omitempty" doc:"The connection's credential revision once the change was made. Absent when the change names none, as a delete."`
-	RequestID    string               `json:"request_id,omitempty" doc:"The X-Request-Id of the API request that caused it."`
-	SessionID    string               `json:"session_id,omitempty" doc:"The session whose tool call caused it. Absent for an incognito session."`
-	AttemptID    string               `json:"attempt_id,omitempty" doc:"The authorization attempt a consent finished."`
+	RequestID    string               `json:"request_id,omitempty" doc:"The X-Request-Id of the API request that caused it. For a change a session's tool call caused, that is the request that created the session, not the one that asked for the turn. Absent for an incognito session's, and once the connection's user was deleted."`
+	SessionID    string               `json:"session_id,omitempty" doc:"The session whose tool call caused it. Absent for an incognito session, and once the connection's user was deleted."`
+	AttemptID    string               `json:"attempt_id,omitempty" doc:"The authorization attempt a consent finished. Absent once the connection's user was deleted."`
 	CreatedAt    time.Time            `json:"created_at"`
 }
 
@@ -258,6 +258,9 @@ func (s *Server) deleteUserConnections(ctx context.Context, request *deleteUserC
 	if err != nil {
 		return nil, err
 	}
+	// The revocations name no request either: this one's access log line has the user's id
+	// in its path.
+	ctx = core.WithCorrelation(ctx, core.Correlation{})
 	for _, connection := range deleted {
 		if s.connectorTransports != nil {
 			s.connectorTransports.Close(core.ConnectionRef{CustomerID: customerID, ConnectionID: connection.ID})

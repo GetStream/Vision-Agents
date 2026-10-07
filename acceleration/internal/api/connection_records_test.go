@@ -200,6 +200,11 @@ func (s *ConnectionRecordsSuite) TestDeletingAUsersConnectionsLeavesTheNextSessi
 	revoked := s.audit(hers, 2)
 	s.Equal(ConnectorAuditAction(store.AuditGrantRevoked), revoked[0].Action)
 	s.Equal(store.AuditReasonUserDeleted, revoked[0].Reason)
+	for _, row := range revoked {
+		s.Empty(row.RequestID, "no id leads back to the user, neither the delete's nor the credentials write's")
+		s.Empty(row.SessionID)
+		s.Empty(row.AttemptID)
+	}
 	s.Empty(s.audit(pending.ID, 0), "a connection with no grant had none to revoke")
 	status, failure := alice.failure(http.MethodPost, "/v1/agents/sessions", s.session(config, hers))
 	s.Equal(http.StatusBadRequest, status)
