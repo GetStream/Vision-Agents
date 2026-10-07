@@ -46,6 +46,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
@@ -220,6 +221,14 @@ type RouterSuite struct {
 	// it returns at the time, whatever host a manifest's reply names: the test's own fake
 	// provider. Nil leaves bridge as the suite set it.
 	channelProvider func() string
+	// forwardHTTP, set by a suite about event forwarding before it starts the harness, gives
+	// the router an event forwarder (internal/eventforward) whose sends go through it, to the
+	// test's own destinations on loopback, which egress refuses; a destination URL on loopback
+	// is let through at create, any other is checked by egress. Nil leaves forwarding off, as
+	// a deployment without connectors has, and runs no forwarder worker beside the other
+	// suites'.
+	forwardHTTP *http.Client
+	forwarder   *eventforward.Forwarder
 	// resolver is the router's connector resolver over the suite's store and sealer, with
 	// connectors' schemes, set by SetupSuite.
 	resolver *resolver.Resolver
@@ -373,6 +382,16 @@ func (s *RouterSuite) SetupSuite() {
 	if s.channelProvider != nil {
 		s.bridge = s.channelBridge(logger)
 	}
+	if s.forwardHTTP != nil {
+		s.forwarder, err = eventforward.New(eventforward.Options{
+			Store: pgStore, Secrets: s.sealer, HTTP: s.forwardHTTP, PublicURL: loopbackOrPublic, Logger: logger,
+			// A forward sent again waits milliseconds here, not the production seconds.
+			Retries: []time.Duration{10 * time.Millisecond, 10 * time.Millisecond}, Poll: 10 * time.Millisecond,
+		})
+		s.Require().NoError(err)
+		s.forwarder.Start()
+		s.T().Cleanup(s.forwarder.Close)
+	}
 
 	server, err := NewServer(Options{
 		Routers:       s.modalities,
@@ -418,6 +437,7 @@ func (s *RouterSuite) SetupSuite() {
 		ConnectorTransports:   transports,
 		ConnectorEventSecrets: s.eventSecrets,
 		ChannelBridge:         s.bridge,
+		EventForwarder:        s.forwarder,
 		SlackApps:             s.slackApps,
 		OperatorProviderApps:  s.operatorApps,
 	})
