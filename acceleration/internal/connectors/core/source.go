@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 	"unicode/utf8"
@@ -19,6 +20,41 @@ type ToolSource interface {
 	// matches.
 	Open(ctx context.Context, b ResolvedBinding, grants []ToolGrant) (Toolset, error)
 }
+
+// EventSource is a ToolSource whose server can also deliver events to a webhook the router
+// serves: MCP Events (experimental-ext-triggers-events «Webhook-Based Delivery», at 6682596d).
+// It reaches the server through ResolvedBinding.HTTP, as Discover and Open do.
+type EventSource interface {
+	// Subscribe creates or refreshes the subscription: the server keys it on the
+	// connection's principal, the URL, the event and its arguments, so asking again with
+	// the same four refreshes it. ErrNoEvents is a server that offers no events.
+	Subscribe(ctx context.Context, b ResolvedBinding, sub EventSubscription) (EventGrant, error)
+	// Unsubscribe stops it, named as it was made; Secret is not sent.
+	Unsubscribe(ctx context.Context, b ResolvedBinding, sub EventSubscription) error
+}
+
+// EventSubscription is one event, with its filters, delivered to one URL signed with one
+// secret.
+type EventSubscription struct {
+	Name      string
+	Arguments map[string]any
+	URL       string
+	// Secret is the subscription's own Standard Webhooks secret, whsec_ and base64, which the
+	// client supplies and the server signs every delivery with.
+	Secret string
+}
+
+// EventGrant is what the server granted.
+type EventGrant struct {
+	// ID is the server's id for the subscription, for routing only.
+	ID string
+	// RefreshBefore is when the server stops delivering unless subscribed to again. Nil is a
+	// grant that does not expire.
+	RefreshBefore *time.Time
+}
+
+// ErrNoEvents is a connection's server that offers no events.
+var ErrNoEvents = errors.New("core: the server offers no events")
 
 // Toolset is the tools of one opened ToolSource, for one session.
 type Toolset interface {

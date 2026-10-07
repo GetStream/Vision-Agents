@@ -179,6 +179,12 @@ const (
 	// (docs.slack.dev/reference/methods/chat.postMessage). Without it PathChatPostMessage is
 	// 404. Only Slack has these shapes, so it is named for Slack.
 	SlackChannel Personality = "slack_channel"
+	// MCPEvents adds MCP Events' webhook delivery to the MCP endpoint (events.go): the events
+	// capability in server/discover, events/subscribe, which verifies the callback with a
+	// signed challenge before it subscribes, and events/unsubscribe; Emit and DeliverEvent
+	// post signed occurrences. The draft is experimental-ext-triggers-events at 6682596d.
+	// Without it those methods are not found and the capability is absent.
+	MCPEvents Personality = "mcp_events"
 	// SlowConfigRotation holds every tooling.tokens.rotate for slowRotationDelay before it
 	// answers, so two callers that rotate one configuration token without a lock between
 	// them overlap at the server. Not a Slack behaviour: a slow network, which any caller can
@@ -245,6 +251,9 @@ type Server struct {
 	configRotations int
 	slackApps       map[string]*SlackApp
 	slackOrder      []string
+
+	// eventSubs are the MCP Events subscriptions under MCPEvents, by their key (eventSlot).
+	eventSubs map[string]*eventSub
 }
 
 type client struct {
