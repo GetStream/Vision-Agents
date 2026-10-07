@@ -1591,7 +1591,7 @@ type AgentConnectorBinding struct {
 type ConnectorBindingPolicy struct {
 	PreSpeech   *string               `json:"pre_speech,omitempty" minLength:"1" doc:"What the agent says while one of the binding's tools runs, such as \"Let me pull up your calendar.\", in place of the phrase it picks itself when the model reached for the tool without a word. A voice session with a separate voice says it; every session reports it on tool_started."`
 	OnInterrupt *ConnectorOnInterrupt `json:"on_interrupt,omitempty" doc:"What an interruption of the turn does to a call in flight. Omitted is cancel."`
-	Cancellable *bool                 `json:"cancellable,omitempty" doc:"Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running to its answer or the binding's timeout, for a tool that is not safe to stop halfway, such as a payment. It only matters with on_interrupt cancel: a wait call is never stopped by an interruption."`
+	Cancellable *bool                 `json:"cancellable,omitempty" doc:"Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running after an interruption, for a tool that is not safe to stop halfway, such as a payment; the binding's timeout still ends it and tells the provider to stop it. It only matters with on_interrupt cancel: a wait call is never stopped by an interruption."`
 }
 
 func (*ConnectorBindingPolicy) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

@@ -3548,7 +3548,7 @@ type ConnectorBindingEvent struct {
 
 // ConnectorBindingPolicy How a binding's tool calls behave around speech and interruptions. Every field is optional, and a field left out keeps today's behaviour.
 type ConnectorBindingPolicy struct {
-	// Cancellable Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running to its answer or the binding's timeout, for a tool that is not safe to stop halfway, such as a payment. It only matters with on_interrupt cancel: a wait call is never stopped by an interruption.
+	// Cancellable Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running after an interruption, for a tool that is not safe to stop halfway, such as a payment; the binding's timeout still ends it and tells the provider to stop it. It only matters with on_interrupt cancel: a wait call is never stopped by an interruption.
 	Cancellable *bool `json:"cancellable,omitempty"`
 
 	// OnInterrupt cancel stops waiting for the call when the turn is interrupted, and tells the provider to stop it unless cancellable is false. wait lets the call finish, up to the binding's timeout, and its result goes into the conversation for the next turn.
