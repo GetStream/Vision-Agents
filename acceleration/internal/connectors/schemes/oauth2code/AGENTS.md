@@ -62,7 +62,8 @@ Classify(resp, body, err)
   429        RateLimited, Retry-After (delay-seconds or HTTP-date)
   challenge  Bearer insufficient_scope -> ScopeRequired + scopes; 401 insufficient_claims -> ScopeRequired + decoded
              claims; invalid_token -> InvalidGrant. A token68 or unparseable text skips to the next comma
-  body       invalid_grant, invalid_refresh_token -> InvalidGrant; temporarily_unavailable -> Transient;
+  body       invalid_grant, invalid_refresh_token, Slack's invalid_auth, token_revoked, account_inactive
+             -> InvalidGrant; temporarily_unavailable -> Transient;
              server_error, internal_error, fatal_error -> Uncertain; insufficient_scope -> ScopeRequired;
              invalid_client, unauthorized_client, unsupported_grant_type, invalid_scope -> Transient; any other
              code is a resource's own error and falls through

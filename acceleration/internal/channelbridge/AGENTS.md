@@ -20,14 +20,21 @@ Slack -> POST /v1/connectors/events/{connector}/{app}   api.receiveProviderAppEv
     claim        store.ClaimChannelThreadMessage: a retried delivery is dropped
   200
   Bridge.write                                off the request
-    author user, channel (agent_config_id), message without source -> Stream Chat
-Stream Chat -> message.new -> api.receiveMessageEvent
-  no source: the hook wakes the session on the channel, or a worker starts one
-  source agent, finished, channel linked: api.handOffReply -> Bridge.Reply
-    Bridge.send                               off the request
+    author user, agent user (the channel's id), channel (agent_config_id,
+    support_customer_id, support_agent_id), message without source -> Stream Chat
+Stream Chat -> message.new -> api.receiveMessageEvent -> api.answerThread
+  claim (thread channel, turn, Stream message id)
+  the session on the channel (ByAgentWhere), else a persistent text session from
+  the channel's agent config, ConversationID agent:thread-<uuid>
+  Session.FollowUp(text): the reply is written into the thread channel
+conversation flush: final text stored (UpdateMessagePartial, no webhook)
+  -> Service.OnFinishedReply -> Bridge.Reply        the one hand-off point
+    claim (thread channel, reply, Stream message id)
+    Bridge.send                               off the caller
       manifest reply template (ResolvedManifest.Reply)
       core.Transports: resolver credential, scheme Wrap, egress
-      2xx and reply.accepted (Slack: ok true), else logged
+      2xx and reply.accepted (Slack: ok true)
+      refused: scheme.Classify; invalid_grant -> Resolver.Invalidate
 ```
 
 ## Terms
@@ -42,7 +49,10 @@ Stream Chat -> message.new -> api.receiveMessageEvent
 
 - **Acknowledge fast, write later.** `Deliver` touches Postgres only, so the provider gets its answer within its limit (Slack: three seconds, https://docs.slack.dev/apis/events-api/). Stream Chat writes and replies run on goroutines; `Close` waits for them. A write that fails after the answer is logged; the provider does not retry it.
 - **A retried delivery is dropped by the provider's message id**, in the thread channel (`channel_thread_messages`). Example: Slack sends the same `message` event with `X-Slack-Retry-Num: 1`; the claim fails and nothing is written.
-- **The person's message has no `source`.** That is how the message hook (`api.addressed`) knows a person wrote it. The agent's reply has `source: agent`, which the hook never answers and hands to `Reply` instead (`api.replied`).
+- **The person's message has no `source`.** That is how the message hook (`api.addressed`) knows a person wrote it, and how the conversation on the channel reads it back as a user turn (`conversation.messageFromThread`). The session is told it with `FollowUp`, which writes no second copy.
+- **A thread channel is a conversation.** The session that answers holds its persistent conversation on the thread channel, so the reply is kept there: the Router's own session (`api.threadSession`) and one a caller opens through `POST /v1/agents/sessions` with `agent_id` naming the channel (`api.threadConversation`). The hook does not hand a thread channel's message to a dispatch worker.
+- **One hand-off point for replies.** The conversation calls `Reply` once a reply's final text is stored; the webhook never carries it (`UpdateMessagePartial` sends none). `Reply` claims the reply by its Stream message id, so a reply written again is sent once. Example: a reply a login later marks is told twice and leaves once.
+- **A refusal the transport cannot see still ends the grant.** Slack answers a revoked token with HTTP 200 `invalid_auth`; the scheme's `Classify` reads it and `Reply` calls `Resolver.Invalidate`.
 - **One agent per connection.** The agent that answers is the one agent config of the customer that binds the connection as `fixed`. None or two: the message is dropped and logged.
 - **Replies leave only through `core.Transports`**, so the credential, the scheme and the egress checks are the connector layer's. The bridge holds no token.
 - **No text and no author in logs.** They are a person's.
@@ -58,4 +68,4 @@ ROUTER_POSTGRES_DSN=... ROUTER_REDIS_ADDR=... \
 ROUTER_POSTGRES_DSN=... go test -tags integration -run 'TestStoreSuite/(TestTheFirst|TestASecondMessage|TestARetried)' ./internal/store
 ```
 
-`SlackChannelSuite` (`internal/api/provider_app_events_test.go`) runs the whole flow against Postgres, the suite's Stream Chat (`chattest`) and `fakeprovider` with `SlackChannel`. `chattest` sends no webhooks, so the suite delivers the `message.new` Stream Chat would send, built from the message `chattest` stored.
+`SlackChannelSuite` (`internal/api/provider_app_events_test.go`) runs the whole flow against Postgres, the suite's Stream Chat (`chattest`), real persistent sessions and `fakeprovider` with `SlackChannel`. `chattest` sends no webhooks, so the suite delivers the `message.new` Stream Chat would send, built from the message `chattest` stored. `go test -run TestThreadChannelSuite ./internal/conversation` covers the conversation side: history and the hand-off.
