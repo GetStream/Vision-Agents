@@ -1932,6 +1932,9 @@ components:
             type: string
           nullable: true
           type: array
+        setup:
+          $ref: '#/components/schemas/ConnectorSetup'
+          description: What a person does at the provider before the first consent, such as registering an OAuth client. Absent when the manifest says nothing.
       required:
         - id
         - revision
@@ -2216,6 +2219,34 @@ components:
           type: string
       required:
         - name
+      type: object
+    ConnectorSetup:
+      additionalProperties: false
+      description: What a person does at the provider before the first consent.
+      properties:
+        steps:
+          description: In order.
+          items:
+            $ref: '#/components/schemas/ConnectorSetupStep'
+          type: array
+        url:
+          description: Where the steps start, a page of the provider's.
+          format: uri
+          type: string
+      required:
+        - steps
+      type: object
+    ConnectorSetupStep:
+      additionalProperties: false
+      description: One step of a provider's setup.
+      properties:
+        description:
+          type: string
+        title:
+          type: string
+      required:
+        - title
+        - description
       type: object
     ConnectorToolGrant:
       description: One tool a binding allows.

@@ -4378,6 +4378,8 @@ export type components = {
             readonly schemes: readonly string[] | null;
             /** @description The scopes a consent asks for. */
             readonly scopes: readonly string[] | null;
+            /** @description What a person does at the provider before the first consent, such as registering an OAuth client. Absent when the manifest says nothing. */
+            readonly setup?: components["schemas"]["ConnectorSetup"];
         };
         /** @description How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint. */
         readonly ConnectorClient: {
@@ -4507,6 +4509,21 @@ export type components = {
             readonly config_refresh_token?: string;
             /** @description The app's name in the customer's workspace. */
             readonly name: string;
+        };
+        /** @description What a person does at the provider before the first consent. */
+        readonly ConnectorSetup: {
+            /** @description In order. */
+            readonly steps: readonly components["schemas"]["ConnectorSetupStep"][];
+            /**
+             * Format: uri
+             * @description Where the steps start, a page of the provider's.
+             */
+            readonly url?: string;
+        };
+        /** @description One step of a provider's setup. */
+        readonly ConnectorSetupStep: {
+            readonly description: string;
+            readonly title: string;
         };
         /** @description One tool a binding allows. */
         readonly ConnectorToolGrant: {

@@ -38,6 +38,12 @@ type Manifest struct {
 	// cf62af0d). Nothing that connects reads them.
 	Category    string `yaml:"category,omitempty" json:"category,omitempty"`
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Setup is what a person does at the provider before the first consent, as the plugin
+	// catalog's setup_url and setup_steps say it (internal/plugins/plugins.yaml), so a
+	// dashboard's setup page can show it over a connector (architecture doc on
+	// connectors/planning, «Plugins move onto connectors», the Volt setup page row). Nothing
+	// that connects reads it.
+	Setup Setup `yaml:"setup,omitempty" json:"setup,omitzero"`
 	// Inputs are what a connection is created with: a shop, a region, a tenant.
 	Inputs []Input `yaml:"inputs,omitempty" json:"inputs,omitempty"`
 	// Vars are fixed strings picked by an enum input's value, such as a login host per
@@ -67,6 +73,19 @@ type Manifest struct {
 	// Channel is how the connector is an inbound channel (channel.go). A connector has
 	// sources, a channel, or both.
 	Channel *ChannelRule `yaml:"channel,omitempty" json:"channel,omitempty"`
+}
+
+// Setup is a provider's setup page and the steps a person takes there.
+type Setup struct {
+	// URL is where the steps start, an https page of the provider's.
+	URL   string      `yaml:"url,omitempty" json:"url,omitempty"`
+	Steps []SetupStep `yaml:"steps,omitempty" json:"steps,omitempty"`
+}
+
+// SetupStep is one step of a provider's setup.
+type SetupStep struct {
+	Title       string `yaml:"title" json:"title"`
+	Description string `yaml:"description" json:"description"`
 }
 
 // Input is one value a connection is created with. It has an enum or a pattern, so what a
@@ -347,6 +366,17 @@ func (m Manifest) Validate() error {
 	}
 	if m.Name == "" {
 		fail("name", "is empty")
+	}
+
+	if m.Setup.URL != "" {
+		if u, err := url.Parse(m.Setup.URL); err != nil || u.Scheme != "https" || u.Host == "" {
+			fail("setup.url", "%q is not an https URL", m.Setup.URL)
+		}
+	}
+	for i, step := range m.Setup.Steps {
+		if step.Title == "" || step.Description == "" {
+			fail(fmt.Sprintf("setup.steps[%d]", i), "a step needs a title and a description")
+		}
 	}
 
 	inputs := map[string]Input{}
