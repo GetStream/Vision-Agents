@@ -56,6 +56,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -746,12 +747,17 @@ func (s *RouterSuite) telephony(logger *slog.Logger) *phone.Service {
 	config, err := phone.DefaultConfig()
 	s.Require().NoError(err)
 
+	sealer, err := auth.NewSealer("router suite sip trunks")
+	s.Require().NoError(err)
+
 	service, err := phone.NewService(phone.ServiceOptions{
-		Registry: vendors.Registry(config),
-		Store:    s.store,
-		Recorder: routing.NewRecorder(routing.Phone, s.store, s.live, logger),
-		Gate:     s.gate,
-		Logger:   logger,
+		Registry:  vendors.Registry(config),
+		Store:     s.store,
+		Recorder:  routing.NewRecorder(routing.Phone, s.store, s.live, logger),
+		Gate:      s.gate,
+		Sealer:    sealer,
+		SIPTrunks: siptrunk.New(siptrunk.Options{Logger: logger}),
+		Logger:    logger,
 	})
 	s.Require().NoError(err)
 	return service

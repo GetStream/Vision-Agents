@@ -65,6 +65,7 @@ var dataTables = []dataTable{
 	{name: "voices", customer: "customer_id"},
 	{name: "voice_samples", parent: "voices", parentColumn: "voice_id"},
 	{name: "voice_bindings", parent: "voices", parentColumn: "voice_id"},
+	{name: "sip_trunks", customer: "customer_id"},
 	{name: "phone_numbers", customer: "customer_id"},
 	{name: "knowledge_urls", customer: "customer_id"},
 	{name: "knowledge_documents", customer: "customer_id"},
@@ -104,7 +105,7 @@ var dataTables = []dataTable{
 // their data would be a way to walk off with a customer's users' accounts. Both are left
 // out on the way out and left alone on the way in, so a connection arrives needing to be
 // authorized again rather than arriving broken.
-var secretColumns = []string{"secret_sealed", "access_token", "refresh_token", "oauth_state", "code_verifier", "credentials_sealed"}
+var secretColumns = []string{"secret_sealed", "access_token", "refresh_token", "oauth_state", "code_verifier", "credentials_sealed", "password_sealed"}
 
 // DataChange is one thing that happened to one row.
 type DataChange struct {
@@ -356,6 +357,12 @@ func (t dataTable) identity() string {
 	if t.name == "connector_connections" {
 		return "jsonb_build_object('customer_id', ?::text, 'status', '" + ConnectionNeedsReauthorization + "'," +
 			" 'credentials_kek_version', 0, 'expires_at', NULL, 'provider_unit_id', NULL)"
+	}
+	// A trunk arrives without its password, since the key that sealed it is the other
+	// deployment's, so it arrives at key version 0, which is what a trunk without one
+	// holds (20261007050000_sip_trunks.sql).
+	if t.name == "sip_trunks" {
+		return "jsonb_build_object('customer_id', ?::text, 'password_kek_version', 0)"
 	}
 	return fmt.Sprintf("jsonb_build_object('%s', ?::text)", t.customer)
 }

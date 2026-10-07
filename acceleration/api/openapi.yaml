@@ -77,6 +77,20 @@ components:
         - daily
         - monthly
       type: string
+    AddTrunkNumberRequest:
+      properties:
+        country:
+          description: Required. ISO 3166-1 alpha-2 country code.
+          type: string
+        e164:
+          description: Required. The number in +15551234567 form.
+          type: string
+        tags:
+          additionalProperties:
+            type: string
+          description: The customer's own cost labels.
+          type: object
+      type: object
     AgentChannels:
       description: The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
       properties:
@@ -2459,6 +2473,36 @@ components:
           description: Provider-specific voice id.
           type: string
       type: object
+    CreateSipTrunkRequest:
+      properties:
+        codecs:
+          description: PCMU, PCMA or G722, in order of preference. Omit for PCMU then PCMA.
+          items:
+            type: string
+          type: array
+        host:
+          description: 'Required. The trunk''s hostname, without sip: or a port, e.g. example.pstn.twilio.com.'
+          type: string
+        late_offer:
+          description: The trunk accepts an INVITE without SDP. Omit for false.
+          type: boolean
+        name:
+          description: Required.
+          type: string
+        password:
+          description: Required. Stored sealed and never returned.
+          type: string
+        port:
+          description: Omit for 5060.
+          format: int64
+          type: integer
+        transport:
+          description: udp, tcp or tls. Omit for tcp.
+          type: string
+        username:
+          description: Required.
+          type: string
+      type: object
     CustomConnectorRequest:
       additionalProperties: false
       description: A custom MCP server for the app's agents to connect to. An unknown field is refused rather than ignored.
@@ -3652,6 +3696,9 @@ components:
         released_at:
           format: date-time
           nullable: true
+          type: string
+        sip_trunk_id:
+          description: The customer's own SIP trunk calls from this number are dialled through. Present only for vendor sip_trunk.
           type: string
         stream_trunk_id:
           description: The SIP trunk calls to this number arrive on. Absent until attached.
@@ -5300,6 +5347,56 @@ components:
         - started_at
         - state
       type: object
+    SipTrunk:
+      properties:
+        codecs:
+          description: Audio codecs offered to the trunk, in order of preference.
+          items:
+            type: string
+          type: array
+        created_at:
+          format: date-time
+          type: string
+        has_password:
+          description: Whether a password is stored. The password itself is never returned. False for a trunk that arrived from another deployment, which needs one set before it can be called through.
+          type: boolean
+        host:
+          description: 'The trunk''s hostname, without sip: or a port.'
+          type: string
+        id:
+          type: string
+        late_offer:
+          description: The trunk accepts an INVITE without SDP.
+          type: boolean
+        name:
+          type: string
+        port:
+          format: int64
+          type: integer
+        transport:
+          enum:
+            - udp
+            - tcp
+            - tls
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        username:
+          type: string
+      required:
+        - codecs
+        - created_at
+        - has_password
+        - host
+        - id
+        - late_offer
+        - name
+        - port
+        - transport
+        - updated_at
+        - username
+      type: object
     Skill:
       properties:
         capture_video:
@@ -6615,6 +6712,30 @@ components:
           type: string
         voice:
           description: The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
+          type: string
+      type: object
+    UpdateSipTrunkRequest:
+      properties:
+        codecs:
+          items:
+            type: string
+          type: array
+        host:
+          type: string
+        late_offer:
+          type: boolean
+        name:
+          type: string
+        password:
+          description: Omit to keep the stored password.
+          type: string
+        port:
+          format: int64
+          type: integer
+        transport:
+          description: udp, tcp or tls.
+          type: string
+        username:
           type: string
       type: object
     UseCase:
@@ -12781,6 +12902,209 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Set the sandbox recipients
+  /v1/phone/trunks:
+    get:
+      description: Trunks outbound calls from the customer's own numbers are dialled through. Passwords are never returned. Answers not_configured on a deployment with no key to seal them with.
+      operationId: listSipTrunks
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/SipTrunk'
+                type: array
+          description: The customer's trunks, newest first
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: The calling customer's own SIP trunks
+    post:
+      operationId: createSipTrunk
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSipTrunkRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SipTrunk'
+          description: The trunk is stored, its password sealed
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Add one of the customer's own SIP trunks
+  /v1/phone/trunks/{id}:
+    delete:
+      description: Answers 409 while numbers are on the trunk. Release them first.
+      operationId: deleteSipTrunk
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The trunk was removed
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Remove a SIP trunk with no numbers on it
+    get:
+      operationId: getSipTrunk
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SipTrunk'
+          description: The trunk
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: One of the customer's own SIP trunks
+    patch:
+      description: Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+      operationId: updateSipTrunk
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSipTrunkRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SipTrunk'
+          description: The trunk as it now is
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Change a SIP trunk
+  /v1/phone/trunks/{id}/numbers:
+    post:
+      description: Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+      operationId: addTrunkNumber
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddTrunkNumberRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneNumber'
+          description: The number is on the trunk
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Add a number that is on this SIP trunk
   /v1/phone/use-cases:
     get:
       description: |-

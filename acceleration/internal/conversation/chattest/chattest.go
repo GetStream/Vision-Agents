@@ -37,6 +37,18 @@ type store struct {
 	keyed map[string]App
 	// asked is every request served, with the key it was made with.
 	asked []Request
+	// held is the request Hold keeps waiting, under a lock of its own: mu is taken only once
+	// a request is served, so a held request leaves every other one to be answered.
+	holdMu sync.Mutex
+	held   *held
+}
+
+// held is one request Hold keeps waiting: the path it ends in, a channel closed once it
+// waits, and one closed to let it go on.
+type held struct {
+	suffix         string
+	waiting, letGo chan struct{}
+	once           sync.Once
 }
 
 // Request is one request the server was sent, and the api key it was made with.
@@ -78,6 +90,7 @@ type Server struct {
 	// URL is where it is served, for a client of one's own to be pointed at.
 	URL string
 	db  *store
+	t   *testing.T
 }
 
 // NewServer serves Chat from memory for the life of the test.
@@ -95,7 +108,7 @@ func NewServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("chattest: %v", err)
 	}
-	return &Server{Client: client, URL: server.URL, db: db}
+	return &Server{Client: client, URL: server.URL, db: db, t: t}
 }
 
 // Client serves Chat from memory for the life of the test.
@@ -213,6 +226,34 @@ func (s *Server) Rules() []string {
 	return slices.Sorted(maps.Keys(s.db.rules))
 }
 
+// Hold keeps the next request whose path ends in suffix waiting, before it is served, until
+// release is called: a Stream Chat call that takes as long as the test needs. waiting is
+// closed once that request waits. Every other request is answered as before. The request is
+// let go at the end of the test at the latest, so the server can close.
+func (s *Server) Hold(suffix string) (waiting <-chan struct{}, release func()) {
+	h := &held{suffix: suffix, waiting: make(chan struct{}), letGo: make(chan struct{})}
+	release = func() { h.once.Do(func() { close(h.letGo) }) }
+	s.t.Cleanup(release)
+	s.db.holdMu.Lock()
+	defer s.db.holdMu.Unlock()
+	s.db.held = h
+	return h.waiting, release
+}
+
+// wait keeps the request Hold asked for waiting until it is let go.
+func (db *store) wait(path string) {
+	db.holdMu.Lock()
+	h := db.held
+	if h == nil || !strings.HasSuffix(path, h.suffix) {
+		db.holdMu.Unlock()
+		return
+	}
+	db.held = nil
+	db.holdMu.Unlock()
+	close(h.waiting)
+	<-h.letGo
+}
+
 // unique is an id nothing else has.
 func unique() string {
 	raw := make([]byte, 8)
@@ -270,6 +311,7 @@ func (db *store) messagesIn(id string) []map[string]any {
 }
 
 func (db *store) serve(w http.ResponseWriter, r *http.Request) {
+	db.wait(r.URL.Path)
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")

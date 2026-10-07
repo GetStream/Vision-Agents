@@ -294,7 +294,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		if err != nil {
 			return nil, stack.Wrap(err)
 		}
-		if spec.ConversationID != "" {
+		// A channel OpenInApp refuses, such as a thread channel a request named, takes over
+		// no session that holds it.
+		if spec.ConversationID != "" && persistent.Openable(ctx, spec.ConversationID) {
 			m.takeOver(spec.CustomerID, spec.ConversationID)
 		}
 		var truncated bool

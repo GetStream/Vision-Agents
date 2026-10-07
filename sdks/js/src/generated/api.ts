@@ -2776,6 +2776,72 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/phone/trunks": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The calling customer's own SIP trunks
+         * @description Trunks outbound calls from the customer's own numbers are dialled through. Passwords are never returned. Answers not_configured on a deployment with no key to seal them with.
+         */
+        readonly get: operations["listSipTrunks"];
+        readonly put?: never;
+        /** Add one of the customer's own SIP trunks */
+        readonly post: operations["createSipTrunk"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/trunks/{id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** One of the customer's own SIP trunks */
+        readonly get: operations["getSipTrunk"];
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Remove a SIP trunk with no numbers on it
+         * @description Answers 409 while numbers are on the trunk. Release them first.
+         */
+        readonly delete: operations["deleteSipTrunk"];
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Change a SIP trunk
+         * @description Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+         */
+        readonly patch: operations["updateSipTrunk"];
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/trunks/{id}/numbers": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Add a number that is on this SIP trunk
+         * @description Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+         */
+        readonly post: operations["addTrunkNumber"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/phone/use-cases": {
         readonly parameters: {
             readonly query?: never;
@@ -3306,6 +3372,16 @@ export type components = {
          * @enum {string}
          */
         readonly ActivityGranularity: "daily" | "monthly";
+        readonly AddTrunkNumberRequest: {
+            /** @description Required. ISO 3166-1 alpha-2 country code. */
+            readonly country?: string;
+            /** @description Required. The number in +15551234567 form. */
+            readonly e164?: string;
+            /** @description The customer's own cost labels. */
+            readonly tags?: {
+                readonly [key: string]: string;
+            };
+        };
         /** @description The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is. */
         readonly AgentChannels: {
             readonly identity?: components["schemas"]["ChannelIdentity"];
@@ -4584,6 +4660,27 @@ export type components = {
             /** @description Provider-specific voice id. */
             readonly voice?: string;
         };
+        readonly CreateSipTrunkRequest: {
+            /** @description PCMU, PCMA or G722, in order of preference. Omit for PCMU then PCMA. */
+            readonly codecs?: readonly string[];
+            /** @description Required. The trunk's hostname, without sip: or a port, e.g. example.pstn.twilio.com. */
+            readonly host?: string;
+            /** @description The trunk accepts an INVITE without SDP. Omit for false. */
+            readonly late_offer?: boolean;
+            /** @description Required. */
+            readonly name?: string;
+            /** @description Required. Stored sealed and never returned. */
+            readonly password?: string;
+            /**
+             * Format: int64
+             * @description Omit for 5060.
+             */
+            readonly port?: number;
+            /** @description udp, tcp or tls. Omit for tcp. */
+            readonly transport?: string;
+            /** @description Required. */
+            readonly username?: string;
+        };
         /** @description A custom MCP server for the app's agents to connect to. An unknown field is refused rather than ignored. */
         readonly CustomConnectorRequest: {
             readonly category?: string;
@@ -5306,6 +5403,8 @@ export type components = {
             readonly purchased_at: string;
             /** Format: date-time */
             readonly released_at?: string | null;
+            /** @description The customer's own SIP trunk calls from this number are dialled through. Present only for vendor sip_trunk. */
+            readonly sip_trunk_id?: string;
             /** @description The SIP trunk calls to this number arrive on. Absent until attached. */
             readonly stream_trunk_id?: string;
             /** @description The customer's own cost labels. */
@@ -6240,6 +6339,27 @@ export type components = {
              */
             readonly state: "running" | "passed" | "failed" | "cancelled" | "errored";
         };
+        readonly SipTrunk: {
+            /** @description Audio codecs offered to the trunk, in order of preference. */
+            readonly codecs: readonly string[];
+            /** Format: date-time */
+            readonly created_at: string;
+            /** @description Whether a password is stored. The password itself is never returned. False for a trunk that arrived from another deployment, which needs one set before it can be called through. */
+            readonly has_password: boolean;
+            /** @description The trunk's hostname, without sip: or a port. */
+            readonly host: string;
+            readonly id: string;
+            /** @description The trunk accepts an INVITE without SDP. */
+            readonly late_offer: boolean;
+            readonly name: string;
+            /** Format: int64 */
+            readonly port: number;
+            /** @enum {string} */
+            readonly transport: "udp" | "tcp" | "tls";
+            /** Format: date-time */
+            readonly updated_at: string;
+            readonly username: string;
+        };
         readonly Skill: {
             /** @description Capture task-scoped visual evidence before reasoning. */
             readonly capture_video?: boolean;
@@ -7098,6 +7218,19 @@ export type components = {
             readonly verbosity?: "low" | "medium" | "high";
             /** @description The voice to speak in, in the provider's own terms. Empty returns to the provider's default. */
             readonly voice?: string;
+        };
+        readonly UpdateSipTrunkRequest: {
+            readonly codecs?: readonly string[];
+            readonly host?: string;
+            readonly late_offer?: boolean;
+            readonly name?: string;
+            /** @description Omit to keep the stored password. */
+            readonly password?: string;
+            /** Format: int64 */
+            readonly port?: number;
+            /** @description udp, tcp or tls. */
+            readonly transport?: string;
+            readonly username?: string;
         };
         /** @description A 10DLC use case: what an app sends, reviewed by Stream and then registered as a campaign with the vendor its numbers come from. */
         readonly UseCase: {
@@ -12456,6 +12589,228 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listSipTrunks: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The customer's trunks, newest first */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["SipTrunk"][];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly createSipTrunk: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CreateSipTrunkRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The trunk is stored, its password sealed */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SipTrunk"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getSipTrunk: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The trunk */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SipTrunk"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deleteSipTrunk: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The trunk was removed */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly updateSipTrunk: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["UpdateSipTrunkRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The trunk as it now is */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SipTrunk"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly addTrunkNumber: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AddTrunkNumberRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The number is on the trunk */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PhoneNumber"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 500: components["responses"]["InternalError"];
         };
     };

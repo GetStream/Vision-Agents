@@ -172,23 +172,26 @@ func (s *Server) threadSession(ctx context.Context, origin hookOrigin, thread st
 	spec.CallID, spec.STSTarget, spec.Greeting = "", "", ""
 	spec.PersistConversation = true
 	spec.ConversationID = chatlog.ChannelType + ":" + thread.ChannelID
-	return s.sessions.Create(ctx, spec)
+	return s.sessions.Create(conversation.RouterOpensThread(ctx, spec.ConversationID), spec)
 }
 
 // threadConversation holds a text session asked for on a thread channel, by its agent id, on
 // that channel: an agent id that names one of the customer's thread channels keeps the
 // session's conversation there, so its replies land in the thread, not in a support channel
-// of its own. Anything else is left as it is.
-func (s *Server) threadConversation(ctx context.Context, customerID string, spec *session.Spec) {
+// of its own. It returns ctx carrying the Router's word for that one channel
+// (conversation.RouterOpensThread), the only way a thread channel opens. Anything else is
+// left as it is: a conversation_id the request named opens no thread channel.
+func (s *Server) threadConversation(ctx context.Context, customerID string, spec *session.Spec) context.Context {
 	if s.store == nil || !spec.Text || !spec.PersistConversation || spec.ConversationID != "" ||
 		!strings.HasPrefix(spec.AgentID, conversation.ThreadChannelPrefix) {
-		return
+		return ctx
 	}
 	thread, err := s.store.ChannelThread(ctx, spec.AgentID)
 	if err != nil || thread.CustomerID != customerID {
-		return
+		return ctx
 	}
 	spec.ConversationID = chatlog.ChannelType + ":" + thread.ChannelID
 	// A resumed conversation names its own agent (Spec.Normalize).
 	spec.AgentID = ""
+	return conversation.RouterOpensThread(ctx, spec.ConversationID)
 }

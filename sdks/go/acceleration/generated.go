@@ -1748,6 +1748,27 @@ func (e SimulationRunState) Valid() bool {
 	}
 }
 
+// Defines values for SipTrunkTransport.
+const (
+	Tcp SipTrunkTransport = "tcp"
+	Tls SipTrunkTransport = "tls"
+	Udp SipTrunkTransport = "udp"
+)
+
+// Valid indicates whether the value is a known member of the SipTrunkTransport enum.
+func (e SipTrunkTransport) Valid() bool {
+	switch e {
+	case Tcp:
+		return true
+	case Tls:
+		return true
+	case Udp:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for StreamAppState.
 const (
 	StreamAppStateBlocked      StreamAppState = "blocked"
@@ -2180,6 +2201,18 @@ type ActivityBucket struct {
 
 // ActivityGranularity Separate from Granularity, and coarser, because distinct users cannot be summed: a month of them is who came back rather than the sum of its days.
 type ActivityGranularity string
+
+// AddTrunkNumberRequest defines model for AddTrunkNumberRequest.
+type AddTrunkNumberRequest struct {
+	// Country Required. ISO 3166-1 alpha-2 country code.
+	Country *string `json:"country,omitempty"`
+
+	// E164 Required. The number in +15551234567 form.
+	E164 *string `json:"e164,omitempty"`
+
+	// Tags The customer's own cost labels.
+	Tags *map[string]string `json:"tags,omitempty"`
+}
 
 // AgentChannels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 type AgentChannels struct {
@@ -3672,6 +3705,33 @@ type CreateSessionRequest struct {
 	Voice *string `json:"voice,omitempty"`
 }
 
+// CreateSipTrunkRequest defines model for CreateSipTrunkRequest.
+type CreateSipTrunkRequest struct {
+	// Codecs PCMU, PCMA or G722, in order of preference. Omit for PCMU then PCMA.
+	Codecs *[]string `json:"codecs,omitempty"`
+
+	// Host Required. The trunk's hostname, without sip: or a port, e.g. example.pstn.twilio.com.
+	Host *string `json:"host,omitempty"`
+
+	// LateOffer The trunk accepts an INVITE without SDP. Omit for false.
+	LateOffer *bool `json:"late_offer,omitempty"`
+
+	// Name Required.
+	Name *string `json:"name,omitempty"`
+
+	// Password Required. Stored sealed and never returned.
+	Password *string `json:"password,omitempty"`
+
+	// Port Omit for 5060.
+	Port *int64 `json:"port,omitempty"`
+
+	// Transport udp, tcp or tls. Omit for tcp.
+	Transport *string `json:"transport,omitempty"`
+
+	// Username Required.
+	Username *string `json:"username,omitempty"`
+}
+
 // CustomConnectorRequest A custom MCP server for the app's agents to connect to. An unknown field is refused rather than ignored.
 type CustomConnectorRequest struct {
 	Category *string `json:"category,omitempty"`
@@ -4450,6 +4510,9 @@ type PhoneNumber struct {
 	MonthlyCostMicros int64             `json:"monthly_cost_micros"`
 	PurchasedAt       time.Time         `json:"purchased_at"`
 	ReleasedAt        *time.Time        `json:"released_at,omitempty"`
+
+	// SipTrunkId The customer's own SIP trunk calls from this number are dialled through. Present only for vendor sip_trunk.
+	SipTrunkId *string `json:"sip_trunk_id,omitempty"`
 
 	// StreamTrunkId The SIP trunk calls to this number arrive on. Absent until attached.
 	StreamTrunkId *string `json:"stream_trunk_id,omitempty"`
@@ -5561,6 +5624,31 @@ type SimulationRunMode string
 // SimulationRunState A run passed only if every one of its conversations did. A conversation that never got as far as a ruling leaves the run errored rather than failed.
 type SimulationRunState string
 
+// SipTrunk defines model for SipTrunk.
+type SipTrunk struct {
+	// Codecs Audio codecs offered to the trunk, in order of preference.
+	Codecs    []string  `json:"codecs"`
+	CreatedAt time.Time `json:"created_at"`
+
+	// HasPassword Whether a password is stored. The password itself is never returned. False for a trunk that arrived from another deployment, which needs one set before it can be called through.
+	HasPassword bool `json:"has_password"`
+
+	// Host The trunk's hostname, without sip: or a port.
+	Host string `json:"host"`
+	Id   string `json:"id"`
+
+	// LateOffer The trunk accepts an INVITE without SDP.
+	LateOffer bool              `json:"late_offer"`
+	Name      string            `json:"name"`
+	Port      int64             `json:"port"`
+	Transport SipTrunkTransport `json:"transport"`
+	UpdatedAt time.Time         `json:"updated_at"`
+	Username  string            `json:"username"`
+}
+
+// SipTrunkTransport defines model for SipTrunk.Transport.
+type SipTrunkTransport string
+
 // Skill defines model for Skill.
 type Skill struct {
 	// CaptureVideo Capture task-scoped visual evidence before reasoning.
@@ -6424,6 +6512,22 @@ type UpdateSessionRequestThinking string
 
 // UpdateSessionRequestVerbosity defines model for UpdateSessionRequest.Verbosity.
 type UpdateSessionRequestVerbosity string
+
+// UpdateSipTrunkRequest defines model for UpdateSipTrunkRequest.
+type UpdateSipTrunkRequest struct {
+	Codecs    *[]string `json:"codecs,omitempty"`
+	Host      *string   `json:"host,omitempty"`
+	LateOffer *bool     `json:"late_offer,omitempty"`
+	Name      *string   `json:"name,omitempty"`
+
+	// Password Omit to keep the stored password.
+	Password *string `json:"password,omitempty"`
+	Port     *int64  `json:"port,omitempty"`
+
+	// Transport udp, tcp or tls.
+	Transport *string `json:"transport,omitempty"`
+	Username  *string `json:"username,omitempty"`
+}
 
 // UseCase A 10DLC use case: what an app sends, reviewed by Stream and then registered as a campaign with the vendor its numbers come from.
 type UseCase struct {
@@ -7294,6 +7398,15 @@ type CreateOptOutJSONRequestBody = CreateOptOutRequest
 
 // SetSandboxRecipientsJSONRequestBody defines body for SetSandboxRecipients for application/json ContentType.
 type SetSandboxRecipientsJSONRequestBody = SetSandboxRecipientsRequest
+
+// CreateSipTrunkJSONRequestBody defines body for CreateSipTrunk for application/json ContentType.
+type CreateSipTrunkJSONRequestBody = CreateSipTrunkRequest
+
+// UpdateSipTrunkJSONRequestBody defines body for UpdateSipTrunk for application/json ContentType.
+type UpdateSipTrunkJSONRequestBody = UpdateSipTrunkRequest
+
+// AddTrunkNumberJSONRequestBody defines body for AddTrunkNumber for application/json ContentType.
+type AddTrunkNumberJSONRequestBody = AddTrunkNumberRequest
 
 // CreateUseCaseJSONRequestBody defines body for CreateUseCase for application/json ContentType.
 type CreateUseCaseJSONRequestBody = UseCaseRequest
@@ -9501,6 +9614,75 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /v1/phone/sandbox/recipients (the `SetSandboxRecipients` operationId).
 	SetSandboxRecipients(ctx context.Context, body SetSandboxRecipientsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSipTrunks The calling customer's own SIP trunks
+	//
+	// Trunks outbound calls from the customer's own numbers are dialled through. Passwords are never returned. Answers not_configured on a deployment with no key to seal them with.
+	//
+	// Corresponds with GET /v1/phone/trunks (the `ListSipTrunks` operationId).
+	ListSipTrunks(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateSipTrunkWithBody Add one of the customer's own SIP trunks
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/phone/trunks (the `CreateSipTrunk` operationId).
+	CreateSipTrunkWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateSipTrunk Add one of the customer's own SIP trunks
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/phone/trunks (the `CreateSipTrunk` operationId).
+	CreateSipTrunk(ctx context.Context, body CreateSipTrunkJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteSipTrunk Remove a SIP trunk with no numbers on it
+	//
+	// Answers 409 while numbers are on the trunk. Release them first.
+	//
+	// Corresponds with DELETE /v1/phone/trunks/{id} (the `DeleteSipTrunk` operationId).
+	DeleteSipTrunk(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSipTrunk One of the customer's own SIP trunks
+	//
+	// Corresponds with GET /v1/phone/trunks/{id} (the `GetSipTrunk` operationId).
+	GetSipTrunk(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateSipTrunkWithBody Change a SIP trunk
+	//
+	// Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /v1/phone/trunks/{id} (the `UpdateSipTrunk` operationId).
+	UpdateSipTrunkWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateSipTrunk Change a SIP trunk
+	//
+	// Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /v1/phone/trunks/{id} (the `UpdateSipTrunk` operationId).
+	UpdateSipTrunk(ctx context.Context, id string, body UpdateSipTrunkJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddTrunkNumberWithBody Add a number that is on this SIP trunk
+	//
+	// Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/phone/trunks/{id}/numbers (the `AddTrunkNumber` operationId).
+	AddTrunkNumberWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddTrunkNumber Add a number that is on this SIP trunk
+	//
+	// Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/phone/trunks/{id}/numbers (the `AddTrunkNumber` operationId).
+	AddTrunkNumber(ctx context.Context, id string, body AddTrunkNumberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListUseCases List 10DLC use cases
 	//
@@ -13798,6 +13980,165 @@ func (c *Client) SetSandboxRecipientsWithBody(ctx context.Context, contentType s
 // Corresponds with PUT /v1/phone/sandbox/recipients (the `SetSandboxRecipients` operationId).
 func (c *Client) SetSandboxRecipients(ctx context.Context, body SetSandboxRecipientsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetSandboxRecipientsRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListSipTrunks The calling customer's own SIP trunks
+//
+// Trunks outbound calls from the customer's own numbers are dialled through. Passwords are never returned. Answers not_configured on a deployment with no key to seal them with.
+//
+// Corresponds with GET /v1/phone/trunks (the `ListSipTrunks` operationId).
+func (c *Client) ListSipTrunks(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSipTrunksRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateSipTrunkWithBody Add one of the customer's own SIP trunks
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/phone/trunks (the `CreateSipTrunk` operationId).
+func (c *Client) CreateSipTrunkWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateSipTrunkRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateSipTrunk Add one of the customer's own SIP trunks
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/phone/trunks (the `CreateSipTrunk` operationId).
+func (c *Client) CreateSipTrunk(ctx context.Context, body CreateSipTrunkJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateSipTrunkRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteSipTrunk Remove a SIP trunk with no numbers on it
+//
+// Answers 409 while numbers are on the trunk. Release them first.
+//
+// Corresponds with DELETE /v1/phone/trunks/{id} (the `DeleteSipTrunk` operationId).
+func (c *Client) DeleteSipTrunk(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteSipTrunkRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetSipTrunk One of the customer's own SIP trunks
+//
+// Corresponds with GET /v1/phone/trunks/{id} (the `GetSipTrunk` operationId).
+func (c *Client) GetSipTrunk(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSipTrunkRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateSipTrunkWithBody Change a SIP trunk
+//
+// Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /v1/phone/trunks/{id} (the `UpdateSipTrunk` operationId).
+func (c *Client) UpdateSipTrunkWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateSipTrunkRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateSipTrunk Change a SIP trunk
+//
+// Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /v1/phone/trunks/{id} (the `UpdateSipTrunk` operationId).
+func (c *Client) UpdateSipTrunk(ctx context.Context, id string, body UpdateSipTrunkJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateSipTrunkRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AddTrunkNumberWithBody Add a number that is on this SIP trunk
+//
+// Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/phone/trunks/{id}/numbers (the `AddTrunkNumber` operationId).
+func (c *Client) AddTrunkNumberWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddTrunkNumberRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AddTrunkNumber Add a number that is on this SIP trunk
+//
+// Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/phone/trunks/{id}/numbers (the `AddTrunkNumber` operationId).
+func (c *Client) AddTrunkNumber(ctx context.Context, id string, body AddTrunkNumberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddTrunkNumberRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -21629,6 +21970,235 @@ func NewSetSandboxRecipientsRequestWithBody(server string, contentType string, b
 	return req, nil
 }
 
+// NewListSipTrunksRequest constructs an http.Request for the ListSipTrunks method
+func NewListSipTrunksRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/trunks")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateSipTrunkRequest calls the generic CreateSipTrunk builder with application/json body
+func NewCreateSipTrunkRequest(server string, body CreateSipTrunkJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateSipTrunkRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateSipTrunkRequestWithBody constructs an http.Request for the CreateSipTrunk method, with any body, and a specified content type
+func NewCreateSipTrunkRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/trunks")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteSipTrunkRequest constructs an http.Request for the DeleteSipTrunk method
+func NewDeleteSipTrunkRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/trunks/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetSipTrunkRequest constructs an http.Request for the GetSipTrunk method
+func NewGetSipTrunkRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/trunks/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateSipTrunkRequest calls the generic UpdateSipTrunk builder with application/json body
+func NewUpdateSipTrunkRequest(server string, id string, body UpdateSipTrunkJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateSipTrunkRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewUpdateSipTrunkRequestWithBody constructs an http.Request for the UpdateSipTrunk method, with any body, and a specified content type
+func NewUpdateSipTrunkRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/trunks/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAddTrunkNumberRequest calls the generic AddTrunkNumber builder with application/json body
+func NewAddTrunkNumberRequest(server string, id string, body AddTrunkNumberJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAddTrunkNumberRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewAddTrunkNumberRequestWithBody constructs an http.Request for the AddTrunkNumber method, with any body, and a specified content type
+func NewAddTrunkNumberRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/trunks/%s/numbers", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListUseCasesRequest constructs an http.Request for the ListUseCases method
 func NewListUseCasesRequest(server string, params *ListUseCasesParams) (*http.Request, error) {
 	var err error
@@ -25353,6 +25923,81 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /v1/phone/sandbox/recipients (the `SetSandboxRecipients` operationId).
 	SetSandboxRecipientsWithResponse(ctx context.Context, body SetSandboxRecipientsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSandboxRecipientsResponse, error)
+
+	// ListSipTrunksWithResponse The calling customer's own SIP trunks
+	//
+	// Trunks outbound calls from the customer's own numbers are dialled through. Passwords are never returned. Answers not_configured on a deployment with no key to seal them with.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/phone/trunks (the `ListSipTrunks` operationId).
+	ListSipTrunksWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSipTrunksResponse, error)
+
+	// CreateSipTrunkWithBodyWithResponse Add one of the customer's own SIP trunks
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/trunks (the `CreateSipTrunk` operationId).
+	CreateSipTrunkWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSipTrunkResponse, error)
+
+	// CreateSipTrunkWithResponse Add one of the customer's own SIP trunks
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/trunks (the `CreateSipTrunk` operationId).
+	CreateSipTrunkWithResponse(ctx context.Context, body CreateSipTrunkJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSipTrunkResponse, error)
+
+	// DeleteSipTrunkWithResponse Remove a SIP trunk with no numbers on it
+	//
+	// Answers 409 while numbers are on the trunk. Release them first.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/phone/trunks/{id} (the `DeleteSipTrunk` operationId).
+	DeleteSipTrunkWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteSipTrunkResponse, error)
+
+	// GetSipTrunkWithResponse One of the customer's own SIP trunks
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/phone/trunks/{id} (the `GetSipTrunk` operationId).
+	GetSipTrunkWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSipTrunkResponse, error)
+
+	// UpdateSipTrunkWithBodyWithResponse Change a SIP trunk
+	//
+	// Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/phone/trunks/{id} (the `UpdateSipTrunk` operationId).
+	UpdateSipTrunkWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSipTrunkResponse, error)
+
+	// UpdateSipTrunkWithResponse Change a SIP trunk
+	//
+	// Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/phone/trunks/{id} (the `UpdateSipTrunk` operationId).
+	UpdateSipTrunkWithResponse(ctx context.Context, id string, body UpdateSipTrunkJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSipTrunkResponse, error)
+
+	// AddTrunkNumberWithBodyWithResponse Add a number that is on this SIP trunk
+	//
+	// Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/trunks/{id}/numbers (the `AddTrunkNumber` operationId).
+	AddTrunkNumberWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddTrunkNumberResponse, error)
+
+	// AddTrunkNumberWithResponse Add a number that is on this SIP trunk
+	//
+	// Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/trunks/{id}/numbers (the `AddTrunkNumber` operationId).
+	AddTrunkNumberWithResponse(ctx context.Context, id string, body AddTrunkNumberJSONRequestBody, reqEditors ...RequestEditorFn) (*AddTrunkNumberResponse, error)
 
 	// ListUseCasesWithResponse List 10DLC use cases
 	//
@@ -36675,6 +37320,497 @@ func (r SetSandboxRecipientsResponse) ContentType() string {
 	return ""
 }
 
+type ListSipTrunksResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]SipTrunk
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListSipTrunksResponse) GetJSON200() *[]SipTrunk {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListSipTrunksResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListSipTrunksResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListSipTrunksResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListSipTrunksResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ListSipTrunksResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListSipTrunksResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListSipTrunksResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSipTrunksResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSipTrunksResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListSipTrunksResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateSipTrunkResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *SipTrunk
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateSipTrunkResponse) GetJSON201() *SipTrunk {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateSipTrunkResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateSipTrunkResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateSipTrunkResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateSipTrunkResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateSipTrunkResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateSipTrunkResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateSipTrunkResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateSipTrunkResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateSipTrunkResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateSipTrunkResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteSipTrunkResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteSipTrunkResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteSipTrunkResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteSipTrunkResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteSipTrunkResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DeleteSipTrunkResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteSipTrunkResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteSipTrunkResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteSipTrunkResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteSipTrunkResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteSipTrunkResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetSipTrunkResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SipTrunk
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetSipTrunkResponse) GetJSON200() *SipTrunk {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetSipTrunkResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetSipTrunkResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetSipTrunkResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetSipTrunkResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r GetSipTrunkResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetSipTrunkResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetSipTrunkResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetSipTrunkResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetSipTrunkResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetSipTrunkResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateSipTrunkResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SipTrunk
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateSipTrunkResponse) GetJSON200() *SipTrunk {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateSipTrunkResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UpdateSipTrunkResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UpdateSipTrunkResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r UpdateSipTrunkResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r UpdateSipTrunkResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateSipTrunkResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateSipTrunkResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateSipTrunkResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateSipTrunkResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateSipTrunkResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AddTrunkNumberResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *PhoneNumber
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r AddTrunkNumberResponse) GetJSON201() *PhoneNumber {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AddTrunkNumberResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AddTrunkNumberResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r AddTrunkNumberResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r AddTrunkNumberResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r AddTrunkNumberResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AddTrunkNumberResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r AddTrunkNumberResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AddTrunkNumberResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AddTrunkNumberResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AddTrunkNumberResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListUseCasesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -42521,6 +43657,135 @@ func (c *ClientWithResponses) SetSandboxRecipientsWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseSetSandboxRecipientsResponse(rsp)
+}
+
+// ListSipTrunksWithResponse The calling customer's own SIP trunks
+//
+// Trunks outbound calls from the customer's own numbers are dialled through. Passwords are never returned. Answers not_configured on a deployment with no key to seal them with.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/phone/trunks (the `ListSipTrunks` operationId).
+func (c *ClientWithResponses) ListSipTrunksWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSipTrunksResponse, error) {
+	rsp, err := c.ListSipTrunks(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSipTrunksResponse(rsp)
+}
+
+// CreateSipTrunkWithBodyWithResponse Add one of the customer's own SIP trunks
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/trunks (the `CreateSipTrunk` operationId).
+func (c *ClientWithResponses) CreateSipTrunkWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSipTrunkResponse, error) {
+	rsp, err := c.CreateSipTrunkWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateSipTrunkResponse(rsp)
+}
+
+// CreateSipTrunkWithResponse Add one of the customer's own SIP trunks
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/trunks (the `CreateSipTrunk` operationId).
+func (c *ClientWithResponses) CreateSipTrunkWithResponse(ctx context.Context, body CreateSipTrunkJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSipTrunkResponse, error) {
+	rsp, err := c.CreateSipTrunk(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateSipTrunkResponse(rsp)
+}
+
+// DeleteSipTrunkWithResponse Remove a SIP trunk with no numbers on it
+//
+// Answers 409 while numbers are on the trunk. Release them first.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/phone/trunks/{id} (the `DeleteSipTrunk` operationId).
+func (c *ClientWithResponses) DeleteSipTrunkWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteSipTrunkResponse, error) {
+	rsp, err := c.DeleteSipTrunk(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteSipTrunkResponse(rsp)
+}
+
+// GetSipTrunkWithResponse One of the customer's own SIP trunks
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/phone/trunks/{id} (the `GetSipTrunk` operationId).
+func (c *ClientWithResponses) GetSipTrunkWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSipTrunkResponse, error) {
+	rsp, err := c.GetSipTrunk(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSipTrunkResponse(rsp)
+}
+
+// UpdateSipTrunkWithBodyWithResponse Change a SIP trunk
+//
+// Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/phone/trunks/{id} (the `UpdateSipTrunk` operationId).
+func (c *ClientWithResponses) UpdateSipTrunkWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSipTrunkResponse, error) {
+	rsp, err := c.UpdateSipTrunkWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateSipTrunkResponse(rsp)
+}
+
+// UpdateSipTrunkWithResponse Change a SIP trunk
+//
+// Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/phone/trunks/{id} (the `UpdateSipTrunk` operationId).
+func (c *ClientWithResponses) UpdateSipTrunkWithResponse(ctx context.Context, id string, body UpdateSipTrunkJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSipTrunkResponse, error) {
+	rsp, err := c.UpdateSipTrunk(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateSipTrunkResponse(rsp)
+}
+
+// AddTrunkNumberWithBodyWithResponse Add a number that is on this SIP trunk
+//
+// Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/trunks/{id}/numbers (the `AddTrunkNumber` operationId).
+func (c *ClientWithResponses) AddTrunkNumberWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddTrunkNumberResponse, error) {
+	rsp, err := c.AddTrunkNumberWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddTrunkNumberResponse(rsp)
+}
+
+// AddTrunkNumberWithResponse Add a number that is on this SIP trunk
+//
+// Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/trunks/{id}/numbers (the `AddTrunkNumber` operationId).
+func (c *ClientWithResponses) AddTrunkNumberWithResponse(ctx context.Context, id string, body AddTrunkNumberJSONRequestBody, reqEditors ...RequestEditorFn) (*AddTrunkNumberResponse, error) {
+	rsp, err := c.AddTrunkNumber(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddTrunkNumberResponse(rsp)
 }
 
 // ListUseCasesWithResponse List 10DLC use cases
@@ -51970,6 +53235,410 @@ func ParseSetSandboxRecipientsResponse(rsp *http.Response) (*SetSandboxRecipient
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListSipTrunksResponse parses an HTTP response from a ListSipTrunksWithResponse call
+func ParseListSipTrunksResponse(rsp *http.Response) (*ListSipTrunksResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSipTrunksResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []SipTrunk
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateSipTrunkResponse parses an HTTP response from a CreateSipTrunkWithResponse call
+func ParseCreateSipTrunkResponse(rsp *http.Response) (*CreateSipTrunkResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateSipTrunkResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest SipTrunk
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteSipTrunkResponse parses an HTTP response from a DeleteSipTrunkWithResponse call
+func ParseDeleteSipTrunkResponse(rsp *http.Response) (*DeleteSipTrunkResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteSipTrunkResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetSipTrunkResponse parses an HTTP response from a GetSipTrunkWithResponse call
+func ParseGetSipTrunkResponse(rsp *http.Response) (*GetSipTrunkResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetSipTrunkResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SipTrunk
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateSipTrunkResponse parses an HTTP response from a UpdateSipTrunkWithResponse call
+func ParseUpdateSipTrunkResponse(rsp *http.Response) (*UpdateSipTrunkResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateSipTrunkResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SipTrunk
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAddTrunkNumberResponse parses an HTTP response from a AddTrunkNumberWithResponse call
+func ParseAddTrunkNumberResponse(rsp *http.Response) (*AddTrunkNumberResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AddTrunkNumberResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest PhoneNumber
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError

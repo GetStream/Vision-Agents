@@ -54,6 +54,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -65,6 +66,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
@@ -103,6 +105,11 @@ const (
 	sentryFlushTimeout = 2 * time.Second
 	// traceFlushTimeout bounds the same thing for spans, on the same reasoning.
 	traceFlushTimeout = 2 * time.Second
+	// phoneHangupGrace bounds hanging up the calls this node holds through customers' own
+	// SIP trunks. A BYE is one round trip, so this is generous. On a signal the hangup runs
+	// first, and the HTTP drain gets the rest of shutdownGrace, so both fit inside the
+	// orchestrator's termination grace period.
+	phoneHangupGrace = 5 * time.Second
 )
 
 // usage is what the binary does besides serving.
@@ -222,9 +229,9 @@ func logLevel(settings config.Config) slog.Level {
 }
 
 // newSecretSealer builds the keyring the secrets the router holds for its customers are
-// sealed under: connector credentials, Stream app keys and channel credentials. Connectors
-// and app mode refuse to start without one; channels use it when it is set and are off
-// otherwise, so it is nil only when nothing requires it and no key is set. It does not
+// sealed under: connector credentials, Stream app keys, channel credentials and the
+// passwords of customers' own SIP trunks. Connectors and app mode refuse to start without
+// one; channels and SIP trunks use it when it is set and are off otherwise, so it is nil only when nothing requires it and no key is set. It does not
 // depend on auth.mode: a proxy deployment holds them as much as an api_key one does.
 //
 // The keyring is every ROUTER_AUTH_KEK_V1, _V2 and so on that is set, with
@@ -298,8 +305,8 @@ func loadKeyring(settings config.Config, needs string) (*auth.Sealer, error) {
 			continue
 		}
 		if version == 1 && keys[1] != "" && keys[1] != key {
-			return nil, fmt.Errorf("%s and %s_V1 are both version 1 and differ: set one of them",
-				authKEKEnvVar, authKEKEnvVar)
+			return nil, stack.Wrap(fmt.Errorf("%s and %s_V1 are both version 1 and differ: set one of them",
+				authKEKEnvVar, authKEKEnvVar))
 		}
 		keys[version] = key
 	}
@@ -792,10 +799,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if registrations != nil {
 		go registrations.Run(ctx, dlcPollEvery)
 	}
-	telephony, err := buildPhone(settings, pgStore, liveClient, streamClients, dlcGate, logger)
+	telephony, err := buildPhone(settings, pgStore, liveClient, streamClients, dlcGate, secrets, logger)
 	if err != nil {
 		return err
 	}
+	defer closePhone(telephony, logger)
 
 	// Without a turbopuffer key an agent knows only what its instructions say: the lookup
 	// tool is offered to no session, and there is nothing to fill either.
@@ -1126,10 +1134,18 @@ func run(settings config.Config, logger *slog.Logger) error {
 		return err
 	case <-ctx.Done():
 		logger.Info("shutting down")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
-		defer cancel()
-		return httpServer.Shutdown(shutdownCtx)
+		return stopServing(httpServer, telephony, logger, shutdownGrace)
 	}
+}
+
+// stopServing hangs up the calls through customers' own SIP trunks, then drains HTTP. Both
+// fit in grace from now: the drain gets whatever the hangup left of it.
+func stopServing(httpServer *http.Server, telephony *phone.Service, logger *slog.Logger, grace time.Duration) error {
+	deadline := time.Now().Add(grace)
+	closePhone(telephony, logger)
+	shutdownCtx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	return httpServer.Shutdown(shutdownCtx)
 }
 
 // pruneDataChanges drops the recorded changes nobody can resume from any more, hourly
@@ -1398,6 +1414,7 @@ func buildPhone(
 	liveClient *live.Client,
 	stream *streamapp.Clients,
 	gate *dlc.Gate,
+	secrets *auth.Sealer,
 	logger *slog.Logger,
 ) (*phone.Service, error) {
 	vendorConfig, err := phone.LoadConfig(settings.PhoneConfig)
@@ -1413,6 +1430,15 @@ func buildPhone(
 		recorder = routing.NewRecorder(routing.Phone, pgStore, liveClient, logger)
 	}
 
+	// Passwords of customers' own SIP trunks are sealed under the router's keyring. Without
+	// a key those trunks are off, rather than their passwords stored in the clear.
+	var trunks phone.Provider
+	if secrets != nil {
+		trunks = siptrunk.New(siptrunk.Options{Logger: logger})
+	} else {
+		logger.Info("no key encryption key, calls through customers' own sip trunks are off")
+	}
+
 	return phone.NewService(phone.ServiceOptions{
 		Registry:  vendors.Registry(vendorConfig),
 		Store:     pgStore,
@@ -1421,7 +1447,20 @@ func buildPhone(
 		Gate:      gate,
 		PublicURL: settings.PublicURL,
 		Logger:    logger,
+		Sealer:    secrets,
+		SIPTrunks: trunks,
 	})
+}
+
+// closePhone hangs up the calls this node holds through customers' own SIP trunks. Their
+// signalling runs through this process, so stopping without a BYE would leave both ends of
+// each call connected to nothing.
+func closePhone(telephony *phone.Service, logger *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), phoneHangupGrace)
+	defer cancel()
+	if err := telephony.Close(ctx); err != nil {
+		logger.Error("could not hang up every call through a customer's sip trunk", "error", err)
+	}
 }
 
 // dlcPollEvery is how often the use cases a vendor holds are asked after, for the reports
