@@ -106,6 +106,9 @@ type ManagerOptions struct {
 	// reply to them is let out, for every agent. Nil leaves it at the agent's default, and a
 	// pointer to zero lets a reply start as soon as it is ready.
 	ReplySilence *time.Duration
+	// ReplySilenceMax is the longest the first audio of a reply is held for that silence, for
+	// every agent. Nil leaves it at the agent's default.
+	ReplySilenceMax *time.Duration
 	// PreviewDebounce is how long a caller's words have to hold still before every agent starts
 	// the reply to them, ahead of the wait that decides whether they have finished. Nil leaves
 	// it at the agent's default, and a pointer to zero starts the reply when that wait is over.
@@ -519,6 +522,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		Guardrail:          screening,
 		SpeculativeReplies: m.options.SpeculativeReplies,
 		ReplySilence:       m.options.ReplySilence,
+		ReplySilenceMax:    m.options.ReplySilenceMax,
 		PreviewDebounce:    m.options.PreviewDebounce,
 		AppID:              spec.Memory.AppID,
 		SessionID:          spec.ID,

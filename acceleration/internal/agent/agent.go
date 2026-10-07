@@ -173,6 +173,13 @@ type Options struct {
 	// as it is ready. It does not apply to a greeting, a murmur, or a turn the agent takes
 	// without having been spoken to.
 	ReplySilence *time.Duration
+	// ReplySilenceMax is the longest the first audio of a reply is held for ReplySilence once
+	// it is ready. A caller whose line never goes quiet, because of a conversation in the room
+	// or a steady babble, does not confirm the silence, and the reply is let out when this has
+	// passed. A caller who starts again after a quiet stretch while it is held still has it
+	// dropped unheard. Nil leaves it at one second, and it must be longer than zero while
+	// ReplySilence is on.
+	ReplySilenceMax *time.Duration
 	// PreviewDebounce is how long a caller's words have to hold still before the reply to them
 	// is started, ahead of the wait that decides whether they have finished, so the model has
 	// been working for part of that wait. Words that change again restart it, and words that
@@ -283,6 +290,9 @@ type Agent struct {
 	// replySilence is how long a caller must have been quiet before the first audio of the
 	// reply to them is let out.
 	replySilence time.Duration
+	// replySilenceMax is the longest that first audio is held for it once it is ready, so a
+	// line that never goes quiet cannot stop a reply from being heard.
+	replySilenceMax time.Duration
 	// generatingCancel abandons a conversation Create that has not returned a stream yet.
 	// Interrupt used to Close only an existing stream, so a reply waiting on headers kept
 	// the event loop and the floor until Cerebras answered.
@@ -507,6 +517,17 @@ func New(options Options) (*Agent, error) {
 	if replySilence < 0 {
 		return nil, stack.Wrap(errors.New("agent: the reply silence cannot be negative"))
 	}
+	replySilenceMax := defaultReplySilenceMax
+	if options.ReplySilenceMax != nil {
+		replySilenceMax = *options.ReplySilenceMax
+	}
+	if replySilenceMax < 0 {
+		return nil, stack.Wrap(errors.New("agent: the longest hold of a reply cannot be negative"))
+	}
+	// Without a limit a line that never goes quiet holds a reply for as long as it lasts.
+	if replySilence > 0 && replySilenceMax == 0 {
+		return nil, stack.Wrap(errors.New("agent: the longest hold of a reply must be longer than zero while the reply silence is on"))
+	}
 	previewDebounce := defaultPreviewDebounce
 	if options.PreviewDebounce != nil {
 		previewDebounce = *options.PreviewDebounce
@@ -578,6 +599,7 @@ func New(options Options) (*Agent, error) {
 		cadence:          settling,
 		duplex:           listening,
 		replySilence:     replySilence,
+		replySilenceMax:  replySilenceMax,
 	}
 	// Only a call has a caller's audio to tell silence from.
 	if replySilence > 0 && !options.Text {

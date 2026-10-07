@@ -291,6 +291,32 @@ func (s *ConfigSuite) TestAReplyWaitsForTheCallerToBeQuietUnlessTurnedOff() {
 	s.Contains(err.Error(), "agent.reply_silence")
 }
 
+func (s *ConfigSuite) TestAHeldReplyIsLetOutAfterAtMostASecondUnlessToldOtherwise() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(time.Second, config.Agent.ReplySilenceMax)
+
+	s.T().Setenv("ROUTER_REPLY_SILENCE_MAX", "1500ms")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(1500*time.Millisecond, config.Agent.ReplySilenceMax)
+	s.Equal("1.5s", os.Getenv("ROUTER_REPLY_SILENCE_MAX"), "what is exported says the same")
+
+	for _, value := range []string{"0", "-1s"} {
+		s.T().Setenv("ROUTER_REPLY_SILENCE_MAX", value)
+		_, _, err = Load("")
+		s.Require().Error(err, "a limit of %s lets a reply be held for as long as the line is noisy", value)
+		s.Contains(err.Error(), "agent.reply_silence_max")
+	}
+
+	// With the wait for silence off there is nothing to limit.
+	s.T().Setenv("ROUTER_REPLY_SILENCE", "0")
+	s.T().Setenv("ROUTER_REPLY_SILENCE_MAX", "0")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Zero(config.Agent.ReplySilenceMax)
+}
+
 func (s *ConfigSuite) TestAReplyIsStartedWhenTheWordsHaveHeldStillUnlessTurnedOff() {
 	config, _, err := Load("")
 	s.Require().NoError(err)

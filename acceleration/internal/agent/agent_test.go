@@ -554,6 +554,9 @@ type AgentSuite struct {
 	// replySilence is how long a reply waits for the caller to have been quiet, and is nil,
 	// which leaves the default, unless a test says otherwise.
 	replySilence *time.Duration
+	// replySilenceMax is the longest a reply is held for it, and is nil, which leaves the
+	// default, unless a test says otherwise.
+	replySilenceMax *time.Duration
 	// previewDebounce is how long words hold still before the reply to them is started, and is
 	// nil, which leaves the default, unless a test says otherwise.
 	previewDebounce *time.Duration
@@ -611,6 +614,7 @@ func (s *AgentSuite) SetupTest() {
 	s.duplex = DuplexOptions{}
 	s.speculation = nil
 	s.replySilence = nil
+	s.replySilenceMax = nil
 	s.previewDebounce = nil
 	s.performing = ""
 	if s.agentID == "" {
@@ -792,6 +796,7 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		Duplex:             s.duplex,
 		SpeculativeReplies: s.speculation,
 		ReplySilence:       s.replySilence,
+		ReplySilenceMax:    s.replySilenceMax,
 		PreviewDebounce:    s.previewDebounce,
 		LLM:                reasoner,
 		LLMTarget:          "en-low-latency",
