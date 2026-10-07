@@ -54,6 +54,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
@@ -1079,6 +1080,22 @@ func run(settings config.Config, logger *slog.Logger) error {
 		events.Start()
 		defer events.Close()
 		options.MCPEvents = events
+	}
+	// A person's episodes close and are summarized (T55): a call's when the call hook says it
+	// ended, a thread's by the idle sweeper, which starts only where an episode can be
+	// (startEpisodeSweeper). A summary is an LLM response, so this needs the LLM router too.
+	if pgStore != nil && streams.LLM != nil {
+		closer, err := omnichannel.NewCloser(omnichannel.CloserOptions{
+			Store: pgStore, Stream: streamClients, LLM: streams.LLM, IdleAfter: settings.Episodes.IdleAfter, Logger: logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer closer.Close()
+		options.Episodes = closer
+		if _, err := startEpisodeSweeper(ctx, settings, pgStore, closer); err != nil {
+			logger.Error("could not tell whether any episode can be idle, so none is swept", "error", err)
+		}
 	}
 	if streamClients.PerApp() {
 		// Each registered app signs its own hooks and mints its own tokens, so only work in
