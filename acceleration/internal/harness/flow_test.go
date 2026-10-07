@@ -287,6 +287,16 @@ func (s *FlowSuite) TestCancelOfAHungCreateLetsTheNextDecideStart() {
 	s.Equal("new", asked[1].ID, "a hung create that was cancelled must not keep the mailbox busy")
 }
 
+func (s *FlowSuite) TestNothingIsAskedOnceTheFlowIsClosed() {
+	s.Require().NoError(s.flow.Close())
+
+	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "late", Participant: "Alex", Text: "okay"}))
+	s.flow.running.Wait()
+
+	s.Empty(s.model.requests(), "a decision started after Close would outlive the sessions it was given")
+	s.Empty(s.decisions())
+}
+
 func (s *FlowSuite) TestSlowOverlapYieldsBeforeTheOriginalReplyFinishes() {
 	s.model.holdCreate = make(chan struct{})
 	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "over-slow", Participant: "Alex", Text: "stop, give me one sentence", Unfinished: true, Speaking: true}))
