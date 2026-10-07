@@ -550,16 +550,22 @@ func (s *AuthorizationsSuite) body(response *http.Response) string {
 // browser is one person's browser: a cookie jar of its own, redirects not followed, and
 // router.example reached at the suite's listener.
 type browser struct {
-	suite  *AuthorizationsSuite
-	jar    *cookiejar.Jar
-	client *http.Client
+	suite    *RouterSuite
+	provider *fakeprovider.Server
+	jar      *cookiejar.Jar
+	client   *http.Client
 }
 
 func (s *AuthorizationsSuite) browser() *browser {
+	return newBrowser(&s.RouterSuite, s.provider)
+}
+
+// newBrowser is a browser for a suite whose consents go to provider.
+func newBrowser(s *RouterSuite, provider *fakeprovider.Server) *browser {
 	jar, err := cookiejar.New(nil)
 	s.Require().NoError(err)
 	listener := s.server.Listener.Addr().String()
-	return &browser{suite: s, jar: jar, client: &http.Client{
+	return &browser{suite: s, provider: provider, jar: jar, client: &http.Client{
 		Jar: jar,
 		Transport: roundTripper(func(r *http.Request) (*http.Response, error) {
 			sent := r.Clone(r.Context())
@@ -578,8 +584,9 @@ func (b *browser) handOff(started Authorization) string {
 	var answered struct {
 		AuthorizationURL string `json:"authorization_url"`
 	}
-	b.suite.Require().NoError(json.Unmarshal([]byte(b.suite.body(response)), &answered))
-	b.suite.Require().True(strings.HasPrefix(answered.AuthorizationURL, b.suite.provider.URL+fakeprovider.PathAuthorize+"?"))
+	defer response.Body.Close()
+	b.suite.Require().NoError(json.NewDecoder(response.Body).Decode(&answered))
+	b.suite.Require().True(strings.HasPrefix(answered.AuthorizationURL, b.provider.URL+fakeprovider.PathAuthorize+"?"))
 	return answered.AuthorizationURL
 }
 

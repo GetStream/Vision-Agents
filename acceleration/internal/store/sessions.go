@@ -227,6 +227,30 @@ func (s *Store) DescribeSession(ctx context.Context, customerID, id, title, desc
 	return nil
 }
 
+// ChooseSessionConnection records connectionID as the session's selection for the connector
+// binding called name, replacing one it had, in one statement so two writes for different
+// names never drop each other's. A fork or a reopened chat re-resolves it as it does the
+// selections the session was opened with. A session with no row, such as an incognito one,
+// is left as it is.
+func (s *Store) ChooseSessionConnection(ctx context.Context, customerID, id, name, connectionID string) error {
+	if customerID == "" || id == "" || name == "" || connectionID == "" {
+		return stack.Wrap(errors.New("store: a customer, a session, a binding name and a connection id are required"))
+	}
+	_, err := s.db.NewUpdate().Model((*AgentSession)(nil)).
+		Set("updated_at = ?", time.Now().UTC()).
+		Set(`connector_selections = (
+			SELECT coalesce(jsonb_agg(chosen), '[]'::jsonb) FROM jsonb_array_elements(connector_selections) AS chosen
+			WHERE chosen->>'name' <> ?) || jsonb_build_array(jsonb_build_object('name', ?::text, 'connection_id', ?::text))`,
+			name, name, connectionID).
+		Where("id = ?", id).
+		Where("customer_id = ?", customerID).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: choose session connection: %w", err))
+	}
+	return nil
+}
+
 // SessionExists reports whether any customer has a session with this id.
 func (s *Store) SessionExists(ctx context.Context, id string) (bool, error) {
 	exists, err := s.db.NewSelect().Model((*AgentSession)(nil)).Where("id = ?", id).Exists(ctx)

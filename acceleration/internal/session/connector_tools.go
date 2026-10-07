@@ -23,6 +23,9 @@ import (
 type Connectors struct {
 	Registry   core.Registry
 	Transports *core.Transports
+	// Consents begins a consent for the caller's own connection when a tool call needs one
+	// (connector_login.go). Nil leaves such a binding out of the session, as it was before.
+	Consents Consents
 }
 
 // defaultConnectorTimeout bounds one connector tool call whose binding sets no timeout_ms.
@@ -131,6 +134,7 @@ func (m *Manager) attachConnectors(ctx context.Context, spec *Spec) (*dispatcher
 		}
 		m.logger.Warn("opening the session without a connector", "connector", binding.Name, "reason", reason)
 		unavailable = append(unavailable, ConnectorUnavailable{Name: binding.Name, ConnectorID: binding.ConnectorID, Reason: reason})
+		m.offerLogin(*spec, binding, reason, selected[binding.Name], d)
 	}
 	return d, d.tools, unavailable, nil
 }

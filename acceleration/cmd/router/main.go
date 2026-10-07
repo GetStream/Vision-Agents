@@ -835,7 +835,9 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
 	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, streamClients, pluginAuth,
-		session.Connectors{Registry: connectors, Transports: connectorTransports}, logger)
+		session.Connectors{Registry: connectors, Transports: connectorTransports,
+			// Nil with connectors off: no secrets to seal an attempt with.
+			Consents: api.ConnectorConsents(pgStore, connectors, connectorSecrets, settings.PublicURL)}, logger)
 	if err != nil {
 		return err
 	}

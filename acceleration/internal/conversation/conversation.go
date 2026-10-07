@@ -77,8 +77,11 @@ type Message struct {
 	// Authorizations ask the end user to connect a plugin the reply needed (authorizations.go).
 	// They are written among the attachments, by MarshalJSON.
 	Authorizations []plugins.Authorization `json:"-"`
-	Saved          bool                    `json:"saved"`
-	Error          string                  `json:"persistence_error,omitempty"`
+	// ConnectorAuthorizations ask the end user to connect a connector binding the reply
+	// needed (connector_logins.go). They are written among the attachments, by MarshalJSON.
+	ConnectorAuthorizations []ConnectorAuthorization `json:"-"`
+	Saved                   bool                     `json:"saved"`
+	Error                   string                   `json:"persistence_error,omitempty"`
 
 	// Read from Stream user metadata, never from message custom fields.
 	authorID, authorName string
@@ -804,6 +807,7 @@ func (s *Service) historyIn(ctx context.Context, client *getstream.Stream, custo
 				msg.Files = filesFromAttachments(m.Attachments)
 			}
 			msg.Authorizations = authorizationsFromAttachments(m.Attachments)
+			msg.ConnectorAuthorizations = connectorAuthorizationsFromAttachments(m.Attachments)
 			msg.Saved = true
 			msg.authorID = m.User.ID
 			if m.User.Name != nil {
@@ -1530,6 +1534,7 @@ func (c *Conversation) publish(m Message) {
 		m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 		m.Files = append([]sandbox.Attachment{}, m.Files...)
 		m.Authorizations = append([]plugins.Authorization{}, m.Authorizations...)
+		m.ConnectorAuthorizations = append([]ConnectorAuthorization{}, m.ConnectorAuthorizations...)
 		c.emit(Updated{CID: c.data.CID, Message: m})
 	}
 }
@@ -1547,6 +1552,7 @@ func (c *Conversation) enqueue(m Message, create bool) {
 	m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 	m.Files = append([]sandbox.Attachment{}, m.Files...)
 	m.Authorizations = append([]plugins.Authorization{}, m.Authorizations...)
+	m.ConnectorAuthorizations = append([]ConnectorAuthorization{}, m.ConnectorAuthorizations...)
 	op := operation{Message: m, Create: create}
 	if m.Role == "user" {
 		op.Author = c.userAuthor()
@@ -1608,6 +1614,7 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 		parts = liveParts(parts, *op.live)
 	}
 	extra := append(partialAttachments(m.Artifacts), authorizationAttachments(m.Authorizations)...)
+	extra = append(extra, connectorAuthorizationAttachments(m.ConnectorAuthorizations)...)
 	extra = append(extra, fileAttachments(m.Files)...)
 	if attachments := messageAttachments(parts, extra); len(attachments) > 0 {
 		fields["attachments"] = attachments
@@ -1785,6 +1792,7 @@ func (c *Conversation) run() {
 				copy.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 				copy.Files = append([]sandbox.Attachment{}, m.Files...)
 				copy.Authorizations = append([]plugins.Authorization{}, m.Authorizations...)
+				copy.ConnectorAuthorizations = append([]ConnectorAuthorization{}, m.ConnectorAuthorizations...)
 				m = &copy
 			}
 			// A change not sent yet waits for the next update; a settled reply's is stored.
