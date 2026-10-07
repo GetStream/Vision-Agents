@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
@@ -262,6 +263,114 @@ func (s *ConnectorLoginSuite) TestAConnectionConnectedBeforeOpensOnlyOnceTheChat
 	s.Contains(asked, `"status":"authorization_required"`)
 	s.Contains(still, `"status":"authorization_required"`, "connected before the chat asked is not a consent in it")
 	s.Equal("primary", said)
+}
+
+// TestACallThroughALoginLeavesOneInvocationRow: call_tool on a binding a login opened is a
+// connector call like any other, and leaves one row. Asking for the login leaves none: no
+// connection was called.
+func (s *ConnectorLoginSuite) TestACallThroughALoginLeavesOneInvocationRow() {
+	mine := s.pending("alice", "primary")
+	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM"}
+	d, _, _, err := s.attachWithConsents(s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", nil)))
+	s.Require().NoError(err)
+	asked, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+	s.Require().NoError(err)
+	s.Require().Contains(asked, `"status":"authorization_required"`)
+	s.connect(mine, "primary")
+	_, finished := d.loginFinished(s.ctx, "attempt-alice", mine)
+	s.Require().True(finished)
+
+	said, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+
+	s.Require().NoError(err)
+	s.Equal("primary", said)
+	rows := s.invocations(mine, 1)
+	s.Equal("whoami", rows[0].Tool)
+	s.Equal("crm", rows[0].Binding)
+	s.Empty(rows[0].ErrorType)
+}
+
+// TestARefusedCallThroughALoginLeavesADeniedRow: the config stopped granting the tool after
+// the login opened the binding.
+func (s *ConnectorLoginSuite) TestARefusedCallThroughALoginLeavesADeniedRow() {
+	mine := s.pending("alice", "primary")
+	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM"}
+	config := s.config(s.chosen("crm", "whoami"))
+	d, _, _, err := s.attachWithConsents(s.persisted(s.spec(config, "alice", nil)))
+	s.Require().NoError(err)
+	asked, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+	s.Require().NoError(err)
+	s.Require().Contains(asked, `"status":"authorization_required"`)
+	s.connect(mine, "primary")
+	_, finished := d.loginFinished(s.ctx, "attempt-alice", mine)
+	s.Require().True(finished)
+	s.rebind(config, s.chosen("crm"))
+
+	_, err = s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+
+	s.Require().ErrorContains(err, "the tool is no longer granted")
+	s.Equal(store.InvocationDenied, s.invocations(mine, 1)[0].ErrorType)
+	s.Zero(s.provider.calls("primary"))
+}
+
+// TestABindingALoginOpensAuditsWithTheSession: the consent's callback hands the login back on
+// its own request's context; the provider refuses the token while the tools are listed, and
+// the revocation names the session, as one during a call does.
+func (s *ConnectorLoginSuite) TestABindingALoginOpensAuditsWithTheSession() {
+	mine := s.pending("alice", "primary")
+	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM"}
+	spec := s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", nil))
+	spec.ID = uuid.NewString()
+	d, _, _, err := s.attachWithConsents(spec)
+	s.Require().NoError(err)
+	asked, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+	s.Require().NoError(err)
+	s.Require().Contains(asked, `"status":"authorization_required"`)
+	// Connected with another account's token, which the provider refuses.
+	s.connect(mine, "secondary")
+	callback := core.WithCorrelation(s.ctx, core.Correlation{RequestID: "callback-request"})
+
+	_, opened := d.loginFinished(callback, "attempt-alice", mine)
+
+	s.False(opened, "the provider refused the token")
+	var rows []store.ConnectorAuditEvent
+	s.Require().Eventually(func() bool {
+		rows, err = s.store.ConnectorAuditEvents(s.ctx, s.customerID, store.AuditFilter{ConnectionID: mine})
+		return err == nil && len(rows) == 1
+	}, 5*time.Second, 20*time.Millisecond)
+	s.Equal(store.AuditGrantRevoked, rows[0].Action)
+	s.Equal(spec.ID, rows[0].SessionID)
+	s.Equal("callback-request", rows[0].RequestID)
+}
+
+// TestAnIncognitoSessionIsOfferedNoLogin: an incognito session keeps no conversation
+// (Spec.Normalize), and a login is asked only in one, so no consent is begun and no binding
+// is opened by one.
+func (s *ConnectorLoginSuite) TestAnIncognitoSessionIsOfferedNoLogin() {
+	s.begun = Consent{ConnectionID: s.pending("alice", "primary"), AuthorizationID: "attempt-alice", Name: "CRM"}
+	spec := s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", nil))
+	spec.Incognito = true
+	s.Require().NoError(spec.Normalize())
+
+	d, tools, unavailable, err := s.attachWithConsents(spec)
+
+	s.Require().NoError(err)
+	s.Nil(d.logins)
+	s.Empty(tools)
+	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableNoSelection}}, unavailable)
+	s.Zero(s.begins)
+}
+
+// invocations is connection's call log, once it holds count rows and a moment more.
+func (s *ConnectorLoginSuite) invocations(connection string, count int) []store.ConnectorInvocation {
+	read := func() []store.ConnectorInvocation {
+		rows, err := s.store.ConnectorInvocations(s.ctx, s.customerID, connection, 0, nil)
+		s.Require().NoError(err)
+		return rows
+	}
+	s.Require().Eventually(func() bool { return len(read()) >= count }, 5*time.Second, 20*time.Millisecond)
+	s.Never(func() bool { return len(read()) > count }, 300*time.Millisecond, 50*time.Millisecond)
+	return read()
 }
 
 // pending is a connection of user's to account that was never connected.

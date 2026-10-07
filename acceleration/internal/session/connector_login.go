@@ -199,14 +199,19 @@ func (d *dispatcher) runLogin(ctx context.Context, l *login, call llm.ToolCall) 
 	if !ok {
 		return nil, errUnknownTool(name)
 	}
+	// Logged as Run logs a call, one row for each, refused or run.
+	started := time.Now()
 	if err := d.recheck(ctx, found); err != nil {
+		d.record(found, started, store.InvocationDenied)
 		return nil, err
 	}
 	arguments := string(asked.Arguments)
 	if arguments == "" || arguments == "null" {
 		arguments = "{}"
 	}
-	return d.call(ctx, found, llm.ToolCall{ID: call.ID, Name: name, Arguments: arguments})
+	parts, failure, err := d.call(ctx, found, llm.ToolCall{ID: call.ID, Name: name, Arguments: arguments})
+	d.record(found, started, failure)
+	return parts, err
 }
 
 // openOrAsk is the login's opened binding, or else what the model reads instead.
@@ -248,7 +253,10 @@ func (d *dispatcher) openOrAsk(ctx context.Context, l *login) (*dispatcher, stri
 // for another login. l.mu is held.
 func (d *dispatcher) openLogin(ctx context.Context, l *login, connectionID string) bool {
 	opened := &dispatcher{store: d.store, spec: d.spec, routes: map[string]route{}}
-	reason, err := d.logins.open(ctx, d.spec, l.binding, connectionID, opened)
+	// Opened as attachConnectors opens a binding, on the context a call runs on, so a refresh
+	// while the tools are listed names this session, whether the turn or the consent's
+	// callback asked for it.
+	reason, err := d.logins.open(d.correlated(ctx), d.spec, l.binding, connectionID, opened)
 	if err != nil || reason != "" {
 		opened.Close()
 		d.logins.logger.Warn("a login in the conversation is on a connection the session cannot use",
