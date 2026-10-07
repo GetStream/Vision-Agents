@@ -48,23 +48,24 @@ const threadTurnLease = askTimeout + 30*time.Second
 //	    wait until the turn is over; close the session it opened; let go of the lease
 
 // linkedThread is the external thread a channel holds, when it is a thread channel of the
-// app the hook came from.
-func (s *Server) linkedThread(ctx context.Context, origin hookOrigin, channelID string) (store.ChannelThread, bool) {
+// app the hook came from. An error is a channel nobody can tell is one or not: the hook
+// answers it nowhere, rather than hand the thread's message to a session under its id.
+func (s *Server) linkedThread(ctx context.Context, origin hookOrigin, channelID string) (store.ChannelThread, bool, error) {
 	if s.store == nil || s.sessions == nil || !strings.HasPrefix(channelID, conversation.ThreadChannelPrefix) {
-		return store.ChannelThread{}, false
+		return store.ChannelThread{}, false, nil
 	}
 	thread, err := s.store.ChannelThread(ctx, channelID)
+	if errors.Is(err, store.ErrNoChannelThread) {
+		return store.ChannelThread{}, false, nil
+	}
 	if err != nil {
-		if !errors.Is(err, store.ErrNoChannelThread) {
-			s.logger.Error("could not tell whether a channel holds an external thread", "channel", channelID, "error", err)
-		}
-		return store.ChannelThread{}, false
+		return store.ChannelThread{}, false, err
 	}
 	if !origin.owns(thread.CustomerID, thread.StreamAppPK) {
 		s.logger.Info("ignoring a message in a thread channel of another app", "channel", channelID, "stream_app", origin.app)
-		return store.ChannelThread{}, false
+		return store.ChannelThread{}, false, nil
 	}
-	return thread, true
+	return thread, true, nil
 }
 
 // answerThread has a session on a thread channel answer a person's message there. One turn
@@ -189,19 +190,32 @@ func (s *Server) threadSession(ctx context.Context, origin hookOrigin, thread st
 // voice transcript from the thread channel (conversation.BarThread), so nothing it is told
 // says the thread exists.
 //
+// The agent id is the one the session is keyed under (Spec.KeyedAgentID): a voice session
+// that names none is keyed under its call id, which Normalize gives it later.
+//
 //	caller    agent id                        session
 //	backend   the customer's thread channel   conversation in the thread channel
 //	device    the customer's thread channel   as for an unknown id; no transcript there
+//	device    unreadable: channel_threads     barred, as if it were one
 //	anyone    anything else                   as it was
 func (s *Server) threadConversation(ctx context.Context, customerID string, spec *session.Spec) context.Context {
-	if s.store == nil || spec.ConversationID != "" || !strings.HasPrefix(spec.AgentID, conversation.ThreadChannelPrefix) {
+	keyed := spec.KeyedAgentID()
+	if s.store == nil || spec.ConversationID != "" || !strings.HasPrefix(keyed, conversation.ThreadChannelPrefix) {
 		return ctx
 	}
-	thread, err := s.store.ChannelThread(ctx, spec.AgentID)
+	cid := chatlog.ChannelType + ":" + keyed
+	thread, err := s.store.ChannelThread(ctx, keyed)
+	if err != nil && !errors.Is(err, store.ErrNoChannelThread) {
+		// Whether it is a thread channel is not known, so a device is kept out of it.
+		s.logger.Error("could not tell whether an agent id names a thread channel", "channel", keyed, "error", err)
+		if !ServerSideFrom(ctx) {
+			return conversation.BarThread(ctx, cid)
+		}
+		return ctx
+	}
 	if err != nil || thread.CustomerID != customerID {
 		return ctx
 	}
-	cid := chatlog.ChannelType + ":" + thread.ChannelID
 	if !ServerSideFrom(ctx) {
 		return conversation.BarThread(ctx, cid)
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
@@ -82,6 +83,81 @@ func (s *SlackChannelSuite) TestADevicesCallNamingAThreadChannelWritesNoTranscri
 	s.Equal(answeredFor(guessed, unknown), answeredFor(named, channel))
 	s.True(s.transcribed.opened(chatlog.ChannelType+":"+unknown), "an unknown agent id's channel holds the transcript")
 	s.False(s.transcribed.opened(chatlog.ChannelType+":"+channel), "the thread channel holds no transcript of the device's call")
+}
+
+// TestADevicesCallKeyedUnderAThreadChannelByItsCallIDWritesNoTranscriptThere: a voice
+// session that names no agent id is keyed under its call id (Spec.Normalize), so a call id
+// naming a thread channel is the same as an agent id naming it.
+func (s *SlackChannelSuite) TestADevicesCallKeyedUnderAThreadChannelByItsCallIDWritesNoTranscriptThere() {
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	unknown := conversation.ThreadChannelPrefix + s.utils.uuid()
+
+	named := s.client.createSession(CreateSessionRequest{CallId: &channel})
+	guessed := s.client.createSession(CreateSessionRequest{CallId: &unknown})
+
+	s.Equal(answeredFor(guessed, unknown), answeredFor(named, channel))
+	s.True(s.transcribed.opened(chatlog.ChannelType+":"+unknown), "an unknown call id's channel holds the transcript")
+	s.False(s.transcribed.opened(chatlog.ChannelType+":"+channel), "the thread channel holds no transcript of the device's call")
+}
+
+// TestADevicesSocketKeyedUnderAThreadChannelByItsCallIDWritesNoTranscriptThere.
+func (s *SlackChannelSuite) TestADevicesSocketKeyedUnderAThreadChannelByItsCallIDWritesNoTranscriptThere() {
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	unknown := conversation.ThreadChannelPrefix + s.utils.uuid()
+
+	named := s.socketSessionWith(map[string]any{"call_id": channel})
+	guessed := s.socketSessionWith(map[string]any{"call_id": unknown})
+
+	s.Equal(channel, named["agent_id"])
+	s.Equal(unknown, guessed["agent_id"])
+	s.Equal(guessed["state"], named["state"])
+	s.True(s.transcribed.opened(chatlog.ChannelType+":"+unknown), "an unknown call id's channel holds the transcript")
+	s.False(s.transcribed.opened(chatlog.ChannelType+":"+channel), "the thread channel holds no transcript of the device's socket")
+}
+
+// TestADevicesForkKeyedUnderAThreadChannelByItsCallIDWritesNoTranscriptThere: a voice fork
+// joins the call the request names and is keyed under it (forkSpec).
+func (s *SlackChannelSuite) TestADevicesForkKeyedUnderAThreadChannelByItsCallIDWritesNoTranscriptThere() {
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	unknown := conversation.ThreadChannelPrefix + s.utils.uuid()
+	parent := s.client.createSession(CreateSessionRequest{CallId: pointerTo("call-" + s.utils.uuid())})
+
+	var named, guessed Session
+	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+parent.Id+"/fork",
+		ForkSessionRequest{CallId: &channel}, &named))
+	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+parent.Id+"/fork",
+		ForkSessionRequest{CallId: &unknown}, &guessed))
+
+	s.Equal(answeredFor(guessed, unknown), answeredFor(named, channel))
+	s.True(s.transcribed.opened(chatlog.ChannelType+":"+unknown), "an unknown call id's channel holds the transcript")
+	s.False(s.transcribed.opened(chatlog.ChannelType+":"+channel), "the thread channel holds no transcript of the device's fork")
+}
+
+// TestADevicesCallIsBarredFromAChannelWhoseThreadLinkCannotBeRead: when channel_threads
+// cannot be read, whether the agent id is a thread channel is not known, and a device is kept
+// out of it as if it were one.
+func (s *SlackChannelSuite) TestADevicesCallIsBarredFromAChannelWhoseThreadLinkCannotBeRead() {
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	s.unreadableLink(channel)
+
+	s.client.createSession(CreateSessionRequest{AgentId: &channel, CallId: pointerTo("call-" + s.utils.uuid())})
+
+	s.False(s.transcribed.opened(chatlog.ChannelType + ":" + channel))
+}
+
+// TestAMessageInAChannelWhoseThreadLinkCannotBeReadIsAnsweredNowhere: the hook does not hand
+// the thread's message to a session under the channel's agent id when it cannot tell whether
+// the channel holds a thread.
+func (s *SlackChannelSuite) TestAMessageInAChannelWhoseThreadLinkCannotBeReadIsAnsweredNowhere() {
+	said := "is the build green? " + s.utils.uuid()
+	channel := s.messaged("U0000ALICE", said, "1759740000.000100", "")
+	s.unreadableLink(channel)
+	s.client.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel, CallId: pointerTo("call-" + s.utils.uuid())})
+
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+
+	s.Never(func() bool { return s.told(said) }, dropped, 20*time.Millisecond, "no session was told the thread's message")
+	s.Empty(s.slack.Posts())
 }
 
 // TestABackendsCallNamingAThreadChannelWritesItsTranscriptThereAsBefore: the backend is the
@@ -269,6 +345,17 @@ func (s *SlackChannelSuite) heldOnThread() string {
 	return held.Id
 }
 
+// unreadableLink leaves a thread channel's channel_threads row one the store cannot read:
+// thread_parts holds a number where a string goes, so ChannelThread fails to scan it.
+func (s *SlackChannelSuite) unreadableLink(channel string) {
+	_, err := s.store.DB().ExecContext(context.Background(),
+		`UPDATE channel_threads SET thread_parts = '{"ts": 1}'::jsonb WHERE channel_id = ?`, channel)
+	s.Require().NoError(err)
+	_, err = s.store.ChannelThread(context.Background(), channel)
+	s.Require().Error(err)
+	s.Require().NotErrorIs(err, store.ErrNoChannelThread)
+}
+
 // answeredAsUnknown asserts a device is answered for the session held as for an id no
 // session has: not found, with the same error.
 func (s *SlackChannelSuite) answeredAsUnknown(method, path, held string, body any) {
@@ -313,9 +400,14 @@ func answeredFor(opened Session, agentID string) []any {
 // socketSession opens a device's voice socket session under agentID and returns the session
 // it was answered with.
 func (s *SlackChannelSuite) socketSession(agentID string) map[string]any {
+	return s.socketSessionWith(map[string]any{"agent_id": agentID})
+}
+
+// socketSessionWith opens a device's voice socket session asked for as asked.
+func (s *SlackChannelSuite) socketSessionWith(asked map[string]any) map[string]any {
 	connection := s.client.opens("/v1/agents/socket")
 	s.Require().NoError(connection.WriteJSON(map[string]any{
-		"type": "start", "sample_rate": 24_000, "session": map[string]any{"agent_id": agentID},
+		"type": "start", "sample_rate": 24_000, "session": asked,
 	}))
 	var answered map[string]any
 	s.Require().NoError(connection.ReadJSON(&answered))
