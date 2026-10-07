@@ -3,6 +3,7 @@
 package store
 
 import (
+	"strings"
 	"time"
 )
 
@@ -60,12 +61,12 @@ func (s *StoreSuite) TestAHandledDeliveryIsQueuedOnlyForDestinationsOfEveryEvent
 	s.eventDestination("acme-app", "slack_bot", "unhandled", ForwardUnhandled)
 	s.eventDestination("other-app", "slack_bot", "theirs", ForwardAll)
 
-	queued, err := s.store.QueueEventDeliveries(s.ctx, "acme-app", "slack_bot", true, EventDelivery{ID: "msg_handled", Body: []byte("{}"), NextAttemptAt: s.base})
+	queued, err := s.store.QueueEventDeliveries(s.ctx, "acme-app", "slack_bot", []string{ForwardAll}, EventDelivery{ID: "msg_handled", Body: []byte("{}"), NextAttemptAt: s.base})
 	s.Require().NoError(err)
 	s.Equal(1, queued)
 	s.Equal([]string{"every"}, s.queued("msg_handled"))
 
-	queued, err = s.store.QueueEventDeliveries(s.ctx, "acme-app", "slack_bot", false, EventDelivery{ID: "msg_unhandled", Body: []byte("{}"), NextAttemptAt: s.base})
+	queued, err = s.store.QueueEventDeliveries(s.ctx, "acme-app", "slack_bot", []string{ForwardAll, ForwardUnhandled}, EventDelivery{ID: "msg_unhandled", Body: []byte("{}"), NextAttemptAt: s.base})
 	s.Require().NoError(err)
 	s.Equal(2, queued)
 	s.Equal([]string{"every", "unhandled"}, s.queued("msg_unhandled"))
@@ -75,9 +76,9 @@ func (s *StoreSuite) TestADeliveryQueuedTwiceUnderOneIDIsOneRow() {
 	s.eventDestination("acme-app", "slack_bot", "every", ForwardAll)
 	delivery := EventDelivery{ID: "msg_same", Headers: map[string]string{"X-Slack-Signature": "v0=abc"}, Body: []byte("{}"), NextAttemptAt: s.base}
 
-	_, err := s.store.QueueEventDeliveries(s.ctx, "acme-app", "slack_bot", false, delivery)
+	_, err := s.store.QueueEventDeliveries(s.ctx, "acme-app", "slack_bot", []string{ForwardAll, ForwardUnhandled}, delivery)
 	s.Require().NoError(err)
-	queued, err := s.store.QueueEventDeliveries(s.ctx, "acme-app", "slack_bot", false, delivery)
+	queued, err := s.store.QueueEventDeliveries(s.ctx, "acme-app", "slack_bot", []string{ForwardAll, ForwardUnhandled}, delivery)
 
 	s.Require().NoError(err)
 	s.Zero(queued)
@@ -86,12 +87,12 @@ func (s *StoreSuite) TestADeliveryQueuedTwiceUnderOneIDIsOneRow() {
 
 func (s *StoreSuite) TestAClaimedDeliveryIsNotClaimedAgainUntilItsLeaseRunsOut() {
 	destination := s.eventDestination("acme-app", "slack_bot", "every", ForwardAll)
-	_, err := s.store.QueueEventDeliveries(s.ctx, "acme-app", "slack_bot", false, EventDelivery{
+	_, err := s.store.QueueEventDeliveries(s.ctx, "acme-app", "slack_bot", []string{ForwardAll, ForwardUnhandled}, EventDelivery{
 		ID: "msg_one", Headers: map[string]string{"Content-Type": "application/json"}, Body: []byte(`{"a":1}`), NextAttemptAt: s.base,
 	})
 	s.Require().NoError(err)
 
-	claimed, err := s.store.ClaimEventDeliveries(s.ctx, s.base, 10, s.base.Add(time.Minute))
+	claimed, err := s.store.ClaimEventDeliveries(s.ctx, s.base, 10, 10, nil, s.base.Add(time.Minute))
 	s.Require().NoError(err)
 	s.Require().Len(claimed, 1)
 	s.Equal(destination.URL, claimed[0].URL)
@@ -99,25 +100,124 @@ func (s *StoreSuite) TestAClaimedDeliveryIsNotClaimedAgainUntilItsLeaseRunsOut()
 	s.Equal(map[string]string{"Content-Type": "application/json"}, claimed[0].Headers)
 	s.Equal(destination.SecretSealed, claimed[0].SecretSealed)
 
-	again, err := s.store.ClaimEventDeliveries(s.ctx, s.base.Add(59*time.Second), 10, s.base.Add(2*time.Minute))
+	again, err := s.store.ClaimEventDeliveries(s.ctx, s.base.Add(59*time.Second), 10, 10, nil, s.base.Add(2*time.Minute))
 	s.Require().NoError(err)
 	s.Empty(again, "another worker leaves it while the lease runs")
-	after, err := s.store.ClaimEventDeliveries(s.ctx, s.base.Add(time.Minute), 10, s.base.Add(2*time.Minute))
+	after, err := s.store.ClaimEventDeliveries(s.ctx, s.base.Add(time.Minute), 10, 10, nil, s.base.Add(2*time.Minute))
 	s.Require().NoError(err)
 	s.Len(after, 1, "a stopped worker's delivery is taken once its lease ran out")
 }
 
+// AI-924: a destination already sending one of its two takes one more, and another
+// destination's delivery is taken past the rest of its own.
+func (s *StoreSuite) TestAClaimTakesAtMostPerDestinationLessWhatIsBeingSent() {
+	s.eventDestination("acme-app", "slack_bot", "slow", ForwardAll)
+	s.eventDestination("globex-app", "slack_bot", "other", ForwardAll)
+	for _, id := range []string{"msg_1", "msg_2", "msg_3"} {
+		_, err := s.store.QueueEventDeliveries(s.ctx, "acme-app", "slack_bot", []string{ForwardAll}, EventDelivery{ID: id, Body: []byte("{}"), NextAttemptAt: s.base})
+		s.Require().NoError(err)
+	}
+	_, err := s.store.QueueEventDeliveries(s.ctx, "globex-app", "slack_bot", []string{ForwardAll},
+		EventDelivery{ID: "msg_other", Body: []byte("{}"), NextAttemptAt: s.base.Add(time.Second)})
+	s.Require().NoError(err)
+
+	claimed, err := s.store.ClaimEventDeliveries(s.ctx, s.base.Add(time.Second), 10, 2, map[string]int{"slow": 1}, s.base.Add(time.Minute))
+
+	s.Require().NoError(err)
+	taken := map[string]int{}
+	for _, delivery := range claimed {
+		taken[delivery.DestinationID]++
+	}
+	s.Equal(map[string]int{"slow": 1, "other": 1}, taken)
+}
+
+// Two routers claim one backlog at once. Router A's claim pauses after the rows it ranks were
+// read, while router B's claim takes them and commits: A must then skip what B leased, not
+// lease it again (the review of #778). The pause is pg_sleep in A's statement, so B's commit
+// lands inside A's statement every run.
+func (s *StoreSuite) TestTwoRoutersClaimingAtOnceTakeEachDeliveryOnce() {
+	for _, id := range []string{"one", "two", "three"} {
+		s.eventDestination("acme-app", "slack_bot", id, ForwardAll)
+	}
+	_, err := s.store.QueueEventDeliveries(s.ctx, "acme-app", "slack_bot", []string{ForwardAll}, EventDelivery{ID: "msg_one", Body: []byte("{}"), NextAttemptAt: s.base})
+	s.Require().NoError(err)
+	routerA, err := Open(s.dsn)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { s.Require().NoError(routerA.Close()) })
+	ranked := "    WHERE cedl.next_attempt_at <= ?\n), due AS ("
+	s.Require().Contains(claimEventDeliveriesQuery, ranked)
+	paused := strings.Replace(claimEventDeliveriesQuery, ranked,
+		"    WHERE cedl.next_attempt_at <= ? AND (SELECT 1 FROM pg_sleep(0.5)) = 1\n), due AS (", 1)
+
+	type claim struct {
+		claimed []ClaimedEventDelivery
+		err     error
+	}
+	byA := make(chan claim, 1)
+	go func() {
+		claimed, err := routerA.claimEventDeliveries(s.ctx, paused, s.base, 10, 2, nil, s.base.Add(time.Minute))
+		byA <- claim{claimed, err}
+	}()
+	s.Require().Eventually(func() bool {
+		var sleeping int
+		s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+			"SELECT count(*) FROM pg_stat_activity WHERE wait_event = 'PgSleep' AND datname = current_database()").Scan(&sleeping))
+		return sleeping == 1
+	}, 5*time.Second, 10*time.Millisecond, "router A's claim is in its pause")
+	byB, err := s.store.ClaimEventDeliveries(s.ctx, s.base, 10, 2, nil, s.base.Add(time.Minute))
+	s.Require().NoError(err)
+	a := <-byA
+	s.Require().NoError(a.err)
+
+	s.Len(byB, 3)
+	s.Empty(a.claimed, "router A takes none of what router B leased")
+}
+
+func (s *StoreSuite) TestTheNextDeliveryIsTheOneDueFirstAndNoneWhenNothingIsQueued() {
+	_, queued, err := s.store.NextEventDeliveryAt(s.ctx)
+	s.Require().NoError(err)
+	s.False(queued)
+	s.eventDestination("acme-app", "slack_bot", "every", ForwardAll)
+	for i, id := range []string{"msg_late", "msg_early"} {
+		_, err := s.store.QueueEventDeliveries(s.ctx, "acme-app", "slack_bot", []string{ForwardAll},
+			EventDelivery{ID: id, Body: []byte("{}"), NextAttemptAt: s.base.Add(time.Duration(1-i) * time.Minute)})
+		s.Require().NoError(err)
+	}
+
+	next, queued, err := s.store.NextEventDeliveryAt(s.ctx)
+
+	s.Require().NoError(err)
+	s.True(queued)
+	s.True(next.Equal(s.base), "%s is not %s", next, s.base)
+}
+
+// AI-924: the store keeps until when the provider's own headers verify, for the worker to read.
+func (s *StoreSuite) TestAClaimedDeliveryKeepsUntilWhenItsProviderHeadersVerify() {
+	s.eventDestination("acme-app", "slack_bot", "every", ForwardAll)
+	until := s.base.Add(5 * time.Minute)
+	_, err := s.store.QueueEventDeliveries(s.ctx, "acme-app", "slack_bot", []string{ForwardAll},
+		EventDelivery{ID: "msg_one", Body: []byte("{}"), NextAttemptAt: s.base, ProviderHeadersUntil: &until})
+	s.Require().NoError(err)
+
+	claimed, err := s.store.ClaimEventDeliveries(s.ctx, s.base, 10, 2, nil, s.base.Add(time.Minute))
+
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	s.Require().NotNil(claimed[0].ProviderHeadersUntil)
+	s.True(claimed[0].ProviderHeadersUntil.Equal(until))
+}
+
 func (s *StoreSuite) TestARetriedDeliveryIsDueAtItsNextAttempt() {
 	s.eventDestination("acme-app", "slack_bot", "every", ForwardAll)
-	_, err := s.store.QueueEventDeliveries(s.ctx, "acme-app", "slack_bot", false, EventDelivery{ID: "msg_one", Body: []byte("{}"), NextAttemptAt: s.base})
+	_, err := s.store.QueueEventDeliveries(s.ctx, "acme-app", "slack_bot", []string{ForwardAll, ForwardUnhandled}, EventDelivery{ID: "msg_one", Body: []byte("{}"), NextAttemptAt: s.base})
 	s.Require().NoError(err)
 
 	s.Require().NoError(s.store.RetryEventDelivery(s.ctx, "every", "msg_one", 1, s.base.Add(5*time.Second)))
 
-	early, err := s.store.ClaimEventDeliveries(s.ctx, s.base.Add(4*time.Second), 10, s.base.Add(time.Minute))
+	early, err := s.store.ClaimEventDeliveries(s.ctx, s.base.Add(4*time.Second), 10, 10, nil, s.base.Add(time.Minute))
 	s.Require().NoError(err)
 	s.Empty(early)
-	due, err := s.store.ClaimEventDeliveries(s.ctx, s.base.Add(5*time.Second), 10, s.base.Add(time.Minute))
+	due, err := s.store.ClaimEventDeliveries(s.ctx, s.base.Add(5*time.Second), 10, 10, nil, s.base.Add(time.Minute))
 	s.Require().NoError(err)
 	s.Require().Len(due, 1)
 	s.Equal(1, due[0].Attempts)
@@ -125,7 +225,7 @@ func (s *StoreSuite) TestARetriedDeliveryIsDueAtItsNextAttempt() {
 
 func (s *StoreSuite) TestDeletingADestinationDropsItsPendingDeliveries() {
 	s.eventDestination("acme-app", "slack_bot", "every", ForwardAll)
-	_, err := s.store.QueueEventDeliveries(s.ctx, "acme-app", "slack_bot", false, EventDelivery{ID: "msg_one", Body: []byte("{}"), NextAttemptAt: s.base})
+	_, err := s.store.QueueEventDeliveries(s.ctx, "acme-app", "slack_bot", []string{ForwardAll, ForwardUnhandled}, EventDelivery{ID: "msg_one", Body: []byte("{}"), NextAttemptAt: s.base})
 	s.Require().NoError(err)
 
 	s.Require().NoError(s.store.DeleteEventDestination(s.ctx, "acme-app", "slack_bot", "every"))

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -51,17 +52,29 @@ const attemptTimeout = 15 * time.Second
 // router takes it while it is sent: longer than one attempt's attemptTimeout, so a live worker
 // never loses one, and short enough that one a stopped router held is sent again within a
 // minute. A choice, not a spec value.
+//
+// It is also the longest a worker waits between looks for deliveries, even when none is queued
+// or the first is due later (sendDue): a forward another router queued or leased and then
+// stopped with is sent within about two leases, at 2 queries a lease from an idle router.
 const lease = time.Minute
 
-// defaultPoll is how often a worker looks for deliveries due, besides when Forward queues one,
-// which it sends at once. The shortest wait in defaultRetries is 5 s, so a retry goes out at
-// most a second late. A choice, not a spec value.
+// defaultPoll is the shortest wait before a worker looks again for deliveries while some are
+// queued (sendDue), besides when Forward queues one, which it sends at once. The shortest wait
+// in defaultRetries is 5 s, so a retry goes out at most a second late. A choice, not a spec
+// value.
 const defaultPoll = time.Second
 
 // inFlight is how many sends one router runs at once: one slow destination, at attemptTimeout,
-// takes one slot and leaves the rest to the others. A choice, not a spec value. # unverified
-// against real load
+// takes perDestination slots and leaves the rest to the others. A choice, not a spec value.
+// # unverified against real load
 const inFlight = 16
+
+// perDestination is how many sends to one destination one router runs at once (AI-924). A
+// destination that never answers holds perDestination slots for attemptTimeout each and
+// leaves the other inFlight - perDestination, 14 of 16, to every other destination. Two, not
+// one, so one slow answer does not hold up a destination that is up. A choice, not a spec
+// value: the example the review of #774 gave.
+const perDestination = 2
 
 // maxAnswerBytes is how much of a destination's answer is read: none of it is used, so it is
 // read only to let the connection be reused; 64 KiB is a choice.
@@ -99,8 +112,12 @@ type Options struct {
 	PublicURL func(ctx context.Context, raw string) error
 	// Retries are the waits before each attempt after the first. Nil is defaultRetries.
 	Retries []time.Duration
-	// Poll is how often due deliveries are looked for. Zero is defaultPoll.
-	Poll   time.Duration
+	// Poll is the shortest wait between looks for due deliveries while some are queued. Zero is
+	// defaultPoll.
+	Poll time.Duration
+	// Lease is how far a claim pushes a delivery's next attempt, and the longest wait between
+	// looks. Zero is lease. Tests shorten it.
+	Lease  time.Duration
 	Logger *slog.Logger
 }
 
@@ -112,12 +129,16 @@ type Forwarder struct {
 	publicURL func(ctx context.Context, raw string) error
 	retries   []time.Duration
 	poll      time.Duration
+	lease     time.Duration
 	logger    *slog.Logger
 
 	// kick wakes the worker: a delivery was queued, or a slot freed.
 	kick chan struct{}
 	// slots holds one token for each send running.
-	slots   chan struct{}
+	slots chan struct{}
+	// sending is how many sends to each destination are running, by destination id.
+	mu      sync.Mutex
+	sending map[string]int
 	ctx     context.Context
 	cancel  context.CancelFunc
 	working sync.WaitGroup
@@ -127,8 +148,14 @@ type Forwarder struct {
 type Event struct {
 	CustomerID  string
 	ConnectorID string
+	// ID is the provider's own id for the delivery (core.ChannelRule.DeliveryEventID). Empty
+	// keys the forward by its body (deliveryID).
+	ID string
 	// Headers are the provider's headers a receiver verifies the body with (ProviderHeaders).
 	Headers map[string]string
+	// HeadersUntil is when the provider's signature in Headers stops verifying at a receiver
+	// that checks its timestamp (ProviderEvent). Zero when it does not age.
+	HeadersUntil time.Time
 	// Body is the raw request body, as verified.
 	Body []byte
 	// Handled is whether the router acted on the delivery: a signal, or a message an agent of
@@ -169,6 +196,10 @@ func New(options Options) (*Forwarder, error) {
 	if poll <= 0 {
 		poll = defaultPoll
 	}
+	leaseFor := options.Lease
+	if leaseFor <= 0 {
+		leaseFor = lease
+	}
 	logger := options.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -181,27 +212,36 @@ func New(options Options) (*Forwarder, error) {
 		publicURL: publicURL,
 		retries:   retries,
 		poll:      poll,
+		lease:     leaseFor,
 		logger:    logger,
 		kick:      make(chan struct{}, 1),
 		slots:     make(chan struct{}, inFlight),
+		sending:   map[string]int{},
 		ctx:       ctx,
 		cancel:    cancel,
 	}, nil
 }
 
-// Start runs the worker until Close.
+// Start runs the worker until Close. It looks for deliveries at start, for the ones a router
+// queued before it stopped, then when Forward or a finished send wakes it, at the first one
+// due, and at least once a lease: with no deliveries it sends Postgres 2 queries a minute, not
+// one a second (AI-926).
 func (f *Forwarder) Start() {
 	f.working.Add(1)
 	go func() {
 		defer f.working.Done()
-		ticker := time.NewTicker(f.poll)
-		defer ticker.Stop()
+		timer := time.NewTimer(0)
+		defer timer.Stop()
 		for {
-			f.sendDue()
+			wait, again := f.sendDue()
+			timer.Stop()
+			if again {
+				timer.Reset(wait)
+			}
 			select {
 			case <-f.ctx.Done():
 				return
-			case <-ticker.C:
+			case <-timer.C:
 			case <-f.kick:
 			}
 		}
@@ -220,12 +260,33 @@ func (f *Forwarder) Close() {
 // the request path of a provider that waits a few seconds at most (Slack: «respond ... within
 // three seconds», https://docs.slack.dev/apis/events-api/). An error is the store failing.
 func (f *Forwarder) Forward(ctx context.Context, event Event) error {
+	forwards := []string{store.ForwardAll}
+	if !event.Handled {
+		forwards = append(forwards, store.ForwardUnhandled)
+	}
+	return f.queue(ctx, event, forwards)
+}
+
+// ForwardUnanswered queues a delivery for the destinations that take what the router does not
+// handle, alone, and wakes the worker. It is for a delivery Forward counted as handled for a
+// message an agent was to answer, whose write into its thread channel failed after the ack
+// (channelbridge.Bridge.Deliver): the destinations of every event already have it.
+func (f *Forwarder) ForwardUnanswered(ctx context.Context, event Event) error {
+	return f.queue(ctx, event, []string{store.ForwardUnhandled})
+}
+
+// queue queues the event for the customer's destinations whose forward is one of forwards.
+func (f *Forwarder) queue(ctx context.Context, event Event, forwards []string) error {
 	if event.CustomerID == "" {
 		return nil
 	}
-	queued, err := f.store.QueueEventDeliveries(ctx, event.CustomerID, event.ConnectorID, event.Handled, store.EventDelivery{
-		ID: deliveryID(event.Body), Headers: event.Headers, Body: event.Body, NextAttemptAt: time.Now(),
-	})
+	delivery := store.EventDelivery{
+		ID: deliveryID(event.ID, event.Body), Headers: event.Headers, Body: event.Body, NextAttemptAt: time.Now(),
+	}
+	if !event.HeadersUntil.IsZero() {
+		delivery.ProviderHeadersUntil = &event.HeadersUntil
+	}
+	queued, err := f.store.QueueEventDeliveries(ctx, event.CustomerID, event.ConnectorID, forwards, delivery)
 	if err != nil {
 		return err
 	}
@@ -264,12 +325,18 @@ func RotationOverlap(now time.Time) time.Time {
 	return now.Add(rotationOverlap)
 }
 
-// deliveryID is the webhook-id of a delivery: msg_ and the first 128 bits of the body's
-// SHA-256, so the same provider body is the same id, on every attempt and when the provider
-// delivers it again. The spec: the id «remains the same no matter how many times a webhook
-// that has failed is retried», and it must hold no «.», which hex never does.
-func deliveryID(body []byte) string {
+// deliveryID is the webhook-id of a delivery: msg_ and the first 128 bits of the SHA-256 of
+// the provider's own id for it, eventID, or of the body when the provider names none. So one
+// provider event is one id, on every attempt and when the provider delivers it again, and two
+// events are two ids even when their bodies are the same. The spec: the id «remains the same
+// no matter how many times a webhook that has failed is retried», and it must hold no «.»,
+// which hex never does and Slack's trigger_id does. The event\x00 prefix keeps an event id's
+// digest apart from a body's: no JSON or form body starts with "event" and a NUL.
+func deliveryID(eventID string, body []byte) string {
 	sum := sha256.Sum256(body)
+	if eventID != "" {
+		sum = sha256.Sum256([]byte("event\x00" + eventID))
+	}
 	return "msg_" + hex.EncodeToString(sum[:16])
 }
 
@@ -292,6 +359,30 @@ func ProviderHeaders(m core.Manifest, header http.Header) map[string]string {
 		}
 	}
 	return kept
+}
+
+// ProviderEvent is the Event of one verified delivery of a connector m: the provider's own id
+// for it, the provider's headers a receiver verifies it with (ProviderHeaders), and until when
+// those verify, its signed timestamp plus channel.verifier.max_age. For Slack that is
+// X-Slack-Request-Timestamp plus 5 minutes, the window Slack Bolt checks too:
+// «const requestTimestampMaxDeltaMin = 5;» in bolt-js src/receivers/verify-request.ts
+// (https://github.com/slackapi/bolt-js/blob/91c96e3e6d3495c1a976ecf6edfb2a6a5b236b47/src/receivers/verify-request.ts#L41,
+// opened October 7, 2026). The caller sets the customer and Handled.
+func ProviderEvent(m core.Manifest, header http.Header, body []byte) Event {
+	event := Event{ConnectorID: m.ID, Headers: ProviderHeaders(m, header), Body: body}
+	if m.Channel == nil {
+		return event
+	}
+	event.ID = m.Channel.DeliveryEventID(body)
+	rule := m.Channel.Verifier
+	if rule.TimestampHeader == "" || rule.MaxAge <= 0 {
+		return event
+	}
+	// Decimal Unix seconds, as the hmac_header verifier read it (hmacheader.Verifier.Verify).
+	if seconds, err := strconv.ParseInt(header.Get(rule.TimestampHeader), 10, 64); err == nil {
+		event.HeadersUntil = time.Unix(seconds, 0).Add(time.Duration(rule.MaxAge))
+	}
+	return event
 }
 
 // sign is the webhook-signature header of one send: v1, and the base64 HMAC-SHA256 of
@@ -318,28 +409,50 @@ func (f *Forwarder) wake() {
 	}
 }
 
-// sendDue takes as many due deliveries as there are free slots and sends each on its own
+// sendDue takes as many due deliveries as there are free slots, at most perDestination of
+// one destination's counting the ones it is still sending, and sends each on its own
 // goroutine, until none is due or no slot is free.
-func (f *Forwarder) sendDue() {
-	for f.ctx.Err() == nil {
+//
+// It returns how long to wait before looking again, with again false when only a finished send
+// needs to wake the worker: every slot is busy. While deliveries are queued it waits until the
+// first is due, its retry or another router's lease running out, and at least the poll, so
+// rows another router is claiming at that moment are not looked for in a busy loop. It waits
+// a lease at most, also when none is queued: a router that queued or leased one and then
+// stopped wakes nobody else (the review of #778).
+func (f *Forwarder) sendDue() (wait time.Duration, again bool) {
+	for {
+		if f.ctx.Err() != nil {
+			return 0, false
+		}
 		free := cap(f.slots) - len(f.slots)
 		if free == 0 {
-			return
+			return 0, false
 		}
 		now := time.Now()
-		claimed, err := f.store.ClaimEventDeliveries(f.ctx, now, free, now.Add(lease))
+		f.mu.Lock()
+		sending := maps.Clone(f.sending)
+		f.mu.Unlock()
+		claimed, err := f.store.ClaimEventDeliveries(f.ctx, now, free, perDestination, sending, now.Add(f.lease))
 		if err != nil {
 			if f.ctx.Err() == nil {
 				f.logger.Error("could not take the event forwards due", "error", err)
 			}
-			return
+			return f.poll, true
 		}
 		for _, delivery := range claimed {
 			f.slots <- struct{}{}
+			f.mu.Lock()
+			f.sending[delivery.DestinationID]++
+			f.mu.Unlock()
 			f.working.Add(1)
 			go func() {
 				defer f.working.Done()
 				defer func() {
+					f.mu.Lock()
+					if f.sending[delivery.DestinationID]--; f.sending[delivery.DestinationID] == 0 {
+						delete(f.sending, delivery.DestinationID)
+					}
+					f.mu.Unlock()
 					<-f.slots
 					f.wake()
 				}()
@@ -347,9 +460,20 @@ func (f *Forwarder) sendDue() {
 			}()
 		}
 		if len(claimed) < free {
-			return
+			break
 		}
 	}
+	next, queued, err := f.store.NextEventDeliveryAt(f.ctx)
+	switch {
+	case err != nil:
+		if f.ctx.Err() == nil {
+			f.logger.Error("could not find when the next event forward is due", "error", err)
+		}
+		return f.poll, true
+	case !queued:
+		return f.lease, true
+	}
+	return min(max(time.Until(next), f.poll), f.lease), true
 }
 
 // attempt sends a delivery once and records what came of it: gone when the destination took
@@ -404,7 +528,15 @@ func (f *Forwarder) send(ctx context.Context, delivery store.ClaimedEventDeliver
 	if err != nil {
 		return stack.Wrap(err)
 	}
+	// Past the provider's own window its signature fails a receiver that checks it, Slack Bolt
+	// among them (ProviderEvent), so an attempt sent then carries Content-Type alone of them,
+	// and the receiver verifies webhook-signature: no stale signature that a receiver which
+	// skips the timestamp check would take as Slack's, sent hours after Slack signed it.
+	late := delivery.ProviderHeadersUntil != nil && at.After(*delivery.ProviderHeadersUntil)
 	for name, value := range delivery.Headers {
+		if late && name != "Content-Type" {
+			continue
+		}
 		request.Header.Set(name, value)
 	}
 	request.Header.Set(headerID, delivery.ID)

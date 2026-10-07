@@ -169,8 +169,10 @@ func (b *Bridge) Close() {
 // answered is whether an agent answers at least one of the messages, now or already for a
 // delivery the provider retried. When it is false the bridge handled none of them, and the
 // events route hands the delivery to the customer's event destinations that take what the
-// router does not handle (internal/eventforward, T46).
-func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, messages []core.InboundMessage) (answered bool, err error) {
+// router does not handle (internal/eventforward, T46). A message whose write into its thread
+// channel fails after the ack reaches no agent after all, so unanswered, when not nil, is
+// called then, for those destinations to have it (AI-924).
+func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, messages []core.InboundMessage, unanswered func()) (answered bool, err error) {
 	for _, message := range messages {
 		thread, config, fresh, err := b.take(ctx, app, message)
 		if err != nil {
@@ -192,7 +194,9 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 		b.working.Add(1)
 		go func() {
 			defer b.working.Done()
-			b.write(thread, config, episode, message)
+			if !b.write(thread, config, episode, message) && unanswered != nil {
+				unanswered()
+			}
 		}()
 	}
 	return answered, nil
@@ -372,14 +376,16 @@ func (b *Bridge) threadParts(ctx context.Context, connection store.ConnectorConn
 
 // write writes one claimed message into its thread channel as its author, creating the
 // channel the first time, with the agent config that answers it. One thread's messages are
-// written one at a time, in the order they were taken as far as the lock keeps it.
-func (b *Bridge) write(thread store.ChannelThread, config store.AgentConfig, episode omnichannel.Opened, message core.InboundMessage) {
+// written one at a time, in the order they were taken as far as the lock keeps it. It reports
+// whether the message was written.
+func (b *Bridge) write(thread store.ChannelThread, config store.AgentConfig, episode omnichannel.Opened, message core.InboundMessage) bool {
 	release := b.hold(thread.ChannelID)
 	defer release()
 	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 	defer cancel()
 
-	if err := b.writeInto(ctx, thread, config, message); err != nil {
+	err := b.writeInto(ctx, thread, config, message)
+	if err != nil {
 		b.logger.Error("could not write an inbound message into its thread channel",
 			"connector", thread.ConnectorID, "channel", thread.ChannelID, "error", err)
 	}
@@ -387,6 +393,7 @@ func (b *Bridge) write(thread store.ChannelThread, config store.AgentConfig, epi
 		b.logger.Error("could not write the episode card of a thread",
 			"connector", thread.ConnectorID, "channel", thread.ChannelID, "error", err)
 	}
+	return err == nil
 }
 
 func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, config store.AgentConfig, message core.InboundMessage) error {
