@@ -343,7 +343,16 @@ func (s *RouterSuite) SetupSuite() {
 	// anything to say it is running.
 	listener := httptest.NewUnstartedServer(nil)
 	directory := s.nodeDirectory(listener, logger)
-	sessions := s.sessionManager(streams, directory, logger)
+	// Before the sessions, whose dispatcher shares the transports with the validate
+	// endpoint, as cmd/router builds them.
+	credentials, err := pgsealed.New(pgStore, s.sealer)
+	s.Require().NoError(err)
+	s.resolver, err = resolver.New(resolver.Config{Store: pgStore, Credentials: credentials, Schemes: s.connectors.Schemes})
+	s.Require().NoError(err)
+	transports, err := core.NewTransports(core.TransportsConfig{Resolver: s.resolver, Timeout: suiteConnectorTimeout,
+		NewClient: loopbackClients(s.connectorHTTP)})
+	s.Require().NoError(err)
+	sessions := s.sessionManager(streams, directory, session.Connectors{Registry: s.connectors, Transports: transports}, logger)
 	// A nil client reaches public hosts alone, and every auth server here is a local one.
 	public := &plugins.Auth{HTTP: http.DefaultClient}
 	s.events = s.pluginEvents(sessions, public, logger)
@@ -361,13 +370,6 @@ func (s *RouterSuite) SetupSuite() {
 		routing.Image:  streams.Image,
 	}
 
-	credentials, err := pgsealed.New(pgStore, s.sealer)
-	s.Require().NoError(err)
-	s.resolver, err = resolver.New(resolver.Config{Store: pgStore, Credentials: credentials, Schemes: s.connectors.Schemes})
-	s.Require().NoError(err)
-	transports, err := core.NewTransports(core.TransportsConfig{Resolver: s.resolver, Timeout: suiteConnectorTimeout,
-		NewClient: loopbackClients(s.connectorHTTP)})
-	s.Require().NoError(err)
 	if s.channelProvider != nil {
 		s.bridge = s.channelBridge(logger)
 	}
@@ -588,6 +590,13 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 			ID: store.NewID(), Name: lookupOrder, Arguments: `{"order":"12"}`,
 		}}}, nil
 	})
+	// A model that reaches for a connector's tool on its first turn: echo of the binding
+	// called crm, which says back what it is given.
+	reasoning.Register("connecting", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: "Let me ask.", calls: []llm.ToolCall{{
+			ID: store.NewID(), Name: connectorEcho, Arguments: `{"text":"` + connectorEchoText + `"}`,
+		}}}, nil
+	})
 	reasoner, err := llmrouter.New(llmrouter.Options{
 		Config: reasoningConfig(), Registry: reasoning, Store: s.store, Live: s.live,
 		Quota: limiter, Gate: gate, Logger: logger,
@@ -660,6 +669,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 func (s *RouterSuite) sessionManager(
 	streams *Streams,
 	directory *node.Directory,
+	connectors session.Connectors,
 	logger *slog.Logger,
 ) *session.Manager {
 	conversations := conversation.NewForChats(conversation.StreamApps(s.stream))
@@ -681,6 +691,7 @@ func (s *RouterSuite) sessionManager(
 		Store:         s.store,
 		Configs:       s.configs,
 		Directory:     directory,
+		Connectors:    connectors,
 		Logger:        logger,
 		Edge: func(context.Context, session.Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
 			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil

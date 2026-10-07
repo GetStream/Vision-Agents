@@ -533,6 +533,8 @@ func frameOf(event session.Event) (frame, bool) {
 		return frame{"type": "command_accepted", "command": typed}, true
 	case session.CommandStopped:
 		return frame{"type": "command_stopped", "command": typed.CommandReceipt}, true
+	case session.ConnectorUnavailable:
+		return frame{"type": "connector_unavailable", "name": typed.Name, "connector_id": typed.ConnectorID, "reason": typed.Reason}, true
 	case conversation.Updated:
 		return frame{"type": "conversation_updated", "conversation_id": typed.CID, "message": typed.Message}, true
 	case agent.ToolStarted:

@@ -3473,6 +3473,9 @@ type CreateSessionRequest struct {
 	// ConfigId An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
 	ConfigId *string `json:"config_id,omitempty"`
 
+	// ConnectorBindings The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A required binding left without one fails the session; an optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.
+	ConnectorBindings *[]SessionConnectorBinding `json:"connector_bindings,omitempty"`
+
 	// ContextTruncated Older history was omitted from the model context.
 	ContextTruncated *bool `json:"context_truncated,omitempty"`
 
@@ -4996,6 +4999,15 @@ type Session struct {
 
 	// Voice The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
 	Voice *string `json:"voice,omitempty"`
+}
+
+// SessionConnectorBinding The connection a session uses for one of its agent config's connector bindings chosen per session. Only a reference: the credential stays sealed on the connection.
+type SessionConnectorBinding struct {
+	// ConnectionId The caller's own connection to the binding's connector.
+	ConnectionId string `json:"connection_id"`
+
+	// Name The binding's alias in the agent config.
+	Name string `json:"name"`
 }
 
 // SessionFilter Which sessions to list. A field not listed here is refused rather than ignored.

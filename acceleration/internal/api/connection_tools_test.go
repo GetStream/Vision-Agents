@@ -403,15 +403,20 @@ func (s *ConnectionToolsSuite) get(id string) Connection {
 	return connection
 }
 
-// issue is an access token from the fake's client credentials grant (RFC 6749 section 4.4),
-// which its MCP endpoint takes.
+// issue is an access token from the fake's client credentials grant.
 func (s *ConnectionToolsSuite) issue() string {
+	return issuedToken(&s.RouterSuite, s.provider)
+}
+
+// issuedToken is an access token from provider's client credentials grant (RFC 6749 section
+// 4.4), which its MCP endpoint takes.
+func issuedToken(s *RouterSuite, provider *fakeprovider.Server) string {
 	form := url.Values{"grant_type": {"client_credentials"}}
-	request, err := http.NewRequest(http.MethodPost, s.provider.URL+fakeprovider.PathToken, strings.NewReader(form.Encode()))
+	request, err := http.NewRequest(http.MethodPost, provider.URL+fakeprovider.PathToken, strings.NewReader(form.Encode()))
 	s.Require().NoError(err)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	request.SetBasicAuth(s.provider.ClientID, s.provider.ClientSecret)
-	response, err := s.provider.Client().Do(request)
+	request.SetBasicAuth(provider.ClientID, provider.ClientSecret)
+	response, err := provider.Client().Do(request)
 	s.Require().NoError(err)
 	defer response.Body.Close()
 	var token struct {

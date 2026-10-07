@@ -91,6 +91,17 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
+	// The connector bindings are the config's as it is now, not as the parent was opened
+	// with. The session re-resolves the parent's selections against them and against the
+	// caller asking for the fork, and drops the ones the config no longer declares.
+	if config == nil {
+		spec.ConnectorBindings = nil
+		if s.store != nil && spec.ConfigID != "" {
+			if current, err := s.store.AgentConfig(ctx, customerID, spec.ConfigID); err == nil {
+				spec.ConnectorBindings = current.Connectors
+			}
+		}
+	}
 	recalled, err := s.recordedHistory(ctx, parent, body, spec.Recall)
 	switch {
 	case errors.Is(err, store.ErrUnknownResponse):
@@ -450,6 +461,10 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	if request.Keyterms != nil {
 		spec.Keyterms = *request.Keyterms
 	}
+	for _, chosen := range value(request.ConnectorBindings) {
+		spec.ConnectorSelections = append(spec.ConnectorSelections,
+			session.ConnectorSelection{Name: chosen.Name, ConnectionID: chosen.ConnectionId})
+	}
 	// Cost labels are merged rather than replaced: a config labels which agent the spend
 	// belongs to and a call labels which conversation, and both are worth billing on.
 	if request.Tags != nil {
@@ -727,6 +742,10 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 			Custom: row.Custom, ModelOverwrites: row.ModelOverwrites,
 			CallType: row.CallType,
 		}
+		for _, chosen := range row.ConnectorSelections {
+			spec.ConnectorSelections = append(spec.ConnectorSelections,
+				session.ConnectorSelection{Name: chosen.Name, ConnectionID: chosen.ConnectionID})
+		}
 		parentID = row.ID
 		wasText = row.CallID == ""
 		spec.Text = wasText
@@ -746,6 +765,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 		fresh.Title, fresh.Description = spec.Title, spec.Description
 		fresh.Project, fresh.Custom = spec.Project, spec.Custom
 		fresh.CallType = spec.CallType
+		fresh.ConnectorSelections = spec.ConnectorSelections
 		spec = fresh
 	}
 

@@ -42,6 +42,12 @@ func documentHandWritten(api huma.API) {
 			"`task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, " +
 			"`backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, " +
 			"`models_changed`, `error` and `left`.\n" +
+			"`connector_unavailable` names an optional connector binding the session opened " +
+			"without: name (its alias), connector_id and reason, one of no_selection, " +
+			"shared_session, caller_unverified, connection_unavailable, provider_mismatch, " +
+			"needs_reauthorization, not_connected, open_failed, tool_unavailable and " +
+			"selection_dropped (a fork's selection for an alias its config no longer declares). " +
+			"Every watcher is sent each one when it attaches.\n" +
 			"Persistent text sessions also emit `conversation_updated` with conversation_id and a " +
 			"complete message snapshot: id, command_id, question_id, role, text, state, " +
 			"response_started_at, state_started_at, finished_at, duration_ms, saved, " +
