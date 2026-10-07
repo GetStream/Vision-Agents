@@ -334,8 +334,12 @@ func (f *flow) Cancel(candidateID string) error {
 		return nil
 	}
 	asked, pending := f.pending[candidateID]
+	var stream *llm.Stream
 	if pending {
 		delete(f.pending, candidateID)
+		// run sets the stream under this lock. One it sets after this is closed by run, which
+		// finds the turn no longer pending.
+		stream = asked.stream
 	}
 	f.mu.Unlock()
 
@@ -347,10 +351,10 @@ func (f *flow) Cancel(candidateID string) error {
 	// must not wait for that. advance starts it now, and the leftover call from run does
 	// nothing because the turn in flight has moved on.
 	f.advance(candidateID)
-	if asked.stream == nil {
+	if stream == nil {
 		return nil
 	}
-	return asked.stream.Close()
+	return stream.Close()
 }
 
 func (f *flow) Close() error {

@@ -210,6 +210,26 @@ func (s *FlowSuite) TestCancelAbandonsACreateThatHasNotReturned() {
 	s.Empty(s.decisions(), "a ruling about words that have moved on must not be acted on")
 }
 
+func (s *FlowSuite) TestCancelWhileTheStreamIsBeingHandedOverIsNotARace() {
+	// Cancel reads the stream the decision has opened while the decision is storing it, which
+	// the race detector reports whichever of them wins. Each round has a Create that comes back
+	// at the moment it is cancelled.
+	for round := range 100 {
+		id := fmt.Sprintf("round-%d", round)
+		hold := make(chan struct{})
+		s.model.mu.Lock()
+		s.model.holdCreate = hold
+		s.model.mu.Unlock()
+		s.Require().NoError(s.flow.Decide(FlowTurn{ID: id, Participant: "Alex", Text: "okay"}))
+		s.waitAsked(round + 1)
+
+		cancelled := make(chan error, 1)
+		go func() { cancelled <- s.flow.Cancel(id) }()
+		close(hold)
+		s.Require().NoError(<-cancelled)
+	}
+}
+
 func (s *FlowSuite) TestCancelStartsTheWaitingTurnBeforeCreateReturns() {
 	hold := make(chan struct{})
 	s.model.holdCreate = hold
