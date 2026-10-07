@@ -24,6 +24,11 @@ type TwilioSuite struct {
 	// seen is what the last request asked for, which is how these tests check that what
 	// the caller wanted arrived in Twilio's own shape.
 	seen request
+	// seenPricing is the last request to the pricing host, kept apart so a search's own
+	// request is still the one in seen.
+	seenPricing request
+	// pricingCalls counts requests to the pricing host.
+	pricingCalls int
 	// respond answers the next request.
 	respond func(w http.ResponseWriter, r *http.Request)
 }
@@ -43,18 +48,26 @@ func TestTwilio(t *testing.T) { suite.Run(t, new(TwilioSuite)) }
 func (s *TwilioSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.seen = request{}
+	s.seenPricing = request{}
+	s.pricingCalls = 0
 	s.respond = func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{}`)) }
 
 	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		user, pass, _ := r.BasicAuth()
-		s.seen = request{
+		got := request{
 			method: r.Method,
 			path:   r.URL.Path,
 			query:  r.URL.Query(),
 			form:   r.PostForm,
 			user:   user,
 			pass:   pass,
+		}
+		if strings.HasPrefix(r.URL.Path, "/v1/PhoneNumbers/Countries/") {
+			s.pricingCalls++
+			s.seenPricing = got
+		} else {
+			s.seen = got
 		}
 		w.Header().Set("Content-Type", "application/json")
 		s.respond(w, r)
@@ -64,6 +77,7 @@ func (s *TwilioSuite) SetupTest() {
 		AccountSID: "AC123",
 		AuthToken:  "secret",
 		BaseURL:    s.server.URL,
+		PricingURL: s.server.URL,
 	})
 	s.Require().NoError(err)
 	s.provider = provider
@@ -104,6 +118,106 @@ func (s *TwilioSuite) TestSearchingAsksForTheCountryAndReturnsWhatIsOffered() {
 	s.Equal("+15125551234", offered[0].E164)
 	s.Equal("Austin", offered[0].Locality)
 	s.Equal([]phone.Capability{phone.Voice, phone.SMS}, offered[0].Capabilities)
+}
+
+const usPrices = `{"iso_country":"US","price_unit":"USD","phone_number_prices":[
+	{"number_type":"local","base_price":"1.15","current_price":"1.00"},
+	{"number_type":"toll free","base_price":"2.15","current_price":"2.00"}]}`
+
+const oneNumber = `{"available_phone_numbers":[{"phone_number":"+15125550100","iso_country":"US",
+	"capabilities":{"voice":true}}]}`
+
+func (s *TwilioSuite) TestSearchingQuotesTheCurrentPriceForTheTypeSearched() {
+	s.answerWithPrices(oneNumber, usPrices)
+
+	local, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "us"})
+	s.Require().NoError(err)
+	tollFree, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US", Type: phone.TollFree})
+	s.Require().NoError(err)
+
+	s.Equal(int64(1_000_000), local[0].MonthlyCostMicros, "current_price, which has the account's discounts")
+	s.Equal(int64(2_000_000), tollFree[0].MonthlyCostMicros, `twilio names this type "toll free", with a space`)
+	s.Equal(1, s.pricingCalls, "a country's prices are asked for once")
+}
+
+func (s *TwilioSuite) TestPricesAreAskedForOnTheCountryWithTheAccountsCredentials() {
+	s.answerWithPrices(oneNumber, usPrices)
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "us"})
+	s.Require().NoError(err)
+
+	s.Equal("/v1/PhoneNumbers/Countries/US", s.seenPricing.path)
+	s.Equal("AC123", s.seenPricing.user)
+	s.Equal("secret", s.seenPricing.pass)
+}
+
+func (s *TwilioSuite) TestSearchingStillReturnsNumbersWhenPricesCannotBeHad() {
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/") {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(oneNumber))
+	}
+
+	offered, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+	s.Require().NoError(err)
+
+	s.Require().Len(offered, 1)
+	s.Zero(offered[0].MonthlyCostMicros)
+}
+
+func (s *TwilioSuite) TestAFailedPriceLookupIsAskedAgainOnTheNextSearch() {
+	pricingDown := true
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/") {
+			if pricingDown {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(usPrices))
+			return
+		}
+		_, _ = w.Write([]byte(oneNumber))
+	}
+
+	first, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+	s.Require().NoError(err)
+	pricingDown = false
+	second, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+	s.Require().NoError(err)
+
+	s.Zero(first[0].MonthlyCostMicros)
+	s.Equal(int64(1_000_000), second[0].MonthlyCostMicros)
+	s.Equal(2, s.pricingCalls)
+}
+
+func (s *TwilioSuite) TestPricesAreNotAskedForWhenTheSearchFails() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	s.Error(err)
+	s.Zero(s.pricingCalls)
+}
+
+func (s *TwilioSuite) TestAPriceInAnotherCurrencyIsNotQuotedAsDollars() {
+	s.answerWithPrices(oneNumber, `{"price_unit":"EUR","phone_number_prices":[
+		{"number_type":"local","current_price":"1.00"}]}`)
+
+	offered, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+	s.Require().NoError(err)
+
+	s.Zero(offered[0].MonthlyCostMicros)
+}
+
+func (s *TwilioSuite) TestATypeTwilioHasNoPriceForIsNotQuoted() {
+	s.answerWithPrices(oneNumber, usPrices)
+
+	offered, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US", Type: phone.Mobile})
+	s.Require().NoError(err)
+
+	s.Zero(offered[0].MonthlyCostMicros)
 }
 
 func (s *TwilioSuite) TestSearchingWithoutACountryIsRejectedBeforeAnyCall() {
@@ -279,6 +393,17 @@ func (s *TwilioSuite) TestAFailureFromTwilioSaysWhatTwilioSaid() {
 func (s *TwilioSuite) answer(body string) {
 	s.respond = func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(body))
+	}
+}
+
+// answerWithPrices answers a number search with numbers and the pricing call with prices.
+func (s *TwilioSuite) answerWithPrices(numbers, prices string) {
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/PhoneNumbers/Countries/") {
+			_, _ = w.Write([]byte(prices))
+			return
+		}
+		_, _ = w.Write([]byte(numbers))
 	}
 }
 
