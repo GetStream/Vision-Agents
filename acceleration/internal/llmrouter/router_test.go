@@ -341,8 +341,8 @@ func (s *LLMRouterSuite) TestClosingTwiceIsSafe() {
 func (s *LLMRouterSuite) TestErrorCodeExplainsTheFailure() {
 	s.Equal("provider_error", errorCode(llm.Response{Status: llm.StatusFailed}))
 	s.Empty(errorCode(llm.Response{Status: llm.StatusCompleted}))
-	s.Equal(routing.ErrorCancelled, errorCode(llm.Response{Status: llm.StatusCancelled}),
-		"a response the caller abandoned is recorded as that, not as a provider failure")
+	s.Empty(errorCode(llm.Response{Status: llm.StatusCancelled}),
+		"a response the caller abandoned is not a provider failure")
 }
 
 func (s *LLMRouterSuite) TestAnAbandonedResponseIsStillBilled() {
