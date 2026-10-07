@@ -50,6 +50,7 @@ type connectorFixture struct {
 	provider *accountsProvider
 	manager  *Manager
 	registry core.Registry
+	resolver *resolver.Resolver
 
 	// customerID, connectorID and revision are the test's own tenant and connector.
 	customerID  string
@@ -78,17 +79,23 @@ func (s *connectorFixture) SetupSuite() {
 	}
 	credentials, err := pgsealed.New(db, s.sealer)
 	s.Require().NoError(err)
-	connectors, err := resolver.New(resolver.Config{Store: db, Credentials: credentials, Schemes: s.registry.Schemes})
+	s.resolver, err = resolver.New(resolver.Config{Store: db, Credentials: credentials, Schemes: s.registry.Schemes})
 	s.Require().NoError(err)
-	// egress refuses loopback, so the clients reach the provider over its own transport.
-	transports, err := core.NewTransports(core.TransportsConfig{Resolver: connectors, Timeout: fixtureRequestTimeout,
+	s.manager = s.managerWith(fixtureRequestTimeout)
+}
+
+// managerWith is a manager whose connections' clients bound each request by requestTimeout,
+// as connectorHTTPTimeout does in the router. egress refuses loopback, so the clients reach
+// the provider over its own transport.
+func (s *connectorFixture) managerWith(requestTimeout time.Duration) *Manager {
+	transports, err := core.NewTransports(core.TransportsConfig{Resolver: s.resolver, Timeout: requestTimeout,
 		NewClient: func(timeout time.Duration, wrap func(http.RoundTripper) http.RoundTripper) *http.Client {
 			return &http.Client{Transport: wrap(s.provider.Client().Transport), Timeout: timeout}
 		}})
 	s.Require().NoError(err)
 	logger := slog.New(slog.DiscardHandler)
-	s.manager = &Manager{logger: logger, options: ManagerOptions{
-		Store: db, Logger: logger, Connectors: Connectors{Registry: s.registry, Transports: transports},
+	return &Manager{logger: logger, options: ManagerOptions{
+		Store: s.store, Logger: logger, Connectors: Connectors{Registry: s.registry, Transports: transports},
 	}}
 }
 

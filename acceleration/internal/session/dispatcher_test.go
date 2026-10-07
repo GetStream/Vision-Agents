@@ -165,7 +165,27 @@ func (s *DispatcherSuite) TestACallTheTimeoutCutsOffIsAnUnknownOutcome() {
 	said, err := s.call(d, "crm__slow", "{}")
 
 	s.Require().NoError(err, "not an error the model would retry")
-	s.Contains(said, "outcome_unknown: crm__slow did not answer within 200ms")
+	s.Contains(said, "outcome_unknown: crm__slow did not answer in time")
+	s.Equal(1, s.provider.calls("primary"))
+}
+
+// TestACallTheConnectionsClientCutsOffIsAnUnknownOutcome: a binding may wait longer than the
+// connection's client lets one request run (connectorHTTPTimeout, 10 s in the router, against
+// timeout_ms up to 30000). The client gives up after the request was sent, so the model is
+// told the outcome is unknown, not that the call failed.
+func (s *DispatcherSuite) TestACallTheConnectionsClientCutsOffIsAnUnknownOutcome() {
+	defer func(kept *Manager) { s.manager = kept }(s.manager)
+	s.manager = s.managerWith(300 * time.Millisecond)
+	app := s.connection("", "primary")
+	binding := s.fixed("crm", app, "slow")
+	binding.TimeoutMs = 1500
+	d, _, _, err := s.attach(s.spec(s.config(binding), "", nil))
+	s.Require().NoError(err)
+
+	said, err := s.call(d, "crm__slow", "{}")
+
+	s.Require().NoError(err, "not an error the model would retry")
+	s.Contains(said, "outcome_unknown: crm__slow did not answer in time")
 	s.Equal(1, s.provider.calls("primary"))
 }
 
