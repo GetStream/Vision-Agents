@@ -50,6 +50,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
@@ -1060,6 +1061,24 @@ func run(settings config.Config, logger *slog.Logger) error {
 		forwarder.Start()
 		defer forwarder.Close()
 		options.EventForwarder = forwarder
+	}
+	// A connection's MCP events are subscribed to on its server, signed with secrets sealed
+	// under the connector keyring, and each opens a conversation, so they need connectors on,
+	// a database, sessions and an https public URL for the callback: the draft refuses any
+	// other («Servers MUST reject events/subscribe with a non-https delivery.url»). Every router
+	// runs the worker that refreshes them; a subscription is taken by one router at a time.
+	if connectorResolver != nil && connectorSecrets != nil && pgStore != nil && sessions != nil &&
+		strings.HasPrefix(settings.PublicURL, "https://") {
+		events, err := mcpevents.New(mcpevents.Options{
+			Store: pgStore, Sessions: sessions, Registry: connectors, Transports: connectorTransports,
+			Secrets: connectorSecrets, PublicURL: settings.PublicURL, Logger: logger,
+		})
+		if err != nil {
+			return err
+		}
+		events.Start()
+		defer events.Close()
+		options.MCPEvents = events
 	}
 	if streamClients.PerApp() {
 		// Each registered app signs its own hooks and mints its own tokens, so only work in

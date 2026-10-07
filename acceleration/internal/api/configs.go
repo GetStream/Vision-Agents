@@ -14,6 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -424,6 +425,18 @@ func connectorBindingsComplaint(bindings *[]AgentConnectorBinding) (string, bool
 					"when a session is created and connection.connection_id is not set here", alias), false
 			}
 		}
+		if binding.Events != nil && len(*binding.Events) > 0 && binding.Connection.Type != AgentConnectorSelectionTypeFixed {
+			return fmt.Sprintf("connector binding %q declares events, and only a fixed binding may: a session "+
+				"binding's connection is picked when a session opens, and an event arrives with none open", alias), false
+		}
+		events := map[string]bool{}
+		for _, event := range value(binding.Events) {
+			key := mcpevents.Key(strings.TrimSpace(event.Event), value(event.Arguments))
+			if events[key] {
+				return fmt.Sprintf("connector binding %q declares event %q with the same arguments twice", alias, event.Event), false
+			}
+			events[key] = true
+		}
 		tools := make(map[string]bool, len(binding.Tools))
 		for _, tool := range binding.Tools {
 			if strings.TrimSpace(tool.Name) == "" {
@@ -535,9 +548,24 @@ func storedBindings(bindings []AgentConnectorBinding) []store.ConnectorBinding {
 			Tools:     tools,
 			Required:  value(binding.Required),
 			TimeoutMs: value(binding.TimeoutMs),
+			Events:    bindingEventsOf(binding.Events),
 		})
 	}
 	return stored
+}
+
+// bindingEventsOf reads the events a caller declared on a binding, or nothing for none, so a
+// binding without events is stored as it was before they existed.
+func bindingEventsOf(events *[]ConnectorBindingEvent) []store.BindingEvent {
+	var read []store.BindingEvent
+	for _, event := range value(events) {
+		read = append(read, store.BindingEvent{
+			Event:        strings.TrimSpace(event.Event),
+			Arguments:    value(event.Arguments),
+			Instructions: strings.TrimSpace(value(event.Instructions)),
+		})
+	}
+	return read
 }
 
 // bindingsOf renders a config's bindings for the wire.
@@ -562,6 +590,20 @@ func bindingsOf(bindings []store.ConnectorBinding) []AgentConnectorBinding {
 		if binding.TimeoutMs > 0 {
 			timeout := binding.TimeoutMs
 			one.TimeoutMs = &timeout
+		}
+		if len(binding.Events) > 0 {
+			events := make([]ConnectorBindingEvent, 0, len(binding.Events))
+			for _, event := range binding.Events {
+				declared := ConnectorBindingEvent{Event: event.Event}
+				if len(event.Arguments) > 0 {
+					declared.Arguments = &event.Arguments
+				}
+				if event.Instructions != "" {
+					declared.Instructions = &event.Instructions
+				}
+				events = append(events, declared)
+			}
+			one.Events = &events
 		}
 		rendered = append(rendered, one)
 	}
@@ -1511,12 +1553,28 @@ type AgentConfig struct {
 // (internal/api/connectors.go:1176 at cf62af0d), and nothing there says why 30 seconds; it is
 // unverified.
 type AgentConnectorBinding struct {
-	Name        string                  `json:"name" pattern:"^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$" doc:"The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place."`
-	ConnectorId string                  `json:"connector_id" doc:"A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_."`
-	Connection  AgentConnectorSelection `json:"connection"`
-	Tools       []ConnectorToolGrant    `json:"tools" maxItems:"128" nullable:"false" doc:"The exact tools allowed, each named once. There is no wildcard, and an empty list grants none."`
-	Required    *bool                   `json:"required,omitempty" default:"false" doc:"Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it."`
-	TimeoutMs   *int                    `json:"timeout_ms,omitempty" minimum:"1" maximum:"30000" doc:"How long one tool call may take, in milliseconds. Omitted, the session's default applies."`
+	Name        string                   `json:"name" pattern:"^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$" doc:"The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place."`
+	ConnectorId string                   `json:"connector_id" doc:"A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_."`
+	Connection  AgentConnectorSelection  `json:"connection"`
+	Tools       []ConnectorToolGrant     `json:"tools" maxItems:"128" nullable:"false" doc:"The exact tools allowed, each named once. There is no wildcard, and an empty list grants none."`
+	Required    *bool                    `json:"required,omitempty" default:"false" doc:"Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it."`
+	TimeoutMs   *int                     `json:"timeout_ms,omitempty" minimum:"1" maximum:"30000" doc:"How long one tool call may take, in milliseconds. Omitted, the session's default applies."`
+	Events      *[]ConnectorBindingEvent `json:"events,omitempty" maxItems:"32" doc:"MCP events the binding's fixed connection is subscribed to, each opening a text conversation from the config when it arrives. Subscribed when the connection is next validated. Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an event arrives with no session open."`
+}
+
+// ConnectorBindingEvent is one MCP event a binding subscribes to on its connection's server.
+// The cap of 32 on a binding's events is plugin_events', a choice that is unverified.
+type ConnectorBindingEvent struct {
+	Event        string          `json:"event" minLength:"1" doc:"The event's name, as the server's events/list gives it, such as issue.created."`
+	Arguments    *map[string]any `json:"arguments,omitempty" doc:"The event's filters, as its inputSchema describes them."`
+	Instructions *string         `json:"instructions,omitempty" doc:"What the agent does with the event when it arrives, added to its instructions for that conversation."`
+}
+
+func (*ConnectorBindingEvent) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "One MCP event a binding subscribes to on its fixed connection. Each one that " +
+		"arrives opens a text conversation from the config, as the app, with the event's data as the " +
+		"first thing said to it."
+	return schema
 }
 
 func (*AgentConnectorBinding) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

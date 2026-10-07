@@ -328,6 +328,13 @@ func (s *Server) validateConnection(ctx context.Context, request *validateConnec
 	if err != nil {
 		return nil, err
 	}
+	// The credential works, so the events its bindings declare are subscribed to, off the
+	// request (internal/mcpevents). Nil with connectors off.
+	if s.mcpEvents != nil {
+		if err := s.mcpEvents.Reconcile(ctx, connection); err != nil {
+			return nil, err
+		}
+	}
 	validation := ConnectionValidation{ConnectionID: connection.ID, Status: validationConnected,
 		ToolsDigest: digest, CheckedAt: &listedAt}
 	if len(missing) > 0 {

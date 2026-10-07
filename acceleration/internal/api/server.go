@@ -44,6 +44,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
@@ -252,6 +253,10 @@ type Options struct {
 	// destinations, and serves the endpoints that manage them (internal/eventforward). Absent,
 	// nothing is forwarded and the destination endpoints say forwarding is not enabled.
 	EventForwarder *eventforward.Forwarder
+	// MCPEvents subscribes connector bindings to their connection's MCP events and answers
+	// the deliveries (internal/mcpevents). Absent, which it is with connectors off, a validate
+	// subscribes to nothing and the deliveries route answers 410.
+	MCPEvents *mcpevents.Service
 	// SlackApps creates, updates and deletes the Slack app the router keeps for a customer
 	// (managed, T54). Absent, the provider app paths say connectors are not enabled.
 	SlackApps *slackapps.Client
@@ -321,6 +326,7 @@ type Server struct {
 	eventSecrets      EventSecretLookup
 	channelBridge     ChannelBridge
 	eventForwarder    *eventforward.Forwarder
+	mcpEvents         *mcpevents.Service
 	// slackApps and operatorApps serve the provider app paths.
 	slackApps    *slackapps.Client
 	operatorApps OperatorAppLookup
@@ -442,6 +448,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		eventSecrets:      options.ConnectorEventSecrets,
 		channelBridge:     options.ChannelBridge,
 		eventForwarder:    options.EventForwarder,
+		mcpEvents:         options.MCPEvents,
 		slackApps:         options.SlackApps,
 		operatorApps:      options.OperatorProviderApps,
 		trusted:           options.TrustedProxies,
@@ -532,6 +539,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+providerAppEventsPath+"{connector_id}/{provider_app_id}", s.receiveProviderAppEvent)
 	mux.HandleFunc("GET /v1/agents/plugins/{plugin_id}/logo", s.servePluginLogo)
 	mux.HandleFunc("POST "+plugins.EventsPath+"{token}", s.receivePluginEvent)
+	mux.HandleFunc("POST "+mcpevents.Path+"{token}", s.receiveConnectionEvent)
 	mux.HandleFunc("GET "+channels.HookPath+"{token}", s.receiveChannelMessage)
 	mux.HandleFunc("POST "+channels.HookPath+"{token}", s.receiveChannelMessage)
 	mux.HandleFunc("POST "+dlc.HookPath, s.receiveDLCReport)

@@ -368,6 +368,12 @@ func (s *Server) deleteConnection(ctx context.Context, request *deleteConnection
 	if s.connectorTransports != nil {
 		s.connectorTransports.Close(core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID})
 	}
+	// So do its MCP event subscriptions: a delivery to one is answered 410 from here on.
+	if s.mcpEvents != nil {
+		if err := s.mcpEvents.Stop(ctx, connection.CustomerID, connection.ID); err != nil {
+			return nil, err
+		}
+	}
 	return nil, nil
 }
 
