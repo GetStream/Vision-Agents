@@ -24,6 +24,12 @@ const (
 	// transcriber that finalizes has already decided the caller stopped, so waiting the
 	// whole gap again for the words to hold still only delays the answer.
 	cadenceFinalGap = 60 * time.Millisecond
+	// defaultPreviewDebounce is how long a transcript revision has to hold still before the
+	// reply to its words is started, ahead of the wait that decides whether the caller has
+	// finished. It is much shorter than that wait, so the model is already working for most of
+	// it, and long enough that words which are still arriving restart it instead of being
+	// previewed one revision at a time.
+	defaultPreviewDebounce = 150 * time.Millisecond
 )
 
 // candidate is a stable transcript revision worth asking the flow controller about.
@@ -61,6 +67,12 @@ type cadence struct {
 	ready  chan candidate
 	done   chan struct{}
 	after  func(time.Duration, func()) cadenceTimer
+
+	// preview is how long a revision has to hold still before a reply is started for its
+	// words, ahead of the wait that makes them a candidate. Zero starts none, which leaves the
+	// reply to start with the candidate. previews carries the words it starts one for.
+	preview  time.Duration
+	previews chan candidate
 
 	mu         sync.Mutex
 	speakers   map[string]*cadenceSpeaker
@@ -104,6 +116,11 @@ type cadenceSpeaker struct {
 	committedUtterance int64
 	committedAt        time.Time
 	emittedGeneration  int64
+
+	// previewTimer is the debounce that has a reply started for the words if they hold still,
+	// and previewEpoch says which timer is the live one.
+	previewTimer cadenceTimer
+	previewEpoch int64
 }
 
 func newCadence(gap, retry, settle time.Duration, logger *slog.Logger) *cadence {
@@ -130,6 +147,7 @@ func newCadence(gap, retry, settle time.Duration, logger *slog.Logger) *cadence 
 			return time.AfterFunc(delay, fn)
 		},
 		speakers: map[string]*cadenceSpeaker{},
+		previews: make(chan candidate, eventBuffer),
 	}
 }
 
@@ -220,6 +238,7 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 		delay = c.retry
 	}
 	c.scheduleLocked(current, delay)
+	c.schedulePreviewLocked(current, delay, unfinished)
 	c.logger.Debug("heard more, waiting for the words to stop changing",
 		"participant", transcript.Participant.ID, "mode", transcript.Mode, "text", text,
 		"confidence", transcript.Confidence, "gap", delay, "superseded", superseded)
@@ -381,8 +400,11 @@ func (c *cadence) Forget(participant stt.Participant) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if current, ok := c.speakers[participant.ID]; ok && current.timer != nil {
-		current.timer.Stop()
+	if current, ok := c.speakers[participant.ID]; ok {
+		if current.timer != nil {
+			current.timer.Stop()
+		}
+		c.stopPreviewLocked(current)
 	}
 	delete(c.speakers, participant.ID)
 }
@@ -400,6 +422,7 @@ func (c *cadence) Close() {
 		if current.timer != nil {
 			current.timer.Stop()
 		}
+		c.stopPreviewLocked(current)
 	}
 }
 
@@ -443,6 +466,8 @@ func (c *cadence) emit(participantID string, generation, timerEpoch int64) {
 	current.candidateID = replyPrefix + turnStamp()
 	current.emittedGeneration = generation
 	current.timer = nil
+	// The reply for these words is the candidate's to start from here.
+	c.stopPreviewLocked(current)
 	c.grace = 0
 	ready := candidate{
 		ID:           current.candidateID,
@@ -465,6 +490,86 @@ func (c *cadence) emit(participantID string, generation, timerEpoch int64) {
 	case c.ready <- ready:
 	case <-c.done:
 		c.logger.Debug("dropped a settled turn, the agent is closing", "candidate", ready.ID)
+	}
+}
+
+// Previews carries the words of a revision that has held still for the preview debounce, which
+// is when a reply to them can be started: ahead of the wait that makes them a candidate, and so
+// ahead of any ruling on whether the caller has finished. Each is the words as they stand and
+// nothing more, with an id of its own, and a candidate for the same words follows them unless
+// they change first.
+func (c *cadence) Previews() <-chan candidate { return c.previews }
+
+// previewable reports whether the words a preview was announced for are still the words being
+// settled and have not been put to a ruling, which is when the candidate owns what is started
+// for them.
+func (c *cadence) previewable(early candidate) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	current, ok := c.speakers[early.Participant.ID]
+	return ok && current.revision == early.Revision && strings.TrimSpace(current.text) != "" &&
+		current.candidateID == "" && current.emittedGeneration != current.generation
+}
+
+// schedulePreviewLocked starts the debounce for the words just heard, replacing the one the
+// words they replace had running. Words that end visibly unfinished are not previewed, because
+// they are about to change, and nor are words whose candidate is due no later than the debounce
+// would be, which would only be asked about at the same moment. The caller holds the lock.
+func (c *cadence) schedulePreviewLocked(current *cadenceSpeaker, candidateDelay time.Duration, unfinished bool) {
+	c.stopPreviewLocked(current)
+	if c.preview <= 0 || unfinished || candidateDelay <= c.preview {
+		return
+	}
+	generation := current.generation
+	epoch := c.nextTimerEpochLocked()
+	current.previewEpoch = epoch
+	participantID := current.participant.ID
+	current.previewTimer = c.after(c.preview, func() {
+		c.emitPreview(participantID, generation, epoch)
+	})
+}
+
+// stopPreviewLocked cancels a debounce that has not run. The caller holds the lock.
+func (c *cadence) stopPreviewLocked(current *cadenceSpeaker) {
+	if current.previewTimer != nil {
+		current.previewTimer.Stop()
+		current.previewTimer = nil
+	}
+}
+
+// emitPreview announces words that held still for the preview debounce, unless they have
+// changed, been put to a ruling or been forgotten since it began.
+func (c *cadence) emitPreview(participantID string, generation, epoch int64) {
+	c.mu.Lock()
+	current, ok := c.speakers[participantID]
+	if c.closed || !ok || current.generation != generation || current.previewEpoch != epoch ||
+		current.text == "" || current.candidateID != "" || current.emittedGeneration == generation {
+		c.mu.Unlock()
+		return
+	}
+	current.previewTimer = nil
+	ready := candidate{
+		ID:           replyPrefix + turnStamp(),
+		Participant:  current.participant,
+		Speaker:      current.speaker,
+		Text:         strings.TrimSpace(current.text),
+		Language:     current.language,
+		Confidence:   current.confidence,
+		STTLatencyMs: current.latencyMs,
+		RevisedAt:    current.revisedAt,
+		ReadyAt:      time.Now(),
+		Revision:     current.revision,
+	}
+	c.mu.Unlock()
+
+	c.logger.Debug("the words held still, starting a reply to them",
+		"participant", participantID, "preview", ready.ID, "text", ready.Text)
+
+	// A preview that cannot be queued is dropped: the candidate for the same words starts the
+	// reply, as it would have without one.
+	select {
+	case c.previews <- ready:
+	default:
 	}
 }
 

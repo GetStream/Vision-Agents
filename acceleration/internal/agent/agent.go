@@ -173,6 +173,13 @@ type Options struct {
 	// as it is ready. It does not apply to a greeting, a murmur, or a turn the agent takes
 	// without having been spoken to.
 	ReplySilence *time.Duration
+	// PreviewDebounce is how long a caller's words have to hold still before the reply to them
+	// is started, ahead of the wait that decides whether they have finished, so the model has
+	// been working for part of that wait. Words that change again restart it, and words that
+	// end on a comma, a joining word or a hesitation are not previewed at all. It applies
+	// wherever SpeculativeReplies does. Nil leaves it at 150ms, and a pointer to zero starts
+	// the reply when the wait is over, as it did before.
+	PreviewDebounce *time.Duration
 
 	// Voice selects the speaker. Its meaning is the text-to-speech provider's.
 	Voice string
@@ -500,6 +507,13 @@ func New(options Options) (*Agent, error) {
 	if replySilence < 0 {
 		return nil, stack.Wrap(errors.New("agent: the reply silence cannot be negative"))
 	}
+	previewDebounce := defaultPreviewDebounce
+	if options.PreviewDebounce != nil {
+		previewDebounce = *options.PreviewDebounce
+	}
+	if previewDebounce < 0 {
+		return nil, stack.Wrap(errors.New("agent: the preview debounce cannot be negative"))
+	}
 	// Memories belong to the customer unless the caller named someone more specific, and
 	// are always kept under the customer as the app id, so no caller can reach another
 	// customer's and a customer's can be deleted without knowing how its callers labelled
@@ -541,6 +555,7 @@ func New(options Options) (*Agent, error) {
 	}
 
 	settling := newCadence(0, 0, 0, logger)
+	settling.preview = previewDebounce
 	listening := newDuplex(options.Duplex)
 	emitter := NewEmitter(eventBuffer)
 	agent := &Agent{
@@ -1349,6 +1364,8 @@ func (a *Agent) consumeCadence(p *pipeline) {
 				continue
 			}
 			a.act([]Action{a.converse.Settled(ready, a.floor())})
+		case early := <-a.cadence.Previews():
+			a.previewEarly(early)
 		case <-p.ctx.Done():
 			return
 		}
@@ -1505,8 +1522,7 @@ func (a *Agent) ask(ready candidate) {
 	// Speech the voice has finished sending is still on its way out of the edge, so the
 	// agent counts as speaking until it has drained.
 	speaking = speaking || a.speechPending()
-	eligible := !speaking && !ready.Unfinished && !anotherVoice && !a.options.Text &&
-		(a.options.Guardrail == nil || a.options.Guardrail.Policy().Mode != guardrail.ModeBlocking)
+	eligible := a.previewEligible(ready, speaking, anotherVoice)
 	// The acoustic score ruled these words unfinished and is being asked again. Nothing heard
 	// since means it would score the same window, so it is not asked, and nothing is copied or
 	// previewed for it. The preview of the first check is the one the answer will use.
@@ -1543,6 +1559,15 @@ func (a *Agent) ask(ready candidate) {
 		snapshot, _ = a.eotScoringSnapshot(ready.Participant.ID)
 	}
 	a.decideWithEOT(p, current, ready, turn, snapshot)
+}
+
+// previewEligible reports whether a reply may be started for a candidate's words before they
+// are ruled on: the agent is not speaking, the words are a settled turn rather than a
+// provisional one, they are the caller's own, there is a voice to speak the reply, and no
+// policy has to clear them first.
+func (a *Agent) previewEligible(ready candidate, speaking, anotherVoice bool) bool {
+	return !speaking && !ready.Unfinished && !anotherVoice && !a.options.Text &&
+		(a.options.Guardrail == nil || a.options.Guardrail.Policy().Mode != guardrail.ModeBlocking)
 }
 
 type previewResult struct {
@@ -1688,6 +1713,18 @@ func (a *Agent) keepPreview(ready candidate) {
 		a.cancelPreview(ready.ID)
 		return
 	}
+	previous := a.holdPreviewLocked(p, ready, until)
+	a.mu.Unlock()
+
+	if previous != nil && previous.key != ready.ID {
+		a.cancelPreview(previous.key)
+	}
+}
+
+// holdPreviewLocked keeps a preview for the next check of the same words until the given time,
+// and returns the preview it replaced, which the caller lets go of once it has released the
+// lock. The caller holds the lock.
+func (a *Agent) holdPreviewLocked(p *replyPreview, ready candidate, until time.Time) *keptPreview {
 	kept := &keptPreview{key: ready.ID, revision: ready.Revision}
 	kept.expires = time.AfterFunc(time.Until(until), func() { a.expireKeptPreview(ready.Participant.ID, kept) })
 	previous := a.kept[ready.Participant.ID]
@@ -1696,9 +1733,60 @@ func (a *Agent) keepPreview(ready candidate) {
 	}
 	a.kept[ready.Participant.ID] = kept
 	p.kept = true
+	return previous
+}
+
+// previewEarly starts the reply to words that have held still for the preview debounce, ahead
+// of the wait that decides whether the caller has finished, so that the model has been working
+// for part of that wait when the candidate for the same words arrives. It is kept the way a
+// preview is kept across a Wait: the candidate takes it over through the same adoption, which
+// still requires the conversation to be identical, and whatever lets go of a kept preview lets
+// go of this one. There is never more than one for a participant, because new words let go of
+// the one for the old.
+func (a *Agent) previewEarly(early candidate) {
+	if !a.previewsReplies() || !a.cadence.previewable(early) {
+		return
+	}
+	a.mu.Lock()
+	current := a.harness
+	if a.closed || current == nil || a.pipe == nil || a.pipe.native || a.switching.Load() {
+		a.mu.Unlock()
+		return
+	}
+	speaking := a.generating || a.utterances > 0 || a.pendingTools > 0
+	anotherVoice := a.anotherVoiceLocked(early)
+	instructions := a.instructions()
 	a.mu.Unlock()
 
-	if previous != nil && previous.key != ready.ID {
+	if !a.previewEligible(early, speaking || a.speechPending(), anotherVoice) {
+		return
+	}
+	a.preview(early, current, instructions)
+	a.keepEarlyPreview(early)
+}
+
+// keepEarlyPreview holds the reply just started for words, unless they changed while it was
+// being started, for the candidate that puts them. If no candidate does, because nothing came
+// of the words, it is let go after as long as the patience for words that are waited on.
+func (a *Agent) keepEarlyPreview(early candidate) {
+	a.mu.Lock()
+	p := a.previews[early.ID]
+	if p == nil {
+		a.mu.Unlock()
+		return
+	}
+	// Read under the lock a revision takes to let go of a kept preview, so a revision that
+	// lands after this check still finds the preview to drop.
+	current, heard := a.cadence.currentCandidate(early.Participant.ID)
+	if !heard || current.Revision != early.Revision || a.closed || a.switching.Load() {
+		a.mu.Unlock()
+		a.cancelPreview(early.ID)
+		return
+	}
+	previous := a.holdPreviewLocked(p, early, time.Now().Add(a.converse.patienceSpan()))
+	a.mu.Unlock()
+
+	if previous != nil && previous.key != early.ID {
 		a.cancelPreview(previous.key)
 	}
 }

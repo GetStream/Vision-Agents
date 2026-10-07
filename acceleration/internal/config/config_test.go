@@ -291,6 +291,28 @@ func (s *ConfigSuite) TestAReplyWaitsForTheCallerToBeQuietUnlessTurnedOff() {
 	s.Contains(err.Error(), "agent.reply_silence")
 }
 
+func (s *ConfigSuite) TestAReplyIsStartedWhenTheWordsHaveHeldStillUnlessTurnedOff() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(150*time.Millisecond, config.Agent.PreviewDebounce)
+
+	s.T().Setenv("ROUTER_PREVIEW_DEBOUNCE", "80ms")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(80*time.Millisecond, config.Agent.PreviewDebounce)
+
+	s.T().Setenv("ROUTER_PREVIEW_DEBOUNCE", "0")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Zero(config.Agent.PreviewDebounce, "zero starts the reply with the candidate rather than falling back to the default")
+	s.Equal("0s", os.Getenv("ROUTER_PREVIEW_DEBOUNCE"), "what is exported says the same")
+
+	s.T().Setenv("ROUTER_PREVIEW_DEBOUNCE", "-1s")
+	_, _, err = Load("")
+	s.Require().Error(err)
+	s.Contains(err.Error(), "agent.preview_debounce")
+}
+
 func (s *ConfigSuite) TestConnectorsAreOffUnlessAskedFor() {
 	config, _, err := Load("")
 	s.Require().NoError(err)

@@ -554,6 +554,9 @@ type AgentSuite struct {
 	// replySilence is how long a reply waits for the caller to have been quiet, and is nil,
 	// which leaves the default, unless a test says otherwise.
 	replySilence *time.Duration
+	// previewDebounce is how long words hold still before the reply to them is started, and is
+	// nil, which leaves the default, unless a test says otherwise.
+	previewDebounce *time.Duration
 	// remembers is the memory store the agent joins with, when a test gives it one.
 	remembers *stubMemory
 	// incognito holds the session off the record.
@@ -608,6 +611,7 @@ func (s *AgentSuite) SetupTest() {
 	s.duplex = DuplexOptions{}
 	s.speculation = nil
 	s.replySilence = nil
+	s.previewDebounce = nil
 	s.performing = ""
 	if s.agentID == "" {
 		s.agentID = "agent-1"
@@ -788,6 +792,7 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		Duplex:             s.duplex,
 		SpeculativeReplies: s.speculation,
 		ReplySilence:       s.replySilence,
+		PreviewDebounce:    s.previewDebounce,
 		LLM:                reasoner,
 		LLMTarget:          "en-low-latency",
 		STT:                transcriber,

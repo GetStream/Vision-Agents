@@ -1236,6 +1236,7 @@ func buildSessions(
 		// whether or not it is spoken.
 		SpeculativeReplies: &settings.Agent.SpeculativeReplies,
 		ReplySilence:       &settings.Agent.ReplySilence,
+		PreviewDebounce:    &settings.Agent.PreviewDebounce,
 		Stream:             stream,
 		Store:              pgStore,
 		Live:               liveClient,

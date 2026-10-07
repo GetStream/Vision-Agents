@@ -728,6 +728,22 @@ reply, a greeting, a murmur and a turn the agent takes without having been spoke
 held, and `first_frame_queued_ms` and `first_audible_frame_ms` include the wait. `0` lets a
 reply start the moment it is ready, and the agent option `ReplySilence` is the same setting.
 
+### A reply starts when the words hold still, not after the wait: `ROUTER_PREVIEW_DEBOUNCE`
+
+The reply to a caller's words used to be started when they became a candidate, which is after
+the cadence wait that decides whether the caller has finished, so the model began late. It is
+now started once a transcript revision has held still for `ROUTER_PREVIEW_DEBOUNCE`, `150ms`
+by default, and the candidate for the same words takes it over through the adoption a kept
+reply already uses, so there is still one model call for it. Words that change again restart
+the debounce, and words that end on a comma, a joining word or a hesitation, or in digits that
+may still be growing, are not started at all. There is never more than one for a participant:
+new words let go of the reply for the old ones, and every other cause that lets go of a kept
+reply (the floor changing, the caller leaving, the call ending, the models being moved, a check
+that does not answer, the patience for the words running out) lets go of this one too. It
+applies wherever `ROUTER_SPECULATIVE_REPLIES` does, and a reply for words that are never
+answered is paid for like any other dropped one. `0` starts the reply with the candidate, as
+before, and the agent option `PreviewDebounce` is the same setting.
+
 ### A low acoustic score is asked again sooner, and patience is shorter
 
 When the acoustic end-of-turn score rules a caller's words unfinished, it is now put again after

@@ -201,6 +201,11 @@ type Agent struct {
 	// sooner waits for it, and is dropped unheard if the caller starts again in the meantime.
 	// 700ms by default; 0 lets a reply start the moment it is ready.
 	ReplySilence time.Duration `koanf:"reply_silence"`
+	// PreviewDebounce is how long a caller's words have to hold still before the reply to them
+	// is started, ahead of the wait that decides whether they have finished. Words that change
+	// again restart it. It applies wherever SpeculativeReplies does. 150ms by default; 0 starts
+	// the reply when that wait is over.
+	PreviewDebounce time.Duration `koanf:"preview_debounce"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -271,6 +276,7 @@ var variables = map[string]string{
 
 	"agent.speculative_replies": "ROUTER_SPECULATIVE_REPLIES",
 	"agent.reply_silence":       "ROUTER_REPLY_SILENCE",
+	"agent.preview_debounce":    "ROUTER_PREVIEW_DEBOUNCE",
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
 
@@ -294,7 +300,7 @@ func Defaults() Config {
 		// can come to millions of tokens.
 		RateLimit: RateLimit{MessagesPerDay: 200, TokensPerDay: 5_000_000},
 		DataMove:  DataMove{Retention: 7 * 24 * time.Hour},
-		Agent:     Agent{SpeculativeReplies: true, ReplySilence: 700 * time.Millisecond},
+		Agent:     Agent{SpeculativeReplies: true, ReplySilence: 700 * time.Millisecond, PreviewDebounce: 150 * time.Millisecond},
 		EOT:       EOT{Endpoint: eotdefaults.HostedDemoEndpoint, Mode: "primary", Threshold: 0.5},
 		Sandbox:   Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
 	}
@@ -428,6 +434,9 @@ func (c Config) validate() error {
 	if c.Agent.ReplySilence < 0 {
 		return fmt.Errorf("config: agent.reply_silence cannot be negative, got %s", c.Agent.ReplySilence)
 	}
+	if c.Agent.PreviewDebounce < 0 {
+		return fmt.Errorf("config: agent.preview_debounce cannot be negative, got %s", c.Agent.PreviewDebounce)
+	}
 	if c.EOT.Mode != "gate" && c.EOT.Mode != "primary" {
 		return fmt.Errorf("config: eot.mode must be gate or primary, got %q", c.EOT.Mode)
 	}
@@ -519,6 +528,7 @@ func (c Config) export() error {
 		"rate_limit.tokens_per_day":     fmt.Sprint(c.RateLimit.TokensPerDay),
 		"agent.speculative_replies":     fmt.Sprint(c.Agent.SpeculativeReplies),
 		"agent.reply_silence":           c.Agent.ReplySilence.String(),
+		"agent.preview_debounce":        c.Agent.PreviewDebounce.String(),
 		"connectors.enabled":            fmt.Sprint(c.Connectors.Enabled),
 		"sandbox.enabled":               fmt.Sprint(c.Sandbox.Enabled),
 		"sandbox.recipients":            fmt.Sprint(c.Sandbox.Recipients),

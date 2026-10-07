@@ -1011,6 +1011,14 @@ func (c *converse) patienceEnds(participantID string) (time.Time, bool) {
 	return waiting.since.Add(c.patience), true
 }
 
+// patienceSpan is how long the same unfinished words are waited on before the caller is asked
+// what they meant.
+func (c *converse) patienceSpan() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.patience
+}
+
 // hold keeps a turn until the agent has stopped talking. Only one is kept: a caller who
 // has said two more things while being talked over is owed an answer to the last of them.
 // forgetQueuedRevisedByLocked drops the turn queued behind a reply when the words being dealt
