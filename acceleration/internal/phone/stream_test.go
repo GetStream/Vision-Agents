@@ -3,6 +3,24 @@ package phone
 // StreamSuite covers what can be checked without an account: that nothing half-described
 // reaches Stream, and that a trunk address a vendor is given is dialable.
 
+// The caller is the participant the routing rule names from callerTemplate. CallerNumber cuts
+// exactly what the call hook cut before it moved here (strings.CutPrefix on "sip-"), so
+// "sip-" alone is still the caller, with no number.
+func (s *PhoneSuite) TestTheCallerIsTheParticipantTheRoutingRuleNamed() {
+	number, ok := CallerNumber("sip-+15550001111")
+	s.True(ok)
+	s.Equal("+15550001111", number)
+
+	number, ok = CallerNumber("sip-")
+	s.True(ok)
+	s.Empty(number)
+
+	_, ok = CallerNumber("agent-1")
+	s.False(ok)
+	_, ok = CallerNumber("Sip-+15550001111")
+	s.False(ok)
+}
+
 func (s *PhoneSuite) TestStreamNeedsItsCredentials() {
 	s.T().Setenv("STREAM_API_KEY", "deploy-key")
 	s.T().Setenv("STREAM_API_SECRET", "deploy-secret")

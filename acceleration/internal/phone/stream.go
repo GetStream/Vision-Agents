@@ -24,10 +24,10 @@ const callerTemplate = "sip-{{caller_number}}"
 const callerPrefix = "sip-"
 
 // CallerNumber reads the calling number off the id of the participant callerTemplate named,
-// and false for any other participant.
+// and false for any other participant. It is the cut the call hook always made: "sip-" is
+// the caller with an empty number.
 func CallerNumber(participantID string) (string, bool) {
-	number, ok := strings.CutPrefix(participantID, callerPrefix)
-	return number, ok && number != ""
+	return strings.CutPrefix(participantID, callerPrefix)
 }
 
 // StreamOptions configures the Stream side of a phone number.
