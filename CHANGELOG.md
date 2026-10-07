@@ -1605,6 +1605,12 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- Twilio numbers in a number search have a monthly price. Twilio's search does not send a
+  price, so the dashboard showed each Twilio number as "Not quoted". The router now gets
+  the price for each number type from Twilio's Pricing API (`current_price`, which
+  includes the account's discounts), keeps it for 24 hours, and shows it with no change.
+  If that call fails, the search still returns the numbers, with no price. A bought Twilio
+  number still has no price (AI-931).
 - An `oauth2_code` or `oauth2_client_credentials` connection whose MCP server refuses its token
   with a bare 401 (a `WWW-Authenticate` that names `resource_metadata` and no `error`, as the
   MCP authorization spec answers an expired token) is renewed and the call sent once more. The
