@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -27,6 +28,8 @@ type stubLLM struct {
 	scripts []*llmtest.Script
 	// capabilities is what this stub claims to accept.
 	capabilities llm.Capabilities
+	// createDelay is how long Create takes, as a provider takes to answer with its headers.
+	createDelay time.Duration
 }
 
 func newStubLLM() *stubLLM { return &stubLLM{} }
@@ -34,6 +37,9 @@ func newStubLLM() *stubLLM { return &stubLLM{} }
 func (s *stubLLM) Start(context.Context) error { return nil }
 
 func (s *stubLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	if s.createDelay > 0 {
+		time.Sleep(s.createDelay)
+	}
 	s.asked = append(s.asked, params)
 
 	script := llmtest.New(llm.StreamOptions{
@@ -332,8 +338,8 @@ func (s *LLMRouterSuite) TestClosingTwiceIsSafe() {
 func (s *LLMRouterSuite) TestErrorCodeExplainsTheFailure() {
 	s.Equal("provider_error", errorCode(llm.Response{Status: llm.StatusFailed}))
 	s.Empty(errorCode(llm.Response{Status: llm.StatusCompleted}))
-	s.Empty(errorCode(llm.Response{Status: llm.StatusCancelled}),
-		"a response the caller abandoned is not a provider failure")
+	s.Equal(routing.ErrorCancelled, errorCode(llm.Response{Status: llm.StatusCancelled}),
+		"a response the caller abandoned is recorded as that, not as a provider failure")
 }
 
 func (s *LLMRouterSuite) TestAnAbandonedResponseIsStillBilled() {

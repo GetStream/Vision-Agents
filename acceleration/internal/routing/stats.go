@@ -63,9 +63,11 @@ type Stat struct {
 	ErrorMessage string
 }
 
-// ErrorCancelled is the ErrorCode of work its caller gave up on before the provider answered:
-// a reply superseded by newer words, or the slower of two hedged requests. It is not
-// successful, but the provider did nothing wrong, so it is kept out of its health.
+// ErrorCancelled is the ErrorCode of work its caller gave up on, whether before the provider
+// answered or by closing the stream it had opened: a reply superseded by newer words, the
+// slower of two hedged requests, or one cut off by the caller speaking. It is not successful,
+// but the provider did nothing wrong, so it is kept out of its health. What it generated
+// before it was cut off is still billed.
 const ErrorCancelled = "cancelled"
 
 // Recorder writes stats to Postgres and Redis off the request path. A conversation must
@@ -196,34 +198,42 @@ func (r *Recorder) write(ctx context.Context, request store.Request) {
 		}
 	}
 
-	if r.live != nil && measuresProvider(request) {
-		var latencyMs float64
-		if request.LatencyMs != nil {
-			latencyMs = *request.LatencyMs
-		}
-		err := r.live.RecordRequest(ctx, live.Usage{
-			Modality:          request.Modality,
-			CustomerID:        request.CustomerID,
-			Provider:          request.Provider,
-			Model:             request.Model,
-			LatencyMs:         latencyMs,
-			AudioMs:           request.AudioMs,
-			Characters:        request.Characters,
-			InputTokens:       request.InputTokens,
-			CachedInputTokens: request.CachedInputTokens,
-			OutputTokens:      request.OutputTokens,
-			CostMicros:        request.CostMicros,
-			Success:           request.Success,
-		})
-		if err != nil {
+	if r.live != nil {
+		if err := r.live.RecordRequest(ctx, liveUsage(request)); err != nil {
 			r.logger.Error("could not update live counters", "error", err)
 		}
 	}
 }
 
-// measuresProvider reports whether a request says anything about its provider's health and
-// belongs in the live counters. One its caller cancelled before the provider answered does not:
-// it neither failed nor took the time it was given, and it used nothing.
+// liveUsage is what a request adds to the live counters. A cancelled one is marked so, and the
+// counters keep it out of provider health while still counting what it generated.
+func liveUsage(request store.Request) live.Usage {
+	var latencyMs float64
+	if request.LatencyMs != nil {
+		latencyMs = *request.LatencyMs
+	}
+	return live.Usage{
+		Modality:          request.Modality,
+		CustomerID:        request.CustomerID,
+		Provider:          request.Provider,
+		Model:             request.Model,
+		LatencyMs:         latencyMs,
+		AudioMs:           request.AudioMs,
+		Characters:        request.Characters,
+		InputTokens:       request.InputTokens,
+		CachedInputTokens: request.CachedInputTokens,
+		OutputTokens:      request.OutputTokens,
+		CostMicros:        request.CostMicros,
+		Success:           request.Success,
+		Cancelled:         !measuresProvider(request),
+	}
+}
+
+// measuresProvider reports whether a request says anything about its provider's health.
+// One its caller cancelled does not: it neither failed nor was served, and how long it ran
+// is how long it was left to, not how long the provider took. It is still billed for what
+// it generated before it was cut off, so it is kept in the customer's spend and the request
+// log.
 func measuresProvider(request store.Request) bool {
 	return request.ErrorCode != ErrorCancelled
 }
