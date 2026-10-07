@@ -69,6 +69,15 @@ type eventParams struct {
 	} `json:"delivery"`
 }
 
+// GrantEventsFor makes every later events/subscribe grant ttl instead of EventsTTL; a negative
+// one answers a refreshBefore already past, as a server whose clock is behind, or with a bug,
+// does. Zero is EventsTTL again.
+func (s *Server) GrantEventsFor(ttl time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.eventsTTL = ttl
+}
+
 // EventSubscriptions are the subscriptions the server holds now, in no order.
 func (s *Server) EventSubscriptions() []EventSubscription {
 	s.mu.Lock()
@@ -149,7 +158,11 @@ func (s *Server) subscribeEvent(w http.ResponseWriter, id json.RawMessage, token
 	}
 	// «delivery.secret | Replaced»; «TTL | Re-granted».
 	sub.Secret = params.Delivery.Secret
-	sub.RefreshBefore = s.now().Add(EventsTTL).UTC().Truncate(time.Second)
+	ttl := EventsTTL
+	if s.eventsTTL != 0 {
+		ttl = s.eventsTTL
+	}
+	sub.RefreshBefore = s.now().Add(ttl).UTC().Truncate(time.Second)
 	sub.Subscribes++
 	return map[string]any{"id": sub.ID, "refreshBefore": sub.RefreshBefore.Format(time.RFC3339), "cursor": nil, "truncated": false}, true
 }

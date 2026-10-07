@@ -330,8 +330,17 @@ func (s *Server) validateConnection(ctx context.Context, request *validateConnec
 	}
 	// The credential works, so the events its bindings declare are subscribed to, off the
 	// request (internal/mcpevents). Nil with connectors off.
+	// The connection is read again, after Resolve took the credential lock: the copy read
+	// before it can be another router's renewal in flight, which Reconcile leaves alone.
 	if s.mcpEvents != nil {
-		if err := s.mcpEvents.Reconcile(ctx, connection); err != nil {
+		resolved, err := s.store.ConnectorConnection(ctx, connection.CustomerID, connection.ID)
+		if errors.Is(err, store.ErrNoConnectorConnection) {
+			return nil, errNoSuchConnection
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err := s.mcpEvents.Reconcile(ctx, resolved); err != nil {
 			return nil, err
 		}
 	}

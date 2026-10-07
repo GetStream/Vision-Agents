@@ -368,10 +368,13 @@ func (s *Server) deleteConnection(ctx context.Context, request *deleteConnection
 	if s.connectorTransports != nil {
 		s.connectorTransports.Close(core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID})
 	}
-	// So do its MCP event subscriptions: a delivery to one is answered 410 from here on.
+	// So do its MCP event subscriptions: a delivery to one is answered 410 from here on. The
+	// connection is deleted whatever happens here, so a failure is logged, not answered with a
+	// 500 a retry would turn into a 404: a row left behind goes at its next delivery or its
+	// next look, which comes at its refresh time and a day later at most (mcpevents.refreshAt).
 	if s.mcpEvents != nil {
 		if err := s.mcpEvents.Stop(ctx, connection.CustomerID, connection.ID); err != nil {
-			return nil, err
+			s.logger.Error("could not drop a deleted connection's MCP event subscriptions", "connection", connection.ID, "error", err)
 		}
 	}
 	return nil, nil

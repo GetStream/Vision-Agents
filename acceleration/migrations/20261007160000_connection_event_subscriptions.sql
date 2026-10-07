@@ -15,8 +15,8 @@
 --     token as AAD (mcpevents.secretAAD), never shown to anyone.
 --   - next_attempt_at is when a worker next asks the server for it: at once for a new one,
 --     ahead of refresh_before for an active one, later for a refused one. A worker that takes
---     a row pushes it by its lease, so two routers never ask at once. NULL is never: a grant
---     that does not expire.
+--     a row pushes it by its lease, so two routers never ask at once. A grant that does not
+--     expire is asked again once a day (mcpevents.refreshAt); NULL is never.
 --   - failures counts the server's refusals in a row, which double the wait before the next
 --     ask, a day at most (mcpevents.retryWait); a grant sets it back to 0.
 --

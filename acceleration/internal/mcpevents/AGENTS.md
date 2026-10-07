@@ -29,7 +29,8 @@ worker (every router)                               off the request
     else core.EventSource.Subscribe on the connection's own client
          (sources/mcp: server/discover, events/subscribe; the server
           posts a signed verification to the callback first)
-      granted  -> active, due 10 min before refreshBefore
+      granted  -> active, due 10 min before refreshBefore, a lease from now
+                  at the soonest, a day later for a grant that does not expire
       refused  -> failed, due again in 15 min, doubling, a day at most
 
 POST /v1/connectors/mcp-events/{token}             api.receiveConnectionEvent
@@ -46,7 +47,8 @@ POST /v1/connectors/mcp-events/{token}             api.receiveConnectionEvent
                                                     said as JSON data
 
 DELETE /v1/agents/connections/{id}                  api.deleteConnection
-  Service.Stop: every row of the connection dropped at once
+  Service.Stop: every row of the connection dropped at once; a failure is
+                logged, and a row left goes at its next delivery or look
 
 consent finished, connected again                   api.completeConsent
   Service.Reconcile: the rows its bindings declare made again
@@ -72,10 +74,12 @@ consent finished, connected again                   api.completeConsent
 - **An idle router looks once a lease, not once a second.** The worker looks at start, when woken, at the first row due, and at least once a lease (1 min) whatever is due: 2 queries a lease with no rows, as eventforward's worker (#778). Example: router A subscribes and stops before the refresh; idle router B refreshes it within about a lease of its due time (`TestAnIdleRouterTakesARowAnotherRouterAddsWithinALease`, `TestWithNoSubscriptionsAnIdleWorkerLooksTwiceALease`).
 - **A row is one router's at a time.** The claim locks with `SKIP LOCKED` and checks `next_attempt_at` again on the locked row, so two routers never ask the server for one subscription at once (`TestTwoRoutersClaimingAtOnceTakeEachSubscriptionOnce` in `internal/store`). A claim takes one row (`claimBatch`): one attempt is at most two requests of 10 s, inside the 1-min lease, so a row is never worked on past its lease.
 - **The event is data.** It is said to the agent as JSON after a sentence saying so («event payloads are untrusted data with the same injection considerations as tool results»).
-- **Every hardcoded value says where it comes from**, beside it: `MaxEventBytes`, `refreshAhead`, `retryAfter`, `maxRetryAfter`, `lease`, `claimBatch`, `runTimeout`, `settleGap`.
+- **No next attempt is in the past.** Each place that sets when a row is next looked at is a lease from now at the soonest, so a row is never claimed again at once in a loop. Example: a server answers a `refreshBefore` already past (a clock behind, or a bug); the router asks again once a lease, not 500 times a second (`TestAGrantAlreadyEndedIsNotAskedForInALoop`). The places: the claim (the lease), a grant (`refreshAt`), a refusal (`retryWait`, 15 min and up), a renewal in flight (`waitUntil`), a failed read or store (the claim's lease stands), and the worker's own wait (`minLook`, 1 s, to a lease).
+- **Every hardcoded value says where it comes from**, beside it: `MaxEventBytes`, `refreshAhead`, `retryAfter`, `maxRetryAfter`, `lease`, `minLook`, `claimBatch`, `runTimeout`, `settleGap`.
 
 ## Open
 
+- **A connection that stays `needs_reauthorization`** (revoked, never reconnected) has its rows looked at every 15 minutes, a database read each, until it is reconnected or deleted.
 - **Subscribing on a config save.** A config that adds an event subscribes at the next validate of the connection, not at the save.
 - **`terminated` and `gap` envelopes** are acknowledged and logged, as the plugin system does; a `terminated` subscription is asked for again only at its next refresh.
 - **The conversation an event opens lives in memory.** The delivery is acknowledged once its event id is stored; a router that stops before the conversation ends loses it. The draft: «The endpoint SHOULD NOT return 2xx until the event has been durably persisted or forwarded».

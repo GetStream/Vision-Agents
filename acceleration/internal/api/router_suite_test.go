@@ -412,6 +412,9 @@ func (s *RouterSuite) SetupSuite() {
 		s.mcpEvents, err = mcpevents.New(mcpevents.Options{
 			Store: pgStore, Sessions: sessions, Registry: s.connectors, Transports: transports, Secrets: s.sealer,
 			PublicURL: "http://" + listener.Listener.Addr().String(), Logger: logger,
+			// A second, not the production minute, so a test's look by this worker comes and
+			// saves within its window, and is longer than an attempt against the fake.
+			Lease: time.Second,
 		})
 		s.Require().NoError(err)
 		s.mcpEvents.Start()

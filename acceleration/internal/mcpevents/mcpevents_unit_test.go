@@ -43,23 +43,37 @@ func (s *UnitSuite) TestAnotherEventOrFilterIsAnotherKey() {
 func (s *UnitSuite) TestAGrantIsAskedForAgainTenMinutesBeforeItExpires() {
 	expires := s.now.Add(time.Hour)
 
-	next := refreshAt(s.now, &expires)
+	next := refreshAt(s.now, &expires, time.Minute)
 
-	s.Require().NotNil(next)
-	s.Equal(expires.Add(-10*time.Minute), *next)
+	s.Equal(expires.Add(-10*time.Minute), next)
 }
 
 func (s *UnitSuite) TestAGrantShorterThanTenMinutesIsAskedForAgainHalfwayThere() {
 	expires := s.now.Add(4 * time.Minute)
 
-	next := refreshAt(s.now, &expires)
+	next := refreshAt(s.now, &expires, time.Minute)
 
-	s.Require().NotNil(next)
-	s.Equal(s.now.Add(2*time.Minute), *next)
+	s.Equal(s.now.Add(2*time.Minute), next)
 }
 
-func (s *UnitSuite) TestAGrantThatDoesNotExpireIsNeverAskedForAgain() {
-	s.Nil(refreshAt(s.now, nil))
+// TestAGrantThatDoesNotExpireIsAskedForAgainOnceADay: the draft has clients still re-call
+// events/subscribe occasionally, and the look drops a row whose connection went.
+func (s *UnitSuite) TestAGrantThatDoesNotExpireIsAskedForAgainOnceADay() {
+	s.Equal(s.now.Add(24*time.Hour), refreshAt(s.now, nil, time.Minute))
+}
+
+// TestAGrantAlreadyEndedIsAskedForAgainALeaseFromNow: a refreshBefore in the past, from a
+// skewed clock or a server's bug, is not a time to claim the row again at once.
+func (s *UnitSuite) TestAGrantAlreadyEndedIsAskedForAgainALeaseFromNow() {
+	ended := s.now.Add(-time.Minute)
+
+	s.Equal(s.now.Add(time.Minute), refreshAt(s.now, &ended, time.Minute))
+}
+
+func (s *UnitSuite) TestAGrantEndingWithinALeaseIsAskedForAgainALeaseFromNow() {
+	ends := s.now.Add(30 * time.Second)
+
+	s.Equal(s.now.Add(time.Minute), refreshAt(s.now, &ends, time.Minute))
 }
 
 // TestARefusedSubscriptionWaitsTwiceAsLongEachTimeUpToADay: 15 min, 30 min, 1 h ... and a

@@ -194,14 +194,29 @@ func (s *ConnectionEventsSuite) TestAWorkerThatMeetsARenewalAsksAgainBeforeTheGr
 
 	s.idleWorker(idleLease)
 
-	// Past its claim's lease (200 ms) and the suite's own worker's (1 min, past refresh_before),
-	// so only the wait the look saved satisfies it.
+	// Past either worker's claim lease (200 ms here, 1 s for the suite's own), so only the wait
+	// a look saved satisfies it, whichever worker looked: both save the same.
 	s.Eventually(func() bool {
 		held := s.held(connection)
 		return len(held) == 1 && held[0].NextAttemptAt != nil &&
 			held[0].NextAttemptAt.After(looked.Add(2*time.Second)) && held[0].NextAttemptAt.Before(refreshBefore)
-	}, 4*idleLease, 10*time.Millisecond)
+	}, settleFor, 10*time.Millisecond)
 	s.Equal(store.ConnectionEventActive, s.held(connection)[0].Status)
+}
+
+// TestAGrantAlreadyEndedIsNotAskedForInALoop: the server answers a refreshBefore already past
+// (a clock behind, or a bug). The router asks again once a lease (1 s here), not at once in a
+// loop: at most a handful of events/subscribe in a second, not dozens.
+func (s *ConnectionEventsSuite) TestAGrantAlreadyEndedIsNotAskedForInALoop() {
+	s.provider.GrantEventsFor(-time.Minute)
+	s.T().Cleanup(func() { s.provider.GrantEventsFor(0) })
+
+	connection := s.subscribed(s.binding(s.connection(), issueCreated))
+	time.Sleep(time.Second)
+
+	subs := s.atTheFake(connection)
+	s.Require().Len(subs, 1)
+	s.LessOrEqual(subs[0].Subscribes, 3)
 }
 
 // TestARevokedGrantPausesItsSubscriptionUntilTheConnectionIsConnectedAgain: the provider ended

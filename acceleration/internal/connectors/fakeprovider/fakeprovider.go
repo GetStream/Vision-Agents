@@ -254,6 +254,8 @@ type Server struct {
 
 	// eventSubs are the MCP Events subscriptions under MCPEvents, by their key (eventSlot).
 	eventSubs map[string]*eventSub
+	// eventsTTL is what GrantEventsFor set; zero is EventsTTL.
+	eventsTTL time.Duration
 }
 
 type client struct {

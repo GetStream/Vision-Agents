@@ -64,6 +64,11 @@ const maxRetryAfter = 24 * time.Hour
 // eventforward's lease is.
 const lease = time.Minute
 
+// minLook is the shortest wait between looks: a row due now that the claim found locked by
+// another router's claim in flight is looked for again a moment later, not in a busy loop.
+// eventforward's defaultPoll (1 s), a choice.
+const minLook = time.Second
+
 // claimBatch is how many due subscriptions one claim takes: one, so the row a worker holds is
 // always inside its lease. One attempt is at most two requests to the server (server/discover,
 // then events/subscribe or events/unsubscribe), each bounded by the MCP source's 10 s startup
@@ -301,7 +306,7 @@ func (s *Service) attemptDue() (wait time.Duration, again bool) {
 	case !found:
 		return s.lease, true
 	}
-	return min(max(time.Until(next), 0), s.lease), true
+	return min(max(time.Until(next), minLook), s.lease), true
 }
 
 // attempt brings one claimed subscription in step: dropped when its connection is deleted or
@@ -350,7 +355,8 @@ func (s *Service) attempt(sub store.ConnectionEventSubscription) {
 	} else {
 		sub.Status, sub.Error, sub.RemoteID, sub.RefreshBefore = store.ConnectionEventActive, "", grant.ID, grant.RefreshBefore
 		sub.Failures = 0
-		sub.NextAttemptAt = refreshAt(now, grant.RefreshBefore)
+		next := refreshAt(now, grant.RefreshBefore, s.lease)
+		sub.NextAttemptAt = &next
 	}
 	if err := s.store.SaveConnectionEventSubscription(ctx, &sub); err != nil {
 		s.logger.Warn("could not store an MCP event subscription", "subscription", sub.ID, "error", err)
@@ -397,16 +403,25 @@ func gone(connection store.ConnectorConnection, err error) bool {
 }
 
 // refreshAt is when a grant is asked for again: refreshAhead before it expires, or halfway
-// there for a grant shorter than that. Nil for one that does not expire.
-func refreshAt(now time.Time, refreshBefore *time.Time) *time.Time {
+// there for a grant shorter than that, and never sooner than a lease from now. The floor is
+// what keeps a grant already ended, or ending within a lease (a clock skewed past the grant,
+// or a server answering a refreshBefore in the past), from being claimed again at once in a
+// loop of events/subscribe: it is asked again once a lease instead, as an honest server whose
+// clock runs ahead still needs. A grant that does not expire is asked again once a day
+// (maxRetryAfter): the draft has clients «still re-call events/subscribe ... occasionally»
+// even then («Subscription TTL»), and the look is what drops a row whose connection went.
+func refreshAt(now time.Time, refreshBefore *time.Time, lease time.Duration) time.Time {
 	if refreshBefore == nil {
-		return nil
+		return now.Add(maxRetryAfter)
 	}
 	next := refreshBefore.Add(-refreshAhead)
 	if next.Before(now) {
 		next = now.Add(refreshBefore.Sub(now) / 2)
 	}
-	return &next
+	if floor := now.Add(lease); next.Before(floor) {
+		return floor
+	}
+	return next
 }
 
 // subscribe asks the connection's server for the subscription through the first of its
