@@ -57,6 +57,54 @@ func (s *SpecSuite) TestAConfigsPluginsBecomeTheSessions() {
 	s.Equal([]store.PluginEntry{{Name: "slack"}, {Name: "calendly"}}, spec.AgentPlugins)
 }
 
+func (s *SpecSuite) TestAConfigsConnectorBindingsBecomeTheSessions() {
+	bindings := []store.ConnectorBinding{{Name: "tracker", ConnectorID: "linear",
+		Connection: store.ConnectionBinding{Type: selectionSession}}}
+
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Connectors: bindings})
+
+	s.Equal(bindings, spec.ConnectorBindings)
+}
+
+// TestAConnectorBindingWinsOverAPluginEntryForTheSameProvider: the same provider is a
+// binding's connector_id equal to a plugin entry's name, the id the built-in connectors share
+// with the plugin catalog. The binding's alias plays no part.
+func (s *SpecSuite) TestAConnectorBindingWinsOverAPluginEntryForTheSameProvider() {
+	spec := FromConfig(store.AgentConfig{
+		CustomerID:   "acme",
+		AgentPlugins: []store.PluginEntry{{Name: "linear"}, {Name: "calendly"}},
+		UserPlugins:  []store.PluginEntry{{Name: "linear"}, {Name: "gong"}},
+		Connectors: []store.ConnectorBinding{{Name: "tracker", ConnectorID: "linear",
+			Connection: store.ConnectionBinding{Type: selectionSession}}},
+	})
+	spec.CallID = "call-1"
+
+	s.Require().NoError(spec.Normalize())
+
+	s.Equal([]store.PluginEntry{{Name: "calendly"}}, spec.AgentPlugins)
+	s.Equal([]store.PluginEntry{{Name: "gong"}}, spec.UserPlugins)
+}
+
+func (s *SpecSuite) TestAPluginOfAnotherProviderStaysBesideABinding() {
+	spec := FromConfig(store.AgentConfig{
+		CustomerID:   "acme",
+		AgentPlugins: []store.PluginEntry{{Name: "slack"}},
+		Connectors: []store.ConnectorBinding{{Name: "slack", ConnectorID: "custom_slack",
+			Connection: store.ConnectionBinding{Type: selectionFixed, ConnectionID: "c1"}}},
+	})
+	spec.CallID = "call-1"
+
+	s.Require().NoError(spec.Normalize())
+
+	s.Equal([]store.PluginEntry{{Name: "slack"}}, spec.AgentPlugins)
+}
+
+func (s *SpecSuite) TestAThreadChannelIsAConversationSeveralPeopleShare() {
+	s.True(Spec{ConversationID: "agent:" + persistent.ThreadChannelPrefix + "0199"}.Shared())
+	s.False(Spec{ConversationID: "agent:support-0199"}.Shared())
+	s.False(Spec{}.Shared())
+}
+
 func (s *SpecSuite) TestAConfigsSandboxBecomesTheSessions() {
 	spec := FromConfig(store.AgentConfig{
 		CustomerID: "acme",

@@ -465,8 +465,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	// The validate endpoint asks it for a credential, and the session's dispatcher will (T21,
-	// AI-851). The events endpoint revokes through it.
+	// The validate endpoint and the session's dispatcher ask it for a credential. The events
+	// endpoint revokes through it.
 	connectorResolver, err := newConnectorResolver(connectors, pgStore, connectorSecrets)
 	if err != nil {
 		return err
@@ -825,7 +825,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
-	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, streamClients, pluginAuth, logger)
+	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, streamClients, pluginAuth,
+		session.Connectors{Registry: connectors, Transports: connectorTransports}, logger)
 	if err != nil {
 		return err
 	}
@@ -1222,6 +1223,7 @@ func buildSessions(
 	judging *lcmrouter.Router,
 	stream *streamapp.Clients,
 	pluginAuth *plugins.Auth,
+	connectors session.Connectors,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.LLM == nil {
@@ -1265,6 +1267,9 @@ func buildSessions(
 		Configs:            configs,
 		Directory:          directory,
 		PluginAuth:         pluginAuth,
+		// The session's dispatcher shares the validate endpoint's transports, so each
+		// connection has one outbound client in the router.
+		Connectors: connectors,
 	})
 }
 

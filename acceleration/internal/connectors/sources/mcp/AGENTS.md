@@ -1,6 +1,6 @@
 # internal/connectors/sources/mcp
 
-The `core.ToolSource` for a connector's MCP server, registered as `mcp` (`Kind`), the name a manifest's `sources[].kind` gives it. Ported from the prototype's `internal/mcp/mcp.go` on `codex/connector-support` at `cf62af0d`, on the official Go SDK (`github.com/modelcontextprotocol/go-sdk`). Callers today: `POST /v1/agents/connections/{id}/validate` (`Discover`, `internal/api/connection_tools.go`). The session's dispatcher (T21) will call `Open`.
+The `core.ToolSource` for a connector's MCP server, registered as `mcp` (`Kind`), the name a manifest's `sources[].kind` gives it. Ported from the prototype's `internal/mcp/mcp.go` on `codex/connector-support` at `cf62af0d`, on the official Go SDK (`github.com/modelcontextprotocol/go-sdk`). Callers today: `POST /v1/agents/connections/{id}/validate` (`Discover`, `internal/api/connection_tools.go`) and the session (`Open`, `internal/session/connector_tools.go`), whose dispatcher (`internal/session/dispatcher.go`) runs `Toolset.Call` and bounds it itself, so the session leaves `Binding.Timeout` zero.
 
 ## Flow
 
@@ -23,7 +23,7 @@ Toolset.Call(call)
   unknown name             -> error, nothing sent
   arguments vs schema      -> error, nothing sent
   tools/call               binding.Timeout bounds it
-  text parts, else structured JSON, else "not text" -> cut at 32 KiB + marker
+  text parts, else structured JSON, else "not text" -> cut at 32 KiB + marker (core.CutResult)
   isError                  -> *core.ToolError, even with no text
 ```
 
