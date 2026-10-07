@@ -688,6 +688,8 @@ func (s *HarnessSuite) TestTheModelAskingAgainDoesNotReplaceTheCallersImages() {
 
 	s.eventually(func() bool { return len(s.slow.requests()) == 1 }, "the subagent was never asked")
 	s.True(s.slow.requests()[0].HasImage(), "the task that ran is the one with the picture")
+	// The task's request can reach the subagent before its event reaches the sink.
+	s.eventually(func() bool { return len(delegatedIn(s.events.seen())) == 1 }, "the picture's task was never reported")
 	for _, settled := range settledIn(s.events.seen()) {
 		s.NotEqual(ReasonSuperseded, settled.Result.Reason, "the picture's task was replaced")
 	}
