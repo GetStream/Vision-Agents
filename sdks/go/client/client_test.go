@@ -407,6 +407,27 @@ func TestHistoryTheCallerKeptGoesOverInOrder(t *testing.T) {
 	}
 }
 
+func TestConnectorBindingsNameAConnectionPerAlias(t *testing.T) {
+	backend := newRouter(t)
+	agent := backend.client(t).Agent("docs")
+
+	session, err := agent.Sessions.Create(t.Context(), SessionOptions{
+		ConnectorBindings: map[string]string{"crm": "connection-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(t.Context())
+
+	chosen, _ := backend.body(t, "POST", "/v1/agents/sessions")["connector_bindings"].([]any)
+	if len(chosen) != 1 {
+		t.Fatalf("the connector bindings went over as %v", chosen)
+	}
+	if first, _ := chosen[0].(map[string]any); first["name"] != "crm" || first["connection_id"] != "connection-1" {
+		t.Errorf("the binding went over as %v", first)
+	}
+}
+
 func TestQueryingNarrowsToTheAgentAndTheFiltersGiven(t *testing.T) {
 	backend := newRouter(t)
 	backend.sessions = []acceleration.Session{{Id: "session-1", State: "closed"}}

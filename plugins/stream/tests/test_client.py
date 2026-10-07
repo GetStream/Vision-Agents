@@ -339,6 +339,19 @@ class TestSessions:
             {"role": "assistant", "text": "It ships Friday."},
         ]
 
+    async def test_connector_bindings_name_a_connection_per_alias(
+        self, api: stream.Client, router: Router
+    ):
+        session = await api.agent("docs").sessions.create(
+            stream.SessionOptions(connector_bindings={"crm": "connection-1"})
+        )
+        await session.close()
+
+        body = router.body("POST", "/v1/agents/sessions")
+        assert body["connector_bindings"] == [
+            {"name": "crm", "connection_id": "connection-1"}
+        ]
+
     async def test_querying_narrows_to_the_agent_and_the_filters_given(
         self, api: stream.Client, router: Router
     ):

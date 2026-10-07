@@ -84,6 +84,8 @@ from .classify_usage import ClassifyUsage
 from .command_receipt import CommandReceipt
 from .connect_channel_request import ConnectChannelRequest
 from .connection import Connection
+from .connection_credentials import ConnectionCredentials
+from .connection_credentials_values import ConnectionCredentialsValues
 from .connection_inputs import ConnectionInputs
 from .connection_metadata import ConnectionMetadata
 from .connection_owner import ConnectionOwner
@@ -92,6 +94,12 @@ from .connection_page import ConnectionPage
 from .connection_request import ConnectionRequest
 from .connection_request_inputs import ConnectionRequestInputs
 from .connection_status import ConnectionStatus
+from .connection_tool import ConnectionTool
+from .connection_tool_input_schema import ConnectionToolInputSchema
+from .connection_tools import ConnectionTools
+from .connection_validation import ConnectionValidation
+from .connection_validation_request import ConnectionValidationRequest
+from .connection_validation_status import ConnectionValidationStatus
 from .connector import Connector
 from .connector_client import ConnectorClient
 from .connector_client_alg import ConnectorClientAlg
@@ -102,6 +110,8 @@ from .connector_o_auth_client import ConnectorOAuthClient
 from .connector_o_auth_client_auth_method import ConnectorOAuthClientAuthMethod
 from .connector_o_auth_client_request import ConnectorOAuthClientRequest
 from .connector_page import ConnectorPage
+from .connector_provider_app import ConnectorProviderApp
+from .connector_provider_app_request import ConnectorProviderAppRequest
 from .connector_tool_grant import ConnectorToolGrant
 from .contact import Contact
 from .contact_state import ContactState
@@ -248,6 +258,7 @@ from .search_request import SearchRequest
 from .search_request_tags import SearchRequestTags
 from .search_result import SearchResult
 from .session import Session
+from .session_connector_binding import SessionConnectorBinding
 from .session_custom import SessionCustom
 from .session_filter import SessionFilter
 from .session_filter_custom import SessionFilterCustom
@@ -450,6 +461,8 @@ __all__ = (
     "CommandReceipt",
     "ConnectChannelRequest",
     "Connection",
+    "ConnectionCredentials",
+    "ConnectionCredentialsValues",
     "ConnectionInputs",
     "ConnectionMetadata",
     "ConnectionOwner",
@@ -458,6 +471,12 @@ __all__ = (
     "ConnectionRequest",
     "ConnectionRequestInputs",
     "ConnectionStatus",
+    "ConnectionTool",
+    "ConnectionToolInputSchema",
+    "ConnectionTools",
+    "ConnectionValidation",
+    "ConnectionValidationRequest",
+    "ConnectionValidationStatus",
     "Connector",
     "ConnectorClient",
     "ConnectorClientAlg",
@@ -468,6 +487,8 @@ __all__ = (
     "ConnectorOAuthClientAuthMethod",
     "ConnectorOAuthClientRequest",
     "ConnectorPage",
+    "ConnectorProviderApp",
+    "ConnectorProviderAppRequest",
     "ConnectorToolGrant",
     "Contact",
     "ContactState",
@@ -612,6 +633,7 @@ __all__ = (
     "SearchRequestTags",
     "SearchResult",
     "Session",
+    "SessionConnectorBinding",
     "SessionCustom",
     "SessionFilter",
     "SessionFilterCustom",

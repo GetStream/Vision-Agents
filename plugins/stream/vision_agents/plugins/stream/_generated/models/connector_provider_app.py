@@ -11,36 +11,32 @@ from typing_extensions import Self
 from ..models.connector_client_registration_method import (
     ConnectorClientRegistrationMethod,
 )
-from ..models.connector_o_auth_client_auth_method import ConnectorOAuthClientAuthMethod
-from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="ConnectorOAuthClient")
+T = TypeVar("T", bound="ConnectorProviderApp")
 
 
 @_attrs_define
-class ConnectorOAuthClient:
-    """The OAuth client the app registered with a connector's provider itself. The secret is write-only: no response
-    carries it.
+class ConnectorProviderApp:
+    """The customer's app at a connector's provider, such as a Slack app. Its client secret and signing secret are kept
+    sealed and never returned.
 
         Attributes:
-            client_id (str):
+            client_id (str): The app's OAuth client, which every consent of the connector's connections uses.
             connector_id (str):
             created_at (datetime.datetime):
+            provider_app_id (str): The provider's id for the app, such as a Slack app id.
             registration (ConnectorClientRegistrationMethod): operator is this deployment's own client, customer one the app
                 registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one
                 registered on the fly (RFC 7591) and cimd one named by a metadata document.
-            updated_at (datetime.datetime): When the client, its secret or its method last changed.
-            auth_method (ConnectorOAuthClientAuthMethod | Unset): How the app's own OAuth client authenticates at the token
-                endpoint (RFC 7591 section 2): none for a public client, which has no secret, client_secret_basic or
-                client_secret_post.
+            updated_at (datetime.datetime):
     """
 
     client_id: str
     connector_id: str
     created_at: datetime.datetime
+    provider_app_id: str
     registration: ConnectorClientRegistrationMethod
     updated_at: datetime.datetime
-    auth_method: ConnectorOAuthClientAuthMethod | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -50,13 +46,11 @@ class ConnectorOAuthClient:
 
         created_at = self.created_at.isoformat()
 
+        provider_app_id = self.provider_app_id
+
         registration = self.registration.value
 
         updated_at = self.updated_at.isoformat()
-
-        auth_method: str | Unset = UNSET
-        if not isinstance(self.auth_method, Unset):
-            auth_method = self.auth_method.value
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -65,12 +59,11 @@ class ConnectorOAuthClient:
                 "client_id": client_id,
                 "connector_id": connector_id,
                 "created_at": created_at,
+                "provider_app_id": provider_app_id,
                 "registration": registration,
                 "updated_at": updated_at,
             }
         )
-        if auth_method is not UNSET:
-            field_dict["auth_method"] = auth_method
 
         return field_dict
 
@@ -83,28 +76,23 @@ class ConnectorOAuthClient:
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
+        provider_app_id = d.pop("provider_app_id")
+
         registration = ConnectorClientRegistrationMethod(d.pop("registration"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
-        _auth_method = d.pop("auth_method", UNSET)
-        auth_method: ConnectorOAuthClientAuthMethod | Unset
-        if isinstance(_auth_method, Unset):
-            auth_method = UNSET
-        else:
-            auth_method = ConnectorOAuthClientAuthMethod(_auth_method)
-
-        connector_o_auth_client = cls(
+        connector_provider_app = cls(
             client_id=client_id,
             connector_id=connector_id,
             created_at=created_at,
+            provider_app_id=provider_app_id,
             registration=registration,
             updated_at=updated_at,
-            auth_method=auth_method,
         )
 
-        connector_o_auth_client.additional_properties = d
-        return connector_o_auth_client
+        connector_provider_app.additional_properties = d
+        return connector_provider_app
 
     @property
     def additional_keys(self) -> list[str]:
