@@ -88,8 +88,6 @@ type Config struct {
 	Schemes map[string]core.Scheme
 	// Now is the clock the cache is judged by; nil is time.Now.
 	Now func() time.Time
-	// Logger hears of an audit row that could not be written; nil is slog.Default().
-	Logger *slog.Logger
 }
 
 // Resolver implements core.Resolver.
@@ -127,12 +125,9 @@ func New(cfg Config) (*Resolver, error) {
 	if now == nil {
 		now = time.Now
 	}
-	logger := cfg.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
+	// The router's own logger: cmd/router sets it as the default before it builds this.
 	return &Resolver{store: cfg.Store, credentials: cfg.Credentials, schemes: cfg.Schemes, now: now,
-		logger: logger, cache: map[core.ConnectionRef]entry{}}, nil
+		logger: slog.Default(), cache: map[core.ConnectionRef]entry{}}, nil
 }
 
 // Resolve returns an access credential for ref.
