@@ -167,6 +167,40 @@ func (s *TwilioSuite) TestSearchingStillReturnsNumbersWhenPricesCannotBeHad() {
 	s.Zero(offered[0].MonthlyCostMicros)
 }
 
+func (s *TwilioSuite) TestAFailedPriceLookupIsAskedAgainOnTheNextSearch() {
+	pricingDown := true
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/") {
+			if pricingDown {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(usPrices))
+			return
+		}
+		_, _ = w.Write([]byte(oneNumber))
+	}
+
+	first, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+	s.Require().NoError(err)
+	pricingDown = false
+	second, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+	s.Require().NoError(err)
+
+	s.Zero(first[0].MonthlyCostMicros)
+	s.Equal(int64(1_000_000), second[0].MonthlyCostMicros)
+	s.Equal(2, s.pricingCalls)
+}
+
+func (s *TwilioSuite) TestPricesAreNotAskedForWhenTheSearchFails() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	s.Error(err)
+	s.Zero(s.pricingCalls)
+}
+
 func (s *TwilioSuite) TestAPriceInAnotherCurrencyIsNotQuotedAsDollars() {
 	s.answerWithPrices(oneNumber, `{"price_unit":"EUR","phone_number_prices":[
 		{"number_type":"local","current_price":"1.00"}]}`)
