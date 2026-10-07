@@ -19,7 +19,8 @@ import (
 
 // ThreadChannelSuite is a persistent conversation held on a thread channel: the agent channel
 // the channel bridge writes one external thread into, stamped as internal/channelbridge
-// stamps it, with the people's messages written without a source.
+// stamps it, with the people's messages written without a source. The suite opens it as the
+// Router's thread path does (conversation.RouterOpensThread); a request naming it is refused.
 type ThreadChannelSuite struct {
 	suite.Suite
 	chat    *chattest.Server
@@ -64,7 +65,7 @@ func (s *ThreadChannelSuite) TestAThreadChannelIsNoSessionCommandChannel() {
 // answered it is.
 func (s *ThreadChannelSuite) TestThePeoplesMessagesAreHistoryOnceAnswered() {
 	s.person("U1", "is the build green?")
-	c, history, _, err := s.service.Open(context.Background(), "customer", "", s.cid)
+	c, history, _, err := s.service.Open(s.routerOpens(), "customer", "", s.cid)
 	s.Require().NoError(err)
 	s.Empty(history, "the unanswered message is the turn about to be told")
 	s.Equal(s.channel, c.Agent(), "the agent is the one the channel names")
@@ -72,7 +73,7 @@ func (s *ThreadChannelSuite) TestThePeoplesMessagesAreHistoryOnceAnswered() {
 	s.person("U2", "and the deploy?")
 	c.Release()
 
-	_, history, _, err = s.service.Open(context.Background(), "customer", "", s.cid)
+	_, history, _, err = s.service.Open(s.routerOpens(), "customer", "", s.cid)
 
 	s.Require().NoError(err)
 	s.Equal([]llm.Message{
@@ -83,7 +84,7 @@ func (s *ThreadChannelSuite) TestThePeoplesMessagesAreHistoryOnceAnswered() {
 
 func (s *ThreadChannelSuite) TestAFinishedReplyIsHandedOverWithItsStoredText() {
 	s.person("U1", "is the build green?")
-	c, _, _, err := s.service.Open(context.Background(), "customer", "", s.cid)
+	c, _, _, err := s.service.Open(s.routerOpens(), "customer", "", s.cid)
 	s.Require().NoError(err)
 
 	s.answer(c, "is the build green?", "It is.")
@@ -109,6 +110,53 @@ func (s *ThreadChannelSuite) TestAReplyInASupportChannelIsNotHandedOver() {
 	s.Never(func() bool { return len(s.handedOver()) > 0 }, 200*time.Millisecond, 20*time.Millisecond)
 }
 
+// A conversation id a request names opens no thread channel, as at baseline 646c7ad4, where
+// only support- channels opened: the same "invalid conversation channel".
+func (s *ThreadChannelSuite) TestAThreadChannelARequestNamesDoesNotOpen() {
+	s.person("U1", "is the build green?")
+
+	_, _, _, err := s.service.Open(context.Background(), "customer", "", s.cid)
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "invalid conversation channel")
+}
+
+// The Router's word is for the one channel it found the channel_threads row of.
+func (s *ThreadChannelSuite) TestTheRoutersWordForAnotherThreadChannelDoesNotOpenThisOne() {
+	other := conversation.RouterOpensThread(context.Background(), "agent:"+conversation.ThreadChannelPrefix+uuid.NewString())
+
+	_, _, _, err := s.service.Open(other, "customer", "", s.cid)
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "invalid conversation channel")
+}
+
+// Reading a thread channel's history by a conversation id a request names is refused as
+// opening it is: the history endpoint, a fork's recall and a voice session's context.
+func (s *ThreadChannelSuite) TestAThreadChannelARequestNamesHasNoHistoryToRead() {
+	s.person("U1", "is the build green?")
+
+	_, historyErr := s.service.HistoryForCaller(context.Background(), "customer", "", s.cid, "", "")
+	_, _, contextErr := s.service.ContextForCaller(context.Background(), "customer", "", s.cid, "")
+
+	s.Require().Error(historyErr)
+	s.Contains(historyErr.Error(), "invalid conversation channel")
+	s.Require().Error(contextErr)
+	s.Contains(contextErr.Error(), "invalid conversation channel")
+}
+
+// A command in a thread channel is no command a request can look up, as at baseline.
+func (s *ThreadChannelSuite) TestACommandInAThreadChannelIsNotFoundByARequest() {
+	c, _, _, err := s.service.Open(s.routerOpens(), "customer", "", s.cid)
+	s.Require().NoError(err)
+	_, err = c.BeginCommand("asked", "is the build green?", "")
+	s.Require().NoError(err)
+
+	_, err = s.service.CommandForCaller(context.Background(), "customer", "", s.cid, "", "asked")
+
+	s.ErrorIs(err, conversation.ErrCommandNotFound)
+}
+
 // While one conversation opens, which holds the service across its Stream Chat calls for up
 // to OpenInApp's 20 s budget, every other conversation's writes go on. The other channel's
 // read is held open by the test until the writes are in.
@@ -130,7 +178,7 @@ func (s *ThreadChannelSuite) TestAWriteDoesNotWaitForAnotherConversationOpening(
 // A reply finished in a thread channel is handed over while another conversation opens, too.
 func (s *ThreadChannelSuite) TestAFinishedReplyDoesNotWaitForAnotherConversationOpening() {
 	s.person("U1", "is the build green?")
-	c, _, _, err := s.service.Open(context.Background(), "customer", "", s.cid)
+	c, _, _, err := s.service.Open(s.routerOpens(), "customer", "", s.cid)
 	s.Require().NoError(err)
 	release := s.openingHeld()
 	defer release()
@@ -178,6 +226,11 @@ func (s *ThreadChannelSuite) openingHeld() (release func()) {
 		let()
 		s.NoError(<-opened)
 	}
+}
+
+// routerOpens is the Router's word that it opens the suite's thread channel.
+func (s *ThreadChannelSuite) routerOpens() context.Context {
+	return conversation.RouterOpensThread(context.Background(), s.cid)
 }
 
 // person writes a message into the thread channel as the bridge does: no source.

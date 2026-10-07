@@ -393,6 +393,34 @@ func (s *SlackChannelSuite) TestASessionOpenedThroughTheAPIForAThreadChannelHold
 	s.Equal(channel, opened.AgentId, "the conversation names its agent, the channel's")
 }
 
+// A conversation_id a request names is a session command channel, as at baseline 646c7ad4,
+// which answered any agent:thread- id with 400 "invalid conversation channel": so is a real
+// thread channel of the caller's own. Only the Router's thread path opens one.
+func (s *SlackChannelSuite) TestAConversationIDNamingAThreadChannelIsRefusedAsBefore() {
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	cid := "agent:" + channel
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions",
+		CreateSessionRequest{Agent: &s.config.Name, Text: pointerTo(true), ConversationId: &cid})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("invalid conversation channel", failure)
+}
+
+// A refused conversation_id takes nothing over: the session the thread channel's
+// conversation is held by goes on, though nobody watches it.
+func (s *SlackChannelSuite) TestARequestNamingAThreadChannelTakesOverNoSessionThere() {
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	held := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel, Text: pointerTo(true)})
+	cid := "agent:" + channel
+
+	status, _ := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions",
+		CreateSessionRequest{Agent: &s.config.Name, Text: pointerTo(true), ConversationId: &cid})
+
+	s.Require().Equal(http.StatusBadRequest, status)
+	s.Nil(s.serverClient.getSession(held.Id).ClosedAt, "the session holding the thread channel is still running")
+}
+
 // Slack refuses a revoked bot token with HTTP 200 and «"ok": false, "error": "invalid_auth"»
 // (https://docs.slack.dev/reference/methods/chat.postMessage), which the transport does not
 // read; the bridge has the scheme classify it and the resolver end the grant.
