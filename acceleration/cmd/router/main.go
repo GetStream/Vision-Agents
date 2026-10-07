@@ -502,6 +502,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	} else {
 		logger.Warn("no redis configured, routing will not use live health", "setting", "redis.addr")
 	}
+	connectorLimiter := newConnectorLimiter(connectorTransports, liveClient, logger)
 
 	// A daily limit is counted in Redis, so a deployment without one caps nothing. That is
 	// the right way round: the limit protects against a customer's end users spending more
@@ -841,7 +842,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, streamClients, pluginAuth,
 		session.Connectors{Registry: connectors, Transports: connectorTransports,
 			// Nil with connectors off: no secrets to seal an attempt with.
-			Consents: api.ConnectorConsents(pgStore, connectors, connectorSecrets, settings.PublicURL)}, logger)
+			Consents: api.ConnectorConsents(pgStore, connectors, connectorSecrets, settings.PublicURL),
+			Limiter:  connectorLimiter}, logger)
 	if err != nil {
 		return err
 	}
