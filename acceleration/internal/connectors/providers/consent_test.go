@@ -246,6 +246,120 @@ func (s *ConsentSuite) TestSalesforceRefusesATokenResponseWithoutAnIdentityURL()
 	s.Equal(1, srv.Hits(fakeprovider.PathToken), "the code was exchanged; the response was refused")
 }
 
+// The four Google servers take one web client from the customer's Cloud project, at the
+// issuer each pins, and ask for offline access so a refresh token comes back.
+func (s *ConsentSuite) TestEachGoogleServerConnectsWithTheSharedClientAtThePinnedIssuer() {
+	scopes := map[string]string{
+		"google_calendar": "https://www.googleapis.com/auth/calendar.readonly",
+		"google_drive":    "https://www.googleapis.com/auth/drive.readonly",
+		"google_docs":     "https://www.googleapis.com/auth/documents.readonly https://www.googleapis.com/auth/drive.readonly",
+		"gmail":           "https://www.googleapis.com/auth/gmail.readonly",
+	}
+	for id, scope := range scopes {
+		s.Run(id, func() {
+			srv := fakeprovider.New(s.T())
+			resolved := s.atFake(srv, s.resolve(id, nil))
+			wire := &tokenWire{next: srv.Client().Transport}
+			scheme := s.schemeOver(&http.Client{Transport: wire}, s.preregistered(srv, core.ClientCustomer))
+
+			out := s.begin(scheme, resolved)
+			s.Equal(0, srv.Hits(fakeprovider.PathProtectedResource), "the issuer is pinned, so the MCP endpoint's metadata is not read")
+			s.Equal(0, srv.Hits(fakeprovider.PathRegister))
+			query := s.query(out.AuthorizeURL)
+			s.True(strings.HasPrefix(out.AuthorizeURL, srv.URL+fakeprovider.PathAuthorize+"?"), "the authorize endpoint from the issuer's metadata")
+			s.Equal(srv.ClientID, query.Get("client_id"))
+			s.Equal(scope, query.Get("scope"))
+			s.Equal("offline", query.Get("access_type"))
+			s.Equal("consent", query.Get("prompt"))
+			s.Equal(srv.URL+fakeprovider.PathMCP, query.Get("resource"), "the pinned resource")
+			s.Equal("GOOGLE", resolved.Client.Env, "one client env for every Google server")
+
+			stored, account, err := s.complete(srv, scheme, resolved, out)
+			s.Require().NoError(err)
+			s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)))
+			s.Empty(account.AccountID, "no identity")
+			s.Require().Len(wire.sent, 1, "one code exchange")
+			s.Empty(wire.sent[0].authorization, "client_secret_post, as the plugin sent it")
+			s.Equal(srv.ClientSecret, wire.sent[0].form.Get("client_secret"))
+		})
+	}
+}
+
+func (s *ConsentSuite) TestSentryRegistersAClientThroughTheMCPEndpointsMetadata() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.atFake(srv, s.resolve("sentry", nil))
+	scheme := s.scheme(srv, s.preregistered(srv, core.ClientCustomer))
+
+	out := s.begin(scheme, resolved)
+	s.Equal(1, srv.Hits(fakeprovider.PathProtectedResource))
+	s.Equal(1, srv.Hits(fakeprovider.PathRegister), "registered, though a customer client exists: the manifest takes dcr only")
+	query := s.query(out.AuthorizeURL)
+	s.NotEqual(srv.ClientID, query.Get("client_id"))
+	s.NotContains(query, "scope", "the plugin asked for none")
+	s.Equal(srv.URL+fakeprovider.PathMCP, query.Get("resource"))
+
+	stored, _, err := s.complete(srv, scheme, resolved, out)
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)))
+}
+
+func (s *ConsentSuite) TestHubSpotConnectsWithTheCustomersClientAndRegistersNone() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.atFake(srv, s.resolve("hubspot", nil))
+	scheme := s.scheme(srv, s.preregistered(srv, core.ClientCustomer))
+
+	out := s.begin(scheme, resolved)
+	s.Equal(1, srv.Hits(fakeprovider.PathProtectedResource))
+	s.Equal(0, srv.Hits(fakeprovider.PathRegister))
+	query := s.query(out.AuthorizeURL)
+	s.Equal(srv.ClientID, query.Get("client_id"))
+	s.NotContains(query, "scope")
+	s.Equal(srv.URL+fakeprovider.PathMCP, query.Get("resource"))
+
+	stored, _, err := s.complete(srv, scheme, resolved, out)
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)))
+}
+
+func (s *ConsentSuite) TestHubSpotWithoutAPreregisteredClientIsRefusedRatherThanRegistered() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.atFake(srv, s.resolve("hubspot", nil))
+
+	_, err := s.scheme(srv, nil).Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: resolved, RedirectURI: fakeprovider.RedirectURI})
+	s.ErrorIs(err, oauth2code.ErrNoClient)
+	s.Equal(0, srv.Hits(fakeprovider.PathRegister))
+}
+
+func (s *ConsentSuite) TestShopifyConnectsToTheShopWithTheCustomersClient() {
+	s.Equal("https://mystore.myshopify.com/api/mcp", s.resolve("shopify", map[string]string{"shop": "mystore.myshopify.com"}).Endpoints["mcp"])
+	srv := fakeprovider.New(s.T())
+	resolved := s.atFake(srv, s.resolve("shopify", map[string]string{"shop": "mystore.myshopify.com"}))
+	scheme := s.scheme(srv, s.preregistered(srv, core.ClientCustomer))
+
+	out := s.begin(scheme, resolved)
+	s.Equal(1, srv.Hits(fakeprovider.PathProtectedResource))
+	s.Equal(0, srv.Hits(fakeprovider.PathRegister))
+	query := s.query(out.AuthorizeURL)
+	s.Equal(srv.ClientID, query.Get("client_id"))
+	s.NotContains(query, "scope")
+
+	stored, _, err := s.complete(srv, scheme, resolved, out)
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)))
+}
+
+// The shop is put into the MCP endpoint's host, so only a myshopify.com host is taken.
+func (s *ConsentSuite) TestShopifyRefusesAShopOutsideMyshopify() {
+	raw, err := fs.ReadFile(providers.FS, "shopify.yaml")
+	s.Require().NoError(err)
+	manifest, err := core.ParseManifest(raw)
+	s.Require().NoError(err)
+	for _, shop := range []string{"evil.example", "mystore.myshopify.com.evil.example", "127.0.0.1", "mystore.myshopify.com/x"} {
+		_, err := manifest.Resolve(oauth2code.Name, map[string]string{"shop": shop}, nil)
+		s.Error(err, shop)
+	}
+}
+
 // resolve is the built-in manifest id resolved for oauth2_code with inputs.
 func (s *ConsentSuite) resolve(id string, inputs map[string]string) core.ResolvedManifest {
 	raw, err := fs.ReadFile(providers.FS, id+".yaml")

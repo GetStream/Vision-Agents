@@ -1,0 +1,54 @@
+# HubSpot's hosted MCP server, moved from the plugin catalog (internal/plugins/plugins.yaml,
+# entry hubspot, «[plugin]» below; T58 in acceleration/docs/connectors/subtasks.md on
+# connectors/planning). Vendor page, opened October 7, 2026:
+#   [setup] https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server
+# And the servers' own metadata, fetched on October 7, 2026 («[prm]» and «[as]»):
+#   [prm] GET https://mcp.hubspot.com/.well-known/oauth-protected-resource at
+#         2026-10-07T14:28:23Z: resource https://mcp.hubspot.com, authorization_servers
+#         [https://mcp.hubspot.com], scopes_supported [].
+#   [as]  GET https://mcp.hubspot.com/.well-known/oauth-authorization-server at
+#         2026-10-07T14:28:23Z: issuer https://mcp.hubspot.com, authorize
+#         https://mcp.hubspot.com/oauth/authorize/user, token
+#         https://mcp.hubspot.com/oauth/v3/token, no registration_endpoint,
+#         token_endpoint_auth_methods_supported [client_secret_post],
+#         code_challenge_methods_supported [S256], no revocation_endpoint.
+id: hubspot
+# A new revision for any change to what this file says; see AGENTS.md.
+revision: 1
+# [plugin]
+name: HubSpot
+category: Customers
+description: Contacts, companies and deals in the CRM.
+setup:
+  # [plugin] setup_url and setup_steps. [setup] now calls the app an MCP connector, under
+  # Development, MCP Connectors, Create MCP connector; the steps say so.
+  url: https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server
+  steps:
+    - title: Create an MCP connector
+      description: In your HubSpot account, open Development, then MCP Connectors, and choose Create MCP connector.
+    - title: Add the redirect URL
+      description: Give it a name and the redirect URI shown on this page.
+    - title: Copy the credentials
+      description: On the connector's details page, copy the Client ID and Client secret into this page.
+endpoints:
+  # «https://mcp.hubspot.com»: [setup]; [plugin] url. The MCP endpoint is the origin, and
+  # [prm]'s resource is exactly it, so oauth2_code discovers authorize and token through
+  # [prm] and [as] (RFC 9728 and 8414).
+  mcp: https://mcp.hubspot.com
+# «PKCE is required for authenticating with HubSpot's MCP server»: [setup]; [as].
+schemes: [oauth2_code]
+client:
+  # An app the customer, or the operator, creates by hand: [setup], and [as] has no
+  # registration_endpoint. [plugin] is client_required, with an agent's own client before
+  # the deployment's. No auth_method: [as] lists client_secret_post alone, which is what the
+  # plugin sends.
+  registration: [operator, customer]
+  # [plugin]: HUBSPOT_MCP_CLIENT_ID and HUBSPOT_MCP_CLIENT_SECRET.
+  env: HUBSPOT
+# No scopes: «you don't explicitly define the connector's scopes»: [setup]; [prm] lists none;
+# [plugin] asks for none.
+# No identity, capture or refresh policy: «OAuth access tokens expire after a set period»
+# ([setup]) and nothing more. # unverified
+sources:
+  - kind: mcp
+    endpoint: mcp

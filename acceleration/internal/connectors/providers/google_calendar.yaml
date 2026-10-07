@@ -1,0 +1,90 @@
+# Google Calendar's hosted MCP server, moved from the plugin catalog
+# (internal/plugins/plugins.yaml, entry google_calendar, «[plugin]» below; T58 in
+# acceleration/docs/connectors/subtasks.md on connectors/planning). Vendor pages, opened
+# October 7, 2026:
+#   [setup] https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server
+#   [web]   https://developers.google.com/identity/protocols/oauth2/web-server
+# And the servers' own metadata, fetched on October 7, 2026 («[prm]» and «[as]»):
+#   [prm] GET https://calendarmcp.googleapis.com/.well-known/oauth-protected-resource/mcp/v1 at
+#         2026-10-07T14:28:23Z: resource https://calendarmcp.googleapis.com/mcp/v1,
+#         authorization_servers [https://accounts.google.com/], twelve calendar scopes in
+#         scopes_supported.
+#   [as]  GET https://accounts.google.com/.well-known/oauth-authorization-server at
+#         2026-10-07T14:28:24Z: issuer https://accounts.google.com, authorize
+#         https://accounts.google.com/o/oauth2/v2/auth, token https://oauth2.googleapis.com/token,
+#         revocation https://oauth2.googleapis.com/revoke, token_endpoint_auth_methods_supported
+#         [client_secret_post, client_secret_basic], code_challenge_methods_supported [plain,
+#         S256], authorization_response_iss_parameter_supported true, no registration_endpoint.
+id: google_calendar
+# A new revision for any change to what this file says; see AGENTS.md.
+revision: 1
+# [plugin]
+name: Google Calendar
+category: Scheduling
+description: Read calendars, events and free time.
+setup:
+  # [plugin] setup_url and setup_steps, as Volt shows them for the plugin today.
+  url: https://console.cloud.google.com/auth/clients
+  steps:
+    - title: Enable the API
+      # [setup] lists the Google Calendar API and the Google Calendar MCP API.
+      description: In a Google Cloud project of your own, enable calendar-json.googleapis.com and calendarmcp.googleapis.com in the API Library.
+    - title: Set up the consent screen
+      description: Under Google Auth Platform, Branding, name the app and give a support email. Choose Internal to let only your Workspace's accounts in, without Google's review.
+    - title: Add the scope
+      description: Under Data Access, add https://www.googleapis.com/auth/calendar.readonly.
+    - title: Create a web client
+      # [setup]: a «Web application» client with an authorized redirect URI.
+      description: Under Clients, create a client of type Web application, with the redirect URI shown on this page as an authorized redirect URI.
+    - title: Copy the credentials
+      description: Copy the Client ID and Client secret into this page. The same client serves Google Drive, Google Docs and Gmail.
+endpoints:
+  # [setup]; [plugin] url; [prm]'s resource.
+  mcp: https://calendarmcp.googleapis.com/mcp/v1
+  # The issuer [as] names, pinned. Discovery from the MCP endpoint cannot be used: [prm] names
+  # https://accounts.google.com/ with a trailing slash, and [as] answers issuer
+  # https://accounts.google.com without it, which RFC 8414 section 3.3 refuses
+  # (oauth2code authorizationServer). Authorize, token and revoke come from [as].
+  issuer: https://accounts.google.com
+  # RFC 8707 resource indicator: [prm]'s resource. With the issuer pinned nothing reads
+  # [prm], so it is written here.
+  resource: https://calendarmcp.googleapis.com/mcp/v1
+# Authorization code with PKCE S256: [as]; [web].
+schemes: [oauth2_code]
+client:
+  # A web client in the customer's Cloud project, or the operator's: [setup] creates one by
+  # hand, and [as] has no registration_endpoint. [plugin] is client_required, with an agent's
+  # own client before the deployment's.
+  registration: [operator, customer]
+  # The plugin sends client_secret_post (setClientSecret in internal/plugins/oauth.go); [as]
+  # lists it.
+  auth_method: client_secret_post
+  # One Cloud-project client serves Calendar, Drive, Docs and Gmail ([plugin]'s setup steps
+  # say so), so the four share GOOGLE_MCP_CLIENT_ID and GOOGLE_MCP_CLIENT_SECRET. The plugin
+  # read GOOGLE_CALENDAR_MCP_*; see the PR.
+  env: GOOGLE
+# Google returns a refresh token only for offline access, and «only on the first
+# authorization»: [web]; [plugin] authorize_params.
+authorize_params:
+  access_type: offline
+  prompt: consent
+scopes:
+  # [plugin] scopes: read only, one of [prm]'s scopes_supported. [setup] asks for
+  # calendar.calendarlist.readonly, calendar.events.freebusy and calendar.events.readonly
+  # instead; the plugin's one is kept, so a moved grant keeps what it was granted. No
+  # separator, so a space (RFC 6749 section 3.3).
+  list:
+    - https://www.googleapis.com/auth/calendar.readonly
+# No identity: the plugin asks for no openid scope, so the token response carries no id_token
+# and no account id.
+refresh:
+  # Not rotating: stress-test row 7 (Google Workspace) of «Stress test: 12 awkward providers»
+  # in acceleration/docs/connectors/architecture.md on connectors/planning. The token
+  # response carries expires_in ([web]), so no access_ttl.
+  rotating: false
+rate_limit:
+  # Quota per Cloud project, that is per OAuth app: row 7.
+  per: app
+sources:
+  - kind: mcp
+    endpoint: mcp
