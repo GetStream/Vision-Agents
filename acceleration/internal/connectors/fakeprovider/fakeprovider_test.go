@@ -266,6 +266,19 @@ func (s *FakeProviderSuite) TestNoRefreshTokenLeavesAnAccessTokenThatExpires() {
 	s.Contains(response.Header.Get("WWW-Authenticate"), `error="invalid_token"`)
 }
 
+func (s *FakeProviderSuite) TestBareChallengeRefusesATokenWithResourceMetadataAndNoError() {
+	srv := fakeprovider.New(s.T(), fakeprovider.BareChallenge)
+	access := s.connect(srv, nil)["access_token"].(string)
+	s.Equal(http.StatusOK, s.call(srv, access).StatusCode)
+
+	srv.Advance(fakeprovider.AccessTTL)
+	for _, token := range []string{access, "a-token-nobody-issued"} {
+		response := s.call(srv, token)
+		s.Equal(http.StatusUnauthorized, response.StatusCode)
+		s.Equal(`Bearer resource_metadata="`+srv.URL+fakeprovider.PathProtectedResource+`"`, response.Header.Get("WWW-Authenticate"))
+	}
+}
+
 func (s *FakeProviderSuite) TestInvalidGrantRefusesEveryRefresh() {
 	srv := fakeprovider.New(s.T(), fakeprovider.InvalidGrant)
 	first := s.connect(srv, nil)
