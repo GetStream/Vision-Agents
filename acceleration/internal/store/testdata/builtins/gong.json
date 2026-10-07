@@ -1,0 +1,1 @@
+{"id":"gong","revision":2,"name":"Gong","category":"Revenue","description":"Review recorded conversations, transcripts, and revenue intelligence.","endpoints":{"mcp":"https://mcp.gong.io/mcp"},"schemes":["oauth2_code"],"client":{"registration":["customer","dcr"]},"scopes":{"list":["mcp:read","mcp:write"]},"sources":[{"kind":"mcp","endpoint":"mcp"}]}

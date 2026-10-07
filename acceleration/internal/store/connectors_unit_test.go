@@ -1,6 +1,11 @@
 package store
 
 import (
+	"bytes"
+	"encoding/json"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -111,4 +116,29 @@ func TestAManifestWithAnotherScopeIsNotTheSameManifest(t *testing.T) {
 	same, err := sameManifest(parsed(t, acmeManifest), parsed(t, acmeChanged))
 	require.NoError(t, err)
 	require.False(t, same)
+}
+
+// TestTheBaseBuiltInsMarshalAsTheyWereStored pins the JSON each built-in on accelerate before
+// AI-900 marshals to (testdata/builtins, written by that code at a8d4b664): what the seeder
+// compares with the revision it stored. A change to core.Manifest that moves those bytes would
+// otherwise stop every router whose database holds them from starting ("already stored with
+// other content"). A new revision of one of these files is new bytes: write its golden again.
+func TestTheBaseBuiltInsMarshalAsTheyWereStored(t *testing.T) {
+	goldens, err := filepath.Glob(filepath.Join("testdata", "builtins", "*.json"))
+	require.NoError(t, err)
+	require.Len(t, goldens, 8)
+	for _, golden := range goldens {
+		id := strings.TrimSuffix(filepath.Base(golden), ".json")
+		want, err := os.ReadFile(golden)
+		require.NoError(t, err)
+		raw, err := fs.ReadFile(providers.FS, id+".yaml")
+		require.NoError(t, err)
+		manifest, err := core.ParseManifest(raw)
+		require.NoError(t, err)
+
+		got, err := json.Marshal(manifest)
+		require.NoError(t, err)
+
+		require.Equal(t, string(bytes.TrimSpace(want)), string(got), "%s marshals to other bytes than it was stored with", id)
+	}
 }
