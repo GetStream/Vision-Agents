@@ -4508,17 +4508,6 @@ export type components = {
             /** @description What a person does at the provider before the first consent, such as registering an OAuth client. Absent when the manifest says nothing. */
             readonly setup?: components["schemas"]["ConnectorSetup"];
         };
-        /** @description One MCP event a binding subscribes to on its fixed connection. Each one that arrives opens a text conversation from the config, as the app, with the event's data as the first thing said to it. */
-        readonly ConnectorBindingEvent: {
-            /** @description The event's filters, as its inputSchema describes them. */
-            readonly arguments?: {
-                readonly [key: string]: unknown;
-            };
-            /** @description The event's name, as the server's events/list gives it, such as issue.created. */
-            readonly event: string;
-            /** @description What the agent does with the event when it arrives, added to its instructions for that conversation. */
-            readonly instructions?: string;
-        };
         /**
          * @description grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted.
          * @enum {string}
@@ -4553,6 +4542,17 @@ export type components = {
             readonly items: readonly components["schemas"]["ConnectorAuditEvent"][] | null;
             /** @description Pass as cursor for the next page, with the same connection_id. Absent on the last one. */
             readonly next_cursor?: string;
+        };
+        /** @description One MCP event a binding subscribes to on its fixed connection. Each one that arrives opens a text conversation from the config, as the app, with the event's data as the first thing said to it. */
+        readonly ConnectorBindingEvent: {
+            /** @description The event's filters, as its inputSchema describes them. */
+            readonly arguments?: {
+                readonly [key: string]: unknown;
+            };
+            /** @description The event's name, as the server's events/list gives it, such as issue.created. */
+            readonly event: string;
+            /** @description What the agent does with the event when it arrives, added to its instructions for that conversation. */
+            readonly instructions?: string;
         };
         /** @description How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint. */
         readonly ConnectorClient: {

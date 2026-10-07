@@ -3471,18 +3471,6 @@ type Connector struct {
 	Setup *ConnectorSetup `json:"setup,omitempty"`
 }
 
-// ConnectorBindingEvent One MCP event a binding subscribes to on its fixed connection. Each one that arrives opens a text conversation from the config, as the app, with the event's data as the first thing said to it.
-type ConnectorBindingEvent struct {
-	// Arguments The event's filters, as its inputSchema describes them.
-	Arguments *map[string]interface{} `json:"arguments,omitempty"`
-
-	// Event The event's name, as the server's events/list gives it, such as issue.created.
-	Event string `json:"event"`
-
-	// Instructions What the agent does with the event when it arrives, added to its instructions for that conversation.
-	Instructions *string `json:"instructions,omitempty"`
-}
-
 // ConnectorAuditAction grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted.
 type ConnectorAuditAction string
 
@@ -3523,6 +3511,18 @@ type ConnectorAuditPage struct {
 
 	// NextCursor Pass as cursor for the next page, with the same connection_id. Absent on the last one.
 	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// ConnectorBindingEvent One MCP event a binding subscribes to on its fixed connection. Each one that arrives opens a text conversation from the config, as the app, with the event's data as the first thing said to it.
+type ConnectorBindingEvent struct {
+	// Arguments The event's filters, as its inputSchema describes them.
+	Arguments *map[string]interface{} `json:"arguments,omitempty"`
+
+	// Event The event's name, as the server's events/list gives it, such as issue.created.
+	Event string `json:"event"`
+
+	// Instructions What the agent does with the event when it arrives, added to its instructions for that conversation.
+	Instructions *string `json:"instructions,omitempty"`
 }
 
 // ConnectorClient How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint.
