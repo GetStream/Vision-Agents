@@ -114,8 +114,13 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if err := s.configs.CreateAgentConfig(ctx, &config); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
+	stored := agentConfigOf(config)
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditAgentConfig, ResourceID: config.ID, ResourceName: config.Name,
+		Action: store.AuditCreated, Changes: auditDiff(nil, stored),
+	})
 	s.pluginEvents.Changed(customerID, config.ID)
-	return &createAgentConfigResponse{Body: agentConfigOf(config)}, nil
+	return &createAgentConfigResponse{Body: stored}, nil
 }
 
 // getAgentConfig returns one config.
@@ -204,8 +209,13 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
+	stored := agentConfigOf(config)
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditAgentConfig, ResourceID: config.ID, ResourceName: config.Name,
+		Action: store.AuditUpdated, Changes: auditDiff(agentConfigOf(existing), stored),
+	})
 	s.pluginEvents.Changed(customerID, config.ID)
-	return &updateAgentConfigResponse{Body: agentConfigOf(config)}, nil
+	return &updateAgentConfigResponse{Body: stored}, nil
 }
 
 // deleteAgentConfig stops a config being usable.
@@ -218,9 +228,18 @@ func (s *Server) deleteAgentConfig(ctx context.Context, request *deleteAgentConf
 		return nil, errNoConfigs
 	}
 
+	// Read before it goes, so the entry recording the deletion can say what was deleted.
+	existing, err := s.configs.AgentConfig(ctx, customerID, request.Id)
+	if err != nil {
+		return nil, errUnknownConfig
+	}
 	if err := s.configs.DeleteAgentConfig(ctx, customerID, request.Id); err != nil {
 		return nil, errUnknownConfig
 	}
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditAgentConfig, ResourceID: existing.ID, ResourceName: existing.Name,
+		Action: store.AuditDeleted, Changes: auditDiff(agentConfigOf(existing), nil),
+	})
 	return nil, nil
 }
 
@@ -270,7 +289,12 @@ func (s *Server) createSkill(ctx context.Context, request *createSkillRequest) (
 	if err := s.configs.CreateSkill(ctx, &skill); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
-	return &createSkillResponse{Body: skillOf(skill)}, nil
+	stored := skillOf(skill)
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditSkill, ResourceID: skill.ID, ResourceName: skill.Name,
+		AgentID: skill.ConfigID, Action: store.AuditCreated, Changes: auditDiff(nil, stored),
+	})
+	return &createSkillResponse{Body: stored}, nil
 }
 
 // getSkill returns one skill.
@@ -320,7 +344,13 @@ func (s *Server) updateSkill(ctx context.Context, request *updateSkillRequest) (
 	if err := s.configs.UpdateSkill(ctx, &skill); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
-	return &updateSkillResponse{Body: skillOf(skill)}, nil
+	stored := skillOf(skill)
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditSkill, ResourceID: skill.ID, ResourceName: skill.Name,
+		AgentID: skill.ConfigID, Action: store.AuditUpdated,
+		Changes: auditDiff(skillOf(existing), stored),
+	})
+	return &updateSkillResponse{Body: stored}, nil
 }
 
 // deleteSkill stops a skill being usable.
@@ -333,9 +363,20 @@ func (s *Server) deleteSkill(ctx context.Context, request *deleteSkillRequest) (
 		return nil, errNoConfigs
 	}
 
+	// Read before it goes, so the entry recording the deletion can say what was deleted and
+	// which agent it was under.
+	existing, err := s.store.Skill(ctx, customerID, request.Id)
+	if err != nil {
+		return nil, errUnknownSkill
+	}
 	if err := s.configs.DeleteSkill(ctx, customerID, request.Id); err != nil {
 		return nil, errUnknownSkill
 	}
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditSkill, ResourceID: existing.ID, ResourceName: existing.Name,
+		AgentID: existing.ConfigID, Action: store.AuditDeleted,
+		Changes: auditDiff(skillOf(existing), nil),
+	})
 	return nil, nil
 }
 

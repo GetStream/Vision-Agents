@@ -952,6 +952,7 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 				UserID: principal.UserID,
 				IP:     clientIP(r, s.trusted),
 			})
+			ctx = context.WithValue(ctx, actorContextKey{}, actorOf(r, principal.ServerSide))
 			r = r.WithContext(ctx)
 			s.policies.Join(principal.AppID, principal.OrganizationID)
 			s.recordUser(ctx, principal)
@@ -999,8 +1000,13 @@ func (s *Server) recordUser(ctx context.Context, principal auth.Principal) {
 // A preflight refuses any header it was not asked about, and the browser reports that as a
 // blocked request naming only the header, so a list covering one mode alone fails in a way
 // that looks like the origin was never allowed.
+//
+// The two actor headers are here because the dashboard is a browser app: it is the client
+// that knows which person clicked save, and the audit is only worth reading if that name
+// reaches the router.
 const corsRequestHeaders = "Authorization, " + auth.AuthTypeHeader + ", " + auth.APIKeyHeader +
-	", X-Stream-Client, " + auth.UserHeader + ", " + CustomerHeader + ", Content-Type"
+	", " + clientHeader + ", " + actorIDHeader + ", " + actorNameHeader +
+	", " + auth.UserHeader + ", " + CustomerHeader + ", Content-Type"
 
 // corsMethods are the methods this API serves. PUT belongs here because a live session's
 // instructions are replaced with one; PATCH does not, because the spec serves none.

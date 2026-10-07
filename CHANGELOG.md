@@ -515,6 +515,36 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### The router records who changed the app's configuration
+
+Every change to an agent config, a skill, a knowledge document or url, a router config, a
+plugin credential or a policy is kept, with the fields that moved, who moved them and what
+they used. `queryAudit` (`POST /v1/audit/query`, cursor paged) answers an `AuditPage` of
+`AuditEntry` `{id, resource_type, resource_id, resource_name, agent_id, action, source,
+actor_id, actor_name, request_id, changes, created_at}`, filtered by any of `resource_type`,
+`resource_id`, `agent_id`, `source` and `action`. Only configuration is recorded: a session,
+a simulation and a run are not, because they are traffic rather than setup. A write that
+moves nothing records nothing, and a plugin's secret is never written down.
+
+Who made a change comes from three unsigned headers a server-side caller may send:
+`X-Stream-Client` (`dashboard`, `cli` or `sdk`, and `api` when nothing says), with
+`X-Stream-Actor-Id` and `X-Stream-Actor-Name` naming the person behind a client that signs
+its own users in. They buy a name beside a change somebody already had the credential to
+make, never permission. The router keeps no email addresses, so the name is a person's name.
+Go sends the client header from `Backend.Credentials`; other SDKs follow.
+
+### A sync no longer writes over an edit made since the last one
+
+`SyncAgentRequest` takes `check_changes`: a sync asking to be checked is refused with a 409
+`unsynced_changes`, naming the fields, rather than replacing an edit made in the dashboard
+since that directory last synced. Only the fields the directory declares are compared, and
+only against what is stored, so a sync whose directory already holds the change goes through.
+`getAgentChanges` (`GET /v1/agents/configs/{id}/changes`) answers an `AgentChanges`
+`{items, last_change, synced_at}`: what changed since the last sync, for a client to show.
+Syncing again with `base_change` set to the newest entry says the person has seen them and
+means it. Without `check_changes` a sync behaves exactly as before, so an SDK that syncs on
+startup is unaffected.
+
 ### Tools can be loaded progressively
 
 An agent config takes `progressive_tools`, a boolean that is off by default, and so does `agent.yaml`. When it is on, the model sees each plugin, MCP server and connector tool as the first line of its description, plus its argument schema with every description, title and example removed. The first time the model calls a tool, the router returns the full description and input schema instead of running the tool, and the model calls it again. Some servers put a page of instructions and examples into a tool's description; with this setting, that page is only paid for in conversations that use the tool. The cost is one extra model turn for each tool a conversation uses. User plugins are unchanged, since they already list their tools on demand. Go and Python read the key from `agent.yaml`, and JavaScript has the regenerated types; other SDKs follow.

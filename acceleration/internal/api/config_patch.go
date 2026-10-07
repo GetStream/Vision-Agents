@@ -5,6 +5,8 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // AgentConfigPatch is what changes about an agent config. Every field is optional, and one
@@ -115,6 +117,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if err != nil {
 		return nil, errUnknownConfig
 	}
+	existing := agentConfigOf(config)
 	before := config.MCPServers
 
 	patch := request.Body
@@ -225,6 +228,11 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
+	stored := agentConfigOf(config)
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditAgentConfig, ResourceID: config.ID, ResourceName: config.Name,
+		Action: store.AuditUpdated, Changes: auditDiff(existing, stored),
+	})
 	s.pluginEvents.Changed(customerID, config.ID)
-	return &agentConfigResponse{Body: agentConfigOf(config)}, nil
+	return &agentConfigResponse{Body: stored}, nil
 }

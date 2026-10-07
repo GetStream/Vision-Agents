@@ -44,6 +44,11 @@ const (
 	AuthorizationHeader = "authorization"
 	// UserHeader names the end user a server-side caller is acting for.
 	UserHeader = "X-Stream-User-Id"
+	// ClientHeader says which client a request came from, which is what the router's audit
+	// log records a configuration change as having been made with. An SDK syncing an agent
+	// directory is this one; the dashboard and the CLI name themselves.
+	ClientHeader = "X-Stream-Client"
+	ClientSDK    = "sdk"
 	// DefaultURL is the hosted router.
 	DefaultURL = "https://accelerate.gcp.stream-io-api.com"
 )
@@ -165,6 +170,7 @@ func (b Backend) token() (string, error) {
 // it when going through the proxy, and otherwise who is billed.
 func (b Backend) Credentials() (http.Header, error) {
 	header := http.Header{}
+	header.Set(ClientHeader, ClientSDK)
 	if b.ActingFor != "" {
 		header.Set(UserHeader, b.ActingFor)
 	}
