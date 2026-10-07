@@ -36,7 +36,7 @@ const scopeRequired = "scope_required"
 
 // stepUps are the step-up consents a dispatcher has begun, one open at a time per
 // connection, so a provider that refuses every call for want of a scope asks the person once
-// rather than once per call.
+// per reply rather than once per call.
 type stepUps struct {
 	consents Consents
 	// notify sends an event to the session's watchers (Session.broadcast).
@@ -48,10 +48,12 @@ type stepUps struct {
 	open map[string]openStepUp
 }
 
-// openStepUp is one step-up begun and what the provider asked for when it was.
+// openStepUp is one step-up begun, what the provider asked for when it was, and the reply
+// (llm.ToolCall.TurnID) it was begun in.
 type openStepUp struct {
 	asked   core.Outcome
 	consent Consent
+	turnID  string
 }
 
 // newStepUps is the step-ups of a session whose deployment can begin a consent, nil when it
@@ -70,9 +72,13 @@ func newStepUps(consents Consents, notify func(Event), logger *slog.Logger) *ste
 // consent, or the connection is not the caller's own. The app's connections are the app's
 // backend to reconnect (createAuthorization), not an end user's.
 //
-// A step-up still open for the connection that asks for at least as much is shown once and
-// reused: no second attempt and no second event. One that was used or expired is not.
-func (d *dispatcher) stepUp(ctx context.Context, r route, asked core.Outcome) (string, bool) {
+// A step-up still open for the connection that asks for at least as much is reused by a
+// later call in the reply it was begun in (turnID): no second attempt and no second event.
+// One that was used or expired is not, and neither is one begun in an earlier reply, as
+// askToLogIn reuses a login only while the reply being written shows it: the person may have
+// closed its popup, whose launch page cannot be handed off again, or missed its event, which
+// is not replayed to a watcher that attaches later.
+func (d *dispatcher) stepUp(ctx context.Context, r route, turnID string, asked core.Outcome) (string, bool) {
 	s := d.stepUps
 	if s == nil || d.spec.Caller.UserID == "" || r.connection.OwnerType != store.OwnerUser ||
 		r.connection.OwnerID != d.spec.Caller.UserID {
@@ -80,7 +86,8 @@ func (d *dispatcher) stepUp(ctx context.Context, r route, asked core.Outcome) (s
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if open, found := s.open[r.connection.ID]; found && covers(open.asked, asked) && d.attemptOpen(ctx, open.consent.AuthorizationID) {
+	if open, found := s.open[r.connection.ID]; found && turnID != "" && open.turnID == turnID &&
+		covers(open.asked, asked) && d.attemptOpen(ctx, open.consent.AuthorizationID) {
 		return stepUpRequired(open.consent.Name), true
 	}
 	consent, err := s.consents(ctx, ConsentRequest{
@@ -91,7 +98,7 @@ func (d *dispatcher) stepUp(ctx context.Context, r route, asked core.Outcome) (s
 		s.logger.Warn("could not begin a step-up consent", "connector", r.binding.Name, "error", err)
 		return "", false
 	}
-	s.open[r.connection.ID] = openStepUp{asked: asked, consent: consent}
+	s.open[r.connection.ID] = openStepUp{asked: asked, consent: consent, turnID: turnID}
 	s.notify(ConnectorScopeRequired{
 		Name: r.binding.Name, ConnectorID: r.binding.ConnectorID, ConnectionID: consent.ConnectionID,
 		Scopes: slices.Clone(asked.Scopes), AuthorizationID: consent.AuthorizationID,

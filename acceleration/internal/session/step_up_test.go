@@ -43,15 +43,16 @@ func (s *StepUpSuite) SetupTest() {
 
 // TestAScopeChallengeOnTheCallersOwnConnectionAsksOnceForAStepUp: the provider refuses every
 // call for want of crm:write. The first call begins one step-up and sends one event; the
-// second is answered the same with no second attempt and no second event. The model reads
-// neither the launch URL nor the handoff token, and the connection stays connected.
+// second in the same reply is answered the same with no second attempt and no second event.
+// The model reads neither the launch URL nor the handoff token, and the connection stays
+// connected.
 func (s *StepUpSuite) TestAScopeChallengeOnTheCallersOwnConnectionAsksOnceForAStepUp() {
 	mine := s.connection("alice", "primary")
 	d := s.attachWithStepUps(s.spec(s.config(s.chosen("crm", "guarded")), "alice", map[string]string{"crm": mine}))
 
-	first, err := s.call(d, "crm__guarded", `{"scope":"crm:write"}`)
+	first, err := s.guarded(d, "turn-1", `{"scope":"crm:write"}`)
 	s.Require().NoError(err)
-	second, err := s.call(d, "crm__guarded", `{"scope":"crm:write"}`)
+	second, err := s.guarded(d, "turn-1", `{"scope":"crm:write"}`)
 	s.Require().NoError(err)
 
 	s.Contains(first, `"status":"scope_required"`)
@@ -76,13 +77,13 @@ func (s *StepUpSuite) TestAScopeChallengeOnTheCallersOwnConnectionAsksOnceForASt
 func (s *StepUpSuite) TestAStepUpThatWasUsedIsAskedForAgain() {
 	mine := s.connection("alice", "primary")
 	d := s.attachWithStepUps(s.spec(s.config(s.chosen("crm", "guarded")), "alice", map[string]string{"crm": mine}))
-	_, err := s.call(d, "crm__guarded", `{"scope":"crm:write"}`)
+	_, err := s.guarded(d, "turn-1", `{"scope":"crm:write"}`)
 	s.Require().NoError(err)
 	s.Require().Len(s.events, 1)
 	_, err = s.store.ConsumeConnectorAuthorizationAttempt(s.ctx, s.events[0].(ConnectorScopeRequired).AuthorizationID)
 	s.Require().NoError(err)
 
-	_, err = s.call(d, "crm__guarded", `{"scope":"crm:write"}`)
+	_, err = s.guarded(d, "turn-1", `{"scope":"crm:write"}`)
 
 	s.Require().NoError(err)
 	s.Len(s.asked, 2)
@@ -94,14 +95,70 @@ func (s *StepUpSuite) TestAStepUpThatWasUsedIsAskedForAgain() {
 func (s *StepUpSuite) TestAChallengeForMoreThanTheOpenStepUpAsksForIsAskedForAgain() {
 	mine := s.connection("alice", "primary")
 	d := s.attachWithStepUps(s.spec(s.config(s.chosen("crm", "guarded")), "alice", map[string]string{"crm": mine}))
-	_, err := s.call(d, "crm__guarded", `{"scope":"crm:write"}`)
+	_, err := s.guarded(d, "turn-1", `{"scope":"crm:write"}`)
 	s.Require().NoError(err)
 
-	_, err = s.call(d, "crm__guarded", `{"scope":"crm:admin"}`)
+	_, err = s.guarded(d, "turn-1", `{"scope":"crm:admin"}`)
 
 	s.Require().NoError(err)
 	s.Require().Len(s.asked, 2)
 	s.Equal([]string{"crm:admin"}, s.asked[1].StepUp.Scopes)
+	s.Len(s.events, 2)
+}
+
+// TestAClaimsChallengeIsNotCoveredByAnOpenScopeStepUp: a claims challenge asks for no scope,
+// yet a step-up for crm:write does not satisfy it, so it begins its own with its claims.
+func (s *StepUpSuite) TestAClaimsChallengeIsNotCoveredByAnOpenScopeStepUp() {
+	mine := s.connection("alice", "primary")
+	d := s.attachWithStepUps(s.spec(s.config(s.chosen("crm", "guarded")), "alice", map[string]string{"crm": mine}))
+	_, err := s.guarded(d, "turn-1", `{"scope":"crm:write"}`)
+	s.Require().NoError(err)
+
+	// eyJhY3IiOiJtZmEifQ== is base64 of {"acr":"mfa"}.
+	read, err := s.guarded(d, "turn-1", `{"claims":"eyJhY3IiOiJtZmEifQ=="}`)
+
+	s.Require().NoError(err)
+	s.Contains(read, `"status":"scope_required"`)
+	s.Require().Len(s.asked, 2)
+	s.Equal(&core.Outcome{Kind: core.OutcomeScopeRequired, Claims: `{"acr":"mfa"}`}, s.asked[1].StepUp)
+	s.Len(s.events, 2)
+}
+
+// TestAStepUpShownOnAnEarlierReplyIsAskedForAgain: the person pressed the button of the first
+// step-up and closed the popup. Its attempt stays open, but its launch page cannot be handed
+// off again, so the next reply's refused call begins a new step-up the person can open.
+func (s *StepUpSuite) TestAStepUpShownOnAnEarlierReplyIsAskedForAgain() {
+	mine := s.connection("alice", "primary")
+	d := s.attachWithStepUps(s.spec(s.config(s.chosen("crm", "guarded")), "alice", map[string]string{"crm": mine}))
+	_, err := s.guarded(d, "turn-1", `{"scope":"crm:write"}`)
+	s.Require().NoError(err)
+	s.Require().Len(s.events, 1)
+	first := s.events[0].(ConnectorScopeRequired).AuthorizationID
+	// What handOffConnectorLaunch does: the sealed blob is replaced, and the row stays open.
+	s.Require().NoError(s.store.HandOffConnectorAuthorizationAttempt(s.ctx, first, []byte("sealed"), []byte("handed-off"), 1))
+
+	read, err := s.guarded(d, "turn-2", `{"scope":"crm:write"}`)
+
+	s.Require().NoError(err)
+	s.Contains(read, `"status":"scope_required"`)
+	s.Len(s.asked, 2)
+	s.Require().Len(s.events, 2, "a new step-up the person can open")
+	s.NotEqual(first, s.events[1].(ConnectorScopeRequired).AuthorizationID)
+	s.Equal(store.ConnectionConnected, s.status(mine), "the old grant keeps working")
+}
+
+// TestACallInNoReplyReusesNoStepUp: a call that names no reply cannot be told to be in the
+// same one, so each refused call begins its own step-up.
+func (s *StepUpSuite) TestACallInNoReplyReusesNoStepUp() {
+	mine := s.connection("alice", "primary")
+	d := s.attachWithStepUps(s.spec(s.config(s.chosen("crm", "guarded")), "alice", map[string]string{"crm": mine}))
+
+	_, err := s.guarded(d, "", `{"scope":"crm:write"}`)
+	s.Require().NoError(err)
+	_, err = s.guarded(d, "", `{"scope":"crm:write"}`)
+
+	s.Require().NoError(err)
+	s.Len(s.asked, 2)
 	s.Len(s.events, 2)
 }
 
@@ -182,6 +239,15 @@ func (s *StepUpSuite) consents(ctx context.Context, request ConsentRequest) (Con
 // toolCall is the model asking for name with arguments.
 func (s *StepUpSuite) toolCall(name, arguments string) llm.ToolCall {
 	return llm.ToolCall{ID: uuid.NewString(), Name: name, Arguments: arguments}
+}
+
+// guarded is the model calling crm's guarded tool with arguments in the reply turnID, and what
+// it read.
+func (s *StepUpSuite) guarded(d *dispatcher, turnID, arguments string) (string, error) {
+	call := s.toolCall("crm__guarded", arguments)
+	call.TurnID = turnID
+	parts, err := d.Run(s.ctx, call)
+	return llm.TextOf(parts), err
 }
 
 func (s *StepUpSuite) notify(event Event) {

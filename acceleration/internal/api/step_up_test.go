@@ -20,17 +20,18 @@ import (
 // a model that calls crm's echo whenever a person asks: the fake refuses that call with a 403
 // insufficient_scope until the token carries fakeprovider.RequiredScope (AI-854).
 
-// TestAScopeChallengeAsksForOneStepUpAndKeepsTheGrant: a 403 insufficient_scope during a
-// session produces one connector_scope_required event, asked again it produces none, and the
-// connection keeps its grant while the step-up is open.
-func (s *ChatLoginsSuite) TestAScopeChallengeAsksForOneStepUpAndKeepsTheGrant() {
+// TestAScopeChallengeAsksForOneStepUpPerReplyAndKeepsTheGrant: a 403 insufficient_scope
+// during a session produces one connector_scope_required event, asked again in the next reply
+// it produces a new one (the person may have closed the first popup, whose launch page cannot
+// be handed off again), and the connection keeps its grant while the step-ups are open.
+func (s *ChatLoginsSuite) TestAScopeChallengeAsksForOneStepUpPerReplyAndKeepsTheGrant() {
 	mine, events, opened := s.steppingUp()
 	before := s.connectionOf(s.client, mine)
 
 	s.ask(opened)
 	asked := s.stepUpOn(events)
 	s.ask(opened)
-	again := s.ranWithoutStepUp(events)
+	again := s.stepUpOn(events)
 
 	s.Equal("crm", asked["name"])
 	s.Equal(mine, asked["connection_id"])
@@ -38,8 +39,8 @@ func (s *ChatLoginsSuite) TestAScopeChallengeAsksForOneStepUpAndKeepsTheGrant() 
 	s.Equal(consentPublicURL+connectorLaunchPath+asked["authorization_id"].(string), asked["launch_url"])
 	s.Regexp(handoffToken, asked["handoff_token"])
 	s.Equal(store.AttemptStepUp, s.attemptKind(asked["authorization_id"].(string)))
-	s.Contains(again, `"status":"scope_required"`, "the second call reads the same step-up")
-	s.Equal(2, s.attemptsOn(mine), "the first consent and one step-up")
+	s.NotEqual(asked["authorization_id"], again["authorization_id"], "the next reply's step-up is a new one")
+	s.Equal(3, s.attemptsOn(mine), "the first consent and one step-up per reply")
 	after := s.connectionOf(s.client, mine)
 	s.Equal(ConnectionStatus(store.ConnectionConnected), after.Status, "the old grant keeps working")
 	s.Equal(before.Revision, after.Revision)
@@ -175,14 +176,6 @@ func (s *ChatLoginsSuite) settle(events *websocket.Conn) {
 			return
 		}
 	}
-}
-
-// ranWithoutStepUp is what the model read of the next echo on events, which sent no
-// connector_scope_required before it.
-func (s *ChatLoginsSuite) ranWithoutStepUp(events *websocket.Conn) string {
-	ran := s.echoRanOn(events)
-	read, _ := ran["result"].(string)
-	return read
 }
 
 // echoRanOn is the next tool_ran of crm's echo on events. A connector_scope_required before it

@@ -153,7 +153,7 @@ func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]ll
 			return llm.TextParts(outcomeUnknown(call.Name)), store.InvocationOutcomeUnknown, nil
 		}
 		if asked, ok := exchange.ScopeRequired(); ok {
-			if text, asking := d.stepUp(ctx, r, asked); asking {
+			if text, asking := d.stepUp(ctx, r, call.TurnID, asked); asking {
 				return llm.TextParts(text), failed(ctx, exchange), nil
 			}
 		}

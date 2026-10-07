@@ -235,9 +235,10 @@ var (
 	toolFails = &mcpsdk.Tool{Name: "fails", Description: "Reports its own failure.",
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}}}
 	// toolGuarded is never run: the provider refuses every call of it with a 403 that asks for
-	// the scope the call names (guardedChallenge).
+	// the scope the call names, or a 401 with the claims challenge it names (newAccountsProvider).
 	toolGuarded = &mcpsdk.Tool{Name: "guarded", Description: "Needs a scope no grant has.",
-		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"scope": map[string]any{"type": "string"}}}}
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+			"scope": map[string]any{"type": "string"}, "claims": map[string]any{"type": "string"}}}}
 	providerTools = map[string]*mcpsdk.Tool{"whoami": toolWhoami, "secret": toolSecret, "slow": toolSlow,
 		"echo": toolEcho, "fails": toolFails, "guarded": toolGuarded}
 )
@@ -331,7 +332,8 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 			Params struct {
 				Name      string `json:"name"`
 				Arguments struct {
-					Scope string `json:"scope"`
+					Scope  string `json:"scope"`
+					Claims string `json:"claims"`
 				} `json:"arguments"`
 			} `json:"params"`
 		}
@@ -343,6 +345,13 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 		}
 		streams := p.streams
 		p.mu.Unlock()
+		if message.Method == "tools/call" && message.Params.Name == toolGuarded.Name && message.Params.Arguments.Claims != "" {
+			// Microsoft's claims challenge: a 401 insufficient_claims with the base64 claims
+			// request (oauth2code's Classify).
+			w.Header().Set("WWW-Authenticate", `Bearer error="insufficient_claims", claims="`+message.Params.Arguments.Claims+`"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		if message.Method == "tools/call" && message.Params.Name == toolGuarded.Name {
 			// RFC 6750 section 3.1: insufficient_scope, with the scope the request needs.
 			w.Header().Set("WWW-Authenticate", `Bearer error="insufficient_scope", scope="`+message.Params.Arguments.Scope+`"`)

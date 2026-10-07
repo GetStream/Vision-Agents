@@ -364,6 +364,23 @@ func (s *TransportsSuite) TestARefusalThatAsksForNoAccessRecordsNoScopeChallenge
 	s.False(found)
 }
 
+// TestA403ThatRefusesTheCredentialIsTheAnswer: only a 401 refuses the credential (RFC 6750
+// section 3.1). A 403 with error="invalid_token" is answered as is: sent once, never renewed,
+// and the connection stays connected.
+func (s *TransportsSuite) TestA403ThatRefusesTheCredentialIsTheAnswer() {
+	s.resolver.refresh = "token-2"
+	s.provider.accept("token-2")
+	s.provider.challenge(http.StatusForbidden, `Bearer error="invalid_token"`)
+
+	response, err := s.post(s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusForbidden, response.StatusCode)
+	s.Equal("challenged", s.read(response), "the caller reads the provider's whole answer")
+	s.Equal([]string{"token-1"}, s.provider.tokens(), "sent once, never renewed")
+	s.True(s.resolver.isConnected())
+}
+
 // TestACrossOriginRedirectNeverCarriesTheCredential: the egress client's redirect policy
 // refuses a redirect to another origin, so the second hop never reaches the scheme and the
 // other server never sees the credential.
