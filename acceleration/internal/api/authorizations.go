@@ -196,8 +196,8 @@ func (s *Server) consents() consents {
 
 // ConnectorConsents is how a session begins a consent for its caller's own connection, when
 // a tool call needs one (session.Consents): the attempt createAuthorization begins, on the
-// connection chosen, or else on the caller's newest connection to the connector that was
-// never connected, or else on a new one. Nil when connectors are off or ROUTER_PUBLIC_URL is
+// connection chosen, or else on the caller's newest connection to the connector in any
+// status, or else on a new one. Nil when connectors are off or ROUTER_PUBLIC_URL is
 // unset, so no consent could begin: a session binding with no usable connection is then left
 // out of the session, as before.
 func ConnectorConsents(records *store.Store, registry core.Registry, secrets *auth.Sealer, publicURL string) session.Consents {
@@ -252,9 +252,14 @@ func (c consents) connectionFor(ctx context.Context, request session.ConsentRequ
 	if err != nil {
 		return store.ConnectorConnection{}, err
 	}
-	// The newest one never connected, so asking again does not leave a pending row each time.
+	// The caller's newest connection to the connector, in any status, so a new chat asking
+	// again does not leave a row and a grant each time. The person still consents in this
+	// chat: one connected before gets a reconnect (begin), which keeps the old grant when it
+	// comes back with another account (completeConsent, account_mismatch), and the session
+	// opens it only once that consent connected it anew (session.openOrAsk). A session still
+	// uses only the connection chosen for it (T22): this one, by the person's own consent.
 	for _, connection := range held {
-		if connection.Status == store.ConnectionPending && mine(connection) {
+		if mine(connection) {
 			return connection, nil
 		}
 	}

@@ -77,6 +77,7 @@ func (s *ChatLoginsSuite) SetupSuite() {
 
 func (s *ChatLoginsSuite) SetupTest() {
 	s.useFixture("standard")
+	s.provider.Use(fakeprovider.ClientCredentials)
 }
 
 // TestASessionBindingWithNoConnectionAsksInTheChatAndCarriesOn: «tell Nash a joke on Slack»
@@ -235,20 +236,20 @@ func (s *ChatLoginsSuite) TestAReopenedChatUsesTheConnectionTheLoginChose() {
 			"SELECT connector_selections::text FROM agent_sessions WHERE id = ?", opened.Id).Scan(&stored) == nil &&
 			stored == `[{"name": "crm", "connection_id": "`+chosen+`"}]`
 	}, settleFor, 20*time.Millisecond, "the session row keeps the connection the login chose")
+	// A fork of the chat while it is still live reads its spec, which keeps the choice too.
+	var forked Session
+	s.Require().Equal(http.StatusCreated, s.serverClient.actingFor(s.client).do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/fork", ForkSessionRequest{Messages: pointerTo(false)}, &forked))
+	s.ask(forked.Id)
+	s.Eventually(func() bool { return s.echoedOn(forked.Id) == 1 }, settleFor, 20*time.Millisecond,
+		"the live fork runs the tool on the connection the login chose")
 	s.client.stopSession(opened.Id)
 
 	s.ask(opened.Id)
 
-	s.Eventually(func() bool {
-		var ran int
-		return s.store.DB().QueryRowContext(context.Background(),
-			"SELECT count(*) FROM agent_response_items WHERE session_id = ? AND kind = ? AND tool_name = ? AND text = ?",
-			opened.Id, store.ItemToolResult, connectorEcho, connectorEchoText).Scan(&ran) == nil && ran == 1
-	}, settleFor, 20*time.Millisecond, "the reopened chat runs the tool on the connection it chose")
-	connections, err := s.store.ConnectorConnectionsByOwner(context.Background(), s.customerID(),
-		store.ConnectionFilter{OwnerType: store.OwnerUser, OwnerID: s.client.userID, ConnectorID: connector})
-	s.Require().NoError(err)
-	s.Len(connections, 1, "no second connection")
+	s.Eventually(func() bool { return s.echoedOn(opened.Id) == 1 }, settleFor, 20*time.Millisecond,
+		"the reopened chat runs the tool on the connection it chose")
+	s.Equal(1, s.connectionsOf(s.client, connector), "no second connection")
 	var attempts int
 	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
 		"SELECT count(*) FROM connector_authorization_attempts WHERE connection_id = ?", chosen).Scan(&attempts))
@@ -281,19 +282,116 @@ func (s *ChatLoginsSuite) TestAConsentFinishedWithoutAHandBackIsPickedUpOnTheNex
 	s.Equal(2, attempts, "the chat's and the backend's, no third")
 }
 
+// TestEveryNewChatAsksOnTheCallersOneConnection: three chats with no selection, each with a
+// login of its own in it, leave the caller one connection, not three. The second and third
+// consent again on it, as a reconnect.
+func (s *ChatLoginsSuite) TestEveryNewChatAsksOnTheCallersOneConnection() {
+	connector, grant := s.connector()
+	config := s.config(connector, grant)
+	var first string
+	for chat := range 3 {
+		opened := s.client.createSession(s.session(config, nil))
+		events := s.client.opens("/v1/agents/sessions/" + opened.Id + "/events")
+		s.ask(opened.Id)
+		asked := s.loginOn(events, "")
+		if chat == 0 {
+			first = asked["connection_id"].(string)
+		}
+		s.Equal(first, asked["connection_id"], "chat %d", chat)
+		b := newBrowser(&s.RouterSuite, s.provider)
+		s.Require().Equal(s.landing(first), b.finish(s.consent(b.handOff(s.started(asked)))).Header.Get("Location"))
+		s.Equal(connectorEchoText, s.carryOn(events).ran["result"], "chat %d", chat)
+		if chat > 0 {
+			s.Equal(store.AttemptReconnect, s.attemptKind(asked["authorization_id"].(string)))
+		}
+	}
+
+	s.Equal(1, s.connectionsOf(s.client, connector))
+}
+
+// TestAReconnectThatComesBackWithAnotherAccountIsRefused: a new chat asks on the caller's
+// connected connection, and the person consents as another account. T17 keeps the old grant,
+// and the chat does not use the connection: it asks again.
+func (s *ChatLoginsSuite) TestAReconnectThatComesBackWithAnotherAccountIsRefused() {
+	s.provider.Use(fakeprovider.ClientCredentials, fakeprovider.CommaScopes)
+	connector, grant := s.connectorWith(`
+scopes:
+  list: [chat:write]
+  separator: ","
+capture:
+  - name: team_id
+    from: token_response
+    path: $.team.id
+  - name: user_id
+    from: token_response
+    path: $.authed_user.id
+identity: [team_id, user_id]
+`)
+	config := s.config(connector, grant)
+	first := s.client.createSession(s.session(config, nil))
+	firstEvents := s.client.opens("/v1/agents/sessions/" + first.Id + "/events")
+	s.ask(first.Id)
+	asked := s.loginOn(firstEvents, "")
+	mine := asked["connection_id"].(string)
+	b := newBrowser(&s.RouterSuite, s.provider)
+	b.finish(s.consent(b.handOff(s.started(asked))))
+	s.Require().Equal(connectorEchoText, s.carryOn(firstEvents).ran["result"])
+	account := s.connectionOf(s.client, mine).AccountID
+
+	s.provider.SwitchAccount()
+	second := s.client.createSession(s.session(config, nil))
+	secondEvents := s.client.opens("/v1/agents/sessions/" + second.Id + "/events")
+	s.ask(second.Id)
+	again := s.loginOn(secondEvents, "")
+	s.Require().Equal(mine, again["connection_id"])
+	b = newBrowser(&s.RouterSuite, s.provider)
+	landed := b.finish(s.consent(b.handOff(s.started(again)))).Header.Get("Location")
+
+	s.Equal(consentDashboard+"?"+url.Values{"connection_id": {mine}, "status": {consentAccountMismatch}}.Encode(), landed)
+	s.Equal(account, s.connectionOf(s.client, mine).AccountID, "the old grant is kept")
+	s.ask(second.Id)
+	s.NotNil(s.loginOn(secondEvents, ""), "the chat asks again rather than use the connection")
+	s.Equal(1, s.connectionsOf(s.client, connector))
+}
+
+// echoedOn is how many times session id ran crm's echo with what it was given, as recorded.
+func (s *ChatLoginsSuite) echoedOn(id string) int {
+	var ran int
+	if s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM agent_response_items WHERE session_id = ? AND kind = ? AND tool_name = ? AND text = ?",
+		id, store.ItemToolResult, connectorEcho, connectorEchoText).Scan(&ran) != nil {
+		return -1
+	}
+	return ran
+}
+
+// connectionsOf is how many live connections user has to connector.
+func (s *ChatLoginsSuite) connectionsOf(user *testClient, connector string) int {
+	connections, err := s.store.ConnectorConnectionsByOwner(context.Background(), s.customerID(),
+		store.ConnectionFilter{OwnerType: store.OwnerUser, OwnerID: user.userID, ConnectorID: connector})
+	s.Require().NoError(err)
+	return len(connections)
+}
+
 // connector stores a connector of the suite's app at the fake that takes oauth2_code, and
 // the grant of its echo at the digest the fake lists, read through a twin connection of the
 // app's that takes a bearer token.
 func (s *ChatLoginsSuite) connector() (string, map[string]any) {
+	return s.connectorWith(`
+scopes:
+  list: [chat:write]
+`)
+}
+
+// connectorWith is connector with more manifest YAML: its scopes, captures and identity.
+func (s *ChatLoginsSuite) connectorWith(extra string) (string, map[string]any) {
 	id := "custom_crm" + strings.ReplaceAll(s.utils.uuid(), "-", "")
 	s.define(id, oauth2code.Name, `
 client:
   registration: [operator]
   auth_method: client_secret_post
   env: FAKE
-scopes:
-  list: [chat:write]
-`)
+`+extra)
 	twin := id + "twin"
 	s.define(twin, bearer.Name, "")
 	var created Connection
