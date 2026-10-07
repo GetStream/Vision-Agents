@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -27,6 +29,9 @@ import (
 // Every call is checked again against the config and the connection as they are now, then
 // run inside one envelope for every source: the binding's timeout, a cancel when the turn is
 // interrupted, and the result cap.
+//
+// Every call it opened, refused or run, leaves one row in the invocation log once it has
+// answered (store.ConnectorInvocation), queued so the model never waits on the write.
 type dispatcher struct {
 	store *store.Store
 	// spec is what the session was opened with: whose it is, its config and its selections.
@@ -39,6 +44,8 @@ type dispatcher struct {
 	next      agent.ToolRunner
 	// logins are the session bindings waiting for their person to log in (connector_login.go).
 	logins *logins
+	// invocations writes the log; nil records nothing.
+	invocations *invocationRecorder
 }
 
 // route is what one offered name was opened for.
@@ -71,10 +78,40 @@ func (d *dispatcher) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentP
 		}
 		return nil, errUnknownTool(call.Name)
 	}
+	started := time.Now()
 	if err := d.recheck(ctx, found); err != nil {
+		d.record(found, started, store.InvocationDenied)
 		return nil, err
 	}
-	return d.call(ctx, found, call)
+	parts, failure, err := d.call(ctx, found, call)
+	d.record(found, started, failure)
+	return parts, err
+}
+
+// record queues the row of one call that started at started and ended now, as failure says.
+// The row names the binding, the connection and the tool, never what the call was asked or
+// answered, and an incognito session's names no session.
+func (d *dispatcher) record(r route, started time.Time, failure string) {
+	sessionID := d.spec.ID
+	if d.spec.Incognito {
+		sessionID = ""
+	}
+	d.invocations.Record(store.ConnectorInvocation{
+		CustomerID: r.connection.CustomerID, ConnectionID: r.connection.ID, ConnectorID: r.binding.ConnectorID,
+		ConfigID: d.spec.ConfigID, Binding: r.binding.Name, Tool: r.tool, SessionID: sessionID,
+		StartedAt: started, LatencyMs: time.Since(started).Milliseconds(), ErrorType: failure,
+	})
+}
+
+// correlated is ctx naming this session for the audit rows its calls cause, such as a
+// refresh (core.Correlation), and none for an incognito session.
+func (d *dispatcher) correlated(ctx context.Context) context.Context {
+	correlation := core.CorrelationOf(ctx)
+	correlation.SessionID = d.spec.ID
+	if d.spec.Incognito {
+		correlation.SessionID = ""
+	}
+	return core.WithCorrelation(ctx, correlation)
 }
 
 // Close ends every toolset. A second call does nothing.
@@ -97,21 +134,59 @@ func (d *dispatcher) Close() {
 // the model retries», connectors/planning). A turn that is
 // interrupted cancels ctx, and the MCP SDK sends notifications/cancelled for the call in
 // flight (cancelCall in go-sdk v1.8.0 mcp/transport.go).
-func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, error) {
-	bounded, cancel := context.WithTimeout(ctx, r.timeout)
+//
+// It also says how the call failed, for its row: empty when it answered, else one of the
+// store.Invocation* values.
+func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, string, error) {
+	bounded, cancel := context.WithTimeout(d.correlated(ctx), r.timeout)
 	defer cancel()
-	result, err := r.toolset.Call(bounded, call)
+	observed, exchange := core.WithExchange(bounded)
+	result, err := r.toolset.Call(observed, call)
 	if err != nil {
 		if ctx.Err() == nil && errors.Is(bounded.Err(), context.DeadlineExceeded) {
-			return llm.TextParts(outcomeUnknown(call.Name)), nil
+			return llm.TextParts(outcomeUnknown(call.Name)), store.InvocationOutcomeUnknown, nil
 		}
-		return nil, err
+		return nil, failed(ctx, exchange), err
 	}
 	// A source cuts its own results; the cap holds whichever source answered.
 	if text := llm.TextOf(result.Parts); len(text) > core.MaxResultBytes {
-		return llm.TextParts(core.CutResult(text)), nil
+		return llm.TextParts(core.CutResult(text)), "", nil
 	}
-	return result.Parts, nil
+	return result.Parts, "", nil
+}
+
+// failed is how a call that failed before the binding's deadline failed, from what its
+// requests saw (core.Exchange): a tool source's error does not say whether anything was sent,
+// and the MCP client reports a 401 only as the words of its status.
+//
+//	the connection has no credential to give (resolver.ErrNotConnected), or
+//	  the provider answered 401 or 403                      customer_auth
+//	the provider could not renew the credential just now    external_server
+//	the turn ended (an interruption) after a request left    outcome_unknown
+//	  before any left                                        client_timeout
+//	the connection's client stopped waiting for a request    client_timeout
+//	nothing was sent: the source refused the arguments, or
+//	  the connection went between the check and the call    denied
+//	anything else the provider or the way to it answered    external_server
+//
+// Example: an MCP tool that answers isError, or a 502, is external_server; a connection whose
+// refresh token the provider revoked is customer_auth.
+func failed(turn context.Context, seen *core.Exchange) string {
+	credential, status := seen.CredentialError(), seen.Status()
+	switch {
+	case errors.Is(credential, resolver.ErrNotConnected) || status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return store.InvocationCustomerAuth
+	case errors.Is(credential, resolver.ErrTemporarilyUnavailable):
+		return store.InvocationExternalServer
+	case turn.Err() != nil && seen.Sent():
+		return store.InvocationOutcomeUnknown
+	case turn.Err() != nil, seen.TimedOut():
+		return store.InvocationClientTimeout
+	case !seen.Sent():
+		return store.InvocationDenied
+	default:
+		return store.InvocationExternalServer
+	}
 }
 
 // outcomeUnknown is what the model reads of a call a timeout cut off.

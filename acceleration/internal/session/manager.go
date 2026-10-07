@@ -149,6 +149,9 @@ type Manager struct {
 	// conversation is read back from. Nil without a store, and never handed an incognito
 	// session.
 	records *sessionRecorder
+	// invocations logs each connector tool call. Nil without a store or with connectors off,
+	// where no session opens a connector.
+	invocations *invocationRecorder
 	// reviews says what a finished call went like, onto the row calls wrote.
 	reviews *reviewer
 	// titles names persistent conversations nobody renamed, on the session row and the channel.
@@ -198,6 +201,9 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		manager.calls = newCallRecorder(options.Store, options.Logger)
 		manager.records = newSessionRecorder(options.Store, options.Logger)
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
+		if options.Connectors.Transports != nil {
+			manager.invocations = newInvocationRecorder(options.Store, options.Logger)
+		}
 	}
 	manager.titles = newTitler(options.LLM, manager.records, options.Logger)
 	manager.cards = newCallCards(options.Store, options.Stream, options.Logger)
@@ -1258,6 +1264,9 @@ func (m *Manager) Shutdown() error {
 		m.calls.Close()
 		m.records.Close()
 		m.logs.close()
+	}
+	if m.invocations != nil {
+		m.invocations.Close()
 	}
 	// A conversation store the caller passed in outlives this manager.
 	if m.conversations != nil && m.options.Conversations == nil {

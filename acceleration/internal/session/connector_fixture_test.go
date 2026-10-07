@@ -94,7 +94,9 @@ func (s *connectorFixture) managerWith(requestTimeout time.Duration) *Manager {
 		}})
 	s.Require().NoError(err)
 	logger := slog.New(slog.DiscardHandler)
-	return &Manager{logger: logger, options: ManagerOptions{
+	invocations := newInvocationRecorder(s.store, logger)
+	s.T().Cleanup(invocations.Close)
+	return &Manager{logger: logger, invocations: invocations, options: ManagerOptions{
 		Store: s.store, Logger: logger, Connectors: Connectors{Registry: s.registry, Transports: transports},
 	}}
 }
@@ -228,7 +230,12 @@ var (
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}}}
 	toolSlow = &mcpsdk.Tool{Name: "slow", Description: "Takes as long as it is let.",
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}}}
-	providerTools = map[string]*mcpsdk.Tool{"whoami": toolWhoami, "secret": toolSecret, "slow": toolSlow}
+	toolEcho = &mcpsdk.Tool{Name: "echo", Description: "Answers with the note it was sent.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"note": map[string]any{"type": "string"}}}}
+	toolFails = &mcpsdk.Tool{Name: "fails", Description: "Reports its own failure.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}}}
+	providerTools = map[string]*mcpsdk.Tool{"whoami": toolWhoami, "secret": toolSecret, "slow": toolSlow,
+		"echo": toolEcho, "fails": toolFails}
 )
 
 // grants grant each of the provider's tools by name, at its digest.
@@ -284,6 +291,16 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 			case <-ctx.Done():
 			}
 			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "done"}}}, nil
+		})
+		server.AddTool(toolEcho, func(_ context.Context, request *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+			var sent struct {
+				Note string `json:"note"`
+			}
+			_ = json.Unmarshal(request.Params.Arguments, &sent)
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "you said " + sent.Note}}}, nil
+		})
+		server.AddTool(toolFails, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+			return &mcpsdk.CallToolResult{IsError: true, Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the record is locked"}}}, nil
 		})
 		servers[account] = server
 	}

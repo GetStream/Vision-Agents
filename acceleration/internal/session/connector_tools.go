@@ -117,7 +117,7 @@ func (m *Manager) attachConnectors(ctx context.Context, spec *Spec) (*dispatcher
 	if spec.ConfigID == "" {
 		return nil, nil, nil, stack.Wrap(errors.New("session: connector bindings come from a stored agent config, and this session names none"))
 	}
-	d := &dispatcher{store: m.options.Store, spec: *spec, routes: map[string]route{}}
+	d := &dispatcher{store: m.options.Store, spec: *spec, routes: map[string]route{}, invocations: m.invocations}
 	for _, binding := range spec.ConnectorBindings {
 		reason, err := m.openBinding(ctx, *spec, binding, selected[binding.Name], d)
 		if err != nil {
