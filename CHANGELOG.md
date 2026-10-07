@@ -1702,6 +1702,13 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
   includes the account's discounts), keeps it for 24 hours, and shows it with no change.
   If that call fails, the search still returns the numbers, with no price. A bought Twilio
   number still has no price (AI-931).
+- A voice agent with tools says what it is about to do before it does it. The instruction that
+  has the reply model call a tool as soon as it has what the tool requires also made it skip the
+  read-back an operator's own instructions ask for first, so the caller heard a half-second
+  filler and then nothing while the tool ran. Before calling a tool the model is now told to say
+  one short sentence, what the instructions ask to be said before acting, such as reading the
+  caller's details back, or else what it is doing, and to call the tool in the same turn: acting
+  at once still holds, but a bare filler never replaces a required read-back.
 - A voice agent with tools acts on a request once it has what the tools require. The model that
   answers a caller was given the tools and nothing about using them, so it kept collecting
   optional details, asked for a first name when a surname was given, asked whether to do what the
