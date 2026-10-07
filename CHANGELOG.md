@@ -755,6 +755,20 @@ applies wherever `ROUTER_SPECULATIVE_REPLIES` does, and a reply for words that a
 answered is paid for like any other dropped one. `0` starts the reply with the candidate, as
 before, and the agent option `PreviewDebounce` is the same setting.
 
+### A reply is started early only for a caller who has gone quiet: `ROUTER_PREVIEW_QUIET`
+
+Words hold still while a caller is still voiced, in a breath, a hesitation or a sound that is
+not speech, and a reply started then was thrown away when the next revision arrived, each one
+paid for. A reply is now started ahead of the wait only when the words have held still for
+`ROUTER_PREVIEW_DEBOUNCE` and the caller's audio has also been quiet for `ROUTER_PREVIEW_QUIET`,
+`120ms` by default, which is checked again when the debounce runs out: for a caller who is still
+voiced it runs on for the rest of the quiet. At most three replies are started this way for one
+run of a caller's words, counted from the last turn that was answered, and after that the reply is
+started with the candidate. No debounce is armed at all when replies are not previewed, in a text
+conversation, for a speech-to-speech model, or while the next turn is being given longer to
+settle after an overlap. `0` looks at the words alone, and the agent option `PreviewQuiet` is the
+same setting.
+
 ### A low acoustic score is asked again sooner, and patience is shorter
 
 When the acoustic end-of-turn score rules a caller's words unfinished, it is now put again after

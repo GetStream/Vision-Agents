@@ -32,6 +32,16 @@ const (
 	// also no longer than cadenceFinalGap, which is what leaves the words of a finalized
 	// transcript to their candidate.
 	defaultPreviewDebounce = 60 * time.Millisecond
+	// defaultPreviewQuiet is how long the caller's audio has to have been quiet, as well as their
+	// words having held still, before a reply is started for them ahead of the wait. Words hold
+	// still while a caller breathes, hesitates or makes a sound that is not speech, and a reply
+	// started then is thrown away when the next revision arrives.
+	defaultPreviewQuiet = 120 * time.Millisecond
+	// maxEarlyPreviews is how many replies are started ahead of the wait for one run of a
+	// caller's words, counted from the last turn that was answered. A caller who goes on talking
+	// keeps changing their words, and every reply started for them is paid for and thrown away.
+	// After this many the reply is started with the candidate.
+	maxEarlyPreviews = 3
 )
 
 // candidate is a stable transcript revision worth asking the flow controller about.
@@ -75,6 +85,13 @@ type cadence struct {
 	// reply to start with the candidate. previews carries the words it starts one for.
 	preview  time.Duration
 	previews chan candidate
+	// previewQuiet is how long the caller's audio also has to have been quiet, as quietFor
+	// measures it, before a reply is started ahead of the wait. Zero looks at the words alone,
+	// and so does having no way to measure it. previewing says whether a reply can be started for
+	// words at all, which is nothing the cadence knows: nil means it can.
+	previewQuiet time.Duration
+	quietFor     func(participantID string) time.Duration
+	previewing   func() bool
 
 	mu         sync.Mutex
 	speakers   map[string]*cadenceSpeaker
@@ -123,6 +140,9 @@ type cadenceSpeaker struct {
 	// and previewEpoch says which timer is the live one.
 	previewTimer cadenceTimer
 	previewEpoch int64
+	// previews is how many replies were started ahead of the wait for the words since the last
+	// turn that was answered.
+	previews int
 }
 
 func newCadence(gap, retry, settle time.Duration, logger *slog.Logger) *cadence {
@@ -275,6 +295,7 @@ func (c *cadence) resolveAfter(candidateID string, wait bool, retryAfter time.Du
 			current.committed = current.text
 			current.committedUtterance = current.utterance
 			current.committedAt = time.Now()
+			current.previews = 0
 			current.text = ""
 			current.carried = ""
 			current.speaker = ""
@@ -516,17 +537,28 @@ func (c *cadence) previewable(early candidate) bool {
 // schedulePreviewLocked starts the debounce for the words just heard, replacing the one the
 // words they replace had running. Words that end visibly unfinished are not previewed, because
 // they are about to change, and nor are words whose candidate is due no later than the debounce
-// would be, which would only be asked about at the same moment. The caller holds the lock.
+// would be, which would only be asked about at the same moment. No debounce is armed at all when
+// no reply can be started for the words, while the line is running late after an overlap and is
+// owed grace, or once a reply has been started ahead of the wait for this many revisions of the
+// caller's words since the last turn that was answered: those are started with the candidate.
+// The caller holds the lock.
 func (c *cadence) schedulePreviewLocked(current *cadenceSpeaker, candidateDelay time.Duration, unfinished bool) {
 	c.stopPreviewLocked(current)
-	if c.preview <= 0 || unfinished || candidateDelay <= c.preview {
+	if c.preview <= 0 || unfinished || candidateDelay <= c.preview || c.grace > 0 ||
+		current.previews >= maxEarlyPreviews || (c.previewing != nil && !c.previewing()) {
 		return
 	}
+	c.armPreviewLocked(current, c.preview)
+}
+
+// armPreviewLocked has the words as they stand announced after the delay, if they are still
+// the words by then. The caller holds the lock.
+func (c *cadence) armPreviewLocked(current *cadenceSpeaker, delay time.Duration) {
 	generation := current.generation
 	epoch := c.nextTimerEpochLocked()
 	current.previewEpoch = epoch
 	participantID := current.participant.ID
-	current.previewTimer = c.after(c.preview, func() {
+	current.previewTimer = c.after(delay, func() {
 		c.emitPreview(participantID, generation, epoch)
 	})
 }
@@ -544,18 +576,30 @@ func (c *cadence) stopPreviewLocked(current *cadenceSpeaker) {
 }
 
 // emitPreview announces words that held still for the preview debounce, unless they have
-// changed, been put to a ruling or been forgotten since it began.
+// changed, been put to a ruling or been forgotten since it began, or the caller's audio has not
+// been quiet for the preview quiet. Words hold still while a caller is still voiced, so that
+// is looked at again here rather than when the debounce was armed, and when it is not so yet the
+// debounce runs on for the rest of it.
 func (c *cadence) emitPreview(participantID string, generation, epoch int64) {
 	c.mu.Lock()
 	current, ok := c.speakers[participantID]
 	if c.closed || !ok || current.generation != generation || current.previewEpoch != epoch ||
-		current.text == "" || current.candidateID != "" || current.emittedGeneration == generation {
+		current.text == "" || current.candidateID != "" || current.emittedGeneration == generation ||
+		(c.previewing != nil && !c.previewing()) {
 		c.mu.Unlock()
 		return
+	}
+	if c.previewQuiet > 0 && c.quietFor != nil {
+		if quiet := c.quietFor(participantID); quiet < c.previewQuiet {
+			c.armPreviewLocked(current, c.previewQuiet-quiet)
+			c.mu.Unlock()
+			return
+		}
 	}
 	current.previewTimer = nil
 	// Announced once: the words are only announced again if they change and hold still again.
 	current.previewEpoch = 0
+	current.previews++
 	ready := candidate{
 		ID:           replyPrefix + turnStamp(),
 		Participant:  current.participant,

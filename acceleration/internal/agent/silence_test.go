@@ -372,7 +372,13 @@ func TestTheReplySilenceDefaultsToSevenHundredMillisecondsAndCanBeTurnedOff(t *t
 	disabled, err := New(options(&off))
 	require.NoError(t, err)
 	require.Zero(t, disabled.replySilence)
-	require.Nil(t, disabled.voiced, "nothing is listened to for a gate that is off")
+	require.NotNil(t, disabled.voiced, "the quiet a reply is started on is still listened for")
+
+	unheard := options(&off)
+	unheard.PreviewQuiet = &off
+	deaf, err := New(unheard)
+	require.NoError(t, err)
+	require.Nil(t, deaf.voiced, "nothing is listened to when neither needs it")
 
 	negative := -time.Millisecond
 	_, err = New(options(&negative))
@@ -404,9 +410,8 @@ func TestAHeldReplyIsLetOutAfterAtMostASecondAndTheLimitCannotBeLeftOut(t *testi
 	_, err = New(options(nil, duration(-time.Millisecond)))
 	require.Error(t, err)
 
-	off, err := New(options(duration(0), duration(0)))
+	_, err = New(options(duration(0), duration(0)))
 	require.NoError(t, err, "with the wait for silence off there is nothing to limit")
-	require.Nil(t, off.voiced)
 }
 
 // speakAloud pushes a chunk of a participant's audio that carries a voice into the call, waits
@@ -588,7 +593,7 @@ func (s *AgentSuite) TestAReplyIsNotHeldWhenTheReplySilenceIsOff() {
 	off := time.Duration(0)
 	s.replySilence = &off
 	s.join(true)
-	s.Nil(s.agent.voiced)
+	s.Zero(s.agent.replySilence)
 	alice := stt.Participant{ID: "alice"}
 	s.keepsTalking(alice)
 

@@ -113,6 +113,10 @@ type ManagerOptions struct {
 	// the reply to them, ahead of the wait that decides whether they have finished. Nil leaves
 	// it at the agent's default, and a pointer to zero starts the reply when that wait is over.
 	PreviewDebounce *time.Duration
+	// PreviewQuiet is how long a caller's audio has to have been quiet, as well as their words
+	// having held still, before every agent starts the reply to them ahead of that wait. Nil
+	// leaves it at the agent's default, and a pointer to zero looks at the words alone.
+	PreviewQuiet *time.Duration
 	// Stream says which Stream app, and with which credential, each session acts in. It
 	// is optional: without it a session has no app, and anything needing one fails where
 	// it needs it, as it does on a deployment with no Stream credentials.
@@ -524,6 +528,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		ReplySilence:       m.options.ReplySilence,
 		ReplySilenceMax:    m.options.ReplySilenceMax,
 		PreviewDebounce:    m.options.PreviewDebounce,
+		PreviewQuiet:       m.options.PreviewQuiet,
 		AppID:              spec.Memory.AppID,
 		SessionID:          spec.ID,
 		Incognito:          spec.Incognito,

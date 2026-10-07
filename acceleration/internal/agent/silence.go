@@ -124,6 +124,16 @@ func (v *voiceActivity) lastVoiced(participantID string) time.Time {
 	return time.Time{}
 }
 
+// quietFor is how long a participant's audio has been quiet at the time now, since it last
+// carried a voice. It is for good if it never has.
+func (v *voiceActivity) quietFor(participantID string, now time.Time) time.Duration {
+	last := v.lastVoiced(participantID)
+	if last.IsZero() {
+		return time.Duration(math.MaxInt64)
+	}
+	return now.Sub(last)
+}
+
 // forget drops what is known of a participant who has left.
 func (v *voiceActivity) forget(participantID string) {
 	v.mu.Lock()

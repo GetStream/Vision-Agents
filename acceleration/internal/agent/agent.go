@@ -186,6 +186,12 @@ type Options struct {
 	// wherever SpeculativeReplies does. Nil leaves it at 60ms, and a pointer to zero starts
 	// the reply when the wait is over, as it did before.
 	PreviewDebounce *time.Duration
+	// PreviewQuiet is how long a caller's audio has to have been quiet, as well as their words
+	// having held still for PreviewDebounce, before the reply to them is started ahead of that
+	// wait. It is looked at again when the debounce runs out, and at most three replies are
+	// started this way for one run of the caller's words: after that the reply is started when
+	// the wait is over. Nil leaves it at 120ms, and a pointer to zero looks at the words alone.
+	PreviewQuiet *time.Duration
 
 	// Voice selects the speaker. Its meaning is the text-to-speech provider's.
 	Voice string
@@ -535,6 +541,13 @@ func New(options Options) (*Agent, error) {
 	if previewDebounce < 0 {
 		return nil, stack.Wrap(errors.New("agent: the preview debounce cannot be negative"))
 	}
+	previewQuiet := defaultPreviewQuiet
+	if options.PreviewQuiet != nil {
+		previewQuiet = *options.PreviewQuiet
+	}
+	if previewQuiet < 0 {
+		return nil, stack.Wrap(errors.New("agent: the preview quiet cannot be negative"))
+	}
 	// Memories belong to the customer unless the caller named someone more specific, and
 	// are always kept under the customer as the app id, so no caller can reach another
 	// customer's and a customer's can be deleted without knowing how its callers labelled
@@ -577,6 +590,7 @@ func New(options Options) (*Agent, error) {
 
 	settling := newCadence(0, 0, 0, logger)
 	settling.preview = previewDebounce
+	settling.previewQuiet = previewQuiet
 	listening := newDuplex(options.Duplex)
 	emitter := NewEmitter(eventBuffer)
 	agent := &Agent{
@@ -601,9 +615,14 @@ func New(options Options) (*Agent, error) {
 		replySilence:     replySilence,
 		replySilenceMax:  replySilenceMax,
 	}
-	// Only a call has a caller's audio to tell silence from.
-	if replySilence > 0 && !options.Text {
+	settling.previewing = agent.previewsEarly
+	// Only a call has a caller's audio to tell silence from, and it is listened to for the hold a
+	// reply is put on and for the quiet a reply is started on.
+	if !options.Text && (replySilence > 0 || (previewQuiet > 0 && previewDebounce > 0 && agent.previewsReplies())) {
 		agent.voiced = newVoiceActivity()
+		settling.quietFor = func(participantID string) time.Duration {
+			return agent.voiced.quietFor(participantID, time.Now())
+		}
 	}
 
 	// Turns are keyed by agent id and decisions by call id, so an agent missing either is
@@ -1615,6 +1634,15 @@ func (a *Agent) previewsReplies() bool {
 	return a.options.SpeculativeReplies == nil || *a.options.SpeculativeReplies
 }
 
+// previewsEarly reports whether a reply can be started for a caller's words ahead of the wait
+// that decides whether they have finished: replies are previewed, there is a voice to speak
+// them and a model that writes them, and no policy has to clear the words first. The cadence
+// asks before it arms the debounce for them.
+func (a *Agent) previewsEarly() bool {
+	return a.previewsReplies() && !a.options.Text && !a.native() &&
+		(a.options.Guardrail == nil || a.options.Guardrail.Policy().Mode != guardrail.ModeBlocking)
+}
+
 func (a *Agent) preview(ready candidate, current *harness.Harness, instructions string) {
 	model := current.PreviewModel()
 	if model == nil {
@@ -1976,7 +2004,7 @@ func (a *Agent) respondCandidate(ready candidate, note string) error {
 	if note != "" {
 		a.cancelPreview(ready.ID)
 	}
-	if a.voiced != nil {
+	if a.voiced != nil && a.replySilence > 0 {
 		// What this reply says is for somebody who has just finished talking, so its first
 		// audio waits for them to have been quiet long enough to have meant it.
 		a.mu.Lock()

@@ -1238,6 +1238,7 @@ func buildSessions(
 		ReplySilence:       &settings.Agent.ReplySilence,
 		ReplySilenceMax:    &settings.Agent.ReplySilenceMax,
 		PreviewDebounce:    &settings.Agent.PreviewDebounce,
+		PreviewQuiet:       &settings.Agent.PreviewQuiet,
 		Stream:             stream,
 		Store:              pgStore,
 		Live:               liveClient,

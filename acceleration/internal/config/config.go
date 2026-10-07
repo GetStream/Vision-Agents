@@ -212,6 +212,11 @@ type Agent struct {
 	// again restart it. It applies wherever SpeculativeReplies does. 60ms by default; 0 starts
 	// the reply when that wait is over.
 	PreviewDebounce time.Duration `koanf:"preview_debounce"`
+	// PreviewQuiet is how long the caller's audio has to have been quiet, as well as their words
+	// having held still for preview_debounce, before the reply to them is started ahead of that
+	// wait. At most three replies are started this way for one run of the caller's words. 120ms
+	// by default; 0 looks at the words alone.
+	PreviewQuiet time.Duration `koanf:"preview_quiet"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -284,6 +289,7 @@ var variables = map[string]string{
 	"agent.reply_silence":       "ROUTER_REPLY_SILENCE",
 	"agent.reply_silence_max":   "ROUTER_REPLY_SILENCE_MAX",
 	"agent.preview_debounce":    "ROUTER_PREVIEW_DEBOUNCE",
+	"agent.preview_quiet":       "ROUTER_PREVIEW_QUIET",
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
 
@@ -312,6 +318,7 @@ func Defaults() Config {
 			ReplySilence:       700 * time.Millisecond,
 			ReplySilenceMax:    time.Second,
 			PreviewDebounce:    60 * time.Millisecond,
+			PreviewQuiet:       120 * time.Millisecond,
 		},
 		EOT:     EOT{Endpoint: eotdefaults.HostedDemoEndpoint, Mode: "primary", Threshold: 0.5},
 		Sandbox: Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
@@ -456,6 +463,9 @@ func (c Config) validate() error {
 	if c.Agent.PreviewDebounce < 0 {
 		return fmt.Errorf("config: agent.preview_debounce cannot be negative, got %s", c.Agent.PreviewDebounce)
 	}
+	if c.Agent.PreviewQuiet < 0 {
+		return fmt.Errorf("config: agent.preview_quiet cannot be negative, got %s", c.Agent.PreviewQuiet)
+	}
 	if c.EOT.Mode != "gate" && c.EOT.Mode != "primary" {
 		return fmt.Errorf("config: eot.mode must be gate or primary, got %q", c.EOT.Mode)
 	}
@@ -549,6 +559,7 @@ func (c Config) export() error {
 		"agent.reply_silence":           c.Agent.ReplySilence.String(),
 		"agent.reply_silence_max":       c.Agent.ReplySilenceMax.String(),
 		"agent.preview_debounce":        c.Agent.PreviewDebounce.String(),
+		"agent.preview_quiet":           c.Agent.PreviewQuiet.String(),
 		"connectors.enabled":            fmt.Sprint(c.Connectors.Enabled),
 		"sandbox.enabled":               fmt.Sprint(c.Sandbox.Enabled),
 		"sandbox.recipients":            fmt.Sprint(c.Sandbox.Recipients),

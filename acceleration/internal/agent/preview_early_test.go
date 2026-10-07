@@ -112,6 +112,19 @@ func (c *previewClock) advance(d time.Duration) {
 	}
 }
 
+// armed is how long from now each timer that has neither run nor been stopped has left.
+func (c *previewClock) armed() []time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var left []time.Duration
+	for _, timer := range c.timers {
+		if !timer.fired && !timer.stopped {
+			left = append(left, timer.due-c.now)
+		}
+	}
+	return left
+}
+
 // burst is the words of a caller being transcribed a few at a time.
 var burst = []string{
 	"please", "please find", "please find a", "please find a table", "please find a table for",
@@ -299,6 +312,176 @@ func (s *CadenceSuite) TestClosingEndsEveryDebounce() {
 	s.nothingAnnounced()
 }
 
+// quietAfter has the cadence told, through the pointer it returns, how long the caller's audio has
+// been quiet, and asked for the default quiet before a reply is started.
+func (s *CadenceSuite) quietAfter(quiet time.Duration) *time.Duration {
+	s.cadence.previewQuiet = defaultPreviewQuiet
+	s.cadence.quietFor = func(string) time.Duration { return quiet }
+	return &quiet
+}
+
+func (s *CadenceSuite) TestWordsThatHoldStillWhileTheCallerIsStillVoicedAreNotAnnouncedUntilTheyHaveBeenQuiet() {
+	s.useDefaultCadence()
+	s.cadence.preview = defaultPreviewDebounce
+	clock := &previewClock{fireStopped: true}
+	s.cadence.after = clock.after
+	voicedFor := new(time.Duration)
+	s.cadence.previewQuiet = defaultPreviewQuiet
+	s.cadence.quietFor = func(string) time.Duration { return *voicedFor }
+	alice := stt.Participant{ID: "alice"}
+
+	for _, text := range burst {
+		s.observe(alice, text)
+		clock.advance(30 * time.Millisecond)
+	}
+	clock.advance(defaultPreviewDebounce)
+	s.Empty(s.announcedNow(), "words that held still were announced while the caller was still voiced")
+
+	clock.advance(defaultPreviewQuiet)
+	s.Empty(s.announcedNow(), "the debounce was not looked at again while the caller was still voiced")
+
+	*voicedFor = defaultPreviewQuiet
+	clock.advance(defaultPreviewQuiet)
+	early := s.announcedNow()
+	s.Require().Len(early, 1, "words that held still once the caller was quiet are one preview")
+	s.Equal(burst[len(burst)-1], early[0].Text)
+
+	clock.advance(time.Minute)
+	s.Empty(s.announcedNow(), "the words were announced again")
+	s.Equal(early[0].Revision, s.ready().Revision, "the candidate is for the words that were announced")
+}
+
+func (s *CadenceSuite) TestWordsThatHoldStillOnceTheCallerHasBeenQuietAreAnnouncedOnce() {
+	timers := s.previewing(defaultPreviewDebounce)
+	s.quietAfter(time.Hour)
+	alice := stt.Participant{ID: "alice"}
+
+	s.observe(alice, "book a table")
+	(*timers)[1].fire()
+
+	early := s.announcedNow()
+	s.Require().Len(early, 1)
+	s.Equal("book a table", early[0].Text)
+	s.Len(*timers, 2, "a debounce that was satisfied is not armed again")
+	(*timers)[1].fire()
+	s.Empty(s.announcedNow(), "the same words were announced twice")
+}
+
+func (s *CadenceSuite) TestADebounceThatFindsTheCallerPartlyQuietRunsOnForTheRest() {
+	timers := s.previewing(defaultPreviewDebounce)
+	quiet := s.quietAfter(50 * time.Millisecond)
+	alice := stt.Participant{ID: "alice"}
+
+	s.observe(alice, "book a table")
+	(*timers)[1].fire()
+
+	s.Empty(s.announcedNow(), "words were announced before the caller had been quiet for the quiet")
+	s.Require().Len(*timers, 3)
+	s.Equal(defaultPreviewQuiet-50*time.Millisecond, (*timers)[2].delay)
+
+	*quiet = defaultPreviewQuiet
+	(*timers)[2].fire()
+	s.Require().Len(s.announcedNow(), 1)
+}
+
+func (s *CadenceSuite) TestWithoutAQuietTheWordsAloneDecide() {
+	timers := s.previewing(defaultPreviewDebounce)
+	s.cadence.quietFor = func(string) time.Duration { return 0 }
+	alice := stt.Participant{ID: "alice"}
+
+	s.observe(alice, "book a table")
+	(*timers)[1].fire()
+
+	s.Require().Len(s.announcedNow(), 1, "a caller who is voiced held a reply back that was asked to look at the words alone")
+}
+
+func (s *CadenceSuite) TestOnlyThreeRepliesAreStartedAheadOfTheWaitForOneRunOfWords() {
+	timers := s.previewing(defaultPreviewDebounce)
+	alice := stt.Participant{ID: "alice"}
+	revisions := []string{"book", "book a", "book a table", "book a table for", "book a table for two"}
+
+	for i, text := range revisions[:maxEarlyPreviews] {
+		s.observe(alice, text)
+		(*timers)[2*i+1].fire()
+		s.Equal(text, s.announced().Text)
+	}
+	armed := len(*timers)
+	s.observe(alice, revisions[3])
+	s.Len(*timers, armed+1, "a debounce was armed after the cap")
+	s.Equal(defaultCadenceGap, (*timers)[armed].delay, "only the candidate is")
+
+	(*timers)[armed].fire()
+	ready := s.ready()
+	s.Equal(revisions[3], ready.Text)
+	s.Require().True(s.cadence.Resolve(ready.ID, false))
+
+	armed = len(*timers)
+	s.observe(alice, "and another thing")
+	s.Len(*timers, armed+2, "the count did not start again once the turn was answered")
+}
+
+func (s *CadenceSuite) TestNoDebounceIsArmedWhenNoReplyCanBeStartedOrTheLineIsOwedGrace() {
+	timers := s.previewing(defaultPreviewDebounce)
+	alice := stt.Participant{ID: "alice"}
+
+	s.cadence.previewing = func() bool { return false }
+	s.observe(alice, "book a table")
+	s.Require().Len(*timers, 1, "a debounce was armed where no reply can be started")
+	s.Equal(defaultCadenceGap, (*timers)[0].delay)
+
+	s.cadence.previewing = nil
+	s.cadence.Grace(150 * time.Millisecond)
+	s.observe(alice, "book a table for two")
+	s.Require().Len(*timers, 2, "a debounce was armed while the line is running late")
+	s.Equal(defaultCadenceGap+150*time.Millisecond, (*timers)[1].delay)
+}
+
+func TestThePreviewQuietDefaultsToOneHundredAndTwentyMillisecondsAndCanBeTurnedOff(t *testing.T) {
+	options := func(quiet *time.Duration) Options {
+		return Options{
+			CustomerID: "acme", Edge: newLoopbackEdge(), LLM: &llmrouter.Router{},
+			STT: &sttrouter.Router{}, TTS: &ttsrouter.Router{}, PreviewQuiet: quiet,
+		}
+	}
+
+	left, err := New(options(nil))
+	require.NoError(t, err)
+	require.Equal(t, 120*time.Millisecond, left.cadence.previewQuiet)
+	require.NotNil(t, left.voiced, "the caller's audio is listened to for it")
+
+	off := time.Duration(0)
+	disabled, err := New(options(&off))
+	require.NoError(t, err)
+	require.Zero(t, disabled.cadence.previewQuiet)
+
+	negative := -time.Millisecond
+	_, err = New(options(&negative))
+	require.Error(t, err)
+}
+
+func TestNoReplyIsStartedAheadOfTheWaitInTextOrSpeechToSpeechMode(t *testing.T) {
+	written, err := New(Options{Text: true, CustomerID: "acme", LLM: &llmrouter.Router{}})
+	require.NoError(t, err)
+	require.False(t, written.previewsEarly())
+
+	spoken, err := New(Options{
+		CustomerID: "acme", Edge: newLoopbackEdge(), LLM: &llmrouter.Router{},
+		STT: &sttrouter.Router{}, TTS: &ttsrouter.Router{},
+	})
+	require.NoError(t, err)
+	require.True(t, spoken.previewsEarly())
+	spoken.nativeMode.Store(true)
+	require.False(t, spoken.previewsEarly())
+
+	off := false
+	unpreviewed, err := New(Options{
+		CustomerID: "acme", Edge: newLoopbackEdge(), LLM: &llmrouter.Router{},
+		STT: &sttrouter.Router{}, TTS: &ttsrouter.Router{}, SpeculativeReplies: &off,
+	})
+	require.NoError(t, err)
+	require.False(t, unpreviewed.previewsEarly())
+}
+
 func TestThePreviewDebounceDefaultsToSixtyMillisecondsAndCanBeTurnedOff(t *testing.T) {
 	options := func(debounce *time.Duration) Options {
 		return Options{
@@ -350,6 +533,41 @@ func (s *AgentSuite) holdsAnEarlyPreview() (stt.Participant, *atomic.Bool) {
 	s.eventually(func() bool { return s.keptPreviews() == 1 && len(s.model.requests()) == 1 },
 		"no reply was started for the words")
 	return alice, s.watchPreview()
+}
+
+func (s *AgentSuite) TestWordsThatHoldStillWhileTheCallerIsStillVoicedStartNoReplyUntilTheyHaveBeenQuiet() {
+	quiet := 800 * time.Millisecond
+	s.previewQuiet = &quiet
+	s.join(true)
+	s.slowGap(10 * time.Second)
+	alice := stt.Participant{ID: "alice"}
+	s.speakAloud(alice)
+
+	s.mutters(alice, "please find a table")
+
+	s.Never(func() bool { return len(s.model.requests()) > 0 }, 400*time.Millisecond, 10*time.Millisecond,
+		"a reply was started for words that held still while the caller was still voiced")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 && s.keptPreviews() == 1 },
+		"no reply was started once the caller had been quiet")
+	s.Equal("please find a table", s.asked(0))
+}
+
+func (s *AgentSuite) TestNoDebounceIsArmedWhenRepliesAreNotPreviewed() {
+	off := false
+	s.speculation = &off
+	s.join(true)
+	clock := &previewClock{}
+	s.agent.cadence.mu.Lock()
+	s.agent.cadence.after = clock.after
+	s.agent.cadence.mu.Unlock()
+	alice := stt.Participant{ID: "alice"}
+	s.speak(alice)
+
+	s.mutters(alice, "please find a table")
+
+	s.eventually(func() bool { _, heard := s.agent.cadence.currentCandidate(alice.ID); return heard },
+		"the words were never heard")
+	s.Equal([]time.Duration{defaultCadenceGap}, clock.armed(), "only the candidate is waited for")
 }
 
 func (s *AgentSuite) TestAStableRevisionStartsAReplyBeforeItsCandidateAndTheCandidateAdoptsIt() {

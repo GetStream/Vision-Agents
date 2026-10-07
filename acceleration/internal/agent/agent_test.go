@@ -560,6 +560,10 @@ type AgentSuite struct {
 	// previewDebounce is how long words hold still before the reply to them is started, and is
 	// nil, which leaves the default, unless a test says otherwise.
 	previewDebounce *time.Duration
+	// previewQuiet is how long the caller's audio has to have been quiet before the reply to
+	// their words is started early, and is nil, which leaves the default, unless a test says
+	// otherwise.
+	previewQuiet *time.Duration
 	// remembers is the memory store the agent joins with, when a test gives it one.
 	remembers *stubMemory
 	// incognito holds the session off the record.
@@ -616,6 +620,7 @@ func (s *AgentSuite) SetupTest() {
 	s.replySilence = nil
 	s.replySilenceMax = nil
 	s.previewDebounce = nil
+	s.previewQuiet = nil
 	s.performing = ""
 	if s.agentID == "" {
 		s.agentID = "agent-1"
@@ -798,6 +803,7 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		ReplySilence:       s.replySilence,
 		ReplySilenceMax:    s.replySilenceMax,
 		PreviewDebounce:    s.previewDebounce,
+		PreviewQuiet:       s.previewQuiet,
 		LLM:                reasoner,
 		LLMTarget:          "en-low-latency",
 		STT:                transcriber,
