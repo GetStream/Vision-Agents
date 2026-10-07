@@ -278,6 +278,9 @@ type PhoneNumber struct {
 	// rather than the number.
 	StreamCallID   string `bun:"stream_call_id,nullzero"`
 	StreamCallType string `bun:"stream_call_type,nullzero"`
+	// SIPTrunkID is the customer's own trunk a number with vendor sip_trunk is dialled
+	// through. Empty for a bought number, and cleared when the number is released.
+	SIPTrunkID string `bun:"sip_trunk_id,nullzero"`
 	// UseCaseID is the 10DLC use case the number sends as. Empty sends as the app's default.
 	UseCaseID   string     `bun:"dlc_use_case_id,nullzero"`
 	PurchasedAt time.Time  `bun:"purchased_at,notnull"`

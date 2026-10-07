@@ -260,6 +260,9 @@ type Outbound struct {
 	// one from when the person answers. It is set only for those vendors, and what it
 	// serves is that vendor's own Answer.
 	AnswerURL string
+	// Trunk is the customer's own SIP trunk the call is dialled through. It is set only
+	// for numbers with vendor sip_trunk; every other vendor dials through its own network.
+	Trunk *SIPTrunk
 }
 
 // Features are the terms this call is placed on, which is what a vendor has to be able to
