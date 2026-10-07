@@ -154,6 +154,62 @@ func (s *InvocationLogSuite) TestACredentialTheProviderRefusesLeavesACustomerAut
 	s.Equal(store.InvocationCustomerAuth, s.logged(app, 1)[0].ErrorType)
 }
 
+// TestAnIncognitoCallsAuditRowNamesNeitherItsRequestNorItsSession: a session's calls run on
+// the context of the request that created it, whose X-Request-Id is the same for the whole
+// session. The revocation an incognito call causes carries neither that id nor the session's.
+func (s *InvocationLogSuite) TestAnIncognitoCallsAuditRowNamesNeitherItsRequestNorItsSession() {
+	spec, app := s.refusedSession()
+	spec.Incognito = true
+
+	rows := s.revokedBy(spec, app)
+
+	s.Empty(rows[0].RequestID)
+	s.Empty(rows[0].SessionID)
+}
+
+// TestARecordedCallsAuditRowNamesItsRequestAndSession is the control: without it, the test
+// above would pass against a router that names nothing for anyone.
+func (s *InvocationLogSuite) TestARecordedCallsAuditRowNamesItsRequestAndSession() {
+	spec, app := s.refusedSession()
+
+	rows := s.revokedBy(spec, app)
+
+	s.Equal("create-request", rows[0].RequestID)
+	s.Equal(spec.ID, rows[0].SessionID)
+}
+
+// refusedSession is a session of an app connection whose token the provider will refuse
+// once the session is open.
+func (s *InvocationLogSuite) refusedSession() (Spec, string) {
+	app := s.connection("", "primary")
+	spec := s.spec(s.config(s.fixed("crm", app, "whoami")), "", nil)
+	spec.ID = uuid.NewString()
+	return spec, app
+}
+
+// revokedBy opens spec, has the provider stop taking the connection's token, makes one call
+// on a context naming the request that created the session, as Manager.Create's does, and
+// returns the audit row of the revocation it caused.
+func (s *InvocationLogSuite) revokedBy(spec Spec, app string) []store.ConnectorAuditEvent {
+	d, _, _, err := s.attach(spec)
+	s.Require().NoError(err)
+	wrong, _, err := bearer.New().Complete(s.ctx, core.CompleteInput{Supplied: map[string]string{bearer.SuppliedToken: tokenOf("secondary")}})
+	s.Require().NoError(err)
+	s.setState(app, func(state *core.CredentialState) { state.Credentials = wrong })
+	created := core.WithCorrelation(s.ctx, core.Correlation{RequestID: "create-request"})
+
+	_, err = d.Run(created, llm.ToolCall{ID: uuid.NewString(), Name: "crm__whoami", Arguments: "{}"})
+
+	s.Require().Error(err)
+	var rows []store.ConnectorAuditEvent
+	s.Require().Eventually(func() bool {
+		rows, err = s.store.ConnectorAuditEvents(s.ctx, s.customerID, store.AuditFilter{ConnectionID: app})
+		return err == nil && len(rows) == 1
+	}, 5*time.Second, 20*time.Millisecond)
+	s.Equal(store.AuditGrantRevoked, rows[0].Action)
+	return rows
+}
+
 // TestAnIncognitoSessionsCallIsLoggedWithoutItsSession: the decision this PR makes for
 // incognito. The row says the connection's credential was used; nothing in it names the
 // conversation. No session's row holds what the call was asked or answered.
@@ -221,11 +277,13 @@ func (s *InvocationLogSuite) TestTheLogDoesNotHoldUpTheCall() {
 	s.Require().NoError(err)
 	s.Equal("primary", said)
 	s.Less(took, 2*time.Second, "the call came back while its row could not be written")
-	s.Never(func() bool {
+	// Polled here, on this goroutine: held is one transaction, which two goroutines must not
+	// share, as a testify Never's condition would.
+	for until := time.Now().Add(300 * time.Millisecond); time.Now().Before(until); time.Sleep(50 * time.Millisecond) {
 		var written int
 		s.Require().NoError(held.QueryRowContext(s.ctx, "SELECT count(*) FROM connector_invocations WHERE connection_id = ?", app).Scan(&written))
-		return written > 0
-	}, 300*time.Millisecond, 50*time.Millisecond, "the write was held by the lock")
+		s.Require().Zero(written, "the write was held by the lock")
+	}
 	s.Require().NoError(held.Commit())
 	s.Len(s.logged(app, 1), 1, "the row is written once the table is free")
 }

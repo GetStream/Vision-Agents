@@ -104,13 +104,16 @@ func (d *dispatcher) record(r route, started time.Time, failure string) {
 }
 
 // correlated is ctx naming this session for the audit rows its calls cause, such as a
-// refresh (core.Correlation), and none for an incognito session.
+// refresh (core.Correlation), and nothing at all for an incognito session. Not even the
+// request id: a session's turns run on the context of the request that created it
+// (Manager.Create), so that id is the same for the whole session and names it in the access
+// log as well as a session id would.
 func (d *dispatcher) correlated(ctx context.Context) context.Context {
+	if d.spec.Incognito {
+		return core.WithCorrelation(ctx, core.Correlation{})
+	}
 	correlation := core.CorrelationOf(ctx)
 	correlation.SessionID = d.spec.ID
-	if d.spec.Incognito {
-		correlation.SessionID = ""
-	}
 	return core.WithCorrelation(ctx, correlation)
 }
 
