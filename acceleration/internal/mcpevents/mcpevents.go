@@ -64,9 +64,13 @@ const maxRetryAfter = 24 * time.Hour
 // eventforward's lease is.
 const lease = time.Minute
 
-// claimBatch is how many due subscriptions one look takes. A choice: one look's attempts run
-// one after another, so a batch is at most a few seconds of work.
-const claimBatch = 16
+// claimBatch is how many due subscriptions one claim takes: one, so the row a worker holds is
+// always inside its lease. One attempt is at most two requests to the server (server/discover,
+// then events/subscribe or events/unsubscribe), each bounded by the MCP source's 10 s startup
+// timeout, so about 20 s, inside the 1-min lease; a batch of 16 could take 16 × 20 s, and its
+// later rows would be claimed again by another router mid-batch. A look still takes every
+// due row, one claim at a time.
+const claimBatch = 1
 
 // runTimeout bounds the conversation one event opens, and settleGap is how long the agent stays
 // quiet, with nothing left to do, before that conversation is taken as finished: the plugin
@@ -190,9 +194,14 @@ func (s *Service) Close() {
 // makes every subscription of the connection due, and wakes the worker, which asks the server
 // for the declared ones and unsubscribes and drops the rest. Nothing is sent to the server
 // here, so the validate does not wait on it.
+//
+// A copy that is not connected changes nothing. The copy is read without the credential lock,
+// so it can be another router's renewal in flight (needs_reauthorization at the resolver's
+// checkpoint) while the stored row is connected again; a deleted or disconnected connection's
+// rows go through the worker and Receive (gone), never from here.
 func (s *Service) Reconcile(ctx context.Context, connection store.ConnectorConnection) error {
 	if connection.Status != store.ConnectionConnected {
-		return s.Stop(ctx, connection.CustomerID, connection.ID)
+		return nil
 	}
 	configs, err := s.store.AgentConfigsBindingConnection(ctx, connection.CustomerID, connection.ID)
 	if err != nil {
@@ -314,7 +323,7 @@ func (s *Service) attempt(sub store.ConnectionEventSubscription) {
 		// needs_reauthorization or pending: the resolver writes needs_reauthorization at its
 		// checkpoint before every OAuth refresh and connected after it (resolver.retrieve), and
 		// a consent connects it again, so the subscription waits rather than going.
-		next := time.Now().UTC().Add(retryAfter)
+		next := waitUntil(time.Now().UTC(), sub.RefreshBefore, s.lease)
 		sub.NextAttemptAt = &next
 		if err := s.store.SaveConnectionEventSubscription(ctx, &sub); err != nil {
 			s.logger.Warn("could not store an MCP event subscription", "subscription", sub.ID, "error", err)
@@ -359,6 +368,26 @@ func retryWait(failures int) time.Duration {
 		wait *= 2
 	}
 	return min(wait, maxRetryAfter)
+}
+
+// waitUntil is when a subscription whose connection waits on a renewal or a reconnect is looked
+// at again: retryAfter from now, but a lease before the server's grant ends when that comes
+// first, so a renewal that finishes in seconds is followed by a refresh in time. Never sooner
+// than a lease from now; and a grant already ended waits retryAfter, since asking sooner saves
+// nothing.
+func waitUntil(now time.Time, refreshBefore *time.Time, lease time.Duration) time.Time {
+	next := now.Add(retryAfter)
+	if refreshBefore == nil || !refreshBefore.After(now) {
+		return next
+	}
+	ahead := refreshBefore.Add(-lease)
+	if ahead.Before(now.Add(lease)) {
+		ahead = now.Add(lease)
+	}
+	if ahead.Before(next) {
+		return ahead
+	}
+	return next
 }
 
 // gone reports whether a subscription's connection is deleted or disconnected, which ends the

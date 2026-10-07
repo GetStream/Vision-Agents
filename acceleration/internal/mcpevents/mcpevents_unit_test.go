@@ -73,6 +73,33 @@ func (s *UnitSuite) TestARefusedSubscriptionWaitsTwiceAsLongEachTimeUpToADay() {
 	s.Equal(24*time.Hour, retryWait(1000))
 }
 
+// TestAWaitOnARenewalEndsALeaseBeforeTheGrantDoes: a grant ending in 5 minutes is asked for
+// again a lease before then, not 15 minutes from now.
+func (s *UnitSuite) TestAWaitOnARenewalEndsALeaseBeforeTheGrantDoes() {
+	ends := s.now.Add(5 * time.Minute)
+
+	s.Equal(ends.Add(-time.Minute), waitUntil(s.now, &ends, time.Minute))
+}
+
+func (s *UnitSuite) TestAWaitOnARenewalWithAGrantFarAwayIsFifteenMinutes() {
+	ends := s.now.Add(time.Hour)
+
+	s.Equal(s.now.Add(15*time.Minute), waitUntil(s.now, &ends, time.Minute))
+}
+
+func (s *UnitSuite) TestAWaitOnARenewalIsNeverShorterThanALease() {
+	ends := s.now.Add(30 * time.Second)
+
+	s.Equal(s.now.Add(time.Minute), waitUntil(s.now, &ends, time.Minute))
+}
+
+func (s *UnitSuite) TestAWaitOnARenewalWithNoGrantLeftOrNoneThatEndsIsFifteenMinutes() {
+	ended := s.now.Add(-time.Minute)
+
+	s.Equal(s.now.Add(15*time.Minute), waitUntil(s.now, &ended, time.Minute))
+	s.Equal(s.now.Add(15*time.Minute), waitUntil(s.now, nil, time.Minute))
+}
+
 // TestASecretIsBoundToItsOwnSubscription: no two subscriptions share additional data, so a
 // sealed secret copied onto another row does not open there, even when the parts run into
 // each other.

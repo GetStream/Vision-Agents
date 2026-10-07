@@ -162,6 +162,48 @@ func (s *ConnectionEventsSuite) TestARenewalInFlightKeepsTheSubscription() {
 	s.False(s.modelWasAsked(during))
 }
 
+// TestAStaleCopyOfARenewalKeepsTheSubscriptions: a validate reads the connection without the
+// credential lock, so its copy can be needs_reauthorization from another router's refresh in
+// flight while the stored row is connected again. Reconcile with that copy changes nothing.
+func (s *ConnectionEventsSuite) TestAStaleCopyOfARenewalKeepsTheSubscriptions() {
+	connection := s.subscribed(s.binding(s.connection(), issueCreated))
+	stale, err := s.store.ConnectorConnection(context.Background(), s.customerID(), connection)
+	s.Require().NoError(err)
+	stale.Status = store.ConnectionNeedsReauthorization
+
+	s.Require().NoError(s.mcpEvents.Reconcile(context.Background(), stale))
+
+	held := s.held(connection)
+	s.Require().Len(held, 1)
+	s.Equal(store.ConnectionEventActive, held[0].Status)
+}
+
+// TestAWorkerThatMeetsARenewalAsksAgainBeforeTheGrantEnds: the worker's look comes while the
+// connection is needs_reauthorization, 30 s before the server's grant ends. It keeps the row
+// and looks again before refresh_before, not 15 minutes later, after the server stopped
+// delivering. An idle worker with a 200 ms lease does the look.
+func (s *ConnectionEventsSuite) TestAWorkerThatMeetsARenewalAsksAgainBeforeTheGrantEnds() {
+	connection := s.subscribed(s.binding(s.connection(), issueCreated))
+	s.setStatus(connection, store.ConnectionNeedsReauthorization)
+	looked := time.Now().UTC()
+	refreshBefore := looked.Add(30 * time.Second)
+	_, err := s.store.DB().ExecContext(context.Background(),
+		"UPDATE connection_event_subscriptions SET refresh_before = ?, next_attempt_at = ? WHERE connection_id = ?",
+		refreshBefore, looked, connection)
+	s.Require().NoError(err)
+
+	s.idleWorker(idleLease)
+
+	// Past its claim's lease (200 ms) and the suite's own worker's (1 min, past refresh_before),
+	// so only the wait the look saved satisfies it.
+	s.Eventually(func() bool {
+		held := s.held(connection)
+		return len(held) == 1 && held[0].NextAttemptAt != nil &&
+			held[0].NextAttemptAt.After(looked.Add(2*time.Second)) && held[0].NextAttemptAt.Before(refreshBefore)
+	}, 4*idleLease, 10*time.Millisecond)
+	s.Equal(store.ConnectionEventActive, s.held(connection)[0].Status)
+}
+
 // TestARevokedGrantPausesItsSubscriptionUntilTheConnectionIsConnectedAgain: the provider ended
 // the grant (a revoke signal, as Slack's tokens_revoked). Nothing reaches the agent while the
 // connection waits for a reconnect, and new credentials bring the subscription back with no
