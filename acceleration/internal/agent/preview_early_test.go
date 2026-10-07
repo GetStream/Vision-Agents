@@ -827,15 +827,23 @@ func (s *AgentSuite) TestNoReplyIsStartedEarlyWhenAPolicyMustClearTheWordsFirst(
 func (s *AgentSuite) TestNoReplyIsStartedEarlyForAnotherVoiceAtTheMicrophone() {
 	s.join(true)
 	s.slowGap(10 * time.Second)
+	clock := s.controlsTimers()
 	alice := stt.Participant{ID: "alice"}
 	s.speak(alice)
 	s.ears.emitter.Send(stt.Transcript{Participant: alice, Mode: stt.ModeReplacement, Speaker: "voice-1", Text: "please find a table"})
-	s.eventually(func() bool { return s.keptPreviews() == 1 }, "the caller's own voice was not previewed")
-	started := len(s.model.requests())
+	s.cadenceHolds(alice, "please find a table")
+	clock.advance(defaultPreviewDebounce)
+	// A preview is kept as soon as it is held, which is before the model has been asked for it. The
+	// request is what says it has started: counted from the kept preview alone, it was recorded a
+	// moment later and mistaken for the reply to the other voice's words.
+	s.eventually(func() bool { return s.keptPreviews() == 1 && len(s.model.requests()) == 1 },
+		"the caller's own voice was not previewed")
 
 	s.ears.emitter.Send(stt.Transcript{Participant: alice, Mode: stt.ModeReplacement, Speaker: "voice-2", Text: "who is at the door"})
+	s.cadenceHolds(alice, "who is at the door")
+	clock.advance(defaultPreviewDebounce)
 
-	s.Never(func() bool { return len(s.model.requests()) > started }, 250*time.Millisecond, 10*time.Millisecond,
+	s.Never(func() bool { return len(s.model.requests()) > 1 }, 250*time.Millisecond, 10*time.Millisecond,
 		"a reply was started for somebody else's words")
 	s.Zero(s.keptPreviews())
 }
