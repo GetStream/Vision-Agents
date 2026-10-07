@@ -840,6 +840,78 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/connectors/{id}/event-destinations": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List a connector's event destinations
+         * @description The connector's event destinations, newest first, without their secrets.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listConnectorEventDestinations"];
+        readonly put?: never;
+        /**
+         * Forward a connector's provider events to a URL
+         * @description Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["createConnectorEventDestination"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connectors/{id}/event-destinations/{destination_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Stop forwarding to an event destination
+         * @description Removes the destination, and every forward to it not yet sent.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteConnectorEventDestination"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connectors/{id}/event-destinations/{destination_id}/rotate-secret": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Rotate an event destination's signing secret
+         * @description Makes a new signing secret for the destination and returns it, once. For the next 24 hours every forward is signed with both the new and the old secret, space-separated in webhook-signature, so the receiver can move to the new one without a forward failing its check. A rotation during another drops the oldest secret.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["rotateConnectorEventDestinationSecret"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/connectors/{id}/oauth-client": {
         readonly parameters: {
             readonly query?: never;
@@ -4170,6 +4242,48 @@ export type components = {
          * @enum {string}
          */
         readonly ConnectorClientRegistrationMethod: "operator" | "customer" | "managed" | "dcr" | "cimd";
+        /** @description A URL of the app's own that a connector's raw provider events are forwarded to, such as Slack's block_actions or reaction_added. Each forward is a POST of the provider's body as it came, with the provider's own Content-Type, signature and timestamp headers, signed on top in the Standard Webhooks shape (webhook-id, webhook-timestamp, webhook-signature) with the destination's own secret. A 2xx answer is taken; a 5xx, a 429 or no answer is sent again after 5 s, 5 min, 30 min and 2 h; any other answer is not sent again. */
+        readonly ConnectorEventDestination: {
+            readonly connector_id: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            readonly forward: components["schemas"]["ConnectorEventForward"];
+            readonly id: string;
+            /**
+             * Format: date-time
+             * @description Until when the secret the last rotation replaced still signs beside the current one. Absent when only one secret signs.
+             */
+            readonly previous_secret_until?: string;
+            /**
+             * Format: date-time
+             * @description When the secret was last rotated, or the destination made.
+             */
+            readonly updated_at: string;
+            readonly url: string;
+        };
+        readonly ConnectorEventDestinationPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["ConnectorEventDestination"][] | null;
+            /** @description Pass as cursor for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        /** @description An event destination to create. An unknown field is refused rather than ignored. */
+        readonly ConnectorEventDestinationRequest: {
+            readonly forward: components["schemas"]["ConnectorEventForward"];
+            /** @description A public https URL. One that is or resolves to a private, loopback or link-local address is refused. */
+            readonly url: string;
+        };
+        /** @description An event destination and the secret its forwards are signed with, which no other response carries. */
+        readonly ConnectorEventDestinationSecret: {
+            readonly destination: components["schemas"]["ConnectorEventDestination"];
+            /** @description The Standard Webhooks signing secret, whsec_ and 32 random bytes in base64. Shown this once: keep it, no later response carries it. */
+            readonly secret: string;
+        };
+        /**
+         * @description Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there.
+         * @enum {string}
+         */
+        readonly ConnectorEventForward: "unhandled" | "all";
         readonly ConnectorInput: {
             /** @description Used when the connection gives no value. An input without one is required. */
             readonly default?: string;
@@ -8626,6 +8740,137 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["Connector"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listConnectorEventDestinations: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The next_cursor of the previous page. Omitted is the first page. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 25. */
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector, such as slack_bot. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of destinations */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorEventDestinationPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly createConnectorEventDestination: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector, such as slack_bot. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectorEventDestinationRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The destination and its secret */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorEventDestinationSecret"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deleteConnectorEventDestination: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The destination, as returned when it was created. */
+                readonly destination_id: string;
+                /** @description The connector, such as slack_bot. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The destination is removed */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly rotateConnectorEventDestinationSecret: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The destination, as returned when it was created. */
+                readonly destination_id: string;
+                /** @description The connector, such as slack_bot. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The destination and its new secret */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorEventDestinationSecret"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];

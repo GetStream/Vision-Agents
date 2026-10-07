@@ -1914,6 +1914,90 @@ components:
         - dcr
         - cimd
       type: string
+    ConnectorEventDestination:
+      description: A URL of the app's own that a connector's raw provider events are forwarded to, such as Slack's block_actions or reaction_added. Each forward is a POST of the provider's body as it came, with the provider's own Content-Type, signature and timestamp headers, signed on top in the Standard Webhooks shape (webhook-id, webhook-timestamp, webhook-signature) with the destination's own secret. A 2xx answer is taken; a 5xx, a 429 or no answer is sent again after 5 s, 5 min, 30 min and 2 h; any other answer is not sent again.
+      properties:
+        connector_id:
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        forward:
+          $ref: '#/components/schemas/ConnectorEventForward'
+        id:
+          readOnly: true
+          type: string
+        previous_secret_until:
+          description: Until when the secret the last rotation replaced still signs beside the current one. Absent when only one secret signs.
+          format: date-time
+          readOnly: true
+          type: string
+        updated_at:
+          description: When the secret was last rotated, or the destination made.
+          format: date-time
+          readOnly: true
+          type: string
+        url:
+          type: string
+      required:
+        - id
+        - connector_id
+        - url
+        - forward
+        - created_at
+        - updated_at
+      type: object
+    ConnectorEventDestinationPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/ConnectorEventDestination'
+          nullable: true
+          type: array
+        next_cursor:
+          description: Pass as cursor for the next page. Absent on the last one.
+          type: string
+      required:
+        - items
+        - has_more
+      type: object
+    ConnectorEventDestinationRequest:
+      additionalProperties: false
+      description: An event destination to create. An unknown field is refused rather than ignored.
+      properties:
+        forward:
+          $ref: '#/components/schemas/ConnectorEventForward'
+        url:
+          description: A public https URL. One that is or resolves to a private, loopback or link-local address is refused.
+          maxLength: 2048
+          minLength: 1
+          type: string
+      required:
+        - url
+        - forward
+      type: object
+    ConnectorEventDestinationSecret:
+      description: An event destination and the secret its forwards are signed with, which no other response carries.
+      properties:
+        destination:
+          $ref: '#/components/schemas/ConnectorEventDestination'
+        secret:
+          description: 'The Standard Webhooks signing secret, whsec_ and 32 random bytes in base64. Shown this once: keep it, no later response carries it.'
+          type: string
+      required:
+        - destination
+        - secret
+      type: object
+    ConnectorEventForward:
+      description: 'Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app''s own code next to the router''s agent. all: every verified delivery, messages and grant events included, but the provider''s URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there.'
+      enum:
+        - unhandled
+        - all
+      type: string
     ConnectorInput:
       properties:
         default:
@@ -8640,6 +8724,174 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Read a connector
+  /v1/agents/connectors/{id}/event-destinations:
+    get:
+      description: |-
+        The connector's event destinations, newest first, without their secrets.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: listConnectorEventDestinations
+      parameters:
+        - description: The connector, such as slack_bot.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connector, such as slack_bot.
+            type: string
+        - description: Up to 200. Omitted is 25.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 25.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page. Omitted is the first page.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page. Omitted is the first page.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorEventDestinationPage'
+          description: A page of destinations
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: List a connector's event destinations
+    post:
+      description: |-
+        Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: createConnectorEventDestination
+      parameters:
+        - description: The connector, such as slack_bot.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connector, such as slack_bot.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectorEventDestinationRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorEventDestinationSecret'
+          description: The destination and its secret
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Forward a connector's provider events to a URL
+  /v1/agents/connectors/{id}/event-destinations/{destination_id}:
+    delete:
+      description: |-
+        Removes the destination, and every forward to it not yet sent.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: deleteConnectorEventDestination
+      parameters:
+        - description: The connector, such as slack_bot.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connector, such as slack_bot.
+            type: string
+        - description: The destination, as returned when it was created.
+          in: path
+          name: destination_id
+          required: true
+          schema:
+            description: The destination, as returned when it was created.
+            type: string
+      responses:
+        "204":
+          description: The destination is removed
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Stop forwarding to an event destination
+  /v1/agents/connectors/{id}/event-destinations/{destination_id}/rotate-secret:
+    post:
+      description: |-
+        Makes a new signing secret for the destination and returns it, once. For the next 24 hours every forward is signed with both the new and the old secret, space-separated in webhook-signature, so the receiver can move to the new one without a forward failing its check. A rotation during another drops the oldest secret.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: rotateConnectorEventDestinationSecret
+      parameters:
+        - description: The connector, such as slack_bot.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connector, such as slack_bot.
+            type: string
+        - description: The destination, as returned when it was created.
+          in: path
+          name: destination_id
+          required: true
+          schema:
+            description: The destination, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorEventDestinationSecret'
+          description: The destination and its new secret
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Rotate an event destination's signing secret
   /v1/agents/connectors/{id}/oauth-client:
     delete:
       description: |-
