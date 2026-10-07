@@ -714,6 +714,20 @@ kept for that check, which takes it over without asking the model a second time.
 if the words change, the floor changes, the caller leaves, the call ends, a check does not
 answer, or the patience for the words runs out.
 
+### A reply waits for the caller to have been quiet: `ROUTER_REPLY_SILENCE`
+
+A caller who pauses at the end of a sentence or between the items of a list can be taken for
+finished, and a reply that was already on its way then began to be heard before they carried
+on, and had to be cut off. The first sound of a reply to a caller's words is now let out only
+once that caller's audio has been quiet for `ROUTER_REPLY_SILENCE`, `700ms` by default,
+since it last carried a voice. A reply that is ready sooner waits for the silence to be
+confirmed, and if the caller starts again meanwhile it is dropped before any of it is heard
+and the turn is reported as interrupted. Quiet is judged on each participant's audio, with a
+level detector that follows their background noise, and not on transcripts. Later frames of a
+reply, a greeting, a murmur and a turn the agent takes without having been spoken to are not
+held, and `first_frame_queued_ms` and `first_audible_frame_ms` include the wait. `0` lets a
+reply start the moment it is ready, and the agent option `ReplySilence` is the same setting.
+
 ### A low acoustic score is asked again sooner, and patience is shorter
 
 When the acoustic end-of-turn score rules a caller's words unfinished, it is now put again after

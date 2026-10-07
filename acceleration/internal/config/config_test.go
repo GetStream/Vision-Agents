@@ -269,6 +269,28 @@ func (s *ConfigSuite) TestSpeculativeRepliesAreOnUnlessTurnedOff() {
 	s.True(config.Agent.SpeculativeReplies)
 }
 
+func (s *ConfigSuite) TestAReplyWaitsForTheCallerToBeQuietUnlessTurnedOff() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(700*time.Millisecond, config.Agent.ReplySilence)
+
+	s.T().Setenv("ROUTER_REPLY_SILENCE", "250ms")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(250*time.Millisecond, config.Agent.ReplySilence)
+
+	s.T().Setenv("ROUTER_REPLY_SILENCE", "0")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Zero(config.Agent.ReplySilence, "zero turns the wait off rather than falling back to the default")
+	s.Equal("0s", os.Getenv("ROUTER_REPLY_SILENCE"), "what is exported says the same")
+
+	s.T().Setenv("ROUTER_REPLY_SILENCE", "-1s")
+	_, _, err = Load("")
+	s.Require().Error(err)
+	s.Contains(err.Error(), "agent.reply_silence")
+}
+
 func (s *ConfigSuite) TestConnectorsAreOffUnlessAskedFor() {
 	config, _, err := Load("")
 	s.Require().NoError(err)

@@ -115,6 +115,9 @@ func (a *Agent) unbind(participant stt.Participant) {
 	ring := a.audioHistory[participant.ID]
 	delete(a.audioHistory, participant.ID)
 	a.mu.Unlock()
+	if a.voiced != nil {
+		a.voiced.forget(participant.ID)
+	}
 	a.cancelEOTPreviews(canceled)
 	a.dropKeptPreview(participant.ID)
 	if ring != nil {

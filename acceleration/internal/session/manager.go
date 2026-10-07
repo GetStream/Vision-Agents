@@ -102,6 +102,10 @@ type ManagerOptions struct {
 	// ruled on the words, and hold it until the ruling says to answer. Nil leaves it on, and
 	// a pointer to false asks for each reply only once the ruling is in.
 	SpeculativeReplies *bool
+	// ReplySilence is how long a caller must have been quiet before the first audio of the
+	// reply to them is let out, for every agent. Nil leaves it at the agent's default, and a
+	// pointer to zero lets a reply start as soon as it is ready.
+	ReplySilence *time.Duration
 	// Stream says which Stream app, and with which credential, each session acts in. It
 	// is optional: without it a session has no app, and anything needing one fails where
 	// it needs it, as it does on a deployment with no Stream credentials.
@@ -510,6 +514,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		SearchTarget:       spec.SearchTarget,
 		Guardrail:          screening,
 		SpeculativeReplies: m.options.SpeculativeReplies,
+		ReplySilence:       m.options.ReplySilence,
 		AppID:              spec.Memory.AppID,
 		SessionID:          spec.ID,
 		Incognito:          spec.Incognito,

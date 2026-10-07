@@ -551,6 +551,9 @@ type AgentSuite struct {
 	// speculation says whether replies start before the flow controller has ruled, and is
 	// nil, which leaves them on, unless a test says otherwise.
 	speculation *bool
+	// replySilence is how long a reply waits for the caller to have been quiet, and is nil,
+	// which leaves the default, unless a test says otherwise.
+	replySilence *time.Duration
 	// remembers is the memory store the agent joins with, when a test gives it one.
 	remembers *stubMemory
 	// incognito holds the session off the record.
@@ -604,6 +607,7 @@ func (s *AgentSuite) SetupTest() {
 	s.runner = nil
 	s.duplex = DuplexOptions{}
 	s.speculation = nil
+	s.replySilence = nil
 	s.performing = ""
 	if s.agentID == "" {
 		s.agentID = "agent-1"
@@ -783,6 +787,7 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		Tools:              s.tools,
 		Duplex:             s.duplex,
 		SpeculativeReplies: s.speculation,
+		ReplySilence:       s.replySilence,
 		LLM:                reasoner,
 		LLMTarget:          "en-low-latency",
 		STT:                transcriber,

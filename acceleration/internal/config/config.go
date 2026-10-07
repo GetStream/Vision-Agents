@@ -196,6 +196,11 @@ type Agent struct {
 	// replies a ruling throws away. On by default; false asks for each reply only once the
 	// ruling is in.
 	SpeculativeReplies bool `koanf:"speculative_replies"`
+	// ReplySilence is how long a caller must have been quiet, on their audio rather than their
+	// words, before the first sound of the reply to them is let out. A reply that is ready
+	// sooner waits for it, and is dropped unheard if the caller starts again in the meantime.
+	// 700ms by default; 0 lets a reply start the moment it is ready.
+	ReplySilence time.Duration `koanf:"reply_silence"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -265,6 +270,7 @@ var variables = map[string]string{
 	"rate_limit.tokens_per_day":   "ROUTER_RATE_LIMIT_TOKENS_PER_DAY",
 
 	"agent.speculative_replies": "ROUTER_SPECULATIVE_REPLIES",
+	"agent.reply_silence":       "ROUTER_REPLY_SILENCE",
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
 
@@ -288,7 +294,7 @@ func Defaults() Config {
 		// can come to millions of tokens.
 		RateLimit: RateLimit{MessagesPerDay: 200, TokensPerDay: 5_000_000},
 		DataMove:  DataMove{Retention: 7 * 24 * time.Hour},
-		Agent:     Agent{SpeculativeReplies: true},
+		Agent:     Agent{SpeculativeReplies: true, ReplySilence: 700 * time.Millisecond},
 		EOT:       EOT{Endpoint: eotdefaults.HostedDemoEndpoint, Mode: "primary", Threshold: 0.5},
 		Sandbox:   Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
 	}
@@ -419,6 +425,9 @@ func (c Config) validate() error {
 	if c.DataMove.Retention < 0 {
 		return fmt.Errorf("config: data_move.retention cannot be negative, got %s", c.DataMove.Retention)
 	}
+	if c.Agent.ReplySilence < 0 {
+		return fmt.Errorf("config: agent.reply_silence cannot be negative, got %s", c.Agent.ReplySilence)
+	}
 	if c.EOT.Mode != "gate" && c.EOT.Mode != "primary" {
 		return fmt.Errorf("config: eot.mode must be gate or primary, got %q", c.EOT.Mode)
 	}
@@ -509,6 +518,7 @@ func (c Config) export() error {
 		"rate_limit.messages_per_day":   fmt.Sprint(c.RateLimit.MessagesPerDay),
 		"rate_limit.tokens_per_day":     fmt.Sprint(c.RateLimit.TokensPerDay),
 		"agent.speculative_replies":     fmt.Sprint(c.Agent.SpeculativeReplies),
+		"agent.reply_silence":           c.Agent.ReplySilence.String(),
 		"connectors.enabled":            fmt.Sprint(c.Connectors.Enabled),
 		"sandbox.enabled":               fmt.Sprint(c.Sandbox.Enabled),
 		"sandbox.recipients":            fmt.Sprint(c.Sandbox.Recipients),

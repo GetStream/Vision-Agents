@@ -166,6 +166,13 @@ type Options struct {
 	// tokens of the replies a ruling throws away. Nil leaves it on, and a pointer to false
 	// asks for the reply only once the ruling is in.
 	SpeculativeReplies *bool
+	// ReplySilence is how long a caller must have been quiet before the first audio of the
+	// reply to them is let out, measured on their audio rather than on their words. A reply
+	// that is ready sooner waits for it, and is dropped unheard if the caller starts again in
+	// the meantime. Nil leaves it at 700ms, and a pointer to zero lets a reply start as soon
+	// as it is ready. It does not apply to a greeting, a murmur, or a turn the agent takes
+	// without having been spoken to.
+	ReplySilence *time.Duration
 
 	// Voice selects the speaker. Its meaning is the text-to-speech provider's.
 	Voice string
@@ -263,6 +270,12 @@ type Agent struct {
 	// previewTurns says which candidate took over the preview started under another one's
 	// id, so model calls reported under the old id count towards the turn that is using them.
 	previewTurns map[string]string
+	// voiced follows when each participant's audio last carried a voice. It is nil when a reply
+	// is not held to the caller's silence.
+	voiced *voiceActivity
+	// replySilence is how long a caller must have been quiet before the first audio of the
+	// reply to them is let out.
+	replySilence time.Duration
 	// generatingCancel abandons a conversation Create that has not returned a stream yet.
 	// Interrupt used to Close only an existing stream, so a reply waiting on headers kept
 	// the event loop and the floor until Cerebras answered.
@@ -335,6 +348,8 @@ type Agent struct {
 	// what may be heard, because the agent starts a turn for itself while the turn before
 	// it is still being spoken.
 	speakingTurn string
+	// gated is the reply to a caller's words that has not let out its first audio yet.
+	gated heldReply
 	// saying is the filtered generated text available for the current reply. It may be ahead
 	// of playout, so it gives overlap judgments and interruption context without claiming
 	// that every generated word reached the caller.
@@ -478,6 +493,13 @@ func New(options Options) (*Agent, error) {
 	if err := options.Tags.Validate(); err != nil {
 		return nil, err
 	}
+	replySilence := defaultReplySilence
+	if options.ReplySilence != nil {
+		replySilence = *options.ReplySilence
+	}
+	if replySilence < 0 {
+		return nil, stack.Wrap(errors.New("agent: the reply silence cannot be negative"))
+	}
 	// Memories belong to the customer unless the caller named someone more specific, and
 	// are always kept under the customer as the app id, so no caller can reach another
 	// customer's and a customer's can be deleted without knowing how its callers labelled
@@ -540,6 +562,11 @@ func New(options Options) (*Agent, error) {
 		synthesisCtx:     map[string]context.Context{},
 		cadence:          settling,
 		duplex:           listening,
+		replySilence:     replySilence,
+	}
+	// Only a call has a caller's audio to tell silence from.
+	if replySilence > 0 && !options.Text {
+		agent.voiced = newVoiceActivity()
 	}
 
 	// Turns are keyed by agent id and decisions by call id, so an agent missing either is
@@ -1103,6 +1130,9 @@ func (a *Agent) consumeEdge() {
 		}
 		a.retainEOTAudioTimed(inbound.Participant.ID, inbound.Audio.SampleRate, inbound.Audio.Channels,
 			inbound.Audio.Samples, inbound.Timing)
+		if a.voiced != nil {
+			a.voiced.observe(inbound.Participant.ID, inbound.Audio, time.Now())
+		}
 		listener, err := a.listen(inbound.Participant)
 		if err != nil {
 			a.fail(err, "stt")
@@ -1835,6 +1865,13 @@ func (a *Agent) respond(participant stt.Participant, text string, listened heard
 func (a *Agent) respondCandidate(ready candidate, note string) error {
 	if note != "" {
 		a.cancelPreview(ready.ID)
+	}
+	if a.voiced != nil {
+		// What this reply says is for somebody who has just finished talking, so its first
+		// audio waits for them to have been quiet long enough to have meant it.
+		a.mu.Lock()
+		a.gated = heldReply{turn: ready.ID, participant: ready.Participant}
+		a.mu.Unlock()
 	}
 	return a.respondTurn(ready.ID, ready.Participant, ready.Text, heard{
 		at:           ready.ReadyAt,
@@ -2642,6 +2679,9 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	// Abandoned audio arrives a frame at a time, so it is reported once per utterance
 	// rather than once per frame.
 	dropping := ""
+	// released is the turn whose first frame has been let out, so none of its later frames is
+	// held to the caller's silence again.
+	released := ""
 
 	for event := range voice.Events() {
 		switch typed := event.(type) {
@@ -2658,6 +2698,13 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 						"synthesis", typed.SynthesisID, "turn", turnOf(typed.SynthesisID))
 				}
 				continue
+			}
+			if turnID := turnOf(typed.SynthesisID); turnID != released {
+				if !a.admitFirstFrame(p, publishCtx, turnID) {
+					a.turns.dropped(turnID, typed.Audio.DurationMs())
+					continue
+				}
+				released = turnID
 			}
 			var err error
 			if marked, ok := a.options.Edge.(MarkedPlayout); ok {

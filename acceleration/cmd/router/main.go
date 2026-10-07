@@ -1235,6 +1235,7 @@ func buildSessions(
 		// Off unless the deployment asks: a reply started before its ruling is paid for
 		// whether or not it is spoken.
 		SpeculativeReplies: &settings.Agent.SpeculativeReplies,
+		ReplySilence:       &settings.Agent.ReplySilence,
 		Stream:             stream,
 		Store:              pgStore,
 		Live:               liveClient,
