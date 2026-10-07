@@ -1,7 +1,6 @@
 package chatlog
 
 import (
-	"cmp"
 	"fmt"
 	"math"
 	"strings"
@@ -15,79 +14,95 @@ import (
 type timings struct {
 	// line is written after the reply's text.
 	line string
-	// fields are the same legs in whole milliseconds, for a client that would rather read
+	// fields are the same figures in whole milliseconds, for a client that would rather read
 	// them than parse the line.
 	fields map[string]any
 }
 
-// timingsOf describes a finished turn. It reports false for one with nothing to say: it was
-// not cut off, and none of its legs happened.
+// timingsOf describes a finished turn as the wait the caller felt and the three stages it is
+// made of, which add up to it:
 //
-// The figure the line leads with is the delay the caller felt, from the end of their speech to
-// the first sound of the reply they could hear, or to the first audio published where the edge
-// does not say when that was. A leg that did not happen is left out, not shown as zero.
+//   - reply: from the end of the caller's speech to the first audible frame of the reply, or to
+//     the first audio published where the edge does not say when that was heard;
+//   - eou, end of utterance: from the end of their speech until the turn was committed to (the
+//     transcriber's settling, the cadence wait and the floor decision);
+//   - llm: from the commitment to the reply's first text, which is nothing when a reply started
+//     beside the decision was ready by then;
+//   - tts: from the first text to the first audible frame (handing it to the voice, the voice's
+//     first audio, any hold for the caller to be quiet, and the edge playing it out).
+//
+// The providers' own first-token and first-byte waits follow, because work started early hides
+// them inside the stages. It reports false for a turn with nothing to say: it was not cut off,
+// and none of it happened. A figure that did not happen is left out, not shown as zero.
 func timingsOf(turn agent.Turn) (timings, bool) {
+	ms := func(v float64) int { return max(0, int(math.Round(v))) }
+
+	reply, heard := ms(turn.SpeechEndToAudibleMs), true
+	if reply == 0 {
+		reply, heard = ms(turn.SpeechEndToAudioMs), false
+	}
+	stt := ms(turn.STTLatencyMs)
+	if reply == 0 && turn.RoundtripMs > 0 {
+		// The roundtrip starts at the transcript, so the transcriber's settling is not in it.
+		reply, stt = ms(turn.RoundtripMs), 0
+	}
+	wait, eot := ms(turn.CadenceMs), ms(turn.DecisionMs)
+	eou, llm := stt+wait+eot, ms(turn.ModelToFirstTextMs)
+	tts := ms(turn.TextToTTSMs + turn.TTSToAudioMs)
+	if heard && turn.FirstAudibleFrameMs > 0 {
+		tts = ms(turn.FirstAudibleFrameMs - turn.CadenceMs - turn.DecisionMs - turn.ModelToFirstTextMs)
+	}
+	ttft, ttfb, hold := ms(turn.LLMTTFTMs), ms(turn.TTSTTFBMs), ms(turn.ReplyHoldMs)
+
 	fields := map[string]any{"interrupted": turn.Interrupted}
-	leg := func(key string, ms float64) int {
-		rounded := int(math.Round(ms))
-		if rounded <= 0 {
-			return 0
+	set := func(key string, v int) {
+		if v > 0 {
+			fields[key] = v
 		}
-		fields[key] = rounded
-		return rounded
 	}
-
-	total := leg("voice_to_voice_ms", cmp.Or(turn.SpeechEndToAudibleMs, turn.SpeechEndToAudioMs, turn.RoundtripMs))
-	leg("roundtrip_ms", turn.RoundtripMs)
-	leg("speech_end_to_audio_ms", turn.SpeechEndToAudioMs)
-	leg("speech_end_to_audible_ms", turn.SpeechEndToAudibleMs)
-	stt := leg("stt_ms", turn.STTLatencyMs)
-	cadence := leg("cadence_ms", turn.CadenceMs)
-	decision := leg("decision_ms", turn.DecisionMs)
-	model := leg("model_to_first_text_ms", turn.ModelToFirstTextMs)
-	ttft := leg("llm_ttft_ms", turn.LLMTTFTMs)
-	toTTS := leg("text_to_tts_ms", turn.TextToTTSMs)
-	voice := leg("tts_to_audio_ms", turn.TTSToAudioMs)
-	leg("tts_ttfb_ms", turn.TTSTTFBMs)
-	hold := leg("reply_hold_ms", turn.ReplyHoldMs)
-	leg("first_frame_queued_ms", turn.FirstFrameQueuedMs)
-	leg("first_audible_frame_ms", turn.FirstAudibleFrameMs)
-	// Both run from the same moment, so what lies between is the edge taking the audio that was
-	// published and playing it.
-	var edge int
-	if turn.RoundtripMs > 0 && turn.FirstAudibleFrameMs > 0 {
-		edge = leg("publish_to_audible_ms", turn.FirstAudibleFrameMs-turn.RoundtripMs)
+	set("reply_ms", reply)
+	if reply > 0 {
+		fields["reply_heard"] = heard
 	}
-	leg("audio_out_ms", turn.AudioOutMs)
-	leg("audio_dropped_ms", turn.AudioDroppedMs)
+	set("eou_ms", eou)
+	set("stt_ms", stt)
+	set("wait_ms", wait)
+	set("eot_ms", eot)
+	set("llm_ms", llm)
+	set("tts_ms", tts)
+	set("llm_ttft_ms", ttft)
+	set("tts_ttfb_ms", ttfb)
+	set("hold_ms", hold)
 
+	var stages []string
+	for _, stage := range []struct {
+		name string
+		ms   int
+	}{{"eou", eou}, {"llm", llm}, {"tts", tts}} {
+		if stage.ms > 0 {
+			stages = append(stages, fmt.Sprintf("%s %d", stage.name, stage.ms))
+		}
+	}
 	var parts []string
 	if turn.Interrupted {
 		parts = append(parts, "interrupted")
 	}
-	if total > 0 {
-		parts = append(parts, fmt.Sprintf("%d ms", total))
+	switch {
+	case reply > 0 && len(stages) > 0:
+		parts = append(parts, fmt.Sprintf("reply %d ms = %s", reply, strings.Join(stages, " + ")))
+	case reply > 0:
+		parts = append(parts, fmt.Sprintf("reply %d ms", reply))
+	default:
+		parts = append(parts, stages...)
 	}
-	shown := func(label string, ms int) {
-		if ms > 0 {
-			parts = append(parts, fmt.Sprintf("%s %d", label, ms))
+	for _, provider := range []struct {
+		name string
+		ms   int
+	}{{"ttft", ttft}, {"ttfb", ttfb}, {"hold", hold}} {
+		if provider.ms > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d", provider.name, provider.ms))
 		}
 	}
-	shown("stt", stt)
-	shown("wait", cadence)
-	shown("eot", decision)
-	switch {
-	case model > 0 && ttft > 0:
-		parts = append(parts, fmt.Sprintf("llm %d (ttft %d)", model, ttft))
-	case model > 0:
-		shown("llm", model)
-	default:
-		shown("ttft", ttft)
-	}
-	shown("→tts", toTTS)
-	shown("tts", voice)
-	shown("audio", edge)
-	shown("hold", hold)
 
 	if len(parts) == 0 {
 		return timings{}, false

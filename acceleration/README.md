@@ -1271,15 +1271,17 @@ nothing behind, and any Stream Chat client can already read a channel.
 For development, `ROUTER_CHAT_TIMINGS=true` (or `cmd/agent -chat-timings`) shows how fast each turn
 was on the agent's reply, so somebody talking to the agent in a call UI sees it without reading
 logs. Each reply gets a line after its text, such as
-`⏱ 1112 ms · stt 6 · wait 350 · eot 96 · llm 412 (ttft 731) · →tts 70 · tts 143 · audio 32 · hold 300`.
-It leads with the delay from the end of the caller's speech to the first sound they could hear (the
-first audio published, where the edge does not say when that was), then gives the stages in order:
-`stt`, `wait` for cadence settling, `eot` for the end-of-turn decision, `llm` to the first text with
-the model's `ttft` beside it, `→tts` to the voice, `tts` to its first audio, `audio` from that being
-published to being heard, and `hold` for how long the reply was held for the caller to be quiet (a
-hold before the first sound is already inside `tts`). A stage that did not happen is left out, and
-a turn the caller talked over starts `⏱ interrupted ·`. The same stages, in whole milliseconds, are
-on the message as the `timings` custom field. Reading the conversation back, in a transcript or as
+`⏱ reply 1112 ms = eou 452 + llm 412 + tts 248 · ttft 731 · ttfb 120 · hold 300`.
+`reply` is the wait the caller felt, from the end of their speech to the first audible frame of the
+reply (the first audio published, where the edge does not say when that was heard), and the three
+stages add up to it: `eou` from the end of their speech until the turn was committed to
+(transcription settling, cadence wait and end-of-turn decision), `llm` from then to the reply's
+first text (absent when a reply started beside the decision was ready by then), and `tts` from the
+first text to the first audible frame. The providers' own `ttft` and `ttfb` follow, because work
+started early hides them inside the stages, and `hold` is how long the reply was held for the
+caller to be quiet. A figure that did not happen is left out, and a turn the caller talked over
+starts `⏱ interrupted ·`. The same figures, in whole milliseconds, are on the message as the
+`timings` custom field (`reply_ms`, `eou_ms`, `llm_ms`, `tts_ms`, and the parts and provider waits). Reading the conversation back, in a transcript or as
 the history of a bound conversation, leaves the line out, so the agent never takes it for something
 said. Off by default.
 

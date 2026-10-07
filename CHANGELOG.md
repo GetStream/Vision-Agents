@@ -524,10 +524,10 @@ the chat channel it writes its transcript to, so somebody talking to it in a cal
 without reading logs. It is off by default: `ROUTER_CHAT_TIMINGS=true` (`agent.chat_timings`)
 turns it on for the router's sessions and `cmd/agent -chat-timings` for the standalone agent. A
 reply gets one line after its text, such as
-`⏱ 1112 ms · stt 6 · wait 350 · eot 96 · llm 412 (ttft 731) · →tts 70 · tts 143 · audio 32 · hold 300`,
-which leads with the delay from the end of the caller's speech to the first sound they could hear
-and then gives the stages in order; a stage that did not happen is left out, and a turn the caller
-talked over starts `⏱ interrupted ·`. The message also carries the same stages in whole
+`⏱ reply 1112 ms = eou 452 + llm 412 + tts 248 · ttft 731 · ttfb 120 · hold 300`: the wait from the
+end of the caller's speech to the first audible frame of the reply, split into end of utterance,
+model and voice stages that add up to it, then the providers' own first-token and first-byte waits; a figure that did not happen is left out, and a turn the caller
+talked over starts `⏱ interrupted ·`. The message also carries the same figures in whole
 milliseconds as a `timings` custom field. Reading a conversation back, as the transcript endpoint
 and the history a bound conversation gives the agent do, leaves the line out, so the agent never
 takes it for something it said.

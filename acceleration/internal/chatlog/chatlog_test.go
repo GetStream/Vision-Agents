@@ -566,10 +566,10 @@ func (s *ChatLogSuite) TestATurnsTimingsAreQueuedForItsReply() {
 
 	s.Equal(timed, queued.kind)
 	s.Equal("turn-1", queued.turnID)
-	s.Equal("⏱ 500 ms", queued.timings.line)
+	s.Equal("⏱ reply 500 ms", queued.timings.line)
 }
 
-func (s *ChatLogSuite) TestTheLineLeadsWithWhatTheCallerWaitedAndThenTheLegsInOrder() {
+func (s *ChatLogSuite) TestTheReplyIsSplitIntoStagesThatAddUpToIt() {
 	described, ok := timingsOf(agent.Turn{
 		TurnID: "turn-1", STTLatencyMs: 6.2, CadenceMs: 350, DecisionMs: 95.6, ModelToFirstTextMs: 412,
 		LLMTTFTMs: 731, TextToTTSMs: 70, TTSToAudioMs: 143, TTSTTFBMs: 120, ReplyHoldMs: 300,
@@ -578,62 +578,66 @@ func (s *ChatLogSuite) TestTheLineLeadsWithWhatTheCallerWaitedAndThenTheLegsInOr
 	})
 
 	s.Require().True(ok)
-	s.Equal("⏱ 1112 ms · stt 6 · wait 350 · eot 96 · llm 412 (ttft 731) · →tts 70 · tts 143 · audio 32 · hold 300", described.line)
+	s.Equal("⏱ reply 1112 ms = eou 452 + llm 412 + tts 248 · ttft 731 · ttfb 120 · hold 300", described.line)
 	s.Equal(map[string]any{
-		"interrupted":              false,
-		"voice_to_voice_ms":        1112,
-		"roundtrip_ms":             1074,
-		"speech_end_to_audio_ms":   1080,
-		"speech_end_to_audible_ms": 1112,
-		"stt_ms":                   6,
-		"cadence_ms":               350,
-		"decision_ms":              96,
-		"model_to_first_text_ms":   412,
-		"llm_ttft_ms":              731,
-		"text_to_tts_ms":           70,
-		"tts_to_audio_ms":          143,
-		"tts_ttfb_ms":              120,
-		"reply_hold_ms":            300,
-		"first_frame_queued_ms":    1080,
-		"first_audible_frame_ms":   1106,
-		"publish_to_audible_ms":    32,
-		"audio_out_ms":             2100,
+		"interrupted": false,
+		"reply_ms":    1112,
+		"reply_heard": true,
+		"eou_ms":      452,
+		"stt_ms":      6,
+		"wait_ms":     350,
+		"eot_ms":      96,
+		"llm_ms":      412,
+		"tts_ms":      248,
+		"llm_ttft_ms": 731,
+		"tts_ttfb_ms": 120,
+		"hold_ms":     300,
 	}, described.fields)
+	s.Equal(described.fields["reply_ms"], described.fields["eou_ms"].(int)+described.fields["llm_ms"].(int)+described.fields["tts_ms"].(int))
 }
 
-func (s *ChatLogSuite) TestAnEdgeThatDoesNotSayWhenTheReplyWasHeardLeavesThatOut() {
+func (s *ChatLogSuite) TestAReplyReadyAtTheDecisionHasNoModelStage() {
+	described, ok := timingsOf(agent.Turn{
+		STTLatencyMs: 12, CadenceMs: 351, DecisionMs: 1934, TTSToAudioMs: 1040, RoundtripMs: 3325,
+		SpeechEndToAudioMs: 3337, LLMTTFTMs: 850,
+	})
+
+	s.Require().True(ok)
+	s.Equal("⏱ reply 3337 ms = eou 2297 + tts 1040 · ttft 850", described.line, "the model's wait was spent beside the decision")
+}
+
+func (s *ChatLogSuite) TestAnEdgeThatDoesNotSayWhenTheReplyWasHeardMeasuresToItsPublishing() {
 	described, ok := timingsOf(agent.Turn{
 		STTLatencyMs: 6, CadenceMs: 350, TTSToAudioMs: 143, RoundtripMs: 1074, SpeechEndToAudioMs: 1080,
 	})
 
 	s.Require().True(ok)
-	s.Equal("⏱ 1080 ms · stt 6 · wait 350 · tts 143", described.line, "it leads with when the audio was published instead")
-	s.NotContains(described.fields, "publish_to_audible_ms")
-	s.NotContains(described.fields, "speech_end_to_audible_ms")
+	s.Equal("⏱ reply 1080 ms = eou 356 + tts 143", described.line)
+	s.Equal(false, described.fields["reply_heard"])
 }
 
-func (s *ChatLogSuite) TestALegThatDidNotHappenIsLeftOutRatherThanShownAsZero() {
+func (s *ChatLogSuite) TestAFigureThatDidNotHappenIsLeftOutRatherThanShownAsZero() {
 	described, ok := timingsOf(agent.Turn{SpeechEndToAudioMs: 900, CadenceMs: 300, TTSToAudioMs: 80, DecisionMs: 0.2})
 
 	s.Require().True(ok)
-	s.Equal("⏱ 900 ms · wait 300 · tts 80", described.line)
+	s.Equal("⏱ reply 900 ms = eou 300 + tts 80", described.line)
 	s.NotContains(described.fields, "stt_ms")
-	s.NotContains(described.fields, "reply_hold_ms")
-	s.NotContains(described.fields, "decision_ms", "a leg that rounds to nothing did not take any time worth showing")
+	s.NotContains(described.fields, "hold_ms")
+	s.NotContains(described.fields, "eot_ms", "a figure that rounds to nothing did not take any time worth showing")
 }
 
 func (s *ChatLogSuite) TestTheRoundtripIsTheFigureWhenNeitherSpeechEndIsKnown() {
-	described, ok := timingsOf(agent.Turn{RoundtripMs: 500})
+	described, ok := timingsOf(agent.Turn{RoundtripMs: 500, STTLatencyMs: 20})
 
 	s.Require().True(ok)
-	s.Equal("⏱ 500 ms", described.line)
+	s.Equal("⏱ reply 500 ms", described.line, "the transcriber's settling is not in a figure that starts at the transcript")
 }
 
 func (s *ChatLogSuite) TestAnInterruptedTurnSaysSoAndKeepsWhateverWasMeasured() {
 	described, ok := timingsOf(agent.Turn{Interrupted: true, STTLatencyMs: 6, CadenceMs: 300, LLMTTFTMs: 410})
 
 	s.Require().True(ok)
-	s.Equal("⏱ interrupted · stt 6 · wait 300 · ttft 410", described.line)
+	s.Equal("⏱ interrupted · eou 306 · ttft 410", described.line)
 	s.Equal(true, described.fields["interrupted"])
 
 	described, ok = timingsOf(agent.Turn{Interrupted: true})
@@ -663,9 +667,9 @@ func (s *ChatLogSuite) TestTimingsThatArriveBeforeTheReplyIsStoredWaitForIt() {
 
 	stored := s.channel()
 	s.Require().Len(stored, 1)
-	s.Equal("Hello there.\n\n⏱ 900 ms · wait 300", stored[0].Text)
+	s.Equal("Hello there.\n\n⏱ reply 900 ms = eou 300", stored[0].Text)
 	s.Equal(false, stored[0].Custom[generatingField])
-	s.Equal(float64(900), stored[0].Custom[conversation.TimingsField].(map[string]any)["voice_to_voice_ms"])
+	s.Equal(float64(900), stored[0].Custom[conversation.TimingsField].(map[string]any)["reply_ms"])
 	s.Empty(writer.recent, "the reply and its timings have met, so there is nothing to wait for")
 }
 
@@ -685,7 +689,7 @@ func (s *ChatLogSuite) TestTimingsThatArriveAfterTheReplyIsStoredAreWrittenOntoI
 
 	stored := s.channel()
 	s.Require().Len(stored, 1, "the reply is updated, not repeated")
-	s.Equal("Hello there.\n\n⏱ 900 ms · wait 300", stored[0].Text)
+	s.Equal("Hello there.\n\n⏱ reply 900 ms = eou 300", stored[0].Text)
 	s.Equal(false, stored[0].Custom[interruptedField])
 	s.Empty(writer.recent)
 	s.Empty(writer.turns)
@@ -701,7 +705,7 @@ func (s *ChatLogSuite) TestTimingsAreWrittenOntoAReplyThatWasNeverShownWhileItSt
 
 	stored := s.channel()
 	s.Require().Len(stored, 1)
-	s.Equal("Hi.\n\n⏱ 500 ms", stored[0].Text)
+	s.Equal("Hi.\n\n⏱ reply 500 ms", stored[0].Text)
 }
 
 func (s *ChatLogSuite) TestAnInterruptedRepliesTimingsAreAllThatIsLeftOfIt() {
@@ -715,7 +719,7 @@ func (s *ChatLogSuite) TestAnInterruptedRepliesTimingsAreAllThatIsLeftOfIt() {
 
 	stored := s.channel()
 	s.Require().Len(stored, 1)
-	s.Equal("⏱ interrupted · stt 6", stored[0].Text, "the unplayed words are not put back")
+	s.Equal("⏱ interrupted · eou 6", stored[0].Text, "the unplayed words are not put back")
 	s.Equal(true, stored[0].Custom[interruptedField])
 }
 
