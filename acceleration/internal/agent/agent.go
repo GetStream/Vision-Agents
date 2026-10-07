@@ -2317,6 +2317,13 @@ func (a *Agent) respondAfterTool(turnID string) error {
 		a.mu.Unlock()
 		return errors.New("agent: not joined")
 	}
+	// queueToolReply chose to answer without holding the lock since. A reply that finished
+	// meanwhile has already run follow, which takes the result and starts the turn that
+	// delivers it, and a second turn for the same result would answer it twice.
+	if !a.toolReply || a.generating {
+		a.mu.Unlock()
+		return nil
+	}
 	history := a.replayLocked()
 	participant := a.lastParticipant
 	a.speakingTurn = turnID

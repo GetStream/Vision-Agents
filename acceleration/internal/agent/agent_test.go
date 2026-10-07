@@ -2787,8 +2787,13 @@ func (s *AgentSuite) TestTheReplyToAToolResultContinuesTheTurnThatAskedForIt() {
 
 	s.says(participant, "where is my order")
 
-	s.eventually(func() bool { return countOf[Responding](s.reported()) == 2 },
-		"the tool result was never answered")
+	// The agent goes quiet once the result has been answered, so what it did is counted
+	// then: a result answered twice shows as a third reply however quickly it began.
+	s.eventually(func() bool {
+		return countOf[Responding](s.reported()) >= 2 && !s.agent.Busy()
+	}, "the tool result was never answered")
+	s.Equal(2, countOf[Responding](s.reported()), "the tool result was answered more than once")
+	s.Len(s.model.requests(), 2, "the tool result was answered more than once")
 	var asked, followed Responding
 	for _, event := range s.reported() {
 		if responding, ok := event.(Responding); ok {
@@ -2801,6 +2806,37 @@ func (s *AgentSuite) TestTheReplyToAToolResultContinuesTheTurnThatAskedForIt() {
 	}
 	s.Empty(asked.Continues, "a question somebody asked continues nothing")
 	s.Equal(asked.TurnID, followed.Continues)
+}
+
+func (s *AgentSuite) TestAToolResultAnotherTurnHasTakenIsNotAnsweredAgain() {
+	// A reply that finishes as its tool comes back runs follow, which takes the result,
+	// while the tool's own goroutine has already decided to answer it.
+	s.join(false)
+	s.agent.mu.Lock()
+	s.agent.toolReply = false
+	s.agent.mu.Unlock()
+
+	s.Require().NoError(s.agent.respondAfterTool(toolPrefix + "late"))
+
+	s.Empty(s.model.requests(), "the result had been answered by the turn that took it")
+	s.Zero(countOf[Responding](s.reported()))
+}
+
+func (s *AgentSuite) TestAToolResultIsLeftOwedWhileAnotherTurnIsBeingWritten() {
+	s.join(false)
+	s.agent.mu.Lock()
+	s.agent.toolReply = true
+	s.agent.generating = true
+	s.agent.mu.Unlock()
+
+	s.Require().NoError(s.agent.respondAfterTool(toolPrefix + "late"))
+
+	s.Empty(s.model.requests(), "a second turn must not start beside the one being written")
+	s.agent.mu.Lock()
+	owed := s.agent.toolReply
+	s.agent.generating = false
+	s.agent.mu.Unlock()
+	s.True(owed, "follow can still deliver the result")
 }
 
 func (s *AgentSuite) TestAToolResultDoesNotCutOffTheReplyAlreadyBeingSpoken() {
