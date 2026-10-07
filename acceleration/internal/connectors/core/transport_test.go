@@ -162,6 +162,35 @@ func (s *TransportsSuite) TestAnExchangeRecordsTheProvidersRefusal() {
 	s.Equal(http.StatusUnauthorized, exchange.Status())
 }
 
+// TestAnExchangeRecordsTheWaitA429AskedFor: the scheme reads the 429's Retry-After, and the
+// caller still reads the whole body.
+func (s *TransportsSuite) TestAnExchangeRecordsTheWaitA429AskedFor() {
+	s.provider.limit("30")
+	ctx, exchange := core.WithExchange(context.Background())
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusTooManyRequests, exchange.Status())
+	s.Equal(30*time.Second, exchange.RetryAfter())
+	s.Equal("slow down", s.read(response))
+}
+
+// TestAnExchangeForgetsTheWaitOnceAnotherRequestIsAnswered: the wait is the last answer's.
+func (s *TransportsSuite) TestAnExchangeForgetsTheWaitOnceAnotherRequestIsAnswered() {
+	s.provider.limit("30")
+	ctx, exchange := core.WithExchange(context.Background())
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+	s.provider.limit("")
+
+	_, err = s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, exchange.Status())
+	s.Zero(exchange.RetryAfter())
+}
+
 func (s *TransportsSuite) TestACorrelationIsWhatTheContextCarries() {
 	ctx := core.WithCorrelation(context.Background(), core.Correlation{RequestID: "request", SessionID: "session"})
 
@@ -623,8 +652,13 @@ func (s *signingScheme) Wrap(base http.RoundTripper, c core.AccessCredential) ht
 }
 
 // Classify finds a refused credential where RFC 6750 section 3.1 puts it: a Bearer challenge
-// with error="invalid_token".
+// with error="invalid_token". A 429 is RateLimited (RFC 6585 section 4) with its Retry-After in
+// delay-seconds (RFC 9110 section 10.2.3), the only form the provider sends.
 func (*signingScheme) Classify(resp *http.Response, _ []byte, _ error) core.Outcome {
+	if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
+		seconds, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
+		return core.Outcome{Kind: core.OutcomeRateLimited, RetryAfter: time.Duration(seconds) * time.Second}
+	}
 	if resp != nil && strings.Contains(resp.Header.Get("WWW-Authenticate"), `error="invalid_token"`) {
 		return core.Outcome{Kind: core.OutcomeInvalidGrant}
 	}
@@ -650,15 +684,17 @@ func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { r
 // connection it saw.
 type provider struct {
 	*httptest.Server
-	mu        sync.Mutex
-	accepted  map[string]bool
-	refused   map[string]bool
-	noReason  bool
-	moveTo    string
-	before    func()
-	requests  []receivedRequest
-	connsSeen map[net.Conn]bool
-	connsGone int
+	mu       sync.Mutex
+	accepted map[string]bool
+	refused  map[string]bool
+	noReason bool
+	// retryAfter, when set, answers every request with 429 and it as Retry-After.
+	retryAfter string
+	moveTo     string
+	before     func()
+	requests   []receivedRequest
+	connsSeen  map[net.Conn]bool
+	connsGone  int
 }
 
 type receivedRequest struct {
@@ -693,12 +729,17 @@ func (p *provider) serve(w http.ResponseWriter, r *http.Request) {
 	p.requests = append(p.requests, receivedRequest{token: token, body: string(raw), contentLength: r.ContentLength,
 		signatureMatches: r.Header.Get(sha256Header) == digest(raw)})
 	before, moveTo, refused, noReason, accepted := p.before, p.moveTo, p.refused[token], p.noReason, p.accepted[token]
+	retryAfter := p.retryAfter
 	p.moveTo = ""
 	p.mu.Unlock()
 	if before != nil {
 		before()
 	}
 	switch {
+	case retryAfter != "":
+		w.Header().Set("Retry-After", retryAfter)
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte("slow down"))
 	case moveTo != "":
 		// RFC 9110 section 15.4.8: 307 keeps the method and the body.
 		http.Redirect(w, r, moveTo, http.StatusTemporaryRedirect)
@@ -732,6 +773,13 @@ func (p *provider) refuseWithoutReason() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.noReason = true
+}
+
+// limit answers every request with 429 and retryAfter, until it is set to "".
+func (p *provider) limit(retryAfter string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.retryAfter = retryAfter
 }
 
 // redirect answers the next request with a 307 to url.

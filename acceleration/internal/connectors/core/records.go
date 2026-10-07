@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"time"
 )
 
 // Correlation names what caused a piece of connector work, for the audit row it leaves: the
@@ -40,6 +41,7 @@ type Exchange struct {
 	status     int
 	credential error
 	timedOut   bool
+	retryAfter time.Duration
 }
 
 type exchangeKey struct{}
@@ -68,6 +70,14 @@ func (e *Exchange) Status() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.status
+}
+
+// RetryAfter is the wait the last answered request's 429 asked for, as the connection's scheme
+// read its Retry-After (Scheme.Classify), zero when it was no 429 or said none.
+func (e *Exchange) RetryAfter() time.Duration {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.retryAfter
 }
 
 // CredentialError is why the Resolver gave the last request no credential, nil when it gave
@@ -117,5 +127,15 @@ func (e *Exchange) answered(status int, err error) {
 		e.timedOut = e.timedOut || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout()
 		return
 	}
-	e.status = status
+	e.status, e.retryAfter = status, 0
+}
+
+// limited records the wait the 429 that answered the last request asked for.
+func (e *Exchange) limited(wait time.Duration) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.retryAfter = wait
 }
