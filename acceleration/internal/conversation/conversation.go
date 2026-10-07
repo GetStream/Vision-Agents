@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -159,8 +160,10 @@ type Service struct {
 	pins   Pins
 	all    map[known]*Conversation
 	logger *slog.Logger
-	// finished is told of every reply finished in a thread channel (OnFinishedReply).
-	finished func(FinishedReply)
+	// finished is told of every reply finished in a thread channel (OnFinishedReply). It is
+	// apart from mu, which OpenInApp holds across Stream Chat calls of up to its 20 s budget,
+	// so a finished reply in one conversation never waits on another opening.
+	finished atomic.Pointer[func(FinishedReply)]
 }
 
 // known is how the service finds a conversation it holds: by its customer and its channel
@@ -237,16 +240,7 @@ type FinishedReply struct {
 // such as one a login later marks, is told again, so fn drops one it has seen. Set it before
 // any conversation is opened.
 func (s *Service) OnFinishedReply(fn func(FinishedReply)) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.finished = fn
-}
-
-// finishedReplies is OnFinishedReply's fn, or nil.
-func (s *Service) finishedReplies() func(FinishedReply) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.finished
+	s.finished.Store(&fn)
 }
 
 // SessionCommandChannel reserves the persistent conversation namespace for the
@@ -1668,8 +1662,10 @@ func (c *Conversation) flush() bool {
 		}
 		finished, isFinished := c.finishedReply(op)
 		c.mu.Unlock()
-		if fn := c.service.finishedReplies(); isFinished && fn != nil {
-			fn(finished)
+		// The hook is read without the service's lock, so a write never waits on another
+		// conversation opening.
+		if fn := c.service.finished.Load(); isFinished && fn != nil {
+			(*fn)(finished)
 		}
 	}
 }

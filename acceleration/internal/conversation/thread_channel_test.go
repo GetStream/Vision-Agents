@@ -2,6 +2,7 @@ package conversation_test
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -106,6 +107,77 @@ func (s *ThreadChannelSuite) TestAReplyInASupportChannelIsNotHandedOver() {
 
 	s.Require().Eventually(func() bool { return len(s.chat.Messages(c.CID()[len("agent:"):])) == 2 }, 5*time.Second, 10*time.Millisecond)
 	s.Never(func() bool { return len(s.handedOver()) > 0 }, 200*time.Millisecond, 20*time.Millisecond)
+}
+
+// While one conversation opens, which holds the service across its Stream Chat calls for up
+// to OpenInApp's 20 s budget, every other conversation's writes go on. The other channel's
+// read is held open by the test until the writes are in.
+func (s *ThreadChannelSuite) TestAWriteDoesNotWaitForAnotherConversationOpening() {
+	c, _, _, err := s.service.Open(context.Background(), "customer", "agent", "")
+	s.Require().NoError(err)
+	release := s.openingHeld()
+	defer release()
+
+	s.Require().NoError(c.Begin("question"))
+	c.Observe(agent.ResponseDelta{Text: "An answer."})
+	c.Observe(agent.Responded{})
+
+	s.Require().Eventually(func() bool {
+		return slices.Contains(s.chat.Messages(c.CID()[len("agent:"):]), "An answer.")
+	}, writeBound, 10*time.Millisecond, "the reply's final text is written while the other conversation opens")
+}
+
+// A reply finished in a thread channel is handed over while another conversation opens, too.
+func (s *ThreadChannelSuite) TestAFinishedReplyDoesNotWaitForAnotherConversationOpening() {
+	s.person("U1", "is the build green?")
+	c, _, _, err := s.service.Open(context.Background(), "customer", "", s.cid)
+	s.Require().NoError(err)
+	release := s.openingHeld()
+	defer release()
+
+	s.answer(c, "is the build green?", "It is.")
+
+	s.Require().Eventually(func() bool { return len(s.handedOver()) == 1 }, writeBound, 10*time.Millisecond,
+		"the reply is handed over while the other conversation opens")
+}
+
+// writeBound is how long a write is given while another conversation opens: far over the
+// milliseconds a write to chattest takes, and far under OpenInApp's 20 s budget, which a
+// write waiting on the service's lock would sit through. The other open is held until after
+// the wait, so a write that waits on it never lands within any bound.
+const writeBound = 5 * time.Second
+
+// openingHeld has another conversation open on a support channel of its own, its history
+// read held open in Stream Chat, and returns once it is held. release lets it finish and
+// waits for it.
+func (s *ThreadChannelSuite) openingHeld() (release func()) {
+	channel := "support-" + uuid.NewString()
+	// The creator and owner OpenInApp stamps on a channel no end user owns.
+	operator, owner := "support-operator", ""
+	_, err := s.chat.Client.Chat().GetOrCreateChannel(context.Background(), "agent", channel, &getstream.GetOrCreateChannelRequest{
+		Data: &getstream.ChannelInput{CreatedByID: &operator, Custom: map[string]any{
+			conversation.CustomerField: "customer", "support_agent_id": "agent", "support_owner_id": owner,
+			conversation.TriggerField: conversation.SessionCommandTrigger,
+		}},
+	})
+	s.Require().NoError(err)
+	// The channel query OpenInApp reads history with: POST /api/v2/chat/channels/{type}/{id}/query
+	// (getstream-go GetOrCreateChannel).
+	waiting, let := s.chat.Hold("/agent/" + channel + "/query")
+	opened := make(chan error, 1)
+	go func() {
+		_, _, _, err := s.service.Open(context.Background(), "customer", "agent", "agent:"+channel)
+		opened <- err
+	}()
+	select {
+	case <-waiting:
+	case err := <-opened:
+		s.FailNow("the other conversation opened without reading its history", "%v", err)
+	}
+	return func() {
+		let()
+		s.NoError(<-opened)
+	}
 }
 
 // person writes a message into the thread channel as the bridge does: no source.
