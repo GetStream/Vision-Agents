@@ -705,6 +705,25 @@ func (s *HarnessSuite) TestCompleteIdentifiersAreNotHandedToAColleague() {
 	s.Empty(s.slow.requests(), "a complete identifier must not wait on the subagent")
 }
 
+func (s *HarnessSuite) TestIdentifiersSaidInWordsAreNotHandedToAColleagueEither() {
+	for _, said := range []string{
+		"a table for two at seven thirty",
+		"my number is five one two five five five zero one four two",
+	} {
+		s.Run(said, func() {
+			s.SetupTest()
+			s.build(true)
+			s.respond("turn-1", said)
+
+			spoken := s.reply("turn-1", `Booking it. <ask skill="think">read that back</ask>`)
+
+			s.Equal("Booking it. ", spoken)
+			s.True(s.harness.Pending(), "the fast model still owes the caller a tool call")
+			s.Empty(s.slow.requests(), "a time or a number said in words is complete as well")
+		})
+	}
+}
+
 func (s *HarnessSuite) TestATurnNobodyPromptedHasSomethingToAnswer() {
 	// Work coming back is a turn nobody asked for, so the conversation ends with the
 	// agent's own reply rather than a caller's sentence. Asked to follow its own turn,

@@ -1817,6 +1817,13 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
   optional ones nobody gave, and follow the operator's instructions and a tool's approval
   setting wherever confirmation comes first.
 
+- A turn that already carries a clock time or a number said in words stays with the fast model.
+  Only digits were recognised as a complete clock time, member id or phone number, so "seven
+  thirty" and "five one two five five five zero one four two" were handed to the slower colleague
+  and the caller waited for it. Spoken clock times ("seven thirty", "half past seven", "quarter
+  to eight", "seven o'clock", "seven pm") and runs of four or more spoken digits, with "oh",
+  "double" and "triple", are now recognised too, without allocating.
+
 - A reply that is still held for the caller to have been quiet is replaced, not followed, by what the
   caller says in the meantime. The flow controller was told the agent was speaking and could let
   the words wait behind the reply, so the held reply was let out and the answer to the later words

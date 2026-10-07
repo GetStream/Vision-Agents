@@ -829,16 +829,17 @@ var (
 )
 
 // identifiersAlreadyComplete reports whether the caller already said a clock time, a
-// member or order id, or a phone number. Those turns are the fast model's to answer and
-// to call tools on; handing them to a colleague is a multi-second wait on a complete
-// thought.
+// member or order id, or a phone number, in digits or spelled out as words. Those turns
+// are the fast model's to answer and to call tools on; handing them to a colleague is a
+// multi-second wait on a complete thought.
 func identifiersAlreadyComplete(history []llm.Message) bool {
 	for i := len(history) - 1; i >= 0; i-- {
 		if history[i].Role != llm.User {
 			continue
 		}
 		text := history[i].Content
-		return spokenClock.MatchString(text) || spokenID.MatchString(text) || spokenPhone.MatchString(text)
+		return spokenClock.MatchString(text) || spokenID.MatchString(text) || spokenPhone.MatchString(text) ||
+			spokenNumbers(text)
 	}
 	return false
 }
