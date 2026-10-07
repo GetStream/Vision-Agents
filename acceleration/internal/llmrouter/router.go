@@ -159,23 +159,13 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 			if candidate.Config.Name() == config.Name() {
 				continue
 			}
-			// The list would win over the target, so it is cleared to ask this one alone.
-			alternative := core
-			alternative.Target = candidate.Config.Name()
-			alternative.Providers = nil
-			provider, selected, err := r.Select(ctx, alternative)
+			child, err := r.child(ctx, core, session, candidate.Config)
+			if errors.Is(err, errClosed) {
+				return nil, err
+			}
 			if err != nil {
 				failures = append(failures, err)
 				continue
-			}
-			// The child serves a response the parent already allowed, so it reaches for
-			// create rather than Create: the limit is asked once per response, not once
-			// per provider tried. It still holds the limiter, because whichever provider
-			// ends up answering is the one whose tokens have to be debited.
-			child := newSession(provider, selected, core.Owner(), r.Recorder(), r.quota)
-			if !session.addChild(child) {
-				_ = child.Close()
-				return nil, stack.Wrap(errors.New("llmrouter: session is closed"))
 			}
 			stream, err := child.create(ctx, params)
 			if err != nil {
@@ -192,4 +182,26 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 		return nil, stack.Wrap(errors.Join(append(failures, errors.New("llmrouter: no fallback provider available"))...))
 	}
 	return session, nil
+}
+
+// child opens a session on one candidate for a response its parent has already allowed.
+//
+// It reaches for create rather than Create: the limit is asked once per response, not once
+// per provider tried. It still holds the limiter, because whichever provider ends up
+// answering is the one whose tokens have to be debited.
+func (r *Router) child(ctx context.Context, core routing.Request, parent *Session, candidate routing.ProviderConfig) (*Session, error) {
+	// The list would win over the target, so it is cleared to ask this one alone.
+	alternative := core
+	alternative.Target = candidate.Name()
+	alternative.Providers = nil
+	provider, selected, err := r.Select(ctx, alternative)
+	if err != nil {
+		return nil, err
+	}
+	child := newSession(provider, selected, core.Owner(), r.Recorder(), r.quota)
+	if !parent.addChild(child) {
+		_ = child.Close()
+		return nil, stack.Wrap(errClosed)
+	}
+	return child, nil
 }
