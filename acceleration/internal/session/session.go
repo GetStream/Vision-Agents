@@ -130,6 +130,11 @@ type Session struct {
 	// carded is whether the session started with the person's episode cards
 	// (callCards.read). Set once, before the session can be reached.
 	carded bool
+	// transcribedInto is the channel a call's transcript is written into: the conversation's,
+	// else the agent id's. Empty when it is written nowhere the call may write, a device's
+	// call under a thread channel's agent id (persistent.Barred). Set once, before the
+	// session can be reached.
+	transcribedInto string
 
 	// Serializes persistent command acceptance/start with command-targeted interruption.
 	commandMu sync.Mutex
@@ -752,6 +757,11 @@ type Settings struct {
 	Verbosity       *string
 }
 
+// ErrCardedToNative refuses moving a session that started with the person's episode cards
+// onto a speech-to-speech model, which is handed the history as a transcript in its
+// instructions with no system message, so the cards would reach it without their note.
+var ErrCardedToNative = errors.New("session: a session that started with episode cards cannot move onto a speech-to-speech model")
+
 // SetSettings moves this session onto other models or another voice, and between the
 // cascade and a speech-to-speech model. The agent config it started from is untouched,
 // and nothing changes when it fails.
@@ -790,8 +800,7 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 	// the note that they are context, not authority. A session that read none moves as
 	// before.
 	if next.Native() && s.carded {
-		return stack.Wrap(errors.New(
-			"session: this session started with the person's episode cards, which a speech-to-speech model cannot be handed as context; start a new session to use one"))
+		return stack.Wrap(ErrCardedToNative)
 	}
 	if next.ControllerTarget == "" && !next.Native() {
 		next.ControllerTarget = defaultControllerTarget

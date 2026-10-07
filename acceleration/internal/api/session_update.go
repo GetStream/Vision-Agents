@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -63,7 +64,9 @@ func (s *Server) registerSessionUpdate(api huma.API) {
 			"Model changes are opened before anything changes, so a target that does not route is " +
 			"refused and the session carries on as it was. Instructions and models take over from " +
 			"the next turn; a reply being spoken finishes on what it started with. Naming sts makes " +
-			"the session native, and an empty sts makes it a cascade again. A title or description " +
+			"the session native, and an empty sts makes it a cascade again. A session that started " +
+			"with the person's episode cards cannot be moved onto a speech-to-speech model: 400, " +
+			"carded_session_to_native. A title or description " +
 			"given here stops the router naming the conversation for what was said.",
 		Responses: map[string]*huma.Response{"200": {Description: "The session as it now is"}},
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
@@ -111,6 +114,9 @@ func (s *Server) updateSession(ctx context.Context, request *updateSessionReques
 	live := found.Live
 	if moving {
 		if err := live.SetSettings(ctx, settings); err != nil {
+			if errors.Is(err, session.ErrCardedToNative) {
+				return nil, errCardedSessionToNative
+			}
 			return nil, invalidRequest(err.Error())
 		}
 	}

@@ -10703,7 +10703,7 @@ paths:
 
         A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
 
-        Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+        Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
       operationId: updateSession
       parameters:
         - description: The session, as returned when it was created.
@@ -11262,7 +11262,7 @@ paths:
     patch:
       description: |-
         Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
-        Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
+        Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native.
       operationId: setSessionSettings
       parameters:
         - description: The session, as returned when it was created.
