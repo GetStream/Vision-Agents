@@ -1573,6 +1573,9 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- An incognito session records nothing, as it promised. It still wrote a `calls` row with its
+  id, caller and instructions, turn timings under its agent id, and, on a call, the decisions
+  with the words that were heard. Its voice minutes no longer appear in the activity report.
 - A login card in a tool result is attached to the reply only when it comes from a server
   each end user logs into: a plugin under `user_plugins`, or an `mcp_servers` entry with
   `user: true`. A server the app logs into, or one with no login, can no longer put one in

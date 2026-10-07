@@ -598,8 +598,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 
 	// The row is queued before the session is reachable, so the call cannot be recorded
-	// as ending before it is recorded as starting.
-	if m.calls != nil {
+	// as ending before it is recorded as starting. An incognito session has none: the row
+	// names the session, its caller and the instructions it ran with.
+	if m.calls != nil && !spec.Incognito {
 		created.calls = m.calls
 		created.closers = append(created.closers, func() {
 			m.calls.Ended(created.id, time.Now().UTC())
