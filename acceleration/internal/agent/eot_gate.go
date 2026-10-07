@@ -313,7 +313,10 @@ func scoreEOTAttempts(ctx context.Context, client *EOTClient, requestID string, 
 		var retryAfter time.Duration
 		var hasRetryAfter bool
 		lastClass, retryAfter, hasRetryAfter = eotErrorMetadata(lastErr)
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		// Read once: a cancellation landing between the checks would end the loop with the class of
+		// the attempt that failed rather than the cancellation that stopped it.
+		stopped := ctx.Err()
+		if errors.Is(stopped, context.DeadlineExceeded) {
 			budgetExhausted = true
 			if lastClass == eotFailureCanceled {
 				lastErr = &eotAttemptError{class: eotFailureTimeout}
@@ -321,13 +324,13 @@ func scoreEOTAttempts(ctx context.Context, client *EOTClient, requestID string, 
 			}
 			break
 		}
-		if errors.Is(ctx.Err(), context.Canceled) {
+		if errors.Is(stopped, context.Canceled) {
 			lastErr = &eotAttemptError{class: eotFailureCanceled}
 			lastClass = eotFailureCanceled
 			break
 		}
 		failure, typed := lastErr.(*eotAttemptError)
-		if !primary || ctx.Err() != nil || attempts >= maxAttempts ||
+		if !primary || stopped != nil || attempts >= maxAttempts ||
 			!typed || !failure.retryable() {
 			break
 		}
