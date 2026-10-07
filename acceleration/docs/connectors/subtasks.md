@@ -11,7 +11,7 @@ On October 6 the 36 open subtasks were regrouped into 26 PRs in 4 waves, each wi
 ## Ground rules
 
 - **Base branch is `accelerate`.** Every PR targets it. The prototype branch `codex/connector-support` is a source of code to copy where the design says «keep», not a base: it changes 197 files at once, carries SDK regenerations for ten languages and an irreversible plugin migration, none of which is reviewable as one PR.
-- **What `accelerate` has today** (checked October 1): `internal/plugins` with five catalog entries and endpoints in `api/legacy.yaml:1061-1177`; one-version AES-GCM sealer in `internal/auth/secret.go` (`KEKVersion = 1`); no `internal/egress`, no `internal/mcp`, no `internal/connectors`; Huma for new operations (`internal/api/policies.go` is the pattern); `cmd/openapi` renders the spec and a test fails when it is stale.
+- **What `accelerate` has today** (checked October 6 at [`88c3e365`](https://github.com/GetStream/Vision-Agents/commit/88c3e3651636764de99df23b8348ab8934da0838)): `internal/plugins` with 14 catalog entries ([`internal/plugins/plugins.yaml`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/plugins/plugins.yaml)); plugin operations registered with Huma ([`internal/api/plugins.go:538`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/api/plugins.go#L538)) and, for the browser and webhook routes, declared in [`internal/api/handwritten.go`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/api/handwritten.go#L216); no `api/legacy.yaml`; an AES-GCM sealer with a KEK keyring (`NewSealerWithKeyring`, [`internal/auth/secret.go:46`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/auth/secret.go#L46)); `internal/egress`, `internal/connectors`, `internal/channels` and `internal/pluginevents` exist, `internal/mcp` does not; Huma for new operations (`internal/api/policies.go` is the pattern); `cmd/openapi` renders the spec and a test fails when it is stale. On October 1 it had five catalog entries, endpoints in `api/legacy.yaml:1061-1177`, a one-version sealer and none of the four packages.
 - **Layer order inside a phase:** migration and store, then core logic, then API, then session wiring, then SDKs. Since October 6 a PR also ships its first production caller: an endpoint, the session or a command. A test is not a caller. A subtask with no caller merges into the subtask that adds one («Remaining work: 26 PRs in 4 waves»).
 - **New endpoints use Huma, not `legacy.yaml`.** The prototype registered its connector endpoints through the generated oapi-codegen server (`ListConnectorsRequestObject` and friends in `internal/api/connectors.go`). AGENTS.md forbids adding to `legacy.yaml`, so the API phase ports the handlers to `huma.Register`.
 - **Go first, SDKs later.** AGENTS.md: SDK changes start with Go; the other SDKs follow in their own PRs. Each API PR regenerates `openapi.yaml` and the Go SDK only.
@@ -310,6 +310,7 @@ Four PRs. After T21 an agent on staging can call a Slack or Linear tool; after T
 - **Description.** Delete `internal/plugins`, `internal/pluginevents`, `session/plugin_tools.go`, `session/plugin_clients.go` and `attachPlugins`, the plugin operations (`listPlugins`, `listConfigPlugins`, `authorizePlugin`, `disconnectPlugin`, the plugin client operations, `getPluginLogo`, `pluginOAuthCallback`, `receivePluginEvent`) and their handlers in `api/plugins.go` and `api/handwritten.go`, the `plugin_authorization` attachment once T59 replaces it, and the SDK surfaces that reference them. One migration drops `agent_plugin_connections`, `agent_plugin_clients`, `agent_plugin_event_subscriptions`, `agent_plugin_event_deliveries` and the columns `agent_configs.agent_plugins`, `user_plugins`, `plugin_events`.
 - **Scope.** Deletions, one migration, OpenAPI and Go SDK regen, the Python plugin's `folder.py` and `config.py` plugin fields, `.claude/skills/plugin/SKILL.md`.
 - **Out of scope.** Any new behavior; moving rows (T61).
+- **Reason, checked October 6.** Until T23, plugin tokens stay in plain text (see T61).
 - **Dependencies.** T21, T22 (an agent always has a tool path), T59, T60, T61 (rows moved), and Volt on connector endpoints.
 - **Acceptance.** `grep -rn plugin_id acceleration/` finds nothing outside the migration's down block; the OpenAPI freshness test passes; `router plugins migrate` reported 0 unmapped rows on staging before the drop.
 
@@ -341,6 +342,7 @@ Four PRs. After T21 an agent on staging can call a Slack or Linear tool; after T
 **Status: one PR with T58** (AI-900, October 6). The command is the manifests' first caller.
 
 - **Description.** `router plugins migrate`, a Go command, not SQL: sealing needs the keyring, and the AAD binds connection id and revision (T8). It writes each `agent_plugin_connections` row as an `oauth2_code` connection (owner `app` when `user_id` is empty, else `user`) with its tokens sealed; each `agent_plugin_clients` row as a `connector_oauth_clients` record, the most recently updated one when two configs of one app differ; each `agent_plugins` entry as a `fixed` binding and each `user_plugins` entry as a `session` binding. It is idempotent and reports every row it cannot map. Event subscriptions are not moved; T60 re-creates them.
+- **Reason, checked October 6.** Plugin tokens are plain text: `access_token TEXT` ([`20260901180000_agent_plugins.sql:16`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/migrations/20260901180000_agent_plugins.sql#L16)). Only the plugin client secret is sealed (`secret_sealed`, [`store/plugins.go:205`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/store/plugins.go#L205)). Connector credentials are sealed (`credentials_sealed`, T8).
 - **Scope.** The command, a dry-run flag that prints the plan, integration tests on a copy of plugin rows.
 - **Dependencies.** T58, T21, T22 (tools run through connectors), T20, T19, T40, T8.
 - **Acceptance.** A dry run on staging lists every row and its target; a real run then leaves every migrated agent's tools working through connectors with no new login; a second run changes nothing. Staging row counts are `unverified` now (0 on October 1); count them first (architecture doc, «Plugins move onto connectors»).
@@ -482,7 +484,7 @@ Waves follow the same rule as the chart above: one more than the deepest depende
 
 ### T38. Events endpoint for each provider app · [AI-869](https://linear.app/stream/issue/AI-869)
 
-**Status: merged into T57's PR** (AI-878, October 6).
+**Status: merged into T57's PR** (AI-878, October 6). **In review:** [PR #768](https://github.com/GetStream/Vision-Agents/pull/768).
 
 - **Required.** Description. `POST /v1/connectors/events/{provider_app_id}` (proposal), a second route into T26's handler. The URL names the customer's provider app, and with it the tenant and the signing secret, so the Router needs no global lookup by account. Token signals go to `Resolver.Invalidate`; messages go to the channel bridge (T57). Slack sends `tokens_revoked` and `app_uninstalled` to the app's Request URL ([tokens\_revoked](https://docs.slack.dev/reference/events/tokens_revoked), [app\_uninstalled](https://docs.slack.dev/reference/events/app_uninstalled)), so one URL serves signals and messages. T26's route for each connector stays for connectors without a provider app for each customer.
 - Scope. Route, provider-app lookup, verifier with that app's secret, tests.
@@ -568,6 +570,20 @@ Six PRs in the Router above the connector layer: the channel bridge and the firs
 
 **Status: one PR with T38 and T35** (AI-878, October 6). Slack is the bridge's first caller. T35 no longer waits for T41: the episode cards come in T41's PR for every channel.
 
+**In review:** [PR #768](https://github.com/GetStream/Vision-Agents/pull/768), an open draft since October 6.
+
+**Cases chat-support-agent handles** (proposal: check each one against [PR #768](https://github.com/GetStream/Vision-Agents/pull/768); nothing here is done). Source: GetStream/chat `projects/chat-support-agent` at `b394e139f8`, read October 6. That agent reads Slack through Socket Mode in one workspace, not through the Events API over HTTP.
+
+- [ ] Gap recovery after a reconnect: `conversations.history` and `conversations.replies`, a 20 s poll, cursors kept in storage.
+- [ ] Deduplication by message `ts`.
+- [ ] Acknowledge first, work later; an «eyes» reaction as the visible acknowledgement.
+- [ ] Bot-loop guards: drop other bots, drop the bot's own user id, drop `message_changed` from unfurls, ignore mentions inside forwarded text.
+- [ ] Rate limits of `chat.update` and of reactions.
+- [ ] One run for each thread; a follow-up message is queued or steers the run.
+- [ ] A channel allowlist.
+- [ ] `action_token` for `assistant.search.context`.
+- [ ] Socket Mode only: Slack spreads deliveries across all open connections, so one consumer for each app.
+
 - **Required.** Description. The inbound half maps a verified message (T26, T37) to a provider unit, an external thread and an author, and writes it to the thread channel as the person, without `source`. Router's message hook then wakes or starts the session. The outbound half takes a reply (`source: agent`) in a linked thread channel, which the message hook hands over, resolves the credential (T12) and sends it through the reply endpoint and body template of the manifest `channel` block (T34). Store `channel_threads`: external thread ↔ thread channel cid, with `stream_app_pk`. Retried deliveries (same ProviderMessageID, T37) and the bot's own messages are dropped. An external author maps to a Stream Chat user.
 - Scope. The bridge package, the store table, the message-hook hand-off, a fake-provider channel personality, tests.
 - Out of scope. Any real provider (T35, T36, T51 to T53); episode cards (T41).
@@ -575,9 +591,9 @@ Six PRs in the Router above the connector layer: the channel bridge and the firs
 - Unblocks. T35, T36, T41, T46, T51 to T53.
 - Acceptance. The fake provider posts a message event; the bridge writes it to a new thread channel without `source`; the message hook wakes a text session; the session's reply reaches the bridge and leaves with the connection's credential; a second event on the same thread uses the same thread channel.
 
-### T35. Slack channel · [AI-862](https://linear.app/stream/issue/AI-862)
+### T35. Slack channel · [AI-878](https://linear.app/stream/issue/AI-878)
 
-**Status: merged into T57's PR** (AI-878, October 6). The episode card in the acceptance moves to T41.
+**Status: merged into T57's PR** (AI-878, October 6). The episode card in the acceptance moves to T41. **In review:** [PR #768](https://github.com/GetStream/Vision-Agents/pull/768); the chat-support-agent checklist is in T57.
 
 - **Required.** Description. Slack Events API on the customer's provider app (T40; for Athena the Stream-owned app): acknowledge within 3 seconds, honour `x-slack-retry-num`, channel + `thread_ts` as the thread key, write into the thread channel, reply with `chat.postMessage` and the bot token. A built-in manifest for the bot token (owner `app`, identity = the Slack team) sits beside the user-token tool manifest `slack.yaml`, unless the hosted Slack MCP accepts a bot token (`unverified`). Athena's first scenario is this channel.
 - Scope. The Slack bot manifest with its `channel` block, Slack verifier parameters, tests with recorded Slack events.
@@ -588,6 +604,7 @@ Six PRs in the Router above the connector layer: the channel bridge and the firs
 
 ### T36. Linq channel (iMessage, BYO account: unverified) · [AI-863](https://linear.app/stream/issue/AI-863)
 
+- **Exists on `accelerate` (October 6).** `internal/channels/linq.go` carries iMessage through Linq, which falls back to RCS or SMS ([`linq.go:28-30`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/channels/linq.go#L28-L30)). It checks a Standard Webhooks signature in `Webhook-Signature` ([`linq.go:20-25`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/channels/linq.go#L20-L25), [`linq.go:37-39`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/channels/linq.go#L37-L39)) and sends the reply ([`linq.go:125-127`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/channels/linq.go#L125-L127)). Before work starts, this task must decide: reuse `internal/channels`, or replace it with the channel bridge (open question, architecture doc, «What `accelerate` already has»).
 - **Proposal.** Description. iMessage through the customer's own Linq account. The Linq webhook points to the events endpoint of the customer's provider app (T38). The verifier is HMAC-SHA256 over `{timestamp}.{rawBody}` with the subscription's signing secret, compared with the `X-Webhook-Signature` header ([Linq webhooks](https://docs.linqapp.com/guides/webhooks/index.md)). The bridge writes each conversation into its own thread channel and one episode card into the person's omni-channel (T41); number ↔ number is the thread key, and the contact map joins it by E.164. The reply goes out through the send endpoint from the manifest `channel` block with the `api_key` scheme (T11). BYO is still `unverified` as a decision: asked on October 1 whether the customer brings their own Linq key, Thierry answered «well thats we have to figure out». No voice: Linq's API places no calls.
 - Scope. Linq manifest (`api_key` scheme, `channel` block with the verifier parameters, the thread key and the reply template), tests against the fake provider.
 - Out of scope. Apple Messages for Business, open only through an Apple-approved MSP; Stream-operated lines.
@@ -597,6 +614,7 @@ Six PRs in the Router above the connector layer: the channel bridge and the firs
 
 ### T51. WhatsApp channel (Meta Cloud API) · [AI-879](https://linear.app/stream/issue/AI-879)
 
+- **Exists on `accelerate` (October 6).** `internal/channels/whatsapp.go` carries WhatsApp through the Meta Cloud API. It checks `X-Hub-Signature-256` under the app secret ([`whatsapp.go:18-34`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/channels/whatsapp.go#L18-L34)), answers Meta's webhook check ([`service.go:115-118`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/channels/service.go#L115-L118)), reads text messages only ([`whatsapp.go:86-91`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/channels/whatsapp.go#L86-L91)) and sends the reply ([`whatsapp.go:135-137`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/channels/whatsapp.go#L135-L137)). Before work starts, this task must decide: reuse `internal/channels`, or replace it with the channel bridge (open question, architecture doc, «What `accelerate` already has»).
 - **Proposal.** Description. One Stream Meta app as Tech Provider. The customer onboards its WABA and number with Embedded Signup; the Router exchanges the code for a business token. Verifier: `X-Hub-Signature-256` with our app secret. Routing by `phone_number_id` (T39). Outbound policy: free text inside the 24-hour window, approved templates outside it; the WhatsApp idle period is shorter than 24 hours.
 - Dependencies. T57, T39, T41, T43.
 
@@ -607,6 +625,7 @@ Six PRs in the Router above the connector layer: the channel bridge and the firs
 
 ### T53. SMS channel (Twilio, Telnyx) · [AI-881](https://linear.app/stream/issue/AI-881)
 
+- **Exists on `accelerate` (October 6).** `internal/channels/telnyx.go` carries SMS through Telnyx. It checks the Ed25519 signature over the timestamp and the body ([`telnyx.go:36-40`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/channels/telnyx.go#L36-L40)) and points a number bought through `/v1/phone/numbers` at the hook ([`telnyx.go:142-145`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/channels/telnyx.go#L142-L145)). STOP, START and HELP are answered before the agent ([`keywords.go:27-30`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/channels/keywords.go#L27-L30)). The same commit adds 10DLC registration (`internal/dlc`). Twilio is not in `internal/channels`. Before work starts, this task must decide: reuse `internal/channels`, or replace it with the channel bridge (open question, architecture doc, «What `accelerate` already has»).
 - **Proposal.** Description. The customer's number or account at the vendor; scheme `apikey`; the vendor's signature verifier; number ↔ number as the thread key; contact map by E.164.
 - Dependencies. T11, T57, T41, T43.
 

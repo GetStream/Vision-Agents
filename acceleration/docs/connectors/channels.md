@@ -105,8 +105,21 @@ Botpress, Twilio Conversation Orchestrator, Intercom Fin and Chatwoot use the sa
 - [ ] Does he agree to the channel bridge in the Router? He asked «how do we want to approach this?» on October 1.
 - [ ] Is the omni-channel with episode cards the required history for all inbound channels?
 - [ ] How do we join one person from different inbound channels into one omni-channel?
+- [ ] Build the channels on `internal/channels`, or keep the channel bridge and move `internal/channels` onto it later? Open since October 6 (next section).
 
 Details: [Architecture changes](#m729fz3d1s3.42018) · [Cost of this design](#m729fz3d1s3.109598) · [How other companies do it](#m729fz3d1s3.72499).
+
+## What `accelerate` already has (checked October 6)
+
+Checked on `accelerate` at [`88c3e365`](https://github.com/GetStream/Vision-Agents/commit/88c3e3651636764de99df23b8348ab8934da0838). The rest of this doc was written before these facts. They change no decision. Full list with code references: architecture doc, «What `accelerate` already has».
+
+- **Inbound channels exist.** Thierry added `internal/channels` in [`41a251f8`](https://github.com/GetStream/Vision-Agents/commit/41a251f8d0d36cbfdaca33f7323bcfe94ea8dd87) on October 5. It carries WhatsApp through the Meta Cloud API, SMS through Telnyx and iMessage through Linq ([`channels.go:40-50`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/channels/channels.go#L40-L50)). Providers deliver to `/v1/agents/channels/hooks/{token}` ([`api/server.go:505-506`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/api/server.go#L505-L506)). The same commit adds 10DLC registration.
+- **A Python channel plugin exists.** `plugins/omni` ([`5240b0ef`](https://github.com/GetStream/Vision-Agents/commit/5240b0ef377e610ad6e7e058134b1a20e13f02e0), #738, October 3) reads Slack, Teams, WhatsApp, RCS, Twilio, Telnyx and Linq webhooks into Stream Chat messages and renders the replies.
+- **Plugin tokens are plain text.** `access_token TEXT` ([`migrations/20260901180000_agent_plugins.sql:16`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/migrations/20260901180000_agent_plugins.sql#L16)). Connector credentials are sealed. Plugin refresh is lazy and takes no lock ([`session/plugin_tools.go:200-210`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/session/plugin_tools.go#L200-L210)).
+- **The connector side is not wired yet.** `Resolver.Resolve` has no production caller. The Slack connector receives signals only, and messages go to `droppingBridge` ([`api/server.go:442-443`](https://github.com/GetStream/Vision-Agents/blob/88c3e3651636764de99df23b8348ab8934da0838/acceleration/internal/api/server.go#L442-L443)). Token export (T45) is not built.
+- **The first channel is in review.** [PR #768](https://github.com/GetStream/Vision-Agents/pull/768) (T57 + T38 + T35) is an open draft. Its channel bridge shares no code and no tables with `internal/channels`.
+
+**Open question, not decided.** Build the channels on `internal/channels`, or keep the channel bridge and move `internal/channels` onto it later? Thierry has not confirmed the connectors plan. On October 6 he asked whether hosting the OAuth callback «solves the need for connectors» (#video-ai).
 
 # Part 2 · Details
 
@@ -313,6 +326,15 @@ Three inbound channels work today through Stream products. The other inbound cha
 A new inbound channel needs three things: a provider manifest, a verifier for its signature and a way to send replies. Agent channels, `session.Session` and tools already exist.
 
 Tools work the same way for every inbound channel. An inbound channel is not a tool (architecture doc, one-way door 9). iMessage uses the same kind of channel bridge. The reason: the Linq MCP server runs only over stdio, and the Router does not run stdio servers (competitor doc, «Voice agents and Router»).
+
+**Checked October 6.** The table above is from October 2. Since October 5, WhatsApp (Meta Cloud API), SMS (Telnyx) and iMessage (Linq) reach the Router through `internal/channels`, not through a channel bridge («What `accelerate` already has»).
+
+**MCP and inbound messages (checked October 6).**
+
+- **MCP Events.** A draft specification lets an MCP server tell the client about updates, «such as new messages» ([OpenAI: MCP Events](https://developers.openai.com/plugins/build/mcp-events), [`experimental-ext-triggers-events`](https://github.com/modelcontextprotocol/experimental-ext-triggers-events), «Experimental»). The plugin system implements its webhook delivery (`POST /v1/agents/plugins/events/{token}`). We found no production MCP server that sends events.
+- **Slack.** The [Slack MCP server](https://docs.slack.dev/ai/slack-mcp-server/) docs list tools and no events. It takes user tokens only. Slack's own MCP sample gets messages through the Events API. Socket Mode sends Events API events over a WebSocket with no public URL, but «Apps using Socket Mode are not currently allowed in the public Slack Marketplace» ([Socket Mode](https://docs.slack.dev/apis/events-api/using-socket-mode)). Can an unlisted app in many workspaces use Socket Mode? `unverified`.
+- **WhatsApp.** Meta's WhatsApp Business Tools MCP (`https://mcp.facebook.com/whatsapp_business_tools`) has `send_message`, `configure_webhooks` and `subscribe_webhook`. No tool reads an inbound message. It is a beta. The Cloud API delivers inbound messages by webhook.
+- **Twilio.** The hosted MCP (`https://mcp.twilio.com/docs`) searches the docs and «does not execute API calls». `@twilio-alpha/mcp` is an alpha local stdio server. Inbound SMS arrives by webhook by default, or through Event Streams, or by polling the Messages API.
 
 ## Other channels: WhatsApp, SMS, iMessage, Telegram
 
@@ -630,7 +652,7 @@ Platforms that run the agent inside the platform use the same pattern as this de
 
 The merged AI-816 work (#727, #729, #730) covers tools only. It stores accounts at providers and gives their tokens to the agent. Checked on [`connectors/planning`](https://github.com/GetStream/Vision-Agents/tree/connectors/planning) @ `[ead4a273](https://github.com/GetStream/Vision-Agents/commit/ead4a273f4d3623fff2a2286d5422725aa0af2e2)`, October 2.
 
-In the code today, «connector» means tools only. The Router has no Slack, WhatsApp or iMessage inbound channel.
+In the code today, «connector» means tools only. On October 2 the Router had no Slack, WhatsApp or iMessage inbound channel. Since October 5, `internal/channels` carries WhatsApp, SMS and iMessage («What `accelerate` already has»).
 
 | Code name | What it does | Example | Where in code |
 | --- | --- | --- | --- |
@@ -654,7 +676,7 @@ The omni-channel is the person's agent channel. It keeps one episode card for ea
 2. Athena gives the id of its own chat to `chatlog.Log`. Thus voice does not open a second agent channel (`[internal/chatlog/chatlog.go:109-111](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/chatlog/chatlog.go#L109-L111)`).
 3. Stream Chat sends each new message in the agent channel to the message hook (`[internal/api/messagehooks.go:61](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/api/messagehooks.go#L61)`). The Router answers from the running `session.Session` or starts a new one (`Server.routeArrivingMessage`, `[:131](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/api/messagehooks.go#L131)`).
 
-**What the Router does not do.** The Router has no Slack, WhatsApp or iMessage inbound channel. Stream Chat does not sync with these services. A channel bridge must receive the provider event, write the message to the thread channel, write the episode card to the omni-channel and send the reply back.
+**What the Router does not do.** On October 2 the Router had no Slack, WhatsApp or iMessage inbound channel. Since October 5, `internal/channels` carries WhatsApp, SMS and iMessage; Slack still has none. Stream Chat does not sync with these services. A channel bridge must receive the provider event, write the message to the thread channel, write the episode card to the omni-channel and send the reply back.
 
 **Why the agent channel keeps the history.** The history stays after the call ends. Any Stream Chat client can read it. The Router does not need its own transcript API (`[internal/chatlog/chatlog.go:3-6](https://github.com/GetStream/Vision-Agents/blob/ead4a273f4d3623fff2a2286d5422725aa0af2e2/acceleration/internal/chatlog/chatlog.go#L3-L6)`).
 
