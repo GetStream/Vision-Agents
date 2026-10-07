@@ -23,7 +23,8 @@ Toolset.Call(call)
   unknown name             -> error, nothing sent
   arguments vs schema      -> error, nothing sent
   tools/call               binding.Timeout and the caller's context bound it;
-                           the client copy has no Timeout of its own
+                           the client's Timeout is at least 35 s (callTimeout),
+                           past the binding's 30 s maximum
   text parts, else structured JSON, else "not text" -> cut at 32 KiB + marker (core.CutResult)
   isError                  -> *core.ToolError, even with no text
 ```
@@ -36,7 +37,8 @@ Toolset.Call(call)
 - **Names never collide.** An alias holding `__` is refused, so a name splits at its first `__` into one alias and one tool. Check: `go test -run 'TestSourceSuite/(TestABindingName|TestToolsOfTwoBindings)' ./internal/connectors/sources/mcp`.
 - **Bounded.** `startupTimeout` bounds `Discover` and `Open`, even when the SDK would wait longer; one HTTP response is at most 4 MiB; one result at most `core.MaxResultBytes` (32 KiB), cut at a UTF-8 boundary and ending with `core.TruncatedMarker`. Check: `go test -run 'TestSourceSuite/(TestTheStartupTimeout|TestAResponseOverTheCap)|TestMCPSourceContract/TestAResultOverTheCap' ./internal/connectors/sources/mcp`.
 - **`isError` is an error.** A result the server marks `isError` is a `*core.ToolError` carrying its text, or a fixed sentence when it has none (an image only). Check: `go test -run 'TestMCPSourceContract/TestAnErrorWithNoText|TestSourceSuite/TestAToolError' ./internal/connectors/sources/mcp`.
-- **Every hardcoded value says where it comes from**, beside it: `defaultStartupTimeout`, `maxResponseBytes`, `Separator`, `implementation`.
+- **Discover keeps the connection's client as it is; a Toolset waits longer.** Validate's requests keep the client's timeout (10 s in the router). An opened Toolset's copy has at least `callTimeout` (35 s), past the longest `timeout_ms` a binding may ask for (30 s), so the caller's deadline ends a call first, even from a server that sent its SSE headers first; and it is still a bound, so the reply to a server's ping, which go-sdk v1.8.0 posts with no deadline of its own, cannot hold `Close` forever. Check: `go test -run TestPingSuite ./internal/connectors/sources/mcp`.
+- **Every hardcoded value says where it comes from**, beside it: `defaultStartupTimeout`, `defaultCallTimeout`, `maxResponseBytes`, `Separator`, `implementation`.
 
 ## Tests
 

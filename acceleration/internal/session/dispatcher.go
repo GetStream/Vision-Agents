@@ -82,10 +82,10 @@ func (d *dispatcher) Close() {
 
 // call runs one tool inside the envelope.
 //
-// The binding's timeout bounds it, and nothing else does: the mcp source sends with a copy of
-// the connection's client that has no Timeout of its own (connectorHTTPTimeout, 10 s in the
-// router, against a timeout_ms of up to 30000), so the client never cuts a call before this
-// deadline. When the deadline runs out the request may have reached the provider and done its
+// The binding's timeout bounds it, and it is always the first bound to end a call: the mcp
+// source sends with a copy of the connection's client whose timeout is at least 35 s
+// (mcp.defaultCallTimeout), past the longest timeout_ms of 30000, where the connection's own
+// client has 10 s (connectorHTTPTimeout in the router). When the deadline runs out the request may have reached the provider and done its
 // work, so the model reads outcome_unknown rather than an error it would retry: the
 // architecture doc's SourceContract («a timed-out write returns outcome_unknown, not an error
 // the model retries», connectors/planning). A turn that is
