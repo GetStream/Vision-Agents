@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -306,18 +307,23 @@ func (s *DispatcherSuite) TestABindingThatIsNotCancellableStopsWaitingAndLeavesT
 	}, 5*time.Second, 20*time.Millisecond)
 }
 
-// TestPreSpeechIsWhatTheToolsOwnBindingAsksFor: a phrase belongs to its binding's tools,
-// and a binding without a policy, or a name the dispatcher did not open, asks for none.
-func (s *DispatcherSuite) TestPreSpeechIsWhatTheToolsOwnBindingAsksFor() {
+// TestAToolsPolicyIsWhatItsOwnBindingAsksFor: a phrase and a wait belong to their binding's
+// tools, and a cancel binding, a binding without a policy, or a name under no bound alias
+// asks for nothing.
+func (s *DispatcherSuite) TestAToolsPolicyIsWhatItsOwnBindingAsksFor() {
 	app := s.connection("", "primary")
 	speaking := s.fixed("crm", app, "slow")
-	speaking.Policy = &store.BindingPolicy{PreSpeech: "Let me pull that up."}
-	d, _, _, err := s.attach(s.spec(s.config(speaking, s.fixed("quiet", app, "whoami")), "", nil))
+	speaking.Policy = &store.BindingPolicy{PreSpeech: "Let me pull that up.", OnInterrupt: store.InterruptWait}
+	cancelling := s.fixed("tickets", app, "whoami")
+	cancelling.Policy = &store.BindingPolicy{OnInterrupt: store.InterruptCancel}
+	d, _, _, err := s.attach(s.spec(s.config(speaking, cancelling, s.fixed("quiet", app, "whoami")), "", nil))
 	s.Require().NoError(err)
 
-	s.Equal("Let me pull that up.", d.preSpeech("crm__slow"))
-	s.Empty(d.preSpeech("quiet__whoami"))
-	s.Empty(d.preSpeech("lookup_order"))
+	s.Equal(agent.ToolPolicy{PreSpeech: "Let me pull that up.", Waits: true}, d.toolPolicy("crm__slow"))
+	s.Equal(agent.ToolPolicy{}, d.toolPolicy("tickets__whoami"))
+	s.Equal(agent.ToolPolicy{}, d.toolPolicy("quiet__whoami"))
+	s.Equal(agent.ToolPolicy{}, d.toolPolicy("lookup_order"))
+	s.Equal(agent.ToolPolicy{}, d.toolPolicy("crm"), "a bare alias is no tool of the binding")
 }
 
 // answering is the rest of a session's tool chain, which answers whatever it is asked.

@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -484,11 +486,11 @@ func (s *AgentSuite) TestAToolsPreSpeechIsSaidInsteadOfTheAgentsOwnFiller() {
 	// A connector binding's policy names what to say while its tool runs; the agent says
 	// it where it would have picked a phrase itself, and tool_started carries it.
 	s.ownsTools("order 12 ships tomorrow")
-	s.preSpeech = func(tool string) string {
+	s.toolPolicy = func(tool string) ToolPolicy {
 		if tool == "lookup_order" {
-			return "Let me pull up your order."
+			return ToolPolicy{PreSpeech: "Let me pull up your order."}
 		}
-		return ""
+		return ToolPolicy{}
 	}
 	s.join(false)
 	s.model.reply = []string{}
@@ -514,7 +516,7 @@ func (s *AgentSuite) TestAToolWithoutPreSpeechGetsTheAgentsOwnFillerAsBefore() {
 	// A tool its binding names no phrase for, or a session with no bindings at all, is
 	// TestAToolReachedForWithoutAWordStillTellsTheCallerToWait.
 	s.ownsTools("order 12 ships tomorrow")
-	s.preSpeech = func(string) string { return "" }
+	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{} }
 	s.join(false)
 	s.model.reply = []string{}
 	s.model.then = []string{"It ships tomorrow."}
@@ -534,7 +536,7 @@ func (s *AgentSuite) TestATurnThatSpokeForItselfIsNotGivenPreSpeechEither() {
 	// pre_speech takes the filler's place, so it follows the filler's rule: a model that
 	// already said what it was doing is not given more words on top.
 	s.ownsTools("order 12 ships tomorrow")
-	s.preSpeech = func(string) string { return "Let me pull up your order." }
+	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{PreSpeech: "Let me pull up your order."} }
 	s.join(false)
 	s.model.reply = []string{"Let me check."}
 	s.model.then = []string{"It ships tomorrow."}
@@ -546,6 +548,144 @@ func (s *AgentSuite) TestATurnThatSpokeForItselfIsNotGivenPreSpeechEither() {
 
 	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the tool answer never came")
 	s.False(s.spokenText("Let me pull up your order."), "the agent stacked pre_speech on top of its own words")
+}
+
+func (s *AgentSuite) TestPreSpeechIsTheFirstCallsThatNamesOne() {
+	// Two calls in one reply: the first names no phrase, the second does, so the second's
+	// is said rather than the agent's own.
+	s.ownsTools("done")
+	s.tools.Tools = append(s.tools.Tools, harness.Tool{Name: "track_parcel", Description: "track a parcel"})
+	s.toolPolicy = func(tool string) ToolPolicy {
+		if tool == "track_parcel" {
+			return ToolPolicy{PreSpeech: "Let me track your parcel."}
+		}
+		return ToolPolicy{}
+	}
+	s.join(false)
+	s.model.reply = []string{}
+	s.model.then = []string{"It ships tomorrow."}
+	s.model.calls = []llm.ToolCall{
+		{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`},
+		{ID: "call-2", Name: "track_parcel", Arguments: `{}`},
+	}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return s.spokenText("Let me track your parcel.") },
+		"the second call's phrase was not said")
+	s.False(s.spokenText(workingPhrases[0]), "the agent said its own filler instead")
+}
+
+// holdingTool answers only when released, whatever its context says, the way the
+// dispatcher runs a call of an on_interrupt: wait binding.
+type holdingTool struct {
+	began   chan struct{}
+	release chan struct{}
+}
+
+func (r *holdingTool) Run(_ context.Context, _ llm.ToolCall) ([]llm.ContentPart, error) {
+	close(r.began)
+	<-r.release
+	return llm.TextParts("order 12 ships tomorrow"), nil
+}
+
+// unanswered names the first tool call in messages whose results do not all come right
+// after it, or a result that answers no call right before it: what a provider refuses.
+// Empty when there is none.
+func unanswered(messages []llm.Message) string {
+	for i := 0; i < len(messages); i++ {
+		if messages[i].Role == llm.ToolResult {
+			return "a result answering no call before it: " + messages[i].ToolCallID
+		}
+		calls := messages[i].ToolCalls
+		if messages[i].Role != llm.Assistant || len(calls) == 0 {
+			continue
+		}
+		var asked, answered []string
+		for _, call := range calls {
+			asked = append(asked, call.ID)
+		}
+		for i+1 < len(messages) && messages[i+1].Role == llm.ToolResult {
+			i++
+			answered = append(answered, messages[i].ToolCallID)
+		}
+		slices.Sort(asked)
+		slices.Sort(answered)
+		if !slices.Equal(asked, answered) {
+			return fmt.Sprintf("calls %v answered by %v", asked, answered)
+		}
+	}
+	return ""
+}
+
+func (s *AgentSuite) TestAnInterruptedWaitToolLeavesItsCallAnsweredForTheNextTurn() {
+	// The call goes on after the interruption, so it is answered at once with a note that
+	// its result will follow; the next turn is not held, and the result comes as a message
+	// of its own once it is in.
+	s.ownsTools("")
+	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{Waits: true} }
+	s.join(true)
+	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
+	release := sync.OnceFunc(func() { close(runner.release) })
+	defer release()
+	s.agent.options.ToolRunner = runner
+	s.model.reply = []string{"Let me check the order."}
+	s.model.then = []string{"Fifteen."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "where is my order")
+	select {
+	case <-runner.began:
+	case <-time.After(3 * time.Second):
+		s.FailNow("tool did not start")
+	}
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.mutters(participant, "stop cancel that lookup")
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.history(), func(m llm.Message) bool { return m.Content == stillRunning })
+	},
+		"the interrupted call was not answered")
+	s.flow.then = nil
+	s.says(participant, "what is seven plus eight")
+	s.eventually(func() bool { return s.spokenText("Fifteen") }, "the next turn waited on the call")
+
+	s.model.mu.Lock()
+	next := s.model.asked[len(s.model.asked)-1].Input
+	s.model.mu.Unlock()
+	s.Empty(unanswered(next), "the next turn replayed a call without its result")
+	s.Equal(llm.User, next[len(next)-1].Role)
+
+	release()
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "the call never answered")
+	s.eventually(func() bool {
+		return strings.Contains(s.history()[len(s.history())-1].Content, "order 12 ships tomorrow")
+	},
+		"the late result never reached the conversation")
+	history := s.history()
+	late := history[len(history)-1]
+	s.Empty(unanswered(history), "the late result broke the conversation")
+	s.Equal(llm.User, late.Role)
+	s.Equal(fmt.Sprintf(lateResult, "lookup_order", "call-1")+"\norder 12 ships tomorrow", late.Content)
+}
+
+func (s *AgentSuite) TestAWaitToolNobodyInterruptedIsAnsweredOnceAsBefore() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{Waits: true} }
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the tool answer never came")
+	results := slices.DeleteFunc(s.history(), func(m llm.Message) bool { return m.Role != llm.ToolResult })
+	s.Equal([]llm.Message{{Role: llm.ToolResult, ToolCallID: "call-1", Content: "order 12 ships tomorrow"}}, results)
 }
 
 func (s *AgentSuite) TestPressingAMenuOptionLeavesTheLineQuietForTheMenu() {

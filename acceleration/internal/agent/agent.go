@@ -130,10 +130,9 @@ type Options struct {
 	// which is how a caller outside this process owns its own tools.
 	ToolRunner    ToolRunner
 	OnToolStarted func(ToolStarted)
-	// PreSpeech is what to say while the tool named runs, in place of a phrase the agent
-	// picks itself (workingPhrases), and what ToolStarted carries. Nil, or empty for a
-	// tool, says the agent's own.
-	PreSpeech func(tool string) string
+	// ToolPolicy is what the tool named asks of the agent (its connector binding's policy).
+	// Nil, or the zero ToolPolicy for a tool, is how every tool has always run.
+	ToolPolicy func(tool string) ToolPolicy
 	// Tools are what the voice model may do rather than say. Each is only offered when
 	// something on this call can run it: the telephony pair needs Telephony, and every
 	// other tool needs a ToolRunner.
@@ -2003,13 +2002,13 @@ func (a *Agent) finish(response llm.Response) {
 }
 
 // preSpeech is what the first of calls that names one asks to be said while it runs
-// (Options.PreSpeech), or empty for none.
+// (ToolPolicy.PreSpeech), or empty for none.
 func (a *Agent) preSpeech(calls []llm.ToolCall) string {
-	if a.options.PreSpeech == nil {
+	if a.options.ToolPolicy == nil {
 		return ""
 	}
 	for _, call := range calls {
-		if phrase := a.options.PreSpeech(call.Name); phrase != "" {
+		if phrase := a.options.ToolPolicy(call.Name).PreSpeech; phrase != "" {
 			return phrase
 		}
 	}

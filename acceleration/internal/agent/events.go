@@ -271,7 +271,7 @@ type ToolStarted struct {
 	Arguments string
 	StartedAt time.Time
 	// PreSpeech is what the tool's connector binding asks to be said while it runs
-	// (Options.PreSpeech), so a client can show it. Empty for none.
+	// (ToolPolicy.PreSpeech), so a client can show it. Empty for none.
 	PreSpeech string
 }
 

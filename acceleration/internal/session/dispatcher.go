@@ -141,8 +141,8 @@ func (d *dispatcher) Close() {
 // The binding's policy (store.BindingPolicy) changes what an interruption does. A wait
 // binding's call does not see it, and the turn waits for its answer. A binding that is not
 // cancellable stops waiting at the interruption and leaves the call running to its answer or
-// deadline, so the provider is never sent the cancel. A binding with no policy is the
-// paragraph above.
+// deadline, so the interruption never sends the provider the cancel; the binding's timeout
+// still does, as for every call. A binding with no policy is the paragraph above.
 //
 // It also says how the call failed, for its row: empty when it answered, else one of the
 // store.Invocation* values.
@@ -283,12 +283,17 @@ func (s Spec) boundAlias(alias string) bool {
 	return slices.ContainsFunc(s.ConnectorBindings, func(b store.ConnectorBinding) bool { return b.Name == alias })
 }
 
-// preSpeech is what the binding of the tool offered as name asks the agent to say while it
-// runs (store.BindingPolicy.PreSpeech): empty for a name it did not open, or a binding that
-// asks for nothing.
-func (d *dispatcher) preSpeech(name string) string {
-	if found, ok := d.routes[name]; ok && found.binding.Policy != nil {
-		return found.binding.Policy.PreSpeech
+// toolPolicy is what the binding of the tool offered as name asks of the agent
+// (store.BindingPolicy): what to say while it runs, and whether its call goes on after an
+// interruption. The binding is the one bound under the name's alias, so a binding waiting
+// for a login is found by the two tools it offers until then. Nothing for a name under no
+// bound alias, or a binding with no policy.
+func (d *dispatcher) toolPolicy(name string) agent.ToolPolicy {
+	alias, _, cut := strings.Cut(name, mcp.Separator)
+	index := slices.IndexFunc(d.spec.ConnectorBindings, func(b store.ConnectorBinding) bool { return b.Name == alias })
+	if !cut || index < 0 || d.spec.ConnectorBindings[index].Policy == nil {
+		return agent.ToolPolicy{}
 	}
-	return ""
+	policy := d.spec.ConnectorBindings[index].Policy
+	return agent.ToolPolicy{PreSpeech: policy.PreSpeech, Waits: policy.OnInterrupt == store.InterruptWait}
 }
