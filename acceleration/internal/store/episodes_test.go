@@ -2,6 +2,8 @@
 
 package store
 
+import "sync"
+
 // episodeOf is a thread episode of the acme-app customer for a contact, which a test changes
 // one part of.
 func (s *StoreSuite) episodeOf(contactID, threadChannel string) *Episode {
@@ -50,6 +52,38 @@ func (s *StoreSuite) TestTheNextMessagesOfAThreadFindItsOpenEpisode() {
 		s.Equal(first.ID, next.ID)
 		s.Equal(first.CardMessageID, next.CardMessageID)
 	}
+	s.Equal(1, s.episodeRows())
+}
+
+// Two first messages of one thread taken at once by two routers open one episode, so the
+// thread gets one card: the open-thread index decides which.
+func (s *StoreSuite) TestTwoFirstMessagesOfOneThreadAtOnceOpenOneEpisode() {
+	person := s.mapped("+15550100")
+	pools := s.pools(8)
+	var wg sync.WaitGroup
+	ids := make([]string, len(pools))
+	opened := make([]bool, len(pools))
+	for i, pool := range pools {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			episode := s.episodeOf(person, "agent:thread-one")
+			var err error
+			opened[i], err = pool.OpenEpisode(s.ctx, episode)
+			s.NoError(err)
+			ids[i] = episode.ID
+		}()
+	}
+	wg.Wait()
+
+	count := 0
+	for i, id := range ids {
+		s.Equal(ids[0], id)
+		if opened[i] {
+			count++
+		}
+	}
+	s.Equal(1, count, "one of them opened it, so one card is written")
 	s.Equal(1, s.episodeRows())
 }
 

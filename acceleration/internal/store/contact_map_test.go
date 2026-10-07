@@ -2,6 +2,8 @@
 
 package store
 
+import "sync"
+
 // contact is a contact map row of the acme-app customer's agent for a phone number, which a
 // test changes one part of.
 func contact(address, conversationID string) *ContactMapEntry {
@@ -71,6 +73,43 @@ func (s *StoreSuite) TestAContactNeedsAnAddressAndAConversation() {
 
 	_, err = s.store.MapContact(s.ctx, contact("+15550100", ""))
 	s.ErrorContains(err, "a kind, an address and a conversation are required")
+}
+
+// Two routers seeing a new number at once, an SMS and a call say, make one row and hand both
+// the same omni-channel: the unique index on the address decides which proposal wins.
+func (s *StoreSuite) TestTwoFirstSightingsOfOneAddressAtOnceAreOneRow() {
+	pools := s.pools(8)
+	var wg sync.WaitGroup
+	omniChannels := make([]string, len(pools))
+	for i, pool := range pools {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			entry := contact("+15550100", "agent:omni-"+newID())
+			_, err := pool.MapContact(s.ctx, entry)
+			s.NoError(err)
+			omniChannels[i] = entry.ConversationID
+		}()
+	}
+	wg.Wait()
+
+	for _, omni := range omniChannels {
+		s.Equal(omniChannels[0], omni)
+	}
+	s.Equal(1, s.contactRows())
+}
+
+// pools are count stores on the suite's database, each its own connection pool, as count
+// routers would be. The suite's own store is the first.
+func (s *StoreSuite) pools(count int) []*Store {
+	pools := []*Store{s.store}
+	for len(pools) < count {
+		pool, err := Open(s.dsn)
+		s.Require().NoError(err)
+		s.T().Cleanup(func() { _ = pool.Close() })
+		pools = append(pools, pool)
+	}
+	return pools
 }
 
 // contactRows is how many contact map rows there are.
