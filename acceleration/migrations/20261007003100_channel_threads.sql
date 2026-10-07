@@ -30,6 +30,12 @@ CREATE TABLE channel_threads (
     thread_parts JSONB NOT NULL DEFAULT '{}',
     stream_app_pk BIGINT,
     last_inbound_at TIMESTAMPTZ NOT NULL,
+    -- turn_holder and turn_until are the lease on the thread's one running turn: the router
+    -- that answers a message in the thread holds it until the reply is done or the lease
+    -- runs out, so two routers never answer one thread at once (store.TakeChannelThreadTurn).
+    -- NULL while no turn runs.
+    turn_holder TEXT,
+    turn_until TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

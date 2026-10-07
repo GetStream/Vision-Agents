@@ -318,11 +318,6 @@ type Server struct {
 	upgrader   websocket.Upgrader
 	popularity *popularity
 	logger     *slog.Logger
-
-	// threadTurns is each thread channel's turn (threadhooks.go), so its messages are
-	// answered one at a time.
-	threadsMu   sync.Mutex
-	threadTurns map[string]*threadTurn
 }
 
 // Option adjusts the options a server is built from. It exists for the settings a

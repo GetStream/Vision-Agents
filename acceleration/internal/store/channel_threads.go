@@ -42,6 +42,55 @@ type ChannelThread struct {
 	StreamAppPK   int64     `bun:"stream_app_pk,nullzero"`
 	LastInboundAt time.Time `bun:"last_inbound_at,notnull"`
 	CreatedAt     time.Time `bun:"created_at,notnull"`
+	// TurnHolder and TurnUntil are the lease on the thread's running turn
+	// (TakeChannelThreadTurn); empty and nil while none runs.
+	TurnHolder string     `bun:"turn_holder,nullzero"`
+	TurnUntil  *time.Time `bun:"turn_until"`
+}
+
+// TakeChannelThreadTurn leases a thread channel's one running turn to holder until until,
+// when no turn holds it or the one that did ran out. False is a turn another holder has: two
+// routers answering one thread at once would talk over each other, and each one's session
+// would miss what the other said. One statement, so two routers asking at once get one
+// lease between them.
+func (s *Store) TakeChannelThreadTurn(ctx context.Context, channelID, holder string, until time.Time) (bool, error) {
+	if channelID == "" || holder == "" {
+		return false, stack.Wrap(errors.New("store: a channel and a holder are required"))
+	}
+	result, err := s.db.NewUpdate().Model((*ChannelThread)(nil)).
+		Set("turn_holder = ?", holder).
+		Set("turn_until = ?", until.UTC()).
+		Where("channel_id = ?", channelID).
+		Where("(turn_until IS NULL OR turn_until < now() OR turn_holder = ?)", holder).
+		Exec(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: take channel thread turn: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: take channel thread turn: %w", err))
+	}
+	return affected == 1, nil
+}
+
+// ReleaseChannelThreadTurn ends holder's lease on a thread channel's turn, so the next turn
+// need not wait for it to run out. A lease another holder took since is left alone.
+func (s *Store) ReleaseChannelThreadTurn(ctx context.Context, channelID, holder string) error {
+	_, err := s.db.NewUpdate().Model((*ChannelThread)(nil)).
+		Set("turn_holder = NULL").
+		Set("turn_until = NULL").
+		Where("channel_id = ?", channelID).
+		Where("turn_holder = ?", holder).
+		Exec(ctx)
+	return stack.Wrap(err)
+}
+
+// ReleaseChannelThreadMessage forgets a claim, so the step that took it can take it again:
+// a reply whose send failed is sent on a later attempt.
+func (s *Store) ReleaseChannelThreadMessage(ctx context.Context, channelID, kind, messageID string) error {
+	_, err := s.db.NewRaw("DELETE FROM channel_thread_messages WHERE channel_id = ? AND kind = ? AND message_id = ?",
+		channelID, kind, messageID).Exec(ctx)
+	return stack.Wrap(err)
 }
 
 // LinkChannelThread returns the thread channel of the external thread thread names, linking it

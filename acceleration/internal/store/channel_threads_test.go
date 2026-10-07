@@ -4,6 +4,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -141,6 +142,91 @@ func (s *StoreSuite) TestEachStepClaimsAMessageOnce() {
 		s.True(first, kind)
 		s.False(again, kind)
 	}
+}
+
+// Two routers are two pools on one database; only one may run a thread's turn.
+func (s *StoreSuite) TestTwoRoutersCannotHoldOneThreadsTurnAtOnce() {
+	_, err := s.store.LinkChannelThread(s.ctx, thread("thread-one", "C0000CHAN:1"))
+	s.Require().NoError(err)
+	other, err := Open(s.dsn)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = other.Close() })
+	until := time.Now().Add(time.Minute)
+
+	first, err := s.store.TakeChannelThreadTurn(s.ctx, "thread-one", "router-a", until)
+	s.Require().NoError(err)
+	second, err := other.TakeChannelThreadTurn(s.ctx, "thread-one", "router-b", until)
+	s.Require().NoError(err)
+	s.True(first)
+	s.False(second, "router b waits while router a answers")
+
+	s.Require().NoError(other.ReleaseChannelThreadTurn(s.ctx, "thread-one", "router-b"))
+	again, err := other.TakeChannelThreadTurn(s.ctx, "thread-one", "router-b", until)
+	s.Require().NoError(err)
+	s.False(again, "a release by a holder that has no lease releases nothing")
+
+	s.Require().NoError(s.store.ReleaseChannelThreadTurn(s.ctx, "thread-one", "router-a"))
+	after, err := other.TakeChannelThreadTurn(s.ctx, "thread-one", "router-b", until)
+	s.Require().NoError(err)
+	s.True(after)
+}
+
+func (s *StoreSuite) TestTwoRoutersAskingAtOnceGetOneTurn() {
+	_, err := s.store.LinkChannelThread(s.ctx, thread("thread-one", "C0000CHAN:1"))
+	s.Require().NoError(err)
+	pools := []*Store{s.store}
+	for range 3 {
+		pool, err := Open(s.dsn)
+		s.Require().NoError(err)
+		s.T().Cleanup(func() { _ = pool.Close() })
+		pools = append(pools, pool)
+	}
+	var wg sync.WaitGroup
+	taken := make([]bool, len(pools))
+	for i, pool := range pools {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ok, err := pool.TakeChannelThreadTurn(s.ctx, "thread-one", fmt.Sprintf("router-%d", i), time.Now().Add(time.Minute))
+			s.NoError(err)
+			taken[i] = ok
+		}()
+	}
+	wg.Wait()
+
+	count := 0
+	for _, ok := range taken {
+		if ok {
+			count++
+		}
+	}
+	s.Equal(1, count)
+}
+
+// A router that stopped mid-turn leaves its lease; it runs out and the next router answers.
+func (s *StoreSuite) TestATurnWhoseLeaseRanOutCanBeTaken() {
+	_, err := s.store.LinkChannelThread(s.ctx, thread("thread-one", "C0000CHAN:1"))
+	s.Require().NoError(err)
+	_, err = s.store.TakeChannelThreadTurn(s.ctx, "thread-one", "router-a", time.Now().Add(-time.Second))
+	s.Require().NoError(err)
+
+	taken, err := s.store.TakeChannelThreadTurn(s.ctx, "thread-one", "router-b", time.Now().Add(time.Minute))
+
+	s.Require().NoError(err)
+	s.True(taken)
+}
+
+func (s *StoreSuite) TestAReleasedClaimCanBeTakenAgain() {
+	_, err := s.store.LinkChannelThread(s.ctx, thread("thread-one", "C0000CHAN:1"))
+	s.Require().NoError(err)
+	_, err = s.store.ClaimChannelThreadMessage(s.ctx, "thread-one", ClaimReply, "reply-1")
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.store.ReleaseChannelThreadMessage(s.ctx, "thread-one", ClaimReply, "reply-1"))
+
+	again, err := s.store.ClaimChannelThreadMessage(s.ctx, "thread-one", ClaimReply, "reply-1")
+	s.Require().NoError(err)
+	s.True(again)
 }
 
 func (s *StoreSuite) TestAMessageIdOlderThanTheKeepIsForgotten() {
