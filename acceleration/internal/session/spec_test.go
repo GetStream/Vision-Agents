@@ -86,15 +86,20 @@ func (s *SpecSuite) TestAConnectorBindingWinsOverAPluginEntryForTheSameProvider(
 }
 
 // TestAVoiceSessionIsKeyedUnderTheAgentIDItNamesBeforeNormalize: KeyedAgentID is what
-// Normalize keys a voice session under, its call id when it names no agent id.
+// Normalize keys a voice session under, its call id when it names no agent id, trimmed as
+// Normalize trims it.
 func (s *SpecSuite) TestAVoiceSessionIsKeyedUnderTheAgentIDItNamesBeforeNormalize() {
 	spec := Spec{CustomerID: "acme", CallID: "call-1"}
-	keyed := spec.KeyedAgentID()
+	padded := Spec{CustomerID: "acme", CallID: " call-1 \n"}
+	keyed, paddedKeyed := spec.KeyedAgentID(), padded.KeyedAgentID()
 
 	s.Require().NoError(spec.Normalize())
+	s.Require().NoError(padded.Normalize())
 
 	s.Equal("call-1", keyed)
 	s.Equal(keyed, spec.AgentID)
+	s.Equal("call-1", paddedKeyed)
+	s.Equal(paddedKeyed, padded.AgentID)
 }
 
 // TestATextSessionNamingNoAgentIDIsKeyedUnderNoneACallerNamed: Normalize gives it a new id.

@@ -197,14 +197,24 @@ func (s *Server) threadSession(ctx context.Context, origin hookOrigin, thread st
 //	backend   the customer's thread channel   conversation in the thread channel
 //	device    the customer's thread channel   as for an unknown id; no transcript there
 //	device    unreadable: channel_threads     barred, as if it were one
+//	device    a thread channel in other case  barred, as if it were the channel
 //	anyone    anything else                   as it was
+//
+// The id is compared trimmed and case-folded. Whether Stream Chat treats channel ids that
+// differ in case, or in spaces around them, as one channel is unverified, so a device naming
+// THREAD-<uuid> or " thread-<uuid>" as its agent id is kept out as if it named the thread
+// channel: fail closed. (A call id is trimmed by Normalize itself, through KeyedAgentID.)
+// Thread channel ids are always lower case (channelbridge: thread- and uuid.NewString), so
+// the row is read by the folded id. The bar is on the id exactly as the session is keyed
+// under it, which is where its transcript goes.
 func (s *Server) threadConversation(ctx context.Context, customerID string, spec *session.Spec) context.Context {
 	keyed := spec.KeyedAgentID()
-	if s.store == nil || spec.ConversationID != "" || !strings.HasPrefix(keyed, conversation.ThreadChannelPrefix) {
+	folded := strings.ToLower(strings.TrimSpace(keyed))
+	if s.store == nil || spec.ConversationID != "" || !strings.HasPrefix(folded, conversation.ThreadChannelPrefix) {
 		return ctx
 	}
 	cid := chatlog.ChannelType + ":" + keyed
-	thread, err := s.store.ChannelThread(ctx, keyed)
+	thread, err := s.store.ChannelThread(ctx, folded)
 	if err != nil && !errors.Is(err, store.ErrNoChannelThread) {
 		// Whether it is a thread channel is not known, so a device is kept out of it.
 		s.logger.Error("could not tell whether an agent id names a thread channel", "channel", keyed, "error", err)
@@ -219,7 +229,8 @@ func (s *Server) threadConversation(ctx context.Context, customerID string, spec
 	if !ServerSideFrom(ctx) {
 		return conversation.BarThread(ctx, cid)
 	}
-	if !spec.Text || !spec.PersistConversation {
+	// The backend opens the thread channel by its exact id, as at base.
+	if !spec.Text || !spec.PersistConversation || keyed != thread.ChannelID {
 		return ctx
 	}
 	spec.ConversationID = cid

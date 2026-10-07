@@ -373,7 +373,7 @@ func (s *Spec) Normalize() error {
 		}
 	}
 
-	s.CallID = strings.TrimSpace(s.CallID)
+	s.CallID = joinedCallID(s.CallID)
 	switch {
 	case !s.Reopened.IsZero() && !(s.Text && s.PersistConversation && s.ConversationID != ""):
 		return stack.Wrap(errors.New("session: only a persistent text conversation is reopened"))
@@ -501,7 +501,13 @@ func (s Spec) KeyedAgentID() string {
 	if s.AgentID != "" || s.Text {
 		return s.AgentID
 	}
-	return s.CallID
+	return joinedCallID(s.CallID)
+}
+
+// joinedCallID is a call id as the session joins it and is keyed under: without the spaces
+// around it. Normalize and KeyedAgentID both read a call id through it.
+func joinedCallID(id string) string {
+	return strings.TrimSpace(id)
 }
 
 // Shared reports whether more than one verified person writes in the conversation: a thread
