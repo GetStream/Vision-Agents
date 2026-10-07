@@ -688,6 +688,143 @@ func (s *AgentSuite) TestAWaitToolNobodyInterruptedIsAnsweredOnceAsBefore() {
 	s.Equal([]llm.Message{{Role: llm.ToolResult, ToolCallID: "call-1", Content: "order 12 ships tomorrow"}}, results)
 }
 
+// heldCalls answers each call only when its own release channel is closed, whatever its
+// context says, the way the dispatcher runs a call of an on_interrupt: wait binding.
+type heldCalls struct {
+	began   map[string]chan struct{}
+	release map[string]chan struct{}
+}
+
+func newHeldCalls(ids ...string) *heldCalls {
+	r := &heldCalls{began: map[string]chan struct{}{}, release: map[string]chan struct{}{}}
+	for _, id := range ids {
+		r.began[id] = make(chan struct{})
+		r.release[id] = make(chan struct{})
+	}
+	return r
+}
+
+func (r *heldCalls) Run(_ context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
+	close(r.began[call.ID])
+	<-r.release[call.ID]
+	return llm.TextParts(call.ID + " result"), nil
+}
+
+// interruptsWaitCallsThenCalls starts a turn asking for first, interrupts it once they all
+// run, then starts the next turn, which asks for next, and returns once next runs.
+func (s *AgentSuite) interruptsWaitCallsThenCalls(runner *heldCalls, first []llm.ToolCall, next llm.ToolCall) {
+	s.ownsTools("")
+	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{Waits: true} }
+	s.join(true)
+	s.agent.options.ToolRunner = runner
+	s.model.reply = []string{"Let me check the order."}
+	s.model.then = []string{"Checking."}
+	s.model.calls = first
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "where is my order")
+	for _, call := range first {
+		s.began(runner, call.ID)
+	}
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.mutters(participant, "stop cancel that lookup")
+	s.eventually(func() bool {
+		answered := 0
+		for _, m := range s.history() {
+			if m.Content == stillRunning {
+				answered++
+			}
+		}
+		return answered == len(first)
+	}, "the interrupted calls were not answered")
+	s.flow.then = nil
+	s.model.mu.Lock()
+	s.model.calls = []llm.ToolCall{next}
+	s.model.keepCalling = true
+	s.model.mu.Unlock()
+	s.says(participant, "and my other order")
+	s.began(runner, next.ID)
+	s.model.mu.Lock()
+	s.model.keepCalling = false
+	s.model.mu.Unlock()
+}
+
+// began waits for the call id to start running.
+func (s *AgentSuite) began(runner *heldCalls, id string) {
+	select {
+	case <-runner.began[id]:
+	case <-time.After(3 * time.Second):
+		s.FailNow("tool did not start: " + id)
+	}
+}
+
+// lateResultsIn is the content of every lateResult message in messages, in order.
+func lateResultsIn(messages []llm.Message) []string {
+	var late []string
+	for _, m := range messages {
+		if m.Role == llm.User && strings.HasPrefix(m.Content, "The lookup_order call (") {
+			late = append(late, m.Content)
+		}
+	}
+	return late
+}
+
+func (s *AgentSuite) TestALateResultWaitsForTheCallsRunningWhenItComes() {
+	// The late result is the caller's message, so it must not come between the next
+	// turn's call and that call's result: a provider refuses the call then.
+	runner := newHeldCalls("call-1", "call-2")
+	s.interruptsWaitCallsThenCalls(runner,
+		[]llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}},
+		llm.ToolCall{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"13"}`})
+
+	close(runner.release["call-1"])
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "the first call never answered")
+	s.Empty(lateResultsIn(s.history()), "the late result came while the next call was still running")
+
+	close(runner.release["call-2"])
+	s.eventually(func() bool {
+		s.model.mu.Lock()
+		defer s.model.mu.Unlock()
+		return len(s.model.asked) == 3
+	}, "the second call's result was never sent")
+
+	s.model.mu.Lock()
+	asked := append([]llm.ResponseParams(nil), s.model.asked...)
+	s.model.mu.Unlock()
+	for i, request := range asked {
+		s.Empty(unanswered(request.Input), "request %d replayed a call without its result", i)
+	}
+	last := asked[2].Input
+	s.Equal(llm.ToolResult, last[len(last)-2].Role)
+	s.Equal("call-2", last[len(last)-2].ToolCallID)
+	s.Equal(llm.Message{Role: llm.User, Content: fmt.Sprintf(lateResult, "lookup_order", "call-1") + "\ncall-1 result"},
+		last[len(last)-1])
+}
+
+func (s *AgentSuite) TestLateResultsHeldBackComeInTheOrderTheyCame() {
+	runner := newHeldCalls("call-1", "call-2", "call-3", "call-4")
+	s.interruptsWaitCallsThenCalls(runner,
+		[]llm.ToolCall{
+			{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`},
+			{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"13"}`},
+			{ID: "call-3", Name: "lookup_order", Arguments: `{"order":"14"}`},
+		},
+		llm.ToolCall{ID: "call-4", Name: "lookup_order", Arguments: `{"order":"15"}`})
+
+	close(runner.release["call-2"])
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "call-2 never answered")
+	close(runner.release["call-1"])
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 2 }, "call-1 never answered")
+	close(runner.release["call-4"])
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 3 }, "call-4 never answered")
+	close(runner.release["call-3"])
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 4 }, "call-3 never answered")
+
+	late := func(id string) string { return fmt.Sprintf(lateResult, "lookup_order", id) + "\n" + id + " result" }
+	s.Equal([]string{late("call-2"), late("call-1"), late("call-3")}, lateResultsIn(s.history()))
+	s.Empty(unanswered(s.history()))
+}
+
 func (s *AgentSuite) TestPressingAMenuOptionLeavesTheLineQuietForTheMenu() {
 	// The digits are the whole point of the tool and the menu is what answers next, so
 	// talking over it would be talking to nobody.

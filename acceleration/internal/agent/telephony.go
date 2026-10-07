@@ -395,18 +395,22 @@ func (a *Agent) press(ctx context.Context, call llm.ToolCall) (string, bool, err
 // without one is refused.
 //
 // A call answered with stillRunning at an interruption (hold) has its result added as the
-// caller's message instead (lateResult).
+// caller's message instead (lateResult). While the history ends in calls not all answered
+// (callsOpen), that message is held back, so it never comes between a call and its
+// result, and added once they are.
 func (a *Agent) resolveTool(call llm.ToolCall, parts []llm.ContentPart, hold *toolHold) {
 	a.mu.Lock()
 	message := llm.Message{
 		Role:       llm.ToolResult,
 		ToolCallID: call.ID,
 	}
+	late := false
 	if hold != nil {
 		hold.resolved = true
 		if hold.answered {
 			message = llm.Message{Role: llm.User}
 			parts = append(llm.TextParts(fmt.Sprintf(lateResult, call.Name, call.ID)), parts...)
+			late = true
 		}
 	}
 	if llm.HasImage([]llm.Message{{Parts: parts}}) {
@@ -414,8 +418,35 @@ func (a *Agent) resolveTool(call llm.ToolCall, parts []llm.ContentPart, hold *to
 	} else {
 		message.Content = llm.TextOf(parts)
 	}
-	a.history = append(a.history, message)
+	if late {
+		a.lateResults = append(a.lateResults, message)
+	} else {
+		a.history = append(a.history, message)
+	}
+	if !callsOpen(a.history) {
+		a.history = append(a.history, a.lateResults...)
+		a.lateResults = nil
+	}
 	a.mu.Unlock()
+}
+
+// callsOpen reports whether history ends in an assistant message with a tool call that no
+// result after it answers yet.
+func callsOpen(history []llm.Message) bool {
+	answered := map[string]bool{}
+	i := len(history) - 1
+	for ; i >= 0 && history[i].Role == llm.ToolResult; i-- {
+		answered[history[i].ToolCallID] = true
+	}
+	if i < 0 || history[i].Role != llm.Assistant {
+		return false
+	}
+	for _, call := range history[i].ToolCalls {
+		if !answered[call.ID] {
+			return true
+		}
+	}
+	return false
 }
 
 // toolHold is one call whose tool goes on after an interruption (ToolPolicy.Waits). Its
