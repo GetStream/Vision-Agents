@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -692,4 +693,35 @@ func (s *ChannelSuite) TestASignalPathWhoseWildcardIsNotEachsIsRefused() {
 func (s *ChannelSuite) TestASignalMatchIsAboutTheWholeEvent() {
 	err := s.signalsVariant("        $.event.type: tokens_revoked", "        $.event.tokens.oauth[*]: U0000USER")
 	s.ErrorContains(err, "a match is about the whole event, not one of its accounts")
+}
+
+// eventIDs is baseChannel reading Slack's two ids: event_id on an event, and trigger_id in an
+// interaction's payload form field.
+func (s *ChannelSuite) eventIDs() *ChannelRule {
+	m, err := ParseManifest(minimal(strings.Replace(baseChannel, "  format: json\n",
+		"  format: json\n  event_id: [$.event_id, $.payload.trigger_id]\n", 1)))
+	s.Require().NoError(err)
+	return m.Channel
+}
+
+func (s *ChannelSuite) TestADeliveryEventIDIsTheProvidersIdOfAnEvent() {
+	s.Equal("Ev0000ONE", s.eventIDs().DeliveryEventID([]byte(`{"type":"event_callback","event_id":"Ev0000ONE"}`)))
+}
+
+// https://docs.slack.dev/interactivity/handling-user-interaction: an interaction is a form
+// whose payload field is JSON, posted to the same URL as the JSON events.
+func (s *ChannelSuite) TestADeliveryEventIDIsReadInsideAFormFieldsJSON() {
+	body := url.Values{"payload": {`{"type":"block_actions","trigger_id":"1.2.abc"}`}}.Encode()
+
+	s.Equal("1.2.abc", s.eventIDs().DeliveryEventID([]byte(body)))
+}
+
+func (s *ChannelSuite) TestADeliveryWithoutAnEventIDHasNone() {
+	s.Empty(s.eventIDs().DeliveryEventID([]byte(`{"type":"app_rate_limited"}`)))
+	s.Empty(s.load("linq").Channel.DeliveryEventID(s.recorded("linq.received.json")), "a block that names no event_id")
+}
+
+func (s *ChannelSuite) TestAnEventIDIsOneValueNotOnePerMessage() {
+	err := s.variant("  format: json\n", "  format: json\n  event_id:\n    - $.events[*].id\n")
+	s.ErrorContains(err, "a delivery has one id, not one per message")
 }

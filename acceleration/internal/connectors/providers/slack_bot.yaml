@@ -18,8 +18,9 @@
 #   [uninstalled] https://docs.slack.dev/reference/events/app_uninstalled
 id: slack_bot
 # A new revision for any change to what this file says; see AGENTS.md. 2 adds
-# channel.subscriptions, the events an app the router creates subscribes to (T54).
-revision: 2
+# channel.subscriptions, the events an app the router creates subscribes to (T54). 3 adds
+# channel.event_id, which keys a forward to an event destination (AI-924).
+revision: 3
 name: Slack bot
 category: Communication
 description: Answer people in Slack threads as the workspace's own bot.
@@ -73,6 +74,13 @@ channel:
   format: json
   # [handshake]: {"type": "url_verification", "challenge": "..."}, answered with the challenge.
   challenge: $.challenge
+  # A forward to the customer's event destinations is keyed by Slack's own id for the
+  # delivery. [events]: event_id is «A unique identifier for this specific event, globally
+  # unique across all workspaces». An interaction is a form whose payload field is JSON
+  # (https://docs.slack.dev/interactivity/handling-user-interaction) and has no event_id; its
+  # trigger_id, which «can be used only once» (the same page), is the id of that one click
+  # (https://docs.slack.dev/reference/interaction-payloads/block_actions-payload).
+  event_id: [$.event_id, $.payload.trigger_id]
   # The bot events an app the router creates subscribes to, which its manifest sends as
   # settings.event_subscriptions.bot_events, «event types the app subscribes to», at most 100
   # (https://docs.slack.dev/reference/app-manifest). A customer's own app (customer) is

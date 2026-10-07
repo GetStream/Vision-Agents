@@ -31,6 +31,11 @@ type ChannelRule struct {
 	// Challenge is the path of the value a handshake asks the endpoint to send back. A body
 	// that has it is a handshake and carries no messages and no signals.
 	Challenge string `yaml:"challenge,omitempty" json:"challenge,omitempty"`
+	// EventID is the paths of the provider's own id for a delivery, tried in order, such as
+	// Slack's event_id on an event and trigger_id on an interaction. A forward of the delivery
+	// to the customer's event destinations is keyed by it (EventID, eventforward). Empty, or
+	// none found, keys a forward by its body.
+	EventID []string `yaml:"event_id,omitempty" json:"event_id,omitempty"`
 	// Messages and Reply are set together, or both left out when the block reads only signals.
 	Messages MessageRule `yaml:"messages,omitempty" json:"messages,omitzero"`
 	Reply    ReplyRule   `yaml:"reply,omitempty" json:"reply,omitzero"`
@@ -402,6 +407,16 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 			fail("channel.challenge", "%q: a handshake has one challenge, not one per message", c.Challenge)
 		}
 	}
+	// Not checkPath: an event id may be in a form field's JSON (EventID), so a form's path
+	// may go past its one member.
+	for i, path := range c.EventID {
+		field := fmt.Sprintf("channel.event_id[%d]", i)
+		if _, err := parsePath(path); err != nil {
+			fail(field, "%v", err)
+		} else if strings.Contains(path, "[*]") {
+			fail(field, "%q: a delivery has one id, not one per message", path)
+		}
+	}
 	for _, path := range slices.Sorted(maps.Keys(msgs.Match)) {
 		checkPath("channel.messages.match."+path, path)
 		if msgs.Match[path] == "" {
@@ -596,6 +611,40 @@ func (m Manifest) checkBody(fail func(field, format string, args ...any), field 
 	default:
 		fail(field, "is %T; a body holds strings, objects and lists", node)
 	}
+}
+
+// DeliveryEventID is the provider's id for one verified delivery: the value of the first
+// event_id path the body has, or "" when none has one. A body the block's format does not
+// read is read as a form, and a form field that holds a JSON object is read as that object:
+// Slack posts its JSON events to the same URL as its interactions, which are a form whose
+// payload field is JSON («The body of the request will contain a payload parameter; your app
+// should parse this payload parameter as JSON»,
+// https://docs.slack.dev/interactivity/handling-user-interaction, opened October 7, 2026).
+func (c ChannelRule) DeliveryEventID(body []byte) string {
+	if len(c.EventID) == 0 {
+		return ""
+	}
+	format := c.Format
+	root, err := decodeBody(format, body)
+	if err != nil {
+		format = FormatForm
+		if root, err = decodeBody(format, body); err != nil {
+			return ""
+		}
+	}
+	if format == FormatForm {
+		for name, value := range root {
+			if object, err := decodeBody(FormatJSON, []byte(value.(string))); err == nil {
+				root[name] = object
+			}
+		}
+	}
+	for _, path := range c.EventID {
+		if id, found, err := readPath(root, path, nil); err == nil && found {
+			return id
+		}
+	}
+	return ""
 }
 
 // Read reads the messages and signals, or the handshake challenge, of one verified inbound
