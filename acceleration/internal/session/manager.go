@@ -156,8 +156,8 @@ type Manager struct {
 	reviews *reviewer
 	// titles names persistent conversations nobody renamed, on the session row and the channel.
 	titles *titler
-	// cards writes each phone call's episode card into the caller's omni-channel. Nil
-	// without a store or Stream clients.
+	// cards writes each phone call's episode card into the caller's omni-channel, and reads
+	// the person's cards for a session to start with. Nil without a store or Stream clients.
 	cards *callCards
 	// hosts runs the tools workers host for an agent config. Nil offers none.
 	hosts ToolHosts
@@ -597,6 +597,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if written == "" {
 		written = streamapp.AgentChannelType + ":" + spec.AgentID
 	}
+	// Where the transcript actually goes, as the transcript factory picks it.
+	if !persistent.Barred(ctx, written) {
+		created.transcribedInto = spec.TranscriptChannel()
+	}
 	if m.options.Transcript != nil && conv == nil && !spec.Incognito && !persistent.Barred(ctx, written) {
 		// A transcript that cannot be opened is not a reason to refuse the call. What was
 		// said is worth keeping; it is not worth not having the conversation for.
@@ -617,7 +621,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			"call", spec.CallID, "conversation", spec.ConversationID,
 			"turns", len(previous), "truncated", spec.ContextTruncated)
 	}
-	created.voiceAgent.RestoreHistory(previous)
+	// The person's other episodes go first, as context before this conversation's own
+	// history, and only to the model: not to the title, the review or the reopened summary.
+	cards := m.cards.read(ctx, spec, stream)
+	created.carded = len(cards) > 0
+	created.voiceAgent.RestoreHistory(append(cards, previous...))
 	// A reopened chat is reviewed again when it ends, and its summary is of all of it.
 	if !spec.Reopened.IsZero() {
 		earlier := spokenOf(previous)

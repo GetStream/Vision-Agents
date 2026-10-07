@@ -318,10 +318,19 @@ func (s *Server) setSessionSettings(ctx context.Context, request *setSessionSett
 		settings.Verbosity = &verbosity
 	}
 	if err := found.SetSettings(ctx, settings); err != nil {
+		if errors.Is(err, session.ErrCardedToNative) {
+			return nil, errCardedSessionToNative
+		}
 		return nil, invalidRequest(err.Error())
 	}
 	return &setSessionSettingsResponse{Body: sessionOf(found)}, nil
 }
+
+// errCardedSessionToNative is what setSessionSettings and updateSession answer a move onto a
+// speech-to-speech model of a session that started with the person's episode cards
+// (session.ErrCardedToNative).
+var errCardedSessionToNative = APIError{Type: ErrorTypeInvalidRequest, Code: codeCardedSessionToNative,
+	Message: "a session that started with the person's episode cards cannot move onto a speech-to-speech model; start a new session to use one"}
 
 // errUnknownSession is what a caller is told about a session that is not theirs, which is the
 // same thing they are told about one that never existed.
@@ -1163,7 +1172,9 @@ func (s *Server) registerSessions(api huma.API) {
 			"Naming sts makes the session native, and an empty sts makes it a cascade again, on " +
 			"whatever llm, stt and tts it names or had before. The conversation carries across: a " +
 			"conversation model is handed the history on every turn, and a speech-to-speech model is " +
-			"opened with the recent transcript in its instructions.",
+			"opened with the recent transcript in its instructions. A session that started with the " +
+			"person's episode cards cannot be moved onto a speech-to-speech model: 400, " +
+			"carded_session_to_native.",
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The session, on its new models"},
 		},

@@ -190,7 +190,8 @@ type Spec struct {
 	// than the model, from the agent's config. The model answers only the server.
 	DispatchText bool
 	// EpisodeCards has a phone call write its episode card into the caller's omni-channel,
-	// from the agent's config. Off, the call does what it did before the cards existed.
+	// and a session on a thread channel or a phone call start with the person's other cards,
+	// from the agent's config. Off, the session does what it did before the cards existed.
 	EpisodeCards bool
 
 	// SkillNames are the skills the voice model may hand to the subagent: the agent
@@ -513,6 +514,29 @@ func (s Spec) KeyedAgentID() string {
 // around it. Normalize and KeyedAgentID both read a call id through it.
 func joinedCallID(id string) string {
 	return strings.TrimSpace(id)
+}
+
+// ConversationChannel is the id, without its type, of the agent channel ConversationID names:
+// the channel a call's transcript is written into (chatlog.Options.Channel). Empty for a
+// ConversationID that names no agent channel, whose transcript goes into the agent id's.
+func (s Spec) ConversationChannel() string {
+	channel := strings.TrimPrefix(s.ConversationID, streamapp.AgentChannelType+":")
+	if channel == s.ConversationID {
+		return ""
+	}
+	return channel
+}
+
+// TranscriptChannel is the cid of the channel a call's transcript is written into: the
+// conversation's agent channel, else the agent id's, as chatlog.New picks it from
+// ConversationChannel. Example: conversation_id "messaging:X" under agent id "front-desk" is
+// written into agent:front-desk.
+func (s Spec) TranscriptChannel() string {
+	channel := s.ConversationChannel()
+	if channel == "" {
+		channel = s.AgentID
+	}
+	return streamapp.AgentChannelType + ":" + channel
 }
 
 // Shared reports whether more than one verified person writes in the conversation: a thread

@@ -456,6 +456,13 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			db.channels[id] = data
 		}
 		result["channel"] = db.channels[id]
+		// Chat answers with the creator it resolved created_by_id to, as it does a message's
+		// author.
+		if creator, ok := db.channels[id]["created_by_id"].(string); ok {
+			channel := maps.Clone(db.channels[id])
+			channel["created_by"] = map[string]any{"id": creator}
+			result["channel"] = channel
+		}
 		result["members"] = db.channels[id]["members"]
 		result["messages"] = db.messagesIn(id)
 	case strings.HasSuffix(r.URL.Path, "/message"):

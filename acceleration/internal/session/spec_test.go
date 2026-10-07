@@ -142,6 +142,22 @@ func (s *SpecSuite) TestAPluginOfAnotherProviderStaysBesideABinding() {
 	s.Equal([]store.PluginEntry{{Name: "slack"}}, spec.AgentPlugins)
 }
 
+// A call's transcript goes into the conversation's agent channel, else the agent id's, as
+// chatlog.New picks it from the Channel the transcript factory passes: a conversation_id of
+// another channel type, or none at all, is the agent id's.
+func (s *SpecSuite) TestATranscriptGoesIntoTheConversationsAgentChannelElseTheAgentIds() {
+	for conversation, want := range map[string][2]string{
+		"agent:support-0199": {"support-0199", "agent:support-0199"},
+		"messaging:X":        {"", "agent:front-desk"},
+		"X":                  {"", "agent:front-desk"},
+		"":                   {"", "agent:front-desk"},
+	} {
+		spec := Spec{ConversationID: conversation, AgentID: "front-desk"}
+		s.Equal(want[0], spec.ConversationChannel(), conversation)
+		s.Equal(want[1], spec.TranscriptChannel(), conversation)
+	}
+}
+
 func (s *SpecSuite) TestAThreadChannelIsAConversationSeveralPeopleShare() {
 	s.True(Spec{ConversationID: "agent:" + persistent.ThreadChannelPrefix + "0199"}.Shared())
 	s.False(Spec{ConversationID: "agent:support-0199"}.Shared())

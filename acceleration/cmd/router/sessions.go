@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent/streamedge"
@@ -48,13 +47,10 @@ func transcriptFor() session.TranscriptFactory {
 		if stream.Client == nil {
 			return nil, errNoStreamApp
 		}
-		channel := strings.TrimPrefix(spec.ConversationID, "agent:")
-		if channel == spec.ConversationID {
-			channel = ""
-		}
 		return chatlog.New(chatlog.Options{
-			AgentID:      spec.AgentID,
-			Channel:      channel,
+			AgentID: spec.AgentID,
+			// The same reading the session's episode card names (Spec.TranscriptChannel).
+			Channel:      spec.ConversationChannel(),
 			CustomerID:   spec.CustomerID,
 			Agent:        chatlog.User{ID: spec.UserID, Name: spec.UserName},
 			VisibleTools: spec.VisibleTools,
