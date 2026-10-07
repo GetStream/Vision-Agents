@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -60,6 +61,8 @@ func (s *DisplaySuite) TestALoginIsShownOnlyInItsOwnersConversation() {
 	receipt, err := c.BeginCommand("command-a", "Tell Nash a joke on Slack", "")
 	s.Require().NoError(err)
 
+	s.False(c.CanAskToConnect("someone-else"))
+	s.True(c.CanAskToConnect("employee"))
 	s.False(c.AskToConnect("someone-else", login("slack", "attempt-1")))
 	s.False(c.AskToConnect("", login("slack", "attempt-1")))
 	c.Observe(agent.Responded{})
@@ -94,11 +97,11 @@ func (s *DisplaySuite) TestAFinishedConnectorLoginMarksTheReplyAndDropsItsHandof
 	s.False(c.ConnectorConnected("attempt-2"), "another attempt")
 	s.True(c.ConnectorConnected("attempt-1"))
 	s.False(c.ConnectorConnected("attempt-1"), "finished once")
-	saved(s.T(), c)
-
-	raw := s.raw(asked.AssistantMessageID)
-	s.Contains(raw, `"status":"connected"`)
-	s.NotContains(raw, "handoff-attempt-1")
+	// The outbox writes the earlier reply again, after the current one is saved.
+	s.Eventually(func() bool {
+		raw := s.raw(asked.AssistantMessageID)
+		return strings.Contains(raw, `"status":"connected"`) && !strings.Contains(raw, "handoff-attempt-1")
+	}, 8*time.Second, 20*time.Millisecond, "the reply that asked is marked connected, its handoff token dropped")
 }
 
 // TestAMessageWithNoConnectorLoginWritesWhatItDidBefore: no connector login, no new

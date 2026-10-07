@@ -50,18 +50,32 @@ func (c *Conversation) AskToConnect(owner string, found ConnectorAuthorization) 
 	found.Type, found.Status = ConnectorAuthorizationType, ""
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if owner == "" || c.data.Owner != owner || c.shared {
+	if !c.canAsk(owner) {
 		return false
 	}
 	m := c.data.Current
-	if m == nil || m.FinishedAt != nil || m.Role != "assistant" {
-		return false
-	}
 	m.ConnectorAuthorizations = mergeConnectorAuthorizations(m.ConnectorAuthorizations, found)
 	m.Sequence++
 	c.save()
 	c.publish(*m)
 	return true
+}
+
+// CanAskToConnect reports whether AskToConnect would show owner a login now, so nothing is
+// begun that nobody would see.
+func (c *Conversation) CanAskToConnect(owner string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.canAsk(owner)
+}
+
+// canAsk is CanAskToConnect with c.mu held.
+func (c *Conversation) canAsk(owner string) bool {
+	if owner == "" || c.data.Owner != owner || c.shared {
+		return false
+	}
+	m := c.data.Current
+	return m != nil && m.FinishedAt == nil && m.Role == "assistant"
 }
 
 // ShowsLogin reports whether the reply being written already shows the login of this
