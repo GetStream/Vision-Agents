@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -26,10 +27,14 @@ import (
 // here. Doing them one at a time from two callers would eventually leave a number that is
 // bought but unreachable, so the order lives in one place.
 type Service struct {
-	registry  *Registry
-	store     *store.Store
-	stream    *Stream
-	apps      Apps
+	registry *Registry
+	store    *store.Store
+	stream   *Stream
+	apps     Apps
+	// Calls through a customer's own trunk are off unless both sealer and sipTrunks are
+	// set: they need the key its password is sealed under and the provider that dials it.
+	sealer    *auth.Sealer
+	sipTrunks Provider
 	recorder  *routing.Recorder
 	gate      *dlc.Gate
 	publicURL string
@@ -45,6 +50,12 @@ type ServiceOptions struct {
 	// Apps answers which Stream app each customer's lines live in. When it is set, Stream
 	// is not used.
 	Apps Apps
+	// Sealer seals the passwords of customers' own SIP trunks. Without it those trunks
+	// are off, rather than their passwords stored in the clear.
+	Sealer *auth.Sealer
+	// SIPTrunks dials numbers on customers' own SIP trunks. It is kept out of the
+	// registry, which is what every customer is offered to buy from.
+	SIPTrunks Provider
 	// Recorder files purchases as request rows, so a number's monthly charge shows up in
 	// cost reporting next to what the models cost.
 	Recorder *routing.Recorder
@@ -71,6 +82,8 @@ func NewService(options ServiceOptions) (*Service, error) {
 		store:     options.Store,
 		stream:    options.Stream,
 		apps:      options.Apps,
+		sealer:    options.Sealer,
+		sipTrunks: options.SIPTrunks,
 		recorder:  options.Recorder,
 		gate:      options.Gate,
 		publicURL: strings.TrimSuffix(options.PublicURL, "/"),
@@ -334,12 +347,16 @@ func (s *Service) Release(ctx context.Context, customerID, e164 string) error {
 	if err != nil {
 		return err
 	}
-	provider, err := s.registry.Open(held.Vendor)
-	if err != nil {
-		return err
-	}
-	if err := provider.ReleaseNumber(ctx, e164); err != nil {
-		return err
+	// A number on the customer's own trunk was never bought here, so there is nobody to
+	// give it back to.
+	if held.Vendor != SIPTrunkVendor {
+		provider, err := s.registry.Open(held.Vendor)
+		if err != nil {
+			return err
+		}
+		if err := provider.ReleaseNumber(ctx, e164); err != nil {
+			return err
+		}
 	}
 	// The trunk and rule the number was attached with would otherwise outlive it, billed
 	// and pointing a number nobody holds at a call.
@@ -375,13 +392,6 @@ type Attached struct {
 // Attach creates the Stream trunk and routing rule for a number and tells the vendor to
 // send calls there. This is what turns a bought number into one that reaches an agent.
 func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, error) {
-	stream, pin, err := s.streamFor(ctx, attachment.CustomerID)
-	if errors.Is(err, errNoStream) {
-		return Attached{}, stack.Wrap(errors.New("phone: attaching a number needs stream credentials"))
-	}
-	if err != nil {
-		return Attached{}, err
-	}
 	if s.store == nil {
 		return Attached{}, stack.Wrap(errors.New("phone: attaching a number needs a database to know who holds it"))
 	}
@@ -389,6 +399,16 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 	held, err := s.store.Number(ctx, attachment.CustomerID, attachment.E164)
 	if err != nil {
 		return Attached{}, stack.Wrap(err)
+	}
+	if held.Vendor == SIPTrunkVendor {
+		return Attached{}, stack.Wrap(errors.New("phone: inbound calls to a number on the customer's own sip trunk are not supported"))
+	}
+	stream, pin, err := s.streamFor(ctx, attachment.CustomerID)
+	if errors.Is(err, errNoStream) {
+		return Attached{}, stack.Wrap(errors.New("phone: attaching a number needs stream credentials"))
+	}
+	if err != nil {
+		return Attached{}, err
 	}
 	provider, err := s.registry.Open(held.Vendor)
 	if err != nil {
@@ -537,11 +557,10 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	if err != nil {
 		return Placed{}, stack.Wrap(err)
 	}
-	provider, err := s.registry.Open(held.Vendor)
+	provider, trunk, err := s.dialVendor(ctx, held)
 	if err != nil {
 		return Placed{}, stack.Wrap(err)
 	}
-	declared, _ := s.registry.Lookup(held.Vendor)
 
 	outbound := Outbound{
 		From:          request.From,
@@ -549,6 +568,7 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		RingTimeout:   request.RingTimeout,
 		InitialDigits: request.InitialDigits,
 		Headers:       request.Headers,
+		Trunk:         trunk,
 	}
 	// A term the vendor cannot express is refused rather than dropped: a call placed
 	// without the ring timeout that was asked for is not the call that was asked for.
@@ -557,7 +577,7 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 			held.Vendor, joinFeatures(missing)))
 	}
 
-	allowedIPs, err := trunkAllowlist(declared)
+	allowedIPs, err := s.allowlistFor(held.Vendor)
 	if err != nil {
 		return Placed{}, stack.Wrap(err)
 	}
@@ -766,6 +786,45 @@ func trunkAllowlist(vendor Vendor) ([]string, error) {
 	return vendor.Signalling, nil
 }
 
+// dialVendor is who places a call from a held number, and the customer's own trunk the
+// call goes through when the number is on one.
+func (s *Service) dialVendor(ctx context.Context, held store.PhoneNumber) (Provider, *SIPTrunk, error) {
+	provider, err := s.provider(held.Vendor)
+	if err != nil || held.Vendor != SIPTrunkVendor {
+		return provider, nil, err
+	}
+	if err := s.sipTrunksReady(); err != nil {
+		return nil, nil, err
+	}
+	trunk, err := s.openSIPTrunk(ctx, held.CustomerID, held.SIPTrunkID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return provider, trunk, nil
+}
+
+// allowlistFor is the addresses a per-call Stream trunk should accept the vendor's leg
+// from. The bridge to a customer's own trunk presents the Stream trunk's password, so it
+// needs none.
+func (s *Service) allowlistFor(vendor string) ([]string, error) {
+	if vendor == SIPTrunkVendor {
+		return nil, nil
+	}
+	declared, _ := s.registry.Lookup(vendor)
+	return trunkAllowlist(declared)
+}
+
+// provider is the provider of a vendor name, which for sip_trunk is not in the registry.
+func (s *Service) provider(vendor string) (Provider, error) {
+	if vendor != SIPTrunkVendor {
+		return s.registry.Open(vendor)
+	}
+	if s.sipTrunks == nil {
+		return nil, stack.Wrap(ErrSIPTrunksDisabled)
+	}
+	return s.sipTrunks, nil
+}
+
 // joinFeatures renders call features for an error message.
 func joinFeatures(features []CallFeature) string {
 	rendered := make([]string, 0, len(features))
@@ -827,7 +886,7 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 	if err != nil {
 		return Dialed{}, stack.Wrap(err)
 	}
-	provider, err := s.registry.Open(held.Vendor)
+	provider, trunk, err := s.dialVendor(ctx, held)
 	if err != nil {
 		return Dialed{}, stack.Wrap(err)
 	}
@@ -873,7 +932,7 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 	}
 
 	started := time.Now()
-	placed, err := provider.Dial(ctx, Outbound{From: request.From, To: request.To, Bridge: bridge})
+	placed, err := provider.Dial(ctx, Outbound{From: request.From, To: request.To, Bridge: bridge, Trunk: trunk})
 	s.record(held.Vendor, "transfer", request.Owner, started, 0, err)
 	if err != nil {
 		return Dialed{}, stack.Wrap(err)
@@ -910,7 +969,7 @@ func (s *Service) SendDigits(ctx context.Context, vendor, vendorCallID, digits s
 	if err := ValidateDigits(digits); err != nil {
 		return err
 	}
-	provider, err := s.registry.Open(vendor)
+	provider, err := s.provider(vendor)
 	if err != nil {
 		return err
 	}

@@ -505,6 +505,22 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 `POST /v1/agents/sessions` takes `history`: the conversation so far, oldest first, as up to 100 `HistoryMessage`s with a `role` of `user` or `assistant`, `text`, and an optional author `name` and `created_at`. It is for a backend that keeps its own thread, such as one in its own Slack app, that outlives a session: open a new session with the thread here, then send the next message to `POST /v1/agents/sessions/{id}/responses`. The model is handed the history before the first response, the way a resumed conversation's is, and once any message names its author or time each user message is quoted with them behind a note that names are labels, not authority. The router records none of it, as turns, transcript or Chat messages; with `incognito` it keeps nothing at all. More than 100 messages or 60000 characters of text, a role other than `user` or `assistant`, and `history` with `conversation_id` are 400s, and a device sending it is a 403. Go (`client.SessionOptions.History`) and Python (`SessionOptions.history`) take it, and JavaScript's `SessionSpec` from the regenerated types; other SDKs follow.
 
+### Calls from numbers on your own SIP trunk (#752)
+
+You can now place calls from the numbers that you already have at your own carrier.
+`POST /v1/phone/trunks` stores your SIP trunk: host, port, transport, username, password
+and codecs. The API never returns the password. `GET`, `PATCH` and `DELETE` on
+`/v1/phone/trunks/{id}` read, change and delete a trunk. `POST /v1/phone/trunks/{id}/numbers`
+adds one of your numbers to the trunk. `POST /v1/phone/calls` then places a call from that
+number through your carrier.
+
+These numbers make outbound calls only. You cannot send initial digits, press digits or add
+custom SIP headers on these calls. The router node that places a call holds it until it
+ends. If that node stops, the call ends.
+
+The trunk endpoints need a key encryption key (`ROUTER_AUTH_KEK`). Without a key, they
+answer 400 with the code `not_configured`. The router refuses a trunk host that resolves to an address that is not public.
+
 ### Every router response carries an `X-Request-Id`, and a 500 is logged with its stack
 
 The router answers every request with `X-Request-Id`, keeping one a proxy sent (printable

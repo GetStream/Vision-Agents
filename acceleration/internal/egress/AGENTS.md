@@ -6,6 +6,7 @@ The one way connector traffic leaves the router. Tenants supply the URLs connect
 
 - `ValidatePublicHTTPSURL(ctx, raw)` checks a URL before it is stored: `https` only, no userinfo, query or fragment, a port in 1–65535, no numeric host that is not an IP address, and every address the host resolves to public.
 - `NewClient(timeout, wrap)` is the only client for connector traffic. `wrap` is `Scheme.Wrap` and may be nil. It sits between the redirect policy and the address checks, so it can remove neither.
+- `IsPublic(ip)` is the address check `NewClient` makes at dial. It is for traffic that is not HTTP, such as the SIP bridge's calls to a customer's trunk; the caller must check every address it connects to, not a name.
 
 ## Rules
 
