@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -33,6 +34,12 @@ const retrieveTimeout = 30 * time.Second
 // cf62af0d), so a token cached just outside that margin is renewed at most 30 s late and
 // before it expires. Unverified, not measured (spike 4 measures the fast path, not this).
 const maxAge = 30 * time.Second
+
+// auditWriteTimeout bounds the write of one audit row, which runs after the change it records
+// committed. The session writer's recordWriteTimeout (internal/session/records.go), so a stuck
+// database holds a refresh no longer than it holds a session's records. Unverified, not
+// measured.
+const auditWriteTimeout = 5 * time.Second
 
 // What LastError says after each outcome. core.CredentialState.LastError is shown to whoever
 // has to reconnect, so each says what to do. The wording follows the prototype's
@@ -81,6 +88,8 @@ type Config struct {
 	Schemes map[string]core.Scheme
 	// Now is the clock the cache is judged by; nil is time.Now.
 	Now func() time.Time
+	// Logger hears of an audit row that could not be written; nil is slog.Default().
+	Logger *slog.Logger
 }
 
 // Resolver implements core.Resolver.
@@ -89,6 +98,7 @@ type Resolver struct {
 	credentials core.CredentialStore
 	schemes     map[string]core.Scheme
 	now         func() time.Time
+	logger      *slog.Logger
 
 	mu    sync.Mutex
 	cache map[core.ConnectionRef]entry
@@ -117,8 +127,12 @@ func New(cfg Config) (*Resolver, error) {
 	if now == nil {
 		now = time.Now
 	}
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Resolver{store: cfg.Store, credentials: cfg.Credentials, schemes: cfg.Schemes, now: now,
-		cache: map[core.ConnectionRef]entry{}}, nil
+		logger: logger, cache: map[core.ConnectionRef]entry{}}, nil
 }
 
 // Resolve returns an access credential for ref.
@@ -185,13 +199,22 @@ func (r *Resolver) Invalidate(ctx context.Context, ref core.ConnectionRef, rejec
 	if !rejected.ExpiresAt.IsZero() && !r.now().Before(rejected.ExpiresAt) {
 		return nil
 	}
-	return stack.Wrap(r.credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+	moved, revision := false, 0
+	err := r.credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
 		if state.Status != store.ConnectionConnected || state.Revision != rejected.Revision {
 			return false, nil
 		}
 		state.Status, state.LastError = store.ConnectionNeedsReauthorization, lastError
+		moved, revision = true, state.Revision
 		return true, nil
-	}))
+	})
+	if err != nil {
+		return stack.Wrap(err)
+	}
+	if moved {
+		r.audit(ctx, ref, nil, store.AuditGrantRevoked, string(why.Kind), revision)
+	}
+	return nil
 }
 
 // Revoke moves a connected connection to needs_reauthorization and drops its cached
@@ -215,7 +238,8 @@ func (r *Resolver) Revoke(ctx context.Context, ref core.ConnectionRef, why core.
 		return stack.Wrap(fmt.Errorf("resolver: %q is not a signal that ends a grant", why))
 	}
 	r.drop(ref)
-	return stack.Wrap(r.credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+	moved, revision := false, 0
+	err := r.credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
 		if state.Status != store.ConnectionConnected {
 			return false, nil
 		}
@@ -223,8 +247,16 @@ func (r *Resolver) Revoke(ctx context.Context, ref core.ConnectionRef, why core.
 			return false, nil
 		}
 		state.Status, state.LastError = store.ConnectionNeedsReauthorization, lastError
+		moved, revision = true, state.Revision
 		return true, nil
-	}))
+	})
+	if err != nil {
+		return stack.Wrap(err)
+	}
+	if moved {
+		r.audit(ctx, ref, nil, store.AuditGrantRevoked, string(why), revision)
+	}
+	return nil
 }
 
 // retrieve gets an access credential that works until req.Deadline through the connection's
@@ -252,6 +284,8 @@ func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connect
 		cache      bool
 		before     core.CredentialState
 		committed  *core.CredentialState
+		// ended is the outcome a renewal failed with, which names why a grant ended.
+		ended core.OutcomeKind
 	)
 	err = r.credentials.Update(ctx, ref, func(state *core.CredentialState, checkpoint func() error) (bool, error) {
 		committed = state
@@ -289,6 +323,7 @@ func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connect
 			credential, cache = got, true
 		case errors.As(err, &outcome):
 			state.Status, state.LastError, failure = statusAfter(outcome, err)
+			ended = outcome.Outcome.Kind
 			// A renewal that failed before the old access credential expired hands that one
 			// back beside the error, for this call only (core.Scheme.Retrieve).
 			if got.Scheme != "" {
@@ -304,6 +339,15 @@ func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connect
 	if err != nil {
 		return core.AccessCredential{}, stack.Wrap(err)
 	}
+	// A connection that was connected when fn ran and is committed otherwise lost its grant
+	// here; one at a new revision had its stored credentials renewed. A Retrieve that renewed
+	// nothing, the common case, writes no row.
+	switch {
+	case before.Status == store.ConnectionConnected && committed.Status != store.ConnectionConnected:
+		r.audit(ctx, ref, &connection, store.AuditGrantRevoked, string(ended), committed.Revision)
+	case before.Status == store.ConnectionConnected && committed.Revision != before.Revision:
+		r.audit(ctx, ref, &connection, store.AuditGrantRefreshed, "", committed.Revision)
+	}
 	if failure != nil {
 		return core.AccessCredential{}, failure
 	}
@@ -315,6 +359,32 @@ func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connect
 			renewed: committed.Revision != before.Revision})
 	}
 	return credential, nil
+}
+
+// audit records one change to a connection's grant, with the correlation ids ctx carries
+// (core.CorrelationOf). It runs after the change committed and detached from ctx, so a caller
+// that gave up still leaves its row; connection is read when nil. A row that cannot be
+// written is logged, and the change stands: the credential is what the caller needs.
+func (r *Resolver) audit(ctx context.Context, ref core.ConnectionRef, connection *store.ConnectorConnection, action, reason string, revision int) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditWriteTimeout)
+	defer cancel()
+	if connection == nil {
+		read, err := r.store.ConnectorConnection(ctx, ref.CustomerID, ref.ConnectionID)
+		if err != nil {
+			r.logger.Error("could not record a connector audit row", "connection", ref.ConnectionID, "action", action, "error", err)
+			return
+		}
+		connection = &read
+	}
+	correlation := core.CorrelationOf(ctx)
+	err := r.store.RecordConnectorAudit(ctx, &store.ConnectorAuditEvent{
+		CustomerID: ref.CustomerID, ConnectionID: ref.ConnectionID, ConnectorID: connection.ConnectorID,
+		OwnerType: connection.OwnerType, Action: action, Reason: reason, Revision: revision,
+		RequestID: correlation.RequestID, SessionID: correlation.SessionID,
+	})
+	if err != nil {
+		r.logger.Error("could not record a connector audit row", "connection", ref.ConnectionID, "action", action, "error", err)
+	}
 }
 
 // statusAfter is the status and LastError a failed renewal leaves, and the error a caller

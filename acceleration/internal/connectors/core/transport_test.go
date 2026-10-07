@@ -129,6 +129,46 @@ func (s *TransportsSuite) TestAResolverRefusalSendsNothing() {
 	s.Empty(s.provider.received())
 }
 
+func (s *TransportsSuite) TestAnExchangeRecordsARequestThatLeftAndItsStatus() {
+	ctx, exchange := core.WithExchange(context.Background())
+
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.True(exchange.Sent())
+	s.Equal(http.StatusOK, exchange.Status())
+	s.NoError(exchange.CredentialError())
+	s.False(exchange.TimedOut())
+}
+
+func (s *TransportsSuite) TestAnExchangeRecordsTheResolversRefusalAndNothingSent() {
+	s.resolver.disconnect()
+	ctx, exchange := core.WithExchange(context.Background())
+
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().Error(err)
+	s.False(exchange.Sent())
+	s.ErrorIs(exchange.CredentialError(), errNotConnected)
+}
+
+func (s *TransportsSuite) TestAnExchangeRecordsTheProvidersRefusal() {
+	s.provider.refuse("token-1")
+	ctx, exchange := core.WithExchange(context.Background())
+
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusUnauthorized, exchange.Status())
+}
+
+func (s *TransportsSuite) TestACorrelationIsWhatTheContextCarries() {
+	ctx := core.WithCorrelation(context.Background(), core.Correlation{RequestID: "request", SessionID: "session"})
+
+	s.Equal(core.Correlation{RequestID: "request", SessionID: "session"}, core.CorrelationOf(ctx))
+	s.Zero(core.CorrelationOf(context.Background()))
+}
+
 // TestARefusedCredentialIsRenewedAndTheRequestSentOnceMore: the provider ended token-1
 // before the expiry the router knows (its clock runs ahead, or it revoked the access token
 // alone). The grant still works, so the resolver renews past token-1 and the request goes
