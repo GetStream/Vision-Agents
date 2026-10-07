@@ -82,14 +82,13 @@ func (d *dispatcher) Close() {
 
 // call runs one tool inside the envelope.
 //
-// The binding's timeout bounds it, and so does the connection's client, which bounds each
-// request it sends (core.TransportsConfig.Timeout, connectorHTTPTimeout in the router, 10 s
-// against a timeout_ms of up to 30000). When either runs out the request may have reached
-// the provider and done its work, so the model reads outcome_unknown rather than an error it
-// would retry: the architecture doc's SourceContract («a timed-out write returns
-// outcome_unknown, not an error the model retries», connectors/planning). The client's bound
-// is not raised to the binding's instead: the transport is one per connection, shared with
-// the validate endpoint and the channel bridge, whose bound would change with it. A turn that is
+// The binding's timeout bounds it, and nothing else does: the mcp source sends with a copy of
+// the connection's client that has no Timeout of its own (connectorHTTPTimeout, 10 s in the
+// router, against a timeout_ms of up to 30000), so the client never cuts a call before this
+// deadline. When the deadline runs out the request may have reached the provider and done its
+// work, so the model reads outcome_unknown rather than an error it would retry: the
+// architecture doc's SourceContract («a timed-out write returns outcome_unknown, not an error
+// the model retries», connectors/planning). A turn that is
 // interrupted cancels ctx, and the MCP SDK sends notifications/cancelled for the call in
 // flight (cancelCall in go-sdk v1.8.0 mcp/transport.go).
 func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, error) {
@@ -97,7 +96,7 @@ func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]ll
 	defer cancel()
 	result, err := r.toolset.Call(bounded, call)
 	if err != nil {
-		if ctx.Err() == nil && (errors.Is(bounded.Err(), context.DeadlineExceeded) || timedOut(err)) {
+		if ctx.Err() == nil && errors.Is(bounded.Err(), context.DeadlineExceeded) {
 			return llm.TextParts(outcomeUnknown(call.Name)), nil
 		}
 		return nil, err
@@ -113,13 +112,6 @@ func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]ll
 func outcomeUnknown(name string) string {
 	return fmt.Sprintf("outcome_unknown: %s did not answer in time. It may or may not have done "+
 		"what was asked; check before calling it again.", name)
-}
-
-// timedOut reports whether err is a request that ran out of time: net/http's client timeout
-// is an error whose Timeout method says so (url.Error, net.Error).
-func timedOut(err error) bool {
-	var timeout interface{ Timeout() bool }
-	return errors.As(err, &timeout) && timeout.Timeout()
 }
 
 // recheck refuses a call that the session's config and connection no longer allow, before

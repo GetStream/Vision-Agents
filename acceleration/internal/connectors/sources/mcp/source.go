@@ -210,6 +210,14 @@ func connect(ctx context.Context, b core.ResolvedBinding, endpoint string) (*mcp
 	// checks all still run. The redirect policy stays the egress client's.
 	client := *b.HTTP
 	client.Transport = capped{base: b.HTTP.Transport}
+	// No client timeout on the copy: a context bounds every request instead, the startup
+	// timeout for connect and tools/list and the caller's for tools/call (the session's
+	// dispatcher). The client's own timeout would cut a tool call the caller still waits
+	// for, and against a server that sent its SSE headers first the SDK reports that cut as
+	// «request terminated without response», with no timeout in the error to say the request
+	// went out (go-sdk v1.8.0 mcp/streamable.go). The connection's client keeps its timeout
+	// for everyone else: the copy is this source's alone.
+	client.Timeout = 0
 	session, err := mcp.NewClient(implementation, nil).Connect(ctx, &mcp.StreamableClientTransport{
 		Endpoint:   endpoint,
 		HTTPClient: &client,

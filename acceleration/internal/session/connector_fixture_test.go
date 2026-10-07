@@ -257,6 +257,10 @@ type accountsProvider struct {
 	// called counts tools/call by account; methods is every JSON-RPC method by account.
 	called  map[string]int
 	methods map[string][]string
+	// streams answers each request as an SSE stream whose headers go out at once, before the
+	// tool has answered, as a server that streams progress does. Off answers in one JSON
+	// object when the tool is done.
+	streams bool
 }
 
 // slowFor is how long slow takes before it answers, longer than any test lets it run; it
@@ -307,20 +311,36 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 		if message.Method == "tools/call" {
 			p.called[account]++
 		}
+		streams := p.streams
 		p.mu.Unlock()
-		// Stateless and JSON, as the mcp source's own tests run the SDK (go-sdk v1.8.0).
+		if streams && message.Method == "tools/call" {
+			// The SSE headers go out now; the SDK's own WriteHeader after them is ignored, and
+			// its events follow on the stream once the tool answers.
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+		}
+		// Stateless, as the mcp source's own tests run the SDK (go-sdk v1.8.0); JSON unless
+		// the provider streams.
 		mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return server },
-			&mcpsdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true}).ServeHTTP(w, r)
+			&mcpsdk.StreamableHTTPOptions{Stateless: true, JSONResponse: !streams}).ServeHTTP(w, r)
 	}))
 	s.T().Cleanup(p.Close)
 	return p
+}
+
+// streamFirst has the provider answer tools/call as an SSE stream whose headers go out first.
+func (p *accountsProvider) streamFirst() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.streams = true
 }
 
 // forget clears what the provider was sent, so a test reads its own.
 func (p *accountsProvider) forget() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.called, p.methods = map[string]int{}, map[string][]string{}
+	p.called, p.methods, p.streams = map[string]int{}, map[string][]string{}, false
 }
 
 // calls is how many tools/call reached account.

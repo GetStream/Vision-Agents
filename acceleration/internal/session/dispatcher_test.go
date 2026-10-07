@@ -189,6 +189,28 @@ func (s *DispatcherSuite) TestACallTheConnectionsClientCutsOffIsAnUnknownOutcome
 	s.Equal(1, s.provider.calls("primary"))
 }
 
+// TestACallToAServerThatStreamsIsAnUnknownOutcomePastTheClientsLimit: the server sends its
+// SSE headers at once and is still working when the connection's client would have cut the
+// request. The call runs to the binding's deadline instead, and its outcome is unknown.
+func (s *DispatcherSuite) TestACallToAServerThatStreamsIsAnUnknownOutcomePastTheClientsLimit() {
+	defer func(kept *Manager) { s.manager = kept }(s.manager)
+	s.manager = s.managerWith(300 * time.Millisecond)
+	s.provider.streamFirst()
+	app := s.connection("", "primary")
+	binding := s.fixed("crm", app, "slow")
+	binding.TimeoutMs = 1500
+	d, _, _, err := s.attach(s.spec(s.config(binding), "", nil))
+	s.Require().NoError(err)
+	started := time.Now()
+
+	said, err := s.call(d, "crm__slow", "{}")
+
+	s.Require().NoError(err, "not an error the model would retry")
+	s.Contains(said, "outcome_unknown: crm__slow did not answer in time")
+	s.Equal(1, s.provider.calls("primary"))
+	s.GreaterOrEqual(time.Since(started), 1500*time.Millisecond, "the binding's deadline, not the client's, ended it")
+}
+
 // TestAnInterruptedCallIsCancelledAtTheProvider: the turn's context ends, and the provider
 // is sent notifications/cancelled for the call.
 func (s *DispatcherSuite) TestAnInterruptedCallIsCancelledAtTheProvider() {

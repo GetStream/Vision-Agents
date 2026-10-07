@@ -22,7 +22,8 @@ Open(ctx, binding, grants)               same connect and list
 Toolset.Call(call)
   unknown name             -> error, nothing sent
   arguments vs schema      -> error, nothing sent
-  tools/call               binding.Timeout bounds it
+  tools/call               binding.Timeout and the caller's context bound it;
+                           the client copy has no Timeout of its own
   text parts, else structured JSON, else "not text" -> cut at 32 KiB + marker (core.CutResult)
   isError                  -> *core.ToolError, even with no text
 ```
