@@ -721,10 +721,12 @@ finished, and a reply that was already on its way then began to be heard before 
 on, and had to be cut off. The first sound of a reply to a caller's words is now let out only
 once that caller's audio has been quiet for `ROUTER_REPLY_SILENCE`, `700ms` by default,
 since it last carried a voice. A reply that is ready sooner waits for the silence to be
-confirmed, and if the caller starts again after a quiet stretch (a voice following at least
-150 ms of audio below the level of one) it is dropped before any of it is heard and the turn is
-reported as interrupted. Quiet is judged on each participant's audio, with a level detector
-that follows their background noise, and not on transcripts. Later frames of a reply, a
+confirmed. A voice while it waits, a cough or a word, only restarts the count: the wait delays
+the reply and never drops it, and a caller who really goes on cancels it with their words, the
+way they cancel any other reply, before any of it is heard. Nothing of a reply that was cancelled
+unheard is kept in the conversation as having been said. Quiet is judged on each participant's
+audio, with a level detector that follows their background noise, and not on transcripts. Later
+frames of a reply, a
 greeting, a murmur and a turn the agent takes without having been spoken to are not held, and
 `first_frame_queued_ms` and `first_audible_frame_ms` include the wait. `0` lets a reply start
 the moment it is ready, and the agent option `ReplySilence` is the same setting.
@@ -732,10 +734,8 @@ the moment it is ready, and the agent option `ReplySilence` is the same setting.
 A line that never goes quiet, because of a conversation in the room or a steady babble, never
 confirms the silence, and a reply could be held for as long as that lasted. A reply is now
 held for at most `ROUTER_REPLY_SILENCE_MAX` after it is ready, `1s` by default,
-and plays when that has passed; only a caller who resumes after a quiet stretch while it is
-held drops it, and sound that carries on without going quiet does not. It must be longer than
-zero while `ROUTER_REPLY_SILENCE` is on, and the agent option `ReplySilenceMax` is the same
-setting.
+and plays when that has passed. It must be longer than zero while `ROUTER_REPLY_SILENCE` is
+on, and the agent option `ReplySilenceMax` is the same setting.
 
 ### A reply starts when the words hold still, not after the wait: `ROUTER_PREVIEW_DEBOUNCE`
 

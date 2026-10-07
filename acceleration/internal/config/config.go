@@ -198,13 +198,13 @@ type Agent struct {
 	SpeculativeReplies bool `koanf:"speculative_replies"`
 	// ReplySilence is how long a caller must have been quiet, on their audio rather than their
 	// words, before the first sound of the reply to them is let out. A reply that is ready
-	// sooner waits for it, and is dropped unheard if the caller starts again in the meantime.
-	// 700ms by default; 0 lets a reply start the moment it is ready.
+	// sooner waits for it, and a voice in the meantime only restarts the count: the wait delays
+	// the reply and never drops it. 700ms by default; 0 lets a reply start the moment it is
+	// ready.
 	ReplySilence time.Duration `koanf:"reply_silence"`
 	// ReplySilenceMax is the longest the first sound of a reply is held for that silence once it
 	// is ready. A line that never goes quiet, because of a conversation in the room or a steady
-	// babble, does not confirm the silence, so the reply is let out when this has passed. A
-	// caller who starts again after a quiet stretch while it is held still has it dropped.
+	// babble, does not confirm the silence, so the reply is let out when this has passed.
 	// 1s by default; it must be longer than zero while reply_silence is on.
 	ReplySilenceMax time.Duration `koanf:"reply_silence_max"`
 	// PreviewDebounce is how long a caller's words have to hold still before the reply to them

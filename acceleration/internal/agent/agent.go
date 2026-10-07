@@ -168,17 +168,16 @@ type Options struct {
 	SpeculativeReplies *bool
 	// ReplySilence is how long a caller must have been quiet before the first audio of the
 	// reply to them is let out, measured on their audio rather than on their words. A reply
-	// that is ready sooner waits for it, and is dropped unheard if the caller starts again in
-	// the meantime. Nil leaves it at 700ms, and a pointer to zero lets a reply start as soon
-	// as it is ready. It does not apply to a greeting, a murmur, or a turn the agent takes
-	// without having been spoken to.
+	// that is ready sooner waits for it, and a voice in the meantime only restarts the count:
+	// the wait delays the reply and never drops it. Nil leaves it at 700ms, and a pointer to
+	// zero lets a reply start as soon as it is ready. It does not apply to a greeting, a
+	// murmur, or a turn the agent takes without having been spoken to.
 	ReplySilence *time.Duration
 	// ReplySilenceMax is the longest the first audio of a reply is held for ReplySilence once
 	// it is ready. A caller whose line never goes quiet, because of a conversation in the room
 	// or a steady babble, does not confirm the silence, and the reply is let out when this has
-	// passed. A caller who starts again after a quiet stretch while it is held still has it
-	// dropped unheard. Nil leaves it at one second, and it must be longer than zero while
-	// ReplySilence is on.
+	// passed. Nil leaves it at one second, and it must be longer than zero while ReplySilence
+	// is on.
 	ReplySilenceMax *time.Duration
 	// PreviewDebounce is how long a caller's words have to hold still before the reply to them
 	// is started, ahead of the wait that decides whether they have finished, so the model has
@@ -365,7 +364,8 @@ type Agent struct {
 	// what may be heard, because the agent starts a turn for itself while the turn before
 	// it is still being spoken.
 	speakingTurn string
-	// gated is the reply to a caller's words that has not let out its first audio yet.
+	// gated is the reply to a caller's words that has not let out any of its audio yet, which
+	// makes it one the caller has heard nothing of.
 	gated heldReply
 	// saying is the filtered generated text available for the current reply. It may be ahead
 	// of playout, so it gives overlap judgments and interruption context without claiming
@@ -2690,6 +2690,11 @@ func (a *Agent) finish(response llm.Response) {
 			Content:   said,
 			ToolCalls: calls,
 		})
+		// A reply that is still held has nothing of it heard, so if it is abandoned in that
+		// state its entry is taken back rather than left as something the caller was told.
+		if a.gated.turn == response.ID {
+			a.gated.committed = len(a.history)
+		}
 	}
 	// History commit and generating=false are one ownership transition. stopPlayback uses
 	// the same lock to decide whether this turn still needs a partial assistant entry.
@@ -2852,6 +2857,10 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				// This records local edge admission after its backpressure wait, not when
 				// the participant hears the chunk on the wire.
 				a.turns.firstAudio(turnOf(typed.SynthesisID), time.Now())
+				// Some of the reply is out, so it is no longer one nobody has heard.
+				if a.gated.turn == turnOf(typed.SynthesisID) {
+					a.gated = heldReply{}
+				}
 			}
 			a.mu.Unlock()
 			if !stillActive {
@@ -3317,6 +3326,14 @@ func (a *Agent) stopPlayback(
 	}
 	wasGenerating := a.generating
 	partial := a.saying // Keep only the string header on the local-stop path.
+	// A reply still held to the caller's silence has let none of itself out, so the caller was
+	// told nothing of it and it goes into the history as nothing heard.
+	unheard := a.gated.turn == turnID
+	committed := 0
+	if unheard {
+		committed = a.gated.committed
+		a.gated = heldReply{}
+	}
 	a.abandoned[turnID] = struct{}{}
 	a.speakingTurn = ""
 	a.generating = false
@@ -3342,13 +3359,27 @@ func (a *Agent) stopPlayback(
 	// save an unfinished generated prefix once; a normal completed history entry is already
 	// present when the model won the race, but its audio may still have been interrupted.
 	if !a.nativeMode.Load() {
-		if wasGenerating {
-			partial = strings.TrimSpace(partial)
-			if partial != "" {
-				a.history = append(a.history, llm.Message{Role: llm.Assistant, Content: partial})
+		switch {
+		case unheard:
+			// What was generated was never said, so none of it is kept as said. The entry a
+			// finished reply added is taken back if nothing has been added since; one that
+			// asked for tools stays, because their results answer it, and the next turn is
+			// told it may not have been heard.
+			if last := len(a.history) - 1; committed > 0 && last == committed-1 &&
+				a.history[last].Role == llm.Assistant && len(a.history[last].ToolCalls) == 0 {
+				a.history = a.history[:last]
+			} else if committed > 0 {
+				a.interruptedReplyPending = true
 			}
+		default:
+			if wasGenerating {
+				partial = strings.TrimSpace(partial)
+				if partial != "" {
+					a.history = append(a.history, llm.Message{Role: llm.Assistant, Content: partial})
+				}
+			}
+			a.interruptedReplyPending = true
 		}
-		a.interruptedReplyPending = true
 	}
 	for _, cancel := range a.toolCancels {
 		cancel()
