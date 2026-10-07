@@ -131,7 +131,13 @@ func addressed(event messageEvent) bool {
 func (s *Server) routeArrivingMessage(r *http.Request, origin hookOrigin, body []byte, event messageEvent) {
 	// A thread channel holds an external thread, such as a Slack thread, which the Router
 	// answers itself: nobody watches it to hand the message to a worker.
-	if thread, linked := s.linkedThread(r.Context(), origin, event.ChannelID); linked {
+	thread, linked, err := s.linkedThread(r.Context(), origin, event.ChannelID)
+	if err != nil {
+		s.logger.Error("not answering a message in a channel that may hold an external thread",
+			"channel", event.ChannelID, "error", err)
+		return
+	}
+	if linked {
 		go s.answerThread(origin, thread, event)
 		return
 	}

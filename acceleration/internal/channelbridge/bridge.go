@@ -404,8 +404,8 @@ func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, conf
 	author := authorUserID(thread.CustomerID, thread.ConnectorID, thread.ProviderUnitID, message.AuthorID)
 	name, agentName := message.AuthorID, config.Name
 	// The agent of a thread channel writes as a user of the channel's own id: the
-	// conversation held on the channel writes as support_agent_id, and the message hook
-	// finds the session answering in the channel by that agent id (Manager.ByAgentWhere).
+	// conversation held on the channel writes as support_agent_id. The message hook finds
+	// the session answering in the channel by its conversation (Manager.ByConversationWhere).
 	if err := conversation.CreateMissingUsers(ctx, bound.Client, map[string]getstream.UserRequest{
 		author:           {ID: author, Name: &name},
 		thread.ChannelID: {ID: thread.ChannelID, Name: &agentName},

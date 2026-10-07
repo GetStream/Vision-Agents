@@ -752,6 +752,35 @@ func (s *SessionSuite) TestAWrittenAnswerIsStoredInTheConversation() {
 	s.Equal([]string{"Hello."}, s.records.replies())
 }
 
+// TestACallBarredFromAThreadChannelWritesNoTranscriptThere: a device that named a thread
+// channel's agent id (persistent.BarThread) keeps no transcript in that channel.
+func (s *SessionSuite) TestACallBarredFromAThreadChannelWritesNoTranscriptThere() {
+	s.records = &stubTranscript{}
+	s.manages()
+	channel := persistent.ThreadChannelPrefix + "0b6a2f3e-7d4c-4e1a-9f58-2c3d4e5f6a7b"
+	s.ctx = persistent.BarThread(s.ctx, "agent:"+channel)
+	created := s.joins(Spec{CallID: "call-1", AgentID: channel})
+
+	_, err := created.Ask(s.ctx, "is my invoice reissuable?")
+
+	s.Require().NoError(err)
+	s.Empty(s.records.replies())
+}
+
+// TestACallBarredFromAnotherChannelWritesItsTranscript: the bar is for the one channel it
+// names.
+func (s *SessionSuite) TestACallBarredFromAnotherChannelWritesItsTranscript() {
+	s.records = &stubTranscript{}
+	s.manages()
+	s.ctx = persistent.BarThread(s.ctx, "agent:"+persistent.ThreadChannelPrefix+"0b6a2f3e-7d4c-4e1a-9f58-2c3d4e5f6a7b")
+	created := s.joins(Spec{CallID: "call-1", AgentID: persistent.ThreadChannelPrefix + "5e8d1c2b-3a4f-4b6c-8d7e-9f0a1b2c3d4e"})
+
+	_, err := created.Ask(s.ctx, "is my invoice reissuable?")
+
+	s.Require().NoError(err)
+	s.Equal([]string{"Hello."}, s.records.replies())
+}
+
 func (s *SessionSuite) TestAnIncognitoCallWritesNothingIntoChat() {
 	s.records = &stubTranscript{}
 	s.manages()

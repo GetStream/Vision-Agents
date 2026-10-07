@@ -582,7 +582,14 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		})
 	}
 
-	if m.options.Transcript != nil && conv == nil && !spec.Incognito {
+	// A transcript is written into the conversation's channel, else the agent id's
+	// (chatlog.Options.Channel). One a device asked for under a thread channel's agent id is
+	// not written there (persistent.BarThread).
+	written := spec.ConversationID
+	if written == "" {
+		written = streamapp.AgentChannelType + ":" + spec.AgentID
+	}
+	if m.options.Transcript != nil && conv == nil && !spec.Incognito && !persistent.Barred(ctx, written) {
 		// A transcript that cannot be opened is not a reason to refuse the call. What was
 		// said is worth keeping; it is not worth not having the conversation for.
 		transcript, err := m.options.Transcript(ctx, spec, stream, m.logger)
@@ -854,13 +861,27 @@ func (m *Manager) ByAgentWhere(agentID string, admits func(customer string, app 
 	if agentID == "" {
 		return nil, false
 	}
+	return m.newest(func(spec Spec) bool { return spec.AgentID == agentID }, admits)
+}
 
+// ByConversationWhere is the newest running session holding the conversation cid, among the
+// sessions a test admits, by their customer and the Stream app they act in. Unlike an agent
+// id, which any caller may name, a conversation is held only by a session opened on it.
+func (m *Manager) ByConversationWhere(cid string, admits func(customer string, app int64) bool) (*Session, bool) {
+	if cid == "" {
+		return nil, false
+	}
+	return m.newest(func(spec Spec) bool { return spec.ConversationID == cid }, admits)
+}
+
+// newest is the newest running session whose spec matches, among those admits takes.
+func (m *Manager) newest(matches func(Spec) bool, admits func(customer string, app int64) bool) (*Session, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	var newest *Session
 	for _, found := range m.sessions {
-		if found.spec.AgentID != agentID {
+		if !matches(found.spec) {
 			continue
 		}
 		if admits != nil && !admits(found.spec.CustomerID, found.spec.StreamApp) {

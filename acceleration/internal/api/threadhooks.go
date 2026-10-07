@@ -40,7 +40,7 @@ const threadTurnLease = askTimeout + 30*time.Second
 //	  answerThread, off the request
 //	    claim (thread channel, turn, Stream message id)    a repeat delivery: nothing
 //	    lease the thread's turn in Postgres                another router's turn: wait
-//	    the session on the channel (ByAgentWhere), else
+//	    the session on the channel (ByConversationWhere), else
 //	      FromConfig(the channel's agent config), Text, PersistConversation,
 //	      ConversationID agent:thread-<uuid>               reply lands in the thread channel
 //	    Session.FollowUp(text)                             the person's message is already
@@ -48,23 +48,24 @@ const threadTurnLease = askTimeout + 30*time.Second
 //	    wait until the turn is over; close the session it opened; let go of the lease
 
 // linkedThread is the external thread a channel holds, when it is a thread channel of the
-// app the hook came from.
-func (s *Server) linkedThread(ctx context.Context, origin hookOrigin, channelID string) (store.ChannelThread, bool) {
+// app the hook came from. An error is a channel nobody can tell is one or not: the hook
+// answers it nowhere, rather than hand the thread's message to a session under its id.
+func (s *Server) linkedThread(ctx context.Context, origin hookOrigin, channelID string) (store.ChannelThread, bool, error) {
 	if s.store == nil || s.sessions == nil || !strings.HasPrefix(channelID, conversation.ThreadChannelPrefix) {
-		return store.ChannelThread{}, false
+		return store.ChannelThread{}, false, nil
 	}
 	thread, err := s.store.ChannelThread(ctx, channelID)
+	if errors.Is(err, store.ErrNoChannelThread) {
+		return store.ChannelThread{}, false, nil
+	}
 	if err != nil {
-		if !errors.Is(err, store.ErrNoChannelThread) {
-			s.logger.Error("could not tell whether a channel holds an external thread", "channel", channelID, "error", err)
-		}
-		return store.ChannelThread{}, false
+		return store.ChannelThread{}, false, err
 	}
 	if !origin.owns(thread.CustomerID, thread.StreamAppPK) {
 		s.logger.Info("ignoring a message in a thread channel of another app", "channel", channelID, "stream_app", origin.app)
-		return store.ChannelThread{}, false
+		return store.ChannelThread{}, false, nil
 	}
-	return thread, true
+	return thread, true, nil
 }
 
 // answerThread has a session on a thread channel answer a person's message there. One turn
@@ -102,8 +103,9 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 	defer cancelTurn()
 
 	// A session a caller opened on the channel through the API answers there; otherwise this
-	// router opens one for the turn.
-	found, running := s.sessions.ByAgentWhere(thread.ChannelID, origin.owns)
+	// router opens one for the turn. It is found by its conversation, not by its agent id,
+	// which any caller may name (threadConversation).
+	found, running := s.sessions.ByConversationWhere(chatlog.ChannelType+":"+thread.ChannelID, origin.owns)
 	opened := false
 	if !running || !found.Spec().PersistConversation {
 		if found, err = s.threadSession(turn, origin, thread, event); err != nil {
@@ -181,16 +183,57 @@ func (s *Server) threadSession(ctx context.Context, origin hookOrigin, thread st
 // of its own. It returns ctx carrying the Router's word for that one channel
 // (conversation.RouterOpensThread), the only way a thread channel opens. Anything else is
 // left as it is: a conversation_id the request named opens no thread channel.
+//
+// Only the customer's backend names a thread channel: the people in the thread are not the
+// device's to read or write as. A device naming one is answered as for an agent id no
+// thread channel has: its text session keeps a support channel of its own, and ctx bars its
+// voice transcript from the thread channel (conversation.BarThread), so nothing it is told
+// says the thread exists.
+//
+// The agent id is the one the session is keyed under (Spec.KeyedAgentID): a voice session
+// that names none is keyed under its call id, which Normalize gives it later.
+//
+//	caller    agent id                        session
+//	backend   the customer's thread channel   conversation in the thread channel
+//	device    the customer's thread channel   as for an unknown id; no transcript there
+//	device    unreadable: channel_threads     barred, as if it were one
+//	device    a thread channel in other case  barred, as if it were the channel
+//	anyone    anything else                   as it was
+//
+// The id is compared trimmed and case-folded. Whether Stream Chat treats channel ids that
+// differ in case, or in spaces around them, as one channel is unverified, so a device naming
+// THREAD-<uuid> or " thread-<uuid>" as its agent id is kept out as if it named the thread
+// channel: fail closed. (A call id is trimmed by Normalize itself, through KeyedAgentID.)
+// Thread channel ids are always lower case (channelbridge: thread- and uuid.NewString), so
+// the row is read by the folded id. The bar is on the id exactly as the session is keyed
+// under it, which is where its transcript goes.
 func (s *Server) threadConversation(ctx context.Context, customerID string, spec *session.Spec) context.Context {
-	if s.store == nil || !spec.Text || !spec.PersistConversation || spec.ConversationID != "" ||
-		!strings.HasPrefix(spec.AgentID, conversation.ThreadChannelPrefix) {
+	keyed := spec.KeyedAgentID()
+	folded := strings.ToLower(strings.TrimSpace(keyed))
+	if s.store == nil || spec.ConversationID != "" || !strings.HasPrefix(folded, conversation.ThreadChannelPrefix) {
 		return ctx
 	}
-	thread, err := s.store.ChannelThread(ctx, spec.AgentID)
+	cid := chatlog.ChannelType + ":" + keyed
+	thread, err := s.store.ChannelThread(ctx, folded)
+	if err != nil && !errors.Is(err, store.ErrNoChannelThread) {
+		// Whether it is a thread channel is not known, so a device is kept out of it.
+		s.logger.Error("could not tell whether an agent id names a thread channel", "channel", keyed, "error", err)
+		if !ServerSideFrom(ctx) {
+			return conversation.BarThread(ctx, cid)
+		}
+		return ctx
+	}
 	if err != nil || thread.CustomerID != customerID {
 		return ctx
 	}
-	spec.ConversationID = chatlog.ChannelType + ":" + thread.ChannelID
+	if !ServerSideFrom(ctx) {
+		return conversation.BarThread(ctx, cid)
+	}
+	// The backend opens the thread channel by its exact id, as at base.
+	if !spec.Text || !spec.PersistConversation || keyed != thread.ChannelID {
+		return ctx
+	}
+	spec.ConversationID = cid
 	// A resumed conversation names its own agent (Spec.Normalize).
 	spec.AgentID = ""
 	return conversation.RouterOpensThread(ctx, spec.ConversationID)

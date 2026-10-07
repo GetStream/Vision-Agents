@@ -110,6 +110,7 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 		Cleared:    func() { _ = writeFrame(frame{"type": "cleared"}) },
 	})
 	spec := specOf(start.Session, customerID, config)
+	ctx = s.threadConversation(ctx, customerID, &spec)
 	spec.Caller = CallerFrom(ctx)
 	spec.CallerKind = KindFrom(ctx)
 	spec.Edge = edge

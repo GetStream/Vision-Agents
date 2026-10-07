@@ -97,6 +97,27 @@ func (s *ThreadChannelSuite) TestAFinishedReplyIsHandedOverWithItsStoredText() {
 		"the reply being written is not handed over, only the stored final text")
 }
 
+// OnFinishedReply(nil) clears the hook: a reply finished after it is handed to nobody.
+func (s *ThreadChannelSuite) TestAFinishedReplyAfterTheHookIsClearedIsHandedToNobody() {
+	s.service.OnFinishedReply(nil)
+	s.person("U1", "is the build green?")
+	c, _, _, err := s.service.Open(s.routerOpens(), "customer", "", s.cid)
+	s.Require().NoError(err)
+
+	s.answer(c, "is the build green?", "It is.")
+
+	s.Never(func() bool { return len(s.handedOver()) > 0 }, 200*time.Millisecond, 20*time.Millisecond)
+}
+
+// The Router's bar is for the one thread channel it names (BarThread).
+func (s *ThreadChannelSuite) TestABarIsForTheOneChannelItNames() {
+	barred := conversation.BarThread(context.Background(), s.cid)
+
+	s.True(conversation.Barred(barred, s.cid))
+	s.False(conversation.Barred(barred, "agent:"+conversation.ThreadChannelPrefix+uuid.NewString()))
+	s.False(conversation.Barred(context.Background(), s.cid))
+}
+
 // A conversation in a session command channel has no external thread to hand a reply to.
 func (s *ThreadChannelSuite) TestAReplyInASupportChannelIsNotHandedOver() {
 	c, _, _, err := s.service.Open(context.Background(), "customer", "agent", "")

@@ -373,7 +373,7 @@ func (s *Spec) Normalize() error {
 		}
 	}
 
-	s.CallID = strings.TrimSpace(s.CallID)
+	s.CallID = joinedCallID(s.CallID)
 	switch {
 	case !s.Reopened.IsZero() && !(s.Text && s.PersistConversation && s.ConversationID != ""):
 		return stack.Wrap(errors.New("session: only a persistent text conversation is reopened"))
@@ -403,7 +403,7 @@ func (s *Spec) Normalize() error {
 	// it, and a second id minted here would not match, so the conversation is asked for
 	// the one it was written under instead.
 	if s.AgentID == "" && !(s.Text && s.PersistConversation && s.ConversationID != "") {
-		s.AgentID = s.CallID
+		s.AgentID = s.KeyedAgentID()
 		if s.Text {
 			s.AgentID = newID()
 		}
@@ -492,6 +492,22 @@ func checkHistory(lines []persistent.HistoryLine, conversationID string) error {
 			size, persistent.MaxHistoryRunes))
 	}
 	return nil
+}
+
+// KeyedAgentID is the agent id a caller's spec names for the session, before Normalize: its
+// own, else a voice session's call id, which Normalize gives it. A text session without one
+// is given a new id, which no caller names, so it names none.
+func (s Spec) KeyedAgentID() string {
+	if s.AgentID != "" || s.Text {
+		return s.AgentID
+	}
+	return joinedCallID(s.CallID)
+}
+
+// joinedCallID is a call id as the session joins it and is keyed under: without the spaces
+// around it. Normalize and KeyedAgentID both read a call id through it.
+func joinedCallID(id string) string {
+	return strings.TrimSpace(id)
 }
 
 // Shared reports whether more than one verified person writes in the conversation: a thread
