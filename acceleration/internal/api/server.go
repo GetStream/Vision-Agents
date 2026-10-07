@@ -457,7 +457,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		eventForwarder:    options.EventForwarder,
 		mcpEvents:         options.MCPEvents,
 		episodes:          options.Episodes,
-		slackApps:        options.SlackApps,
+		slackApps:         options.SlackApps,
 		operatorApps:      options.OperatorProviderApps,
 		trusted:           options.TrustedProxies,
 		upgrader:          newUpgrader(options.CORSOrigins),
