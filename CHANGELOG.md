@@ -1581,6 +1581,12 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- An `oauth2_code` or `oauth2_client_credentials` connection whose MCP server refuses its token
+  with a bare 401 (a `WWW-Authenticate` that names `resource_metadata` and no `error`, as the
+  MCP authorization spec answers an expired token) is renewed and the call sent once more. The
+  router read that 401 as nothing to act on, so every call failed until the stored expiry
+  passed, and `POST /v1/agents/connections/{id}/validate` reported `failed`. A refresh refused
+  with `invalid_grant` now moves the connection to `needs_reauthorization`, and validate says so.
 - An incognito session records nothing, as it promised. It still wrote a `calls` row with its
   id, caller and instructions, turn timings under its agent id, and, on a call, the decisions
   with the words that were heard. Its voice minutes no longer appear in the activity report.
