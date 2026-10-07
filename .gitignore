@@ -110,7 +110,6 @@ plugins/*/example/uv.lock
 /benchmark/baselines/
 
 /acceleration/internal/harness/testdata/flowbench-out/
-/acceleration/internal/harness/testdata/replybench-out/
 
 # Artifacts / assets
 *.pt
