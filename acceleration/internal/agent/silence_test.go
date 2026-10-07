@@ -673,6 +673,75 @@ func (s *AgentSuite) TestNewWordsWhileTheReplyIsHeldCancelItUnheardAndLeaveNothi
 	s.False(s.interruptionNotePending(), "there is no reply that may have been heard in part")
 }
 
+// saysWhileTheReplyIsHeld has a caller say words while the reply to their first words is held,
+// and the flow controller rule on those with the floor given. The first reply asks for the name
+// on a reservation and the reply to what comes after it has it, so hearing both one after the
+// other is the caller being asked for what they have just said.
+func (s *AgentSuite) saysWhileTheReplyIsHeld(floor, words string) (first, second string) {
+	window, longest := 600*time.Millisecond, 5*time.Second
+	s.replySilence = &window
+	s.replySilenceMax = &longest
+	s.join(true)
+	s.flow.reply = []string{`{"disposition":"respond","floor":"continue"}`}
+	s.flow.then = []string{`{"disposition":"respond","floor":"` + floor + `"}`}
+	s.model.reply = []string{"What name is on the reservation?"}
+	s.model.then = []string{"I have the last name."}
+	alice := stt.Participant{ID: "alice"}
+	s.speakAloud(alice)
+	s.says(alice, "please find a table")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+	s.replyIsHeld()
+	held, _ := firstOf[Responding](s.reported())
+
+	s.says(alice, words)
+
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 2 }, "the new words were never answered")
+	var answered []Responding
+	for _, event := range s.reported() {
+		if responding, ok := event.(Responding); ok {
+			answered = append(answered, responding)
+		}
+	}
+	return held.TurnID, answered[1].TurnID
+}
+
+// spokenTurns are the turns reported as spoken, in order.
+func (s *AgentSuite) spokenTurns() []string {
+	var spoken []string
+	for _, event := range s.reported() {
+		if said, ok := event.(Spoke); ok {
+			spoken = append(spoken, said.TurnID)
+		}
+	}
+	return spoken
+}
+
+func (s *AgentSuite) TestWordsAddedWhileTheReplyIsHeldReplaceItWhateverTheControllerMadeOfTheFloor() {
+	for _, floor := range []string{"continue", "shorten", "stop"} {
+		s.Run(floor, func() {
+			s.SetupTest()
+			first, second := s.saysWhileTheReplyIsHeld(floor, "my last name is Gonzalez")
+
+			s.eventually(func() bool { return len(s.spokenTurns()) == 1 }, "the reply to the new words was never spoken")
+			s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 },
+				"the reply nobody had heard was not cancelled")
+			interrupted, _ := firstOf[Interrupted](s.reported())
+			s.Equal(first, interrupted.TurnID)
+			s.never(func() bool { return len(s.spokenTurns()) > 1 }, "two replies were spoken, one after the other")
+			s.Equal([]string{second}, s.spokenTurns())
+			s.Len(s.edge.heard(), 1, "audio of the replaced reply was let out")
+		})
+	}
+}
+
+func (s *AgentSuite) TestAMurmurWhileTheReplyIsHeldLeavesItToBeHeardBeforeTheAnswerToTheMurmur() {
+	first, second := s.saysWhileTheReplyIsHeld("continue", "mm hmm")
+
+	s.eventually(func() bool { return len(s.spokenTurns()) == 2 }, "both replies were not spoken")
+	s.Equal([]string{first, second}, s.spokenTurns())
+	s.Zero(countOf[Interrupted](s.reported()), "a murmur took the floor")
+}
+
 func (s *AgentSuite) TestAHeldReplyDoesNotKeepTheRestOfWhatTheVoiceSaysWaiting() {
 	window, longest := time.Second, 5*time.Second
 	s.replySilence = &window

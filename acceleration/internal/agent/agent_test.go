@@ -2560,6 +2560,10 @@ func (s *AgentSuite) TestBargeInCancelsAReplyThatIsStillOpening() {
 }
 
 func (s *AgentSuite) TestRelatedOverlapShortensThenAnswersTheAddition() {
+	// The reply is not held to the caller's silence, so it is being spoken: a reply that is
+	// still held has told the caller nothing, and an addition replaces it instead.
+	noHold := time.Duration(0)
+	s.replySilence = &noHold
 	s.join(true)
 	s.model.reply = nil
 	participant := stt.Participant{ID: "alice"}

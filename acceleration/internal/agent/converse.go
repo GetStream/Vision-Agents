@@ -127,6 +127,10 @@ type floor struct {
 	Speaking string
 	// Reply is what the caller has heard the agent say on its current or draining turn.
 	Reply string
+	// Unheard says the reply being spoken has let none of itself out yet, because its first
+	// audio is held until the caller has been quiet. The caller has been told nothing of it,
+	// so there is nothing for them to hear finished, and what they say meanwhile replaces it.
+	Unheard bool
 	// Delegating reports whether the subagent is still working on something.
 	Delegating bool
 	// LastSpokeAt is when the agent last published audio.
@@ -650,6 +654,15 @@ func (c *converse) ruled(ruling harness.Decided, state floor, primary bool) []Ac
 		return []Action{c.decide(answer)}
 	}
 
+	// A reply none of which has been heard answers words the caller has since added to, so
+	// finishing it, or finishing a part of it, would tell them what they have already moved on
+	// from and put the answer to what they said after it. Words that are more than a murmur
+	// replace it, whatever the controller made of the floor.
+	if state.Unheard && (ruling.Floor == harness.Shorten ||
+		ruling.Floor == harness.Continue && substantiveBargeIn(ready.Text, state.Reply)) {
+		ruling.Floor = harness.Stop
+	}
+
 	// Somebody spoke over the agent, so who keeps the floor has to be settled before the
 	// turn can be dealt with at all.
 	c.emitter.Send(OverlapDecided{
@@ -730,6 +743,11 @@ func (c *converse) overlapRuled(ruling harness.Decided, seen overlapState, state
 		c.logger.Debug("a provisional ruling let the agent keep the floor",
 			"candidate", ruling.CandidateID, "floor", ruling.Floor)
 		return nil
+	}
+	// Nothing of a reply that is still held has been heard, so there is no part of it to
+	// finish: adding to what was asked replaces it, as it does when the words settle.
+	if state.Unheard && floorDecision == harness.Shorten {
+		floorDecision = harness.Stop
 	}
 
 	c.emitter.Send(OverlapDecided{

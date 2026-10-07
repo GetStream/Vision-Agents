@@ -1807,6 +1807,13 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A reply that is still held for the caller to have been quiet is replaced, not followed, by what the
+  caller says in the meantime. The flow controller was told the agent was speaking and could let
+  the words wait behind the reply, so the held reply was let out and the answer to the later words
+  came straight after it, so the caller was asked for what they had just said. Words that are more than a
+  murmur now take the floor from a reply none of which was heard, whatever the controller made of
+  it, and the reply is cancelled unheard. A murmur still lets the reply be heard first.
+
 - Interrupted voice replies retain their unfinished generated text as conversation
   context, so the next caller turn can be answered naturally and explicit continuation
   requests can pick up the explanation. Repeated transcription updates no longer cancel

@@ -1507,6 +1507,7 @@ func (a *Agent) floor() floor {
 	state := floor{
 		Quiet:           !active,
 		Speaking:        a.speakingTurn,
+		Unheard:         active && a.speakingTurn != "" && a.gated.turn == a.speakingTurn && a.pendingTools == 0,
 		Reply:           "",
 		LastSpokeAt:     a.lastSpokeAt,
 		LastHeardAt:     a.lastHeardAt,

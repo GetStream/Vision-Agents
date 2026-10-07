@@ -539,6 +539,60 @@ func (s *ConverseSuite) TestWhatIsDecidedAboutATurnAndWhoHasTheFloor() {
 	}
 }
 
+func (s *ConverseSuite) TestWhatIsDecidedAboutATurnWhileTheReplyIsStillUnheard() {
+	// A reply whose first audio is still held has told the caller nothing, so words that are
+	// more than a murmur replace it rather than queueing behind it: the caller would otherwise
+	// hear an answer to what they have already gone on from, and then the answer to what they
+	// said after it.
+	unheard := floor{Speaking: "turn-1", Unheard: true, Reply: "What name is on the reservation?",
+		LastParticipant: caller}
+	cases := []struct {
+		name     string
+		text     string
+		floor    harness.Floor
+		state    floor
+		expected []ActionKind
+	}{
+		{"a correction takes the floor", "my last name is Gonzalez", harness.Stop, unheard,
+			[]ActionKind{ActInterrupt, ActAnswer}},
+		{"an addition replaces it instead of cutting it short", "my last name is Gonzalez", harness.Shorten, unheard,
+			[]ActionKind{ActInterrupt, ActAnswer}},
+		{"words the controller let it keep the floor over still replace it", "my last name is Gonzalez",
+			harness.Continue, unheard, []ActionKind{ActInterrupt, ActAnswer}},
+		{"a murmur lets it be heard first", "mm hmm", harness.Continue, unheard, []ActionKind{ActQueue}},
+		{"the same addition to a reply that is being heard cuts it short", "my last name is Gonzalez",
+			harness.Shorten, s.talking(), []ActionKind{ActQueue, ActShorten}},
+	}
+
+	for _, test := range cases {
+		s.Run(test.name, func() {
+			s.build(DuplexOptions{})
+			ready := s.settle(test.text, test.state)
+
+			actions := s.converse.Ruled(harness.Decided{
+				CandidateID: ready.ID,
+				Disposition: harness.Respond,
+				Floor:       test.floor,
+			}, test.state)
+
+			s.Equal(test.expected, kinds(actions))
+		})
+	}
+}
+
+func (s *ConverseSuite) TestAProvisionalAdditionReplacesAReplyThatIsStillUnheard() {
+	unheard := floor{Speaking: "turn-1", Unheard: true, LastParticipant: caller}
+	asked := s.overhears("my last name is", unheard)
+
+	actions := s.converse.Ruled(harness.Decided{
+		CandidateID: asked.ID,
+		Disposition: harness.Wait,
+		Floor:       harness.Shorten,
+	}, unheard)
+
+	s.Equal([]ActionKind{ActInterrupt}, kinds(actions))
+}
+
 func (s *ConverseSuite) TestACoughOverlappingAReplyIsIgnoredEvenIfTheControllerWouldAnswer() {
 	s.build(DuplexOptions{})
 	state := s.talking()
