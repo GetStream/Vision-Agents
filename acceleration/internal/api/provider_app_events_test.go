@@ -42,6 +42,8 @@ type SlackChannelSuite struct {
 	botToken  string
 	config    store.AgentConfig
 	workspace string
+	// transcribed is the channel each voice session's transcript was opened for.
+	transcribed *openedTranscripts
 }
 
 func TestSlackChannelSuite(t *testing.T) {
@@ -61,6 +63,8 @@ func (s *SlackChannelSuite) SetupSuite() {
 		Verifiers: map[string]core.Verifier{verifier.Name(): verifier},
 	}
 	s.channelProvider = func() string { return strings.TrimPrefix(s.slack.URL, "https://") }
+	s.transcribed = &openedTranscripts{}
+	s.transcripts = s.transcribed.open
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }

@@ -881,6 +881,13 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 	default:
 		return session.Spec{}, stack.Wrap(errors.New("there is nothing to fork"))
 	}
+	// A thread channel's conversation is everyone's in the external thread (Spec.Shared). A
+	// fork would carry their words into a conversation one caller owns, outside the thread
+	// and the shared session's connector rule, so none is made, whoever asks: the backend
+	// carries on in the thread by opening it again by its agent id (threadConversation).
+	if recall != nil && (session.Spec{ConversationID: recall.ConversationID}).Shared() {
+		return session.Spec{}, stack.Wrap(errors.New("a thread channel's conversation is not forked"))
+	}
 
 	// A config named on the fork replaces the parent's models wholesale rather than merging
 	// with them, because asking the same question of a different agent is the reason to

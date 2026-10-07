@@ -222,6 +222,9 @@ type RouterSuite struct {
 	// it returns at the time, whatever host a manifest's reply names: the test's own fake
 	// provider. Nil leaves bridge as the suite set it.
 	channelProvider func() string
+	// transcripts, set by a suite before it starts the harness, opens each voice session's
+	// transcript, as cmd/router's chatlog does. Nil keeps none, as the other suites do.
+	transcripts session.TranscriptFactory
 	// forwardHTTP, set by a suite about event forwarding before it starts the harness, gives
 	// the router an event forwarder (internal/eventforward) whose sends go through it, to the
 	// test's own destinations on loopback, which egress refuses; a destination URL on loopback
@@ -713,6 +716,7 @@ func (s *RouterSuite) sessionManager(
 		STT:           streams.STT,
 		TTS:           streams.TTS,
 		Memory:        remembering,
+		Transcript:    s.transcripts,
 		Conversations: conversations,
 		Stream:        s.stream,
 		Store:         s.store,
