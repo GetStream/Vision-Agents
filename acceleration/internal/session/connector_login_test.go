@@ -6,11 +6,13 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -27,6 +29,8 @@ type ConnectorLoginSuite struct {
 	// it to.
 	begun Consent
 	shown []string
+	// begins is how many consents the router began.
+	begins int
 }
 
 func TestConnectorLoginSuite(t *testing.T) {
@@ -35,7 +39,7 @@ func TestConnectorLoginSuite(t *testing.T) {
 
 func (s *ConnectorLoginSuite) SetupTest() {
 	s.connectorFixture.SetupTest()
-	s.begun, s.shown = Consent{}, nil
+	s.begun, s.shown, s.begins = Consent{}, nil, 0
 }
 
 // TestWithoutConsentsABindingWithNoSelectionIsLeftOutAsBefore: a deployment with connectors
@@ -104,7 +108,7 @@ func (s *ConnectorLoginSuite) TestOnlyAnOptionalBindingOfTheCallersOwnWaitsForAL
 // a consent the login did not begin, or one for another connection, opens nothing; the one
 // it began opens the binding, and its granted tools reach the account through call_tool.
 func (s *ConnectorLoginSuite) TestALoginOpensTheBindingOnlyForTheConsentItBegan() {
-	mine, other := s.connection("alice", "primary"), s.connection("alice", "secondary")
+	mine, other := s.pending("alice", "primary"), s.connection("alice", "secondary")
 	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", LaunchURL: "https://router.example/launch", Name: "CRM"}
 	d, _, _, err := s.attachWithConsents(s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", nil)))
 	s.Require().NoError(err)
@@ -115,11 +119,12 @@ func (s *ConnectorLoginSuite) TestALoginOpensTheBindingOnlyForTheConsentItBegan(
 	s.NotContains(asked, s.begun.LaunchURL)
 	s.Equal([]string{"alice"}, s.shown, "asked of the caller")
 
-	_, unknown := d.loginFinished(s.ctx, s.manager, "attempt-bob", mine)
-	_, elsewhere := d.loginFinished(s.ctx, s.manager, "attempt-alice", other)
+	_, unknown := d.loginFinished(s.ctx, "attempt-bob", mine)
+	_, elsewhere := d.loginFinished(s.ctx, "attempt-alice", other)
 	still, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
 	s.Require().NoError(err)
-	name, finished := d.loginFinished(s.ctx, s.manager, "attempt-alice", mine)
+	s.connect(mine, "primary")
+	name, finished := d.loginFinished(s.ctx, "attempt-alice", mine)
 	said, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
 	s.Require().NoError(err)
 	listed, err := s.call(d, "crm__list_tools", `{}`)
@@ -148,8 +153,110 @@ func (s *ConnectorLoginSuite) TestALoginTheConversationCannotShowIsNotAskedFor()
 
 	s.Require().NoError(err)
 	s.Contains(said, `"status":"unavailable"`)
-	_, finished := d.loginFinished(s.ctx, s.manager, "attempt-alice", "unused")
+	_, finished := d.loginFinished(s.ctx, "attempt-alice", "unused")
 	s.False(finished, "nothing was asked, so nothing carries on")
+}
+
+// TestALoginFinishedWithoutAHandBackIsPickedUpOnTheNextCall: the consent finished on another
+// router, or its hand-back failed, so this session was never told. The next call reads the
+// connection, finds it connected, and runs, with no second consent.
+func (s *ConnectorLoginSuite) TestALoginFinishedWithoutAHandBackIsPickedUpOnTheNextCall() {
+	mine := s.pending("alice", "primary")
+	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM"}
+	d, _, _, err := s.attachWithConsents(s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", nil)))
+	s.Require().NoError(err)
+	asked, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+	s.Require().NoError(err)
+	s.Require().Contains(asked, `"status":"authorization_required"`)
+
+	s.connect(mine, "primary")
+	said, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+
+	s.Require().NoError(err)
+	s.Equal("primary", said)
+	s.Equal(1, s.begins, "no second consent")
+	s.Equal([]string{"alice"}, s.shown, "no second button")
+	_, handedBack := d.loginFinished(s.ctx, "attempt-alice", mine)
+	s.False(handedBack, "a hand-back that arrives after is not run again")
+}
+
+// TestAReconnectFinishedWithoutAHandBackIsPickedUpOnTheNextCall: the same for a connection
+// the caller chose that needed reauthorization.
+func (s *ConnectorLoginSuite) TestAReconnectFinishedWithoutAHandBackIsPickedUpOnTheNextCall() {
+	stale := s.connection("alice", "primary")
+	s.setState(stale, func(state *core.CredentialState) { state.Status = store.ConnectionNeedsReauthorization })
+	s.begun = Consent{ConnectionID: stale, AuthorizationID: "attempt-alice", Name: "CRM"}
+	d, _, _, err := s.attachWithConsents(s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", map[string]string{"crm": stale})))
+	s.Require().NoError(err)
+	asked, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+	s.Require().NoError(err)
+	s.Require().Contains(asked, `"status":"authorization_required"`)
+
+	s.setState(stale, func(state *core.CredentialState) { state.Status = store.ConnectionConnected })
+	said, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+
+	s.Require().NoError(err)
+	s.Equal("primary", said)
+	s.Equal(1, s.begins)
+}
+
+// TestASecondCallInTheReplyShowingTheConsentReusesIt: list_tools then call_tool in one reply
+// begin one consent; a later reply that no longer shows it begins a fresh one.
+func (s *ConnectorLoginSuite) TestASecondCallInTheReplyShowingTheConsentReusesIt() {
+	s.begun = Consent{ConnectionID: s.pending("alice", "primary"), AuthorizationID: "attempt-alice", Name: "CRM",
+		ExpiresAt: time.Now().Add(10 * time.Minute)}
+	d, _, _, err := s.attachWithConsents(s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", nil)))
+	s.Require().NoError(err)
+	showing := true
+	d.logins.shows = func(id string) bool { return showing && id == "attempt-alice" }
+
+	_, err = s.call(d, "crm__list_tools", `{}`)
+	s.Require().NoError(err)
+	reused, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+	s.Require().NoError(err)
+	s.Equal(1, s.begins)
+	s.Contains(reused, `"status":"authorization_required"`)
+
+	showing = false
+	_, err = s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+	s.Require().NoError(err)
+	s.Equal(2, s.begins, "a later reply is shown a consent of its own")
+}
+
+// TestAConfigThatDroppedTheBindingBeginsNoConsent: the config is read before a consent begins,
+// as before every call.
+func (s *ConnectorLoginSuite) TestAConfigThatDroppedTheBindingBeginsNoConsent() {
+	s.begun = Consent{ConnectionID: s.pending("alice", "primary"), AuthorizationID: "attempt-alice", Name: "CRM"}
+	config := s.config(s.chosen("crm", "whoami"))
+	d, _, _, err := s.attachWithConsents(s.persisted(s.spec(config, "alice", nil)))
+	s.Require().NoError(err)
+	s.rebind(config)
+
+	said, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+
+	s.Require().NoError(err)
+	s.Contains(said, `"status":"unavailable"`)
+	s.Zero(s.begins)
+	s.Empty(s.shown)
+}
+
+// pending is a connection of user's to account that was never connected.
+func (s *ConnectorLoginSuite) pending(user, account string) string {
+	connection := &store.ConnectorConnection{
+		CustomerID: s.customerID, ConnectorID: s.connectorID, DefinitionRevision: s.revision,
+		OwnerType: store.OwnerUser, OwnerID: user, AuthScheme: bearer.Name, Inputs: map[string]string{"account": account},
+	}
+	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, s.registry, connection))
+	return connection.ID
+}
+
+// connect is a consent finishing on id: account's token stored, the connection connected.
+func (s *ConnectorLoginSuite) connect(id, account string) {
+	stored, _, err := bearer.New().Complete(s.ctx, core.CompleteInput{Supplied: map[string]string{bearer.SuppliedToken: tokenOf(account)}})
+	s.Require().NoError(err)
+	s.setState(id, func(state *core.CredentialState) {
+		state.Credentials, state.Status = stored, store.ConnectionConnected
+	})
 }
 
 // attachWithConsents is attach on a router that begins consents: s.begun, which the session's
@@ -160,6 +267,7 @@ func (s *ConnectorLoginSuite) attachWithConsents(spec Spec) (*dispatcher, []harn
 		if s.begun.AuthorizationID == "" || request.UserID == "" {
 			return Consent{}, errors.New("no consent to begin")
 		}
+		s.begins++
 		return s.begun, nil
 	}
 	d, tools, unavailable, err := manager.attachConnectors(s.ctx, &spec)

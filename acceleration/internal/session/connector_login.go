@@ -67,7 +67,13 @@ type logins struct {
 	consents Consents
 	// ask shows a consent on the reply being written, in the session's own conversation
 	// (conversation.AskToConnect).
-	ask    func(owner string, found persistent.ConnectorAuthorization) bool
+	ask func(owner string, found persistent.ConnectorAuthorization) bool
+	// shows reports whether the reply being written already shows an attempt's login, and
+	// connected marks one finished (conversation.ShowsLogin, conversation.ConnectorConnected).
+	shows     func(authorizationID string) bool
+	connected func(authorizationID string) bool
+	// open is Manager.openBinding, which opens a binding once its connection is usable.
+	open   func(ctx context.Context, spec Spec, binding store.ConnectorBinding, selection string, d *dispatcher) (string, error)
 	logger *slog.Logger
 }
 
@@ -84,6 +90,8 @@ type login struct {
 	// still carries on.
 	begun []string
 	name  string
+	// last is the newest consent begun, reused while the reply being written shows it.
+	last Consent
 	// opened holds the binding's routes once the login is made. Nil before.
 	opened *dispatcher
 }
@@ -111,7 +119,8 @@ func (m *Manager) offerLogin(spec Spec, binding store.ConnectorBinding, reason, 
 		return false
 	}
 	if d.logins == nil {
-		d.logins = &logins{byAlias: map[string]*login{}, consents: m.options.Connectors.Consents, logger: m.logger}
+		d.logins = &logins{byAlias: map[string]*login{}, consents: m.options.Connectors.Consents,
+			open: m.openBinding, logger: m.logger}
 	}
 	d.logins.byAlias[binding.Name] = &login{binding: binding, connectionID: selection}
 	d.tools = append(d.tools, loginTools(binding.Name)...)
@@ -147,7 +156,7 @@ func loginTools(alias string) []harness.Tool {
 // askIn has the logins ask in conv, the session's own conversation.
 func (d *dispatcher) askIn(conv *persistent.Conversation) {
 	if d.logins != nil && conv != nil {
-		d.logins.ask = conv.AskToConnect
+		d.logins.ask, d.logins.shows, d.logins.connected = conv.AskToConnect, conv.ShowsLogin, conv.ConnectorConnected
 	}
 }
 
@@ -158,11 +167,9 @@ func (d *dispatcher) runLogin(ctx context.Context, l *login, call llm.ToolCall) 
 	if verb != loginListTools && verb != loginCallTool {
 		return nil, errUnknownTool(call.Name)
 	}
-	l.mu.Lock()
-	opened := l.opened
-	l.mu.Unlock()
+	opened, instead := d.openOrAsk(ctx, l)
 	if opened == nil {
-		return llm.TextParts(d.askToLogIn(ctx, l)), nil
+		return llm.TextParts(instead), nil
 	}
 	if verb == loginListTools {
 		return llm.TextParts(listed(opened.tools, l.binding.Name)), nil
@@ -189,11 +196,71 @@ func (d *dispatcher) runLogin(ctx context.Context, l *login, call llm.ToolCall) 
 	return d.call(ctx, found, llm.ToolCall{ID: call.ID, Name: name, Arguments: arguments})
 }
 
-// askToLogIn begins a consent for the caller's own connection and shows it on the reply being
-// written. What the model reads names no URL and no token: those are for the person.
-func (d *dispatcher) askToLogIn(ctx context.Context, l *login) string {
+// openOrAsk is the login's opened binding, or else what the model reads instead.
+//
+// A consent finished on another router, or one whose hand-back failed, still connected the
+// connection in the store, so the connection is read before anybody is asked again: once
+// it is connected and the binding may use it, the binding opens here. The plugin path does
+// the same by reading its login on every call (userPluginRunner.connect).
+func (d *dispatcher) openOrAsk(ctx context.Context, l *login) (*dispatcher, string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.opened != nil {
+		return l.opened, ""
+	}
+	if l.connectionID != "" && d.store != nil {
+		connection, err := d.store.ConnectorConnection(ctx, d.spec.CustomerID, l.connectionID)
+		if err == nil && connection.Status == store.ConnectionConnected &&
+			connection.ConnectorID == l.binding.ConnectorID && mayUse(d.spec, l.binding, connection) &&
+			d.openLogin(ctx, l, connection.ID) {
+			for _, begun := range l.begun {
+				if d.logins.connected != nil {
+					d.logins.connected(begun)
+				}
+			}
+			return l.opened, ""
+		}
+	}
+	return nil, d.askToLogIn(ctx, l)
+}
+
+// openLogin opens the login's binding on connectionID and records it as the session's
+// selection for the binding, so a fork or a reopened chat chooses it again rather than ask
+// for another login. l.mu is held.
+func (d *dispatcher) openLogin(ctx context.Context, l *login, connectionID string) bool {
+	opened := &dispatcher{store: d.store, spec: d.spec, routes: map[string]route{}}
+	reason, err := d.logins.open(ctx, d.spec, l.binding, connectionID, opened)
+	if err != nil || reason != "" {
+		opened.Close()
+		d.logins.logger.Warn("a login in the conversation is on a connection the session cannot use",
+			"connector", l.binding.Name, "reason", reason, "error", err)
+		return false
+	}
+	l.opened = opened
+	// An incognito session has no row to record it on.
+	if d.store != nil && d.spec.ID != "" && !d.spec.Incognito {
+		if err := d.store.ChooseSessionConnection(ctx, d.spec.CustomerID, d.spec.ID, l.binding.Name, connectionID); err != nil {
+			d.logins.logger.Warn("could not record the connection a login chose", "connector", l.binding.Name, "error", err)
+		}
+	}
+	return true
+}
+
+// askToLogIn begins a consent for the caller's own connection and shows it on the reply being
+// written. What the model reads names no URL and no token: those are for the person. l.mu is
+// held.
+//
+// The config is read first, as the dispatcher does before every call (recheck), so a binding
+// the config no longer declares as the caller's own begins no consent. A second call in the
+// reply that already shows a consent still open reuses it rather than begin another.
+func (d *dispatcher) askToLogIn(ctx context.Context, l *login) string {
+	if !d.stillWaits(ctx, l.binding) {
+		return loginUnavailable(l.binding.Name)
+	}
+	if last := l.last; last.AuthorizationID != "" && time.Now().Before(last.ExpiresAt) &&
+		d.logins.shows != nil && d.logins.shows(last.AuthorizationID) {
+		return loginRequired(last.Name)
+	}
 	consent, err := d.logins.consents(ctx, ConsentRequest{
 		CustomerID: d.spec.CustomerID, ConnectorID: l.binding.ConnectorID,
 		UserID: d.spec.Caller.UserID, ConnectionID: l.connectionID,
@@ -210,18 +277,39 @@ func (d *dispatcher) askToLogIn(ctx context.Context, l *login) string {
 	if !shown {
 		return loginUnavailable(l.binding.Name)
 	}
-	l.connectionID, l.name = consent.ConnectionID, consent.Name
+	l.connectionID, l.name, l.last = consent.ConnectionID, consent.Name, consent
 	l.begun = append(l.begun, consent.AuthorizationID)
 	if len(l.begun) > maxBegun {
 		l.begun = l.begun[len(l.begun)-maxBegun:]
 	}
+	return loginRequired(consent.Name)
+}
+
+// stillWaits reports whether the stored config still declares binding as the caller's own
+// connection to the same connector.
+func (d *dispatcher) stillWaits(ctx context.Context, binding store.ConnectorBinding) bool {
+	if d.store == nil {
+		return false
+	}
+	config, err := d.store.AgentConfig(ctx, d.spec.CustomerID, d.spec.ConfigID)
+	if err != nil {
+		return false
+	}
+	return slices.ContainsFunc(config.Connectors, func(current store.ConnectorBinding) bool {
+		return current.Name == binding.Name && current.ConnectorID == binding.ConnectorID &&
+			current.Connection.Type == selectionSession
+	})
+}
+
+// loginRequired is what the model reads while the person is shown a consent to press.
+func loginRequired(name string) string {
 	raw, _ := json.Marshal(struct {
 		Status  string `json:"status"`
 		Message string `json:"message"`
 	}{
 		Status: authorizationRequired,
 		Message: fmt.Sprintf("The user has not connected %s. They have been shown a button to connect it. "+
-			"Tell them to press it; you are told once they have, and then carry on.", consent.Name),
+			"Tell them to press it; you are told once they have, and then carry on.", name),
 	})
 	return string(raw)
 }
@@ -265,7 +353,7 @@ func listed(tools []harness.Tool, alias string) string {
 // loginFinished opens the binding whose consent this attempt was, on the connection it
 // connected, and returns the connector's name. It reports false when none of d's logins
 // asked for it, or the connection cannot be used: the binding then stays waiting.
-func (d *dispatcher) loginFinished(ctx context.Context, m *Manager, authorizationID, connectionID string) (string, bool) {
+func (d *dispatcher) loginFinished(ctx context.Context, authorizationID, connectionID string) (string, bool) {
 	if d.logins == nil {
 		return "", false
 	}
@@ -275,19 +363,10 @@ func (d *dispatcher) loginFinished(ctx context.Context, m *Manager, authorizatio
 			l.mu.Unlock()
 			continue
 		}
-		opened := &dispatcher{store: d.store, spec: d.spec, routes: map[string]route{}}
-		reason, err := m.openBinding(ctx, d.spec, l.binding, connectionID, opened)
-		if err != nil || reason != "" {
-			opened.Close()
-			l.mu.Unlock()
-			m.logger.Warn("a login in the conversation finished on a connection the session cannot use",
-				"connector", l.binding.Name, "reason", reason, "error", err)
-			return "", false
-		}
-		l.opened = opened
+		opened := d.openLogin(ctx, l, connectionID)
 		name := l.name
 		l.mu.Unlock()
-		return name, true
+		return name, opened
 	}
 	return "", false
 }
@@ -321,7 +400,7 @@ func (m *Manager) ConnectorConsentFinished(ctx context.Context, customerID, conn
 	}
 	m.mu.Unlock()
 	for _, s := range held {
-		name, ok := s.connectors.loginFinished(ctx, m, authorizationID, connectionID)
+		name, ok := s.connectors.loginFinished(ctx, authorizationID, connectionID)
 		if !ok {
 			continue
 		}
