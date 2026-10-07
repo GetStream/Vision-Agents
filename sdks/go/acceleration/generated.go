@@ -2868,6 +2868,33 @@ type CallTokenRequest struct {
 	UserName *string `json:"user_name,omitempty"`
 }
 
+// CallTokens What a call's models read and wrote, summed over every request, with what their prompts were made of.
+type CallTokens struct {
+	// CachedInputTokens The part of the prompts a provider served from its own cache.
+	CachedInputTokens int64 `json:"cached_input_tokens"`
+
+	// CostMicros Millionths of a dollar, priced from the providers' configured rates.
+	CostMicros int64 `json:"cost_micros"`
+
+	// CostSources Where the cost came from, the costliest first. Sources that cost nothing are left out.
+	CostSources []CostSource `json:"cost_sources"`
+
+	// InputParts What prompts were made of, in tokens. Estimated from each request and scaled to what the provider counted, so the parts sum to the input tokens and only the split between them is a guess. Requests recorded before the split was kept read zero throughout.
+	InputParts InputParts `json:"input_parts"`
+
+	// InputTokens Every prompt the models read, the cached part included.
+	InputTokens int64 `json:"input_tokens"`
+
+	// Models Each model the call used, the busiest first. One billed by audio or characters reads zero tokens.
+	Models []ModelTokens `json:"models"`
+
+	// OutputTokens Everything the models generated, reasoning included.
+	OutputTokens int64 `json:"output_tokens"`
+
+	// Requests How many calls to those models it took.
+	Requests int64 `json:"requests"`
+}
+
 // CallUsage What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it.
 type CallUsage struct {
 	// CachedInputTokens The part of those prompts a provider served from its own cache.
@@ -3492,6 +3519,15 @@ type ContentPart struct {
 	union json.RawMessage
 }
 
+// CostSource One place a call's cost came from.
+type CostSource struct {
+	// CostMicros Millionths of a dollar. A part of the prompt is given its share of what the prompt cost, by tokens.
+	CostMicros int64 `json:"cost_micros"`
+
+	// Source For a model billed by tokens, the part of its prompt (instructions, messages, tool_definitions, tool_use, images or video), output for what it wrote, or input for prompt tokens recorded without a breakdown. For any other model, its modality: stt, tts, search and the rest.
+	Source string `json:"source"`
+}
+
 // CreateOptOutRequest defines model for CreateOptOutRequest.
 type CreateOptOutRequest struct {
 	// Channel The channel a recipient opted out of, or all of them.
@@ -3610,7 +3646,7 @@ type CreateSessionRequest struct {
 	// Text Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
 	Text *bool `json:"text,omitempty"`
 
-	// Title What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is called is a label on it rather than part of it.
+	// Title What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
 	Title *string `json:"title,omitempty"`
 
 	// ToolTimeoutMs How long the model waits for a tool result. Zero is the default.
@@ -4014,6 +4050,27 @@ type IngestedKnowledge struct {
 	Passages int `json:"passages"`
 }
 
+// InputParts What prompts were made of, in tokens. Estimated from each request and scaled to what the provider counted, so the parts sum to the input tokens and only the split between them is a guess. Requests recorded before the split was kept read zero throughout.
+type InputParts struct {
+	// Images Pictures, attached or returned by a tool.
+	Images int64 `json:"images"`
+
+	// Instructions The system prompt: the agent's instructions, skills and plugin guidance.
+	Instructions int64 `json:"instructions"`
+
+	// Messages The conversation's words, from either side.
+	Messages int64 `json:"messages"`
+
+	// ToolDefinitions The tools the model was offered: their names, descriptions and schemas.
+	ToolDefinitions int64 `json:"tool_definitions"`
+
+	// ToolUse The tools the model called, and what they returned.
+	ToolUse int64 `json:"tool_use"`
+
+	// Video Frames of a video, from the call's camera or an attached clip.
+	Video int64 `json:"video"`
+}
+
 // InstructionsRequest defines model for InstructionsRequest.
 type InstructionsRequest struct {
 	Instructions string `json:"instructions"`
@@ -4299,6 +4356,23 @@ type ModelOverwritesThinking string
 // ModelOverwritesVerbosity How much detail to give. Dropped for models that do not take it.
 type ModelOverwritesVerbosity string
 
+// ModelTokens What one model read and wrote over a call.
+type ModelTokens struct {
+	CachedInputTokens int64 `json:"cached_input_tokens"`
+	CostMicros        int64 `json:"cost_micros"`
+
+	// InputParts What prompts were made of, in tokens. Estimated from each request and scaled to what the provider counted, so the parts sum to the input tokens and only the split between them is a guess. Requests recorded before the split was kept read zero throughout.
+	InputParts  InputParts `json:"input_parts"`
+	InputTokens int64      `json:"input_tokens"`
+
+	// Modality What the model does: llm for a language model, sts for speech-to-speech, and so on.
+	Modality     string `json:"modality"`
+	Model        string `json:"model"`
+	OutputTokens int64  `json:"output_tokens"`
+	Provider     string `json:"provider"`
+	Requests     int64  `json:"requests"`
+}
+
 // NumberSearchResult defines model for NumberSearchResult.
 type NumberSearchResult struct {
 	// Numbers What the vendors are offering, cheapest first.
@@ -4306,6 +4380,30 @@ type NumberSearchResult struct {
 
 	// Skipped Vendors that were not part of the answer. A search that reached two of eight vendors found what two vendors had, and deciding whether to buy needs to know which.
 	Skipped []SkippedVendor `json:"skipped"`
+}
+
+// OfferedTool One tool as the model sees it.
+type OfferedTool struct {
+	// Description What the model is told the tool does.
+	Description string `json:"description"`
+
+	// Name How the model asks for it.
+	Name string `json:"name"`
+
+	// Parameters The JSON Schema of its arguments.
+	Parameters *map[string]interface{} `json:"parameters,omitempty"`
+
+	// Tokens Roughly what offering it costs on every request, in tokens: its name, description and schema at four characters a token.
+	Tokens int64 `json:"tokens"`
+}
+
+// OfferedTools The tools a session's conversation model is offered, as they are sent to it.
+type OfferedTools struct {
+	// Tokens Roughly what offering them all costs on every request, in tokens.
+	Tokens int64 `json:"tokens"`
+
+	// Tools Every tool, in the order the model is offered them.
+	Tools *[]OfferedTool `json:"tools"`
 }
 
 // OptOut Somebody who asked not to be reached. Nothing is texted or dialled to them on the channel, or on any for all, until the opt-out is revoked or they text START.
@@ -7601,6 +7699,13 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
 	CreateCallToken(ctx context.Context, id string, body CreateCallTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetCallTokens What a call's models read and wrote, and what their prompts were made of
+	//
+	// Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+	//
+	// Corresponds with GET /v1/agents/calls/{id}/tokens (the `GetCallTokens` operationId).
+	GetCallTokens(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetCallTranscript What was said on a call
 	//
 	// Read back from the chat channel the conversation was written to as it happened, rather than copied into a second place that could disagree with it.
@@ -8595,12 +8700,16 @@ type ClientInterface interface {
 
 	// RespondSessionWithBody Answer a piece of text through the model, as though it had been said
 	//
+	// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/respond (the `RespondSession` operationId).
 	RespondSessionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RespondSession Answer a piece of text through the model, as though it had been said
+	//
+	// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -8709,6 +8818,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/stop (the `StopSession` operationId).
 	StopSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSessionTools List the tools a session's model is offered
+	//
+	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
+	ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSimulationRuns What the simulations have come to, newest first
 	//
@@ -9899,6 +10015,23 @@ func (c *Client) CreateCallTokenWithBody(ctx context.Context, id string, content
 // Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
 func (c *Client) CreateCallToken(ctx context.Context, id string, body CreateCallTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateCallTokenRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCallTokens What a call's models read and wrote, and what their prompts were made of
+//
+// Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+//
+// Corresponds with GET /v1/agents/calls/{id}/tokens (the `GetCallTokens` operationId).
+func (c *Client) GetCallTokens(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCallTokensRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -11983,6 +12116,8 @@ func (c *Client) DeleteSessionMemories(ctx context.Context, id string, reqEditor
 
 // RespondSessionWithBody Answer a piece of text through the model, as though it had been said
 //
+// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/agents/sessions/{id}/respond (the `RespondSession` operationId).
@@ -11999,6 +12134,8 @@ func (c *Client) RespondSessionWithBody(ctx context.Context, id string, contentT
 }
 
 // RespondSession Answer a piece of text through the model, as though it had been said
+//
+// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -12218,6 +12355,23 @@ func (c *Client) SetSessionSettings(ctx context.Context, id string, body SetSess
 // Corresponds with POST /v1/agents/sessions/{id}/stop (the `StopSession` operationId).
 func (c *Client) StopSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewStopSessionRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListSessionTools List the tools a session's model is offered
+//
+// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+//
+// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
+func (c *Client) ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSessionToolsRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -14840,6 +14994,40 @@ func NewCreateCallTokenRequestWithBody(server string, id string, contentType str
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetCallTokensRequest constructs an http.Request for the GetCallTokens method
+func NewGetCallTokensRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/calls/%s/tokens", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -19065,6 +19253,40 @@ func NewStopSessionRequest(server string, id string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewListSessionToolsRequest constructs an http.Request for the ListSessionTools method
+func NewListSessionToolsRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/tools", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListSimulationRunsRequest constructs an http.Request for the ListSimulationRuns method
 func NewListSimulationRunsRequest(server string, params *ListSimulationRunsParams) (*http.Request, error) {
 	var err error
@@ -23143,6 +23365,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
 	CreateCallTokenWithResponse(ctx context.Context, id string, body CreateCallTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCallTokenResponse, error)
 
+	// GetCallTokensWithResponse What a call's models read and wrote, and what their prompts were made of
+	//
+	// Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/calls/{id}/tokens (the `GetCallTokens` operationId).
+	GetCallTokensWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCallTokensResponse, error)
+
 	// GetCallTranscriptWithResponse What was said on a call
 	//
 	// Read back from the chat channel the conversation was written to as it happened, rather than copied into a second place that could disagree with it.
@@ -24249,12 +24480,16 @@ type ClientWithResponsesInterface interface {
 
 	// RespondSessionWithBodyWithResponse Answer a piece of text through the model, as though it had been said
 	//
+	// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/respond (the `RespondSession` operationId).
 	RespondSessionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RespondSessionResponse, error)
 
 	// RespondSessionWithResponse Answer a piece of text through the model, as though it had been said
+	//
+	// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -24369,6 +24604,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/stop (the `StopSession` operationId).
 	StopSessionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StopSessionResponse, error)
+
+	// ListSessionToolsWithResponse List the tools a session's model is offered
+	//
+	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
+	ListSessionToolsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListSessionToolsResponse, error)
 
 	// ListSimulationRunsWithResponse What the simulations have come to, newest first
 	//
@@ -26022,6 +26266,82 @@ func (r CreateCallTokenResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateCallTokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetCallTokensResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CallTokens
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCallTokensResponse) GetJSON200() *CallTokens {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetCallTokensResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetCallTokensResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetCallTokensResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetCallTokensResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetCallTokensResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCallTokensResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCallTokensResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCallTokensResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCallTokensResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -32386,6 +32706,75 @@ func (r StopSessionResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r StopSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListSessionToolsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OfferedTools
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListSessionToolsResponse) GetJSON200() *OfferedTools {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListSessionToolsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListSessionToolsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListSessionToolsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListSessionToolsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListSessionToolsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSessionToolsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSessionToolsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListSessionToolsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -38957,6 +39346,21 @@ func (c *ClientWithResponses) CreateCallTokenWithResponse(ctx context.Context, i
 	return ParseCreateCallTokenResponse(rsp)
 }
 
+// GetCallTokensWithResponse What a call's models read and wrote, and what their prompts were made of
+//
+// Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/calls/{id}/tokens (the `GetCallTokens` operationId).
+func (c *ClientWithResponses) GetCallTokensWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCallTokensResponse, error) {
+	rsp, err := c.GetCallTokens(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCallTokensResponse(rsp)
+}
+
 // GetCallTranscriptWithResponse What was said on a call
 //
 // Read back from the chat channel the conversation was written to as it happened, rather than copied into a second place that could disagree with it.
@@ -40711,6 +41115,8 @@ func (c *ClientWithResponses) DeleteSessionMemoriesWithResponse(ctx context.Cont
 
 // RespondSessionWithBodyWithResponse Answer a piece of text through the model, as though it had been said
 //
+// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/sessions/{id}/respond (the `RespondSession` operationId).
@@ -40723,6 +41129,8 @@ func (c *ClientWithResponses) RespondSessionWithBodyWithResponse(ctx context.Con
 }
 
 // RespondSessionWithResponse Answer a piece of text through the model, as though it had been said
+//
+// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -40908,6 +41316,21 @@ func (c *ClientWithResponses) StopSessionWithResponse(ctx context.Context, id st
 		return nil, err
 	}
 	return ParseStopSessionResponse(rsp)
+}
+
+// ListSessionToolsWithResponse List the tools a session's model is offered
+//
+// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
+func (c *ClientWithResponses) ListSessionToolsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListSessionToolsResponse, error) {
+	rsp, err := c.ListSessionTools(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSessionToolsResponse(rsp)
 }
 
 // ListSimulationRunsWithResponse What the simulations have come to, newest first
@@ -43143,6 +43566,67 @@ func ParseCreateCallTokenResponse(rsp *http.Response) (*CreateCallTokenResponse,
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest CallToken
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCallTokensResponse parses an HTTP response from a GetCallTokensWithResponse call
+func ParseGetCallTokensResponse(rsp *http.Response) (*GetCallTokensResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCallTokensResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CallTokens
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -48282,6 +48766,60 @@ func ParseStopSessionResponse(rsp *http.Response) (*StopSessionResponse, error) 
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListSessionToolsResponse parses an HTTP response from a ListSessionToolsWithResponse call
+func ParseListSessionToolsResponse(rsp *http.Response) (*ListSessionToolsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSessionToolsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OfferedTools
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest BadRequest

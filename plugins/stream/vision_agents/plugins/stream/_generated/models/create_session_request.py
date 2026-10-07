@@ -99,8 +99,9 @@ class CreateSessionRequest:
             is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is
             unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive
             as response_delta and responded events on the session's socket. Default: False.
-        title (str | Unset): What to call the conversation, for a list a person reads. Never shown to the model: what a
-            conversation is called is a label on it rather than part of it.
+        title (str | Unset): What to call the conversation, for a list a person reads, until the router names a
+            persistent one for what was said. Never shown to the model: what a conversation is called is a label on it
+            rather than part of it.
         tool_timeout_ms (int | Unset): How long the model waits for a tool result. Zero is the default.
         tools (list[SessionTool] | Unset):
         tts (str | Unset): Omit it and the config decides, or en-low-latency when there is no config.

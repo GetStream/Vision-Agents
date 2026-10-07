@@ -35,8 +35,10 @@ const itemBatchSize = 64
 // would race: a response row written before the session row it points at violates the
 // foreign key, and items written before their response do the same.
 type recordWrite struct {
-	// session is a session that opened or was renamed, nil otherwise.
+	// session is a session that opened or was renamed, nil otherwise, and tools what its
+	// model is offered.
 	session *store.AgentSession
+	tools   []store.ToolDefinition
 	// closed is the session that ended, and closedAt when.
 	closed   string
 	closedAt time.Time
@@ -110,8 +112,8 @@ func newSessionRecorder(pgStore *store.Store, logger *slog.Logger) *sessionRecor
 }
 
 // Opened queues the row for a session that has just started.
-func (r *sessionRecorder) Opened(row store.AgentSession) {
-	r.queueWrite(recordWrite{session: &row})
+func (r *sessionRecorder) Opened(row store.AgentSession, tools []store.ToolDefinition) {
+	r.queueWrite(recordWrite{session: &row, tools: tools})
 }
 
 // Closed queues the time a session ended.
@@ -242,6 +244,10 @@ func (r *sessionRecorder) write(write recordWrite) {
 	case write.session != nil:
 		if err := r.store.SaveSession(ctx, write.session); err != nil {
 			r.logger.Error("could not record the session starting", "error", err)
+			return
+		}
+		if err := r.store.SaveSessionTools(ctx, write.session.ID, write.tools); err != nil {
+			r.logger.Error("could not record the session's tools", "error", err)
 		}
 	case write.closed != "":
 		if err := r.store.CloseSession(ctx, write.closed, write.closedAt); err != nil {
@@ -321,4 +327,14 @@ func sessionRow(created *Session) store.AgentSession {
 			store.SessionConnectorSelection{Name: selection.Name, ConnectionID: selection.ConnectionID})
 	}
 	return row
+}
+
+// toolRows is what a session's model is offered, as it is kept.
+func toolRows(created *Session) []store.ToolDefinition {
+	offered := created.ToolDefinitions()
+	rows := make([]store.ToolDefinition, 0, len(offered))
+	for _, tool := range offered {
+		rows = append(rows, store.ToolDefinition{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters})
+	}
+	return rows
 }

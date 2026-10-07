@@ -596,6 +596,12 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 		s.noted = append(s.noted, opened)
 		return opened, nil
 	})
+	reasoning.Register("summarising", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: "Noted.", summarises: true}, nil
+	})
+	reasoning.Register("counted", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: "Counted.", usage: llm.Usage{InputTokens: 1000, InputTokensDetails: llm.InputTokensDetails{CachedTokens: 400}, OutputTokens: 20}}, nil
+	})
 
 	// A model that is a while in the writing, for a command that has to still be running
 	// when the test asks it to stop.

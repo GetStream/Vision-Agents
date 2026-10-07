@@ -150,6 +150,29 @@ internal enum Operations {
                     }
                 }
             }
+            /// The caller is known and this operation is server-side only. It needs Stream-Auth-Type: server and a token carrying server: true, which means it cannot be reached from an end user's device.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/post(createSession)/responses/403`.
+            ///
+            /// HTTP response code: `403 forbidden`.
+            case forbidden(Components.Responses.Forbidden)
+            /// The associated value of the enum case if `self` is `.forbidden`.
+            ///
+            /// - Throws: An error if `self` is not `.forbidden`.
+            /// - SeeAlso: `.forbidden`.
+            internal var forbidden: Components.Responses.Forbidden {
+                get throws {
+                    switch self {
+                    case let .forbidden(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "forbidden",
+                            response: self
+                        )
+                    }
+                }
+            }
             /// No such modality, provider or shortcut
             ///
             /// - Remark: Generated from `#/paths//v1/agents/sessions/post(createSession)/responses/404`.

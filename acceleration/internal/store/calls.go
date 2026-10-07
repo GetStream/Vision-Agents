@@ -315,6 +315,60 @@ func (s *Store) CallUsage(ctx context.Context, customerID, agentID string, from 
 	return spent, nil
 }
 
+// ModelTokens is what one model read and wrote over a call.
+type ModelTokens struct {
+	Modality          string     `bun:"modality"`
+	Provider          string     `bun:"provider"`
+	Model             string     `bun:"model"`
+	InputTokens       int64      `bun:"input_tokens"`
+	CachedInputTokens int64      `bun:"cached_input_tokens"`
+	OutputTokens      int64      `bun:"output_tokens"`
+	CostMicros        int64      `bun:"cost_micros"`
+	OutputCostMicros  int64      `bun:"output_cost_micros"`
+	Requests          int64      `bun:"requests"`
+	InputParts        InputParts `bun:"embed:input_"`
+}
+
+// CallTokens is what each model a call used read, wrote and cost, the busiest first. Models
+// that bill by audio or characters rather than tokens read zero tokens. Keyed by agent and
+// window like CallUsage, and read while the call is still going as well as after: to is nil
+// for one that has not ended.
+func (s *Store) CallTokens(ctx context.Context, customerID, agentID string, from time.Time, to *time.Time) ([]ModelTokens, error) {
+	if customerID == "" || agentID == "" {
+		return nil, stack.Wrap(errors.New("store: a customer and an agent id are required"))
+	}
+
+	query := s.db.NewSelect().
+		TableExpr("requests").
+		ColumnExpr("modality, provider, model").
+		ColumnExpr("COALESCE(SUM(input_tokens), 0) AS input_tokens").
+		ColumnExpr("COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens").
+		ColumnExpr("COALESCE(SUM(output_tokens), 0) AS output_tokens").
+		ColumnExpr("COALESCE(SUM(cost_micros), 0) AS cost_micros").
+		ColumnExpr("COALESCE(SUM(output_cost_micros), 0) AS output_cost_micros").
+		ColumnExpr("COUNT(*) AS requests").
+		ColumnExpr("COALESCE(SUM(input_instruction_tokens), 0) AS input_instruction_tokens").
+		ColumnExpr("COALESCE(SUM(input_message_tokens), 0) AS input_message_tokens").
+		ColumnExpr("COALESCE(SUM(input_tool_definition_tokens), 0) AS input_tool_definition_tokens").
+		ColumnExpr("COALESCE(SUM(input_tool_use_tokens), 0) AS input_tool_use_tokens").
+		ColumnExpr("COALESCE(SUM(input_image_tokens), 0) AS input_image_tokens").
+		ColumnExpr("COALESCE(SUM(input_video_tokens), 0) AS input_video_tokens").
+		Where("customer_id = ?", customerID).
+		Where("agent_id = ?", agentID).
+		Where("started_at >= ?", from).
+		Group("modality", "provider", "model").
+		OrderExpr("SUM(input_tokens + output_tokens) DESC, provider, model")
+	if to != nil {
+		query = query.Where("started_at <= ?", *to)
+	}
+
+	var used []ModelTokens
+	if err := query.Scan(ctx, &used); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: call tokens: %w", err))
+	}
+	return used, nil
+}
+
 // RecordCallEvents writes a batch of judgements. They are written together because they
 // arrive together: a call makes several decisions a second, and one round trip each would
 // have the writer permanently behind.

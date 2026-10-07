@@ -1,27 +1,29 @@
 from http import HTTPStatus
-from typing import Any, cast
+from typing import Any
 from urllib.parse import quote
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.command_receipt import CommandReceipt
+from ...models.connector_event_destination_request import (
+    ConnectorEventDestinationRequest,
+)
+from ...models.connector_event_destination_secret import ConnectorEventDestinationSecret
 from ...models.error_response import ErrorResponse
-from ...models.respond_request import RespondRequest
 from ...types import Response
 
 
 def _get_kwargs(
     id: str,
     *,
-    body: RespondRequest,
+    body: ConnectorEventDestinationRequest,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v1/agents/sessions/{id}/respond".format(
+        "url": "/v1/agents/connectors/{id}/event-destinations".format(
             id=quote(str(id), safe=""),
         ),
     }
@@ -36,15 +38,11 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Any | CommandReceipt | ErrorResponse | None:
-    if response.status_code == 200:
-        response_200 = CommandReceipt.from_dict(response.json())
+) -> ConnectorEventDestinationSecret | ErrorResponse | None:
+    if response.status_code == 201:
+        response_201 = ConnectorEventDestinationSecret.from_dict(response.json())
 
-        return response_200
-
-    if response.status_code == 204:
-        response_204 = cast(Any, None)
-        return response_204
+        return response_201
 
     if response.status_code == 400:
         response_400 = ErrorResponse.from_dict(response.json())
@@ -84,7 +82,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Any | CommandReceipt | ErrorResponse]:
+) -> Response[ConnectorEventDestinationSecret | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -97,23 +95,27 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RespondRequest,
-) -> Response[Any | CommandReceipt | ErrorResponse]:
-    """Answer a piece of text through the model, as though it had been said
+    body: ConnectorEventDestinationRequest,
+) -> Response[ConnectorEventDestinationSecret | ErrorResponse]:
+    """Forward a connector's provider events to a URL
 
-     A text session that ended is reopened under the same id, on the config it was opened with: a chat is
-    never over for the person writing in it. A call that ended is not found.
+     Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own
+    provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries
+    the destination's signing secret, once.
+
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The session, as returned when it was created.
-        body (RespondRequest):
+        id (str): The connector, such as slack_bot.
+        body (ConnectorEventDestinationRequest): An event destination to create. An unknown field
+            is refused rather than ignored.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | CommandReceipt | ErrorResponse]
+        Response[ConnectorEventDestinationSecret | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -132,23 +134,27 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RespondRequest,
-) -> Any | CommandReceipt | ErrorResponse | None:
-    """Answer a piece of text through the model, as though it had been said
+    body: ConnectorEventDestinationRequest,
+) -> ConnectorEventDestinationSecret | ErrorResponse | None:
+    """Forward a connector's provider events to a URL
 
-     A text session that ended is reopened under the same id, on the config it was opened with: a chat is
-    never over for the person writing in it. A call that ended is not found.
+     Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own
+    provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries
+    the destination's signing secret, once.
+
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The session, as returned when it was created.
-        body (RespondRequest):
+        id (str): The connector, such as slack_bot.
+        body (ConnectorEventDestinationRequest): An event destination to create. An unknown field
+            is refused rather than ignored.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | CommandReceipt | ErrorResponse
+        ConnectorEventDestinationSecret | ErrorResponse
     """
 
     return sync_detailed(
@@ -162,23 +168,27 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RespondRequest,
-) -> Response[Any | CommandReceipt | ErrorResponse]:
-    """Answer a piece of text through the model, as though it had been said
+    body: ConnectorEventDestinationRequest,
+) -> Response[ConnectorEventDestinationSecret | ErrorResponse]:
+    """Forward a connector's provider events to a URL
 
-     A text session that ended is reopened under the same id, on the config it was opened with: a chat is
-    never over for the person writing in it. A call that ended is not found.
+     Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own
+    provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries
+    the destination's signing secret, once.
+
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The session, as returned when it was created.
-        body (RespondRequest):
+        id (str): The connector, such as slack_bot.
+        body (ConnectorEventDestinationRequest): An event destination to create. An unknown field
+            is refused rather than ignored.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | CommandReceipt | ErrorResponse]
+        Response[ConnectorEventDestinationSecret | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -195,23 +205,27 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RespondRequest,
-) -> Any | CommandReceipt | ErrorResponse | None:
-    """Answer a piece of text through the model, as though it had been said
+    body: ConnectorEventDestinationRequest,
+) -> ConnectorEventDestinationSecret | ErrorResponse | None:
+    """Forward a connector's provider events to a URL
 
-     A text session that ended is reopened under the same id, on the config it was opened with: a chat is
-    never over for the person writing in it. A call that ended is not found.
+     Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own
+    provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries
+    the destination's signing secret, once.
+
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The session, as returned when it was created.
-        body (RespondRequest):
+        id (str): The connector, such as slack_bot.
+        body (ConnectorEventDestinationRequest): An event destination to create. An unknown field
+            is refused rather than ignored.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | CommandReceipt | ErrorResponse
+        ConnectorEventDestinationSecret | ErrorResponse
     """
 
     return (

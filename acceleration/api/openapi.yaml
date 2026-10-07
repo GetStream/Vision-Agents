@@ -1142,6 +1142,51 @@ components:
           description: The name the other participants see. Defaults to the user id.
           type: string
       type: object
+    CallTokens:
+      description: What a call's models read and wrote, summed over every request, with what their prompts were made of.
+      properties:
+        cached_input_tokens:
+          description: The part of the prompts a provider served from its own cache.
+          format: int64
+          type: integer
+        cost_micros:
+          description: Millionths of a dollar, priced from the providers' configured rates.
+          format: int64
+          type: integer
+        cost_sources:
+          description: Where the cost came from, the costliest first. Sources that cost nothing are left out.
+          items:
+            $ref: '#/components/schemas/CostSource'
+          type: array
+        input_parts:
+          $ref: '#/components/schemas/InputParts'
+        input_tokens:
+          description: Every prompt the models read, the cached part included.
+          format: int64
+          type: integer
+        models:
+          description: Each model the call used, the busiest first. One billed by audio or characters reads zero tokens.
+          items:
+            $ref: '#/components/schemas/ModelTokens'
+          type: array
+        output_tokens:
+          description: Everything the models generated, reasoning included.
+          format: int64
+          type: integer
+        requests:
+          description: How many calls to those models it took.
+          format: int64
+          type: integer
+      required:
+        - cached_input_tokens
+        - cost_micros
+        - cost_sources
+        - input_parts
+        - input_tokens
+        - models
+        - output_tokens
+        - requests
+      type: object
     CallUsage:
       description: 'What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it.'
       properties:
@@ -2217,6 +2262,20 @@ components:
       oneOf:
         - $ref: '#/components/schemas/TextContentPart'
         - $ref: '#/components/schemas/ImageContentPart'
+    CostSource:
+      description: One place a call's cost came from.
+      properties:
+        cost_micros:
+          description: Millionths of a dollar. A part of the prompt is given its share of what the prompt cost, by tokens.
+          format: int64
+          type: integer
+        source:
+          description: 'For a model billed by tokens, the part of its prompt (instructions, messages, tool_definitions, tool_use, images or video), output for what it wrote, or input for prompt tokens recorded without a breakdown. For any other model, its modality: stt, tts, search and the rest.'
+          type: string
+      required:
+        - source
+        - cost_micros
+      type: object
     CreateOptOutRequest:
       properties:
         channel:
@@ -2367,7 +2426,7 @@ components:
           description: 'Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session''s socket.'
           type: boolean
         title:
-          description: 'What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is called is a label on it rather than part of it.'
+          description: 'What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.'
           type: string
         tool_timeout_ms:
           description: How long the model waits for a tool result. Zero is the default.
@@ -2972,6 +3031,41 @@ components:
         - namespace
         - passages
       type: object
+    InputParts:
+      description: What prompts were made of, in tokens. Estimated from each request and scaled to what the provider counted, so the parts sum to the input tokens and only the split between them is a guess. Requests recorded before the split was kept read zero throughout.
+      properties:
+        images:
+          description: Pictures, attached or returned by a tool.
+          format: int64
+          type: integer
+        instructions:
+          description: 'The system prompt: the agent''s instructions, skills and plugin guidance.'
+          format: int64
+          type: integer
+        messages:
+          description: The conversation's words, from either side.
+          format: int64
+          type: integer
+        tool_definitions:
+          description: 'The tools the model was offered: their names, descriptions and schemas.'
+          format: int64
+          type: integer
+        tool_use:
+          description: The tools the model called, and what they returned.
+          format: int64
+          type: integer
+        video:
+          description: Frames of a video, from the call's camera or an attached clip.
+          format: int64
+          type: integer
+      required:
+        - images
+        - instructions
+        - messages
+        - tool_definitions
+        - tool_use
+        - video
+      type: object
     InstructionsRequest:
       properties:
         instructions:
@@ -3379,6 +3473,44 @@ components:
             - high
           type: string
       type: object
+    ModelTokens:
+      description: What one model read and wrote over a call.
+      properties:
+        cached_input_tokens:
+          format: int64
+          type: integer
+        cost_micros:
+          format: int64
+          type: integer
+        input_parts:
+          $ref: '#/components/schemas/InputParts'
+        input_tokens:
+          format: int64
+          type: integer
+        modality:
+          description: 'What the model does: llm for a language model, sts for speech-to-speech, and so on.'
+          type: string
+        model:
+          type: string
+        output_tokens:
+          format: int64
+          type: integer
+        provider:
+          type: string
+        requests:
+          format: int64
+          type: integer
+      required:
+        - cached_input_tokens
+        - cost_micros
+        - input_parts
+        - input_tokens
+        - modality
+        - model
+        - output_tokens
+        - provider
+        - requests
+      type: object
     NumberSearchResult:
       properties:
         numbers:
@@ -3394,6 +3526,45 @@ components:
       required:
         - numbers
         - skipped
+      type: object
+    OfferedTool:
+      description: One tool as the model sees it.
+      properties:
+        description:
+          description: What the model is told the tool does.
+          type: string
+        name:
+          description: How the model asks for it.
+          type: string
+        parameters:
+          additionalProperties: {}
+          description: The JSON Schema of its arguments.
+          type: object
+        tokens:
+          description: 'Roughly what offering it costs on every request, in tokens: its name, description and schema at four characters a token.'
+          format: int64
+          type: integer
+      required:
+        - name
+        - description
+        - tokens
+      type: object
+    OfferedTools:
+      description: The tools a session's conversation model is offered, as they are sent to it.
+      properties:
+        tokens:
+          description: Roughly what offering them all costs on every request, in tokens.
+          format: int64
+          type: integer
+        tools:
+          description: Every tool, in the order the model is offered them.
+          items:
+            $ref: '#/components/schemas/OfferedTool'
+          nullable: true
+          type: array
+      required:
+        - tools
+        - tokens
       type: object
     OptOut:
       description: Somebody who asked not to be reached. Nothing is texted or dialled to them on the channel, or on any for all, until the opt-out is revoked or they text START.
@@ -7505,6 +7676,36 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: What a browser needs to join this call
+  /v1/agents/calls/{id}/tokens:
+    get:
+      description: 'Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt''s parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.'
+      operationId: getCallTokens
+      parameters:
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallTokens'
+          description: The call's tokens
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: What a call's models read and wrote, and what their prompts were made of
   /v1/agents/calls/{id}/transcript:
     get:
       description: Read back from the chat channel the conversation was written to as it happened, rather than copied into a second place that could disagree with it.
@@ -10367,6 +10568,7 @@ paths:
       summary: Delete what one session remembered
   /v1/agents/sessions/{id}/respond:
     post:
+      description: 'A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.'
       operationId: respondSession
       parameters:
         - description: The session, as returned when it was created.
@@ -10689,6 +10891,34 @@ paths:
           $ref: '#/components/responses/InternalError'
       summary: Stop a running session
       x-client-accessible: true
+  /v1/agents/sessions/{id}/tools:
+    get:
+      description: 'The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent''s own, its plugins'' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.'
+      operationId: listSessionTools
+      parameters:
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfferedTools'
+          description: The tools
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: List the tools a session's model is offered
   /v1/agents/sessions/query:
     post:
       description: |-
