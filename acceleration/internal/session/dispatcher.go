@@ -28,7 +28,7 @@ import (
 //
 // Every call is checked again against the config and the connection as they are now, then
 // run inside one envelope for every source: the binding's timeout, a cancel when the turn is
-// interrupted, and the result cap.
+// interrupted (as the binding's policy says), and the result cap.
 //
 // Every call it opened, refused or run, leaves one row in the invocation log once it has
 // answered (store.ConnectorInvocation), queued so the model never waits on the write.
@@ -138,9 +138,44 @@ func (d *dispatcher) Close() {
 // interrupted cancels ctx, and the MCP SDK sends notifications/cancelled for the call in
 // flight (cancelCall in go-sdk v1.8.0 mcp/transport.go).
 //
+// The binding's policy (store.BindingPolicy) changes what an interruption does. A wait
+// binding's call does not see it, and the turn waits for its answer. A binding that is not
+// cancellable stops waiting at the interruption and leaves the call running to its answer or
+// deadline, so the provider is never sent the cancel. A binding with no policy is the
+// paragraph above.
+//
 // It also says how the call failed, for its row: empty when it answered, else one of the
 // store.Invocation* values.
 func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, string, error) {
+	policy := r.binding.Policy
+	switch {
+	case policy == nil || policy.OnInterrupt != store.InterruptWait && (policy.Cancellable == nil || *policy.Cancellable):
+		return d.send(ctx, r, call)
+	case policy.OnInterrupt == store.InterruptWait:
+		return d.send(context.WithoutCancel(ctx), r, call)
+	}
+	type answer struct {
+		parts   []llm.ContentPart
+		failure string
+		err     error
+	}
+	answered := make(chan answer, 1)
+	go func() {
+		parts, failure, err := d.send(context.WithoutCancel(ctx), r, call)
+		answered <- answer{parts, failure, err}
+	}()
+	select {
+	case got := <-answered:
+		return got.parts, got.failure, got.err
+	case <-ctx.Done():
+		// The call goes on, so whether the provider does what was asked is unknown here.
+		return nil, store.InvocationOutcomeUnknown, stack.Wrap(fmt.Errorf(
+			"session: %s was left running at the provider: %w", call.Name, ctx.Err()))
+	}
+}
+
+// send runs one tool inside the binding's timeout and the result cap, cancelled with ctx.
+func (d *dispatcher) send(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, string, error) {
 	bounded, cancel := context.WithTimeout(d.correlated(ctx), r.timeout)
 	defer cancel()
 	observed, exchange := core.WithExchange(bounded)
@@ -246,4 +281,14 @@ func (d *dispatcher) recheck(ctx context.Context, r route) error {
 // boundAlias reports whether a connector binding of the spec is called alias.
 func (s Spec) boundAlias(alias string) bool {
 	return slices.ContainsFunc(s.ConnectorBindings, func(b store.ConnectorBinding) bool { return b.Name == alias })
+}
+
+// preSpeech is what the binding of the tool offered as name asks the agent to say while it
+// runs (store.BindingPolicy.PreSpeech): empty for a name it did not open, or a binding that
+// asks for nothing.
+func (d *dispatcher) preSpeech(name string) string {
+	if found, ok := d.routes[name]; ok && found.binding.Policy != nil {
+		return found.binding.Policy.PreSpeech
+	}
+	return ""
 }
