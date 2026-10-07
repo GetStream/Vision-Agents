@@ -46,6 +46,8 @@ type dispatcher struct {
 	logins *logins
 	// invocations writes the log; nil records nothing.
 	invocations *invocationRecorder
+	// limiter holds calls after a provider's 429 (Connectors.Limiter); nil limits nothing.
+	limiter *core.Limiter
 }
 
 // route is what one offered name was opened for.
@@ -58,6 +60,9 @@ type route struct {
 	tool    string
 	digest  string
 	timeout time.Duration
+	// limit is the key the provider's rate limit counts the call under
+	// (core.ResolvedManifest.RateLimitKey), "" when its manifest names none.
+	limit string
 }
 
 // Run calls a connector tool, or hands a name it does not own to next.
@@ -138,9 +143,18 @@ func (d *dispatcher) Close() {
 // interrupted cancels ctx, and the MCP SDK sends notifications/cancelled for the call in
 // flight (cancelCall in go-sdk v1.8.0 mcp/transport.go).
 //
+// A provider that answered a call on the same rate limit key with 429 and Retry-After is not
+// sent the call until that passes, on any router sharing the limiter's Redis: the model reads
+// connector_rate_limited instead, and so it does for the 429 itself, with the wait the router
+// holds: the Retry-After, at most core.MaxBlock. The router never sends the call again by
+// itself (Kanat, 2026-10-07, D8).
+//
 // It also says how the call failed, for its row: empty when it answered, else one of the
 // store.Invocation* values.
 func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, string, error) {
+	if wait := d.limiter.Wait(ctx, r.limit); wait > 0 {
+		return llm.TextParts(rateLimited(call.Name, wait)), store.InvocationDenied, nil
+	}
 	bounded, cancel := context.WithTimeout(d.correlated(ctx), r.timeout)
 	defer cancel()
 	observed, exchange := core.WithExchange(bounded)
@@ -148,6 +162,9 @@ func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]ll
 	if err != nil {
 		if ctx.Err() == nil && errors.Is(bounded.Err(), context.DeadlineExceeded) {
 			return llm.TextParts(outcomeUnknown(call.Name)), store.InvocationOutcomeUnknown, nil
+		}
+		if held := d.limiter.Block(ctx, r.limit, exchange.RetryAfter()); held > 0 {
+			return llm.TextParts(rateLimited(call.Name, held)), failed(ctx, exchange), nil
 		}
 		return nil, failed(ctx, exchange), err
 	}
@@ -196,6 +213,15 @@ func failed(turn context.Context, seen *core.Exchange) string {
 func outcomeUnknown(name string) string {
 	return fmt.Sprintf("outcome_unknown: %s did not answer in time. It may or may not have done "+
 		"what was asked; check before calling it again.", name)
+}
+
+// rateLimited is what the model reads of a call its provider's rate limit holds: the
+// connector_rate_limited result with retry_after_seconds (Kanat, 2026-10-07, D8), in whole
+// seconds rounded up, as Retry-After's delay-seconds are whole (RFC 9110 section 10.2.3).
+func rateLimited(name string, wait time.Duration) string {
+	seconds := int64((wait + time.Second - 1) / time.Second)
+	return fmt.Sprintf("connector_rate_limited: the provider limits how often %s may be called, and it was "+
+		"not run. retry_after_seconds: %d. Do not call it again before then.", name, seconds)
 }
 
 // recheck refuses a call that the session's config and connection no longer allow, before

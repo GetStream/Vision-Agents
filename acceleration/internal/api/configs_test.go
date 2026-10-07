@@ -174,6 +174,23 @@ func (s *ConfigsSuite) TestAConfigWritesNoEpisodeCardsUnlessItSaysSo() {
 	s.True(value(read.EpisodeCards))
 }
 
+// Tools are offered whole unless a config asks for them progressively, and an update that
+// leaves the setting out keeps it.
+func (s *ConfigsSuite) TestAConfigOffersToolsWholeUnlessItSaysProgressively() {
+	unnamed := s.createConfig(map[string]any{"name": "support"})
+	s.False(value(unnamed.ProgressiveTools))
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch,
+		"/v1/agents/configs/"+unnamed.Id, map[string]any{"progressive_tools": true}, &patched))
+	s.True(value(patched.ProgressiveTools))
+
+	var saved AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut,
+		"/v1/agents/configs/"+unnamed.Id, map[string]any{"name": "support"}, &saved))
+	s.True(value(saved.ProgressiveTools), "a setting left out on an update stays")
+}
+
 func (s *ConfigsSuite) TestADispatchSettingThatIsNeitherOnNorOffIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
 		map[string]any{"name": "support", "dispatch": map[string]any{"text": "sometimes"}})

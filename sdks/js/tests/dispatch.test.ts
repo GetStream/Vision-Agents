@@ -7,7 +7,6 @@ import {
   ConfigurationError,
   Dispatch,
   HostingRefusedError,
-  Tools,
   type InboundCall,
   type InboundMessage,
 } from "../src/index.js";
@@ -62,8 +61,9 @@ describe("Dispatch", () => {
     both.stop();
     await running;
 
-    const tools = new Tools().register({ name: "lookup", description: "Look up", run: () => "" });
-    const hosting = new Dispatch({ client: api }).host("stream-support", tools);
+    const agent = api.agent("stream-support");
+    agent.tools.register({ name: "lookup", description: "Look up", run: () => "" });
+    const hosting = new Dispatch({ client: api }).host(agent);
     running = hosting.run();
     connection = await router.socket();
     assert.equal(
@@ -306,14 +306,15 @@ describe("Dispatch", () => {
   });
 
   it("declares the tools it hosts once the router is listening, and runs the calls sent down", async () => {
-    const tools = new Tools().register<{ sdk: string }>({
+    const agent = api.agent("stream-support");
+    agent.tools.register<{ sdk: string }>({
       name: "investigate_sdk",
       description: "Read SDK source",
       parameters: { type: "object", properties: { sdk: { type: "string" } } },
       run: ({ sdk }) => `read ${sdk}`,
     });
-    const dispatch = new Dispatch({ client: api }).host("stream-support", tools, {
-      timeoutMs: 60_000,
+    const dispatch = new Dispatch({ client: api }).host(agent, {
+      toolTimeoutMs: 60_000,
     });
 
     const running = dispatch.run();
@@ -352,8 +353,9 @@ describe("Dispatch", () => {
   });
 
   it("declares its tools again every time the router says it is listening", async () => {
-    const tools = new Tools().register({ name: "lookup", description: "Look up", run: () => "" });
-    const dispatch = new Dispatch({ client: api }).host("stream-support", tools);
+    const agent = api.agent("stream-support");
+    agent.tools.register({ name: "lookup", description: "Look up", run: () => "" });
+    const dispatch = new Dispatch({ client: api }).host(agent);
 
     const running = dispatch.run();
     const connection = await router.socket();
@@ -372,12 +374,13 @@ describe("Dispatch", () => {
 
   it("keeps reading while a hosted tool runs, and counts it as work in flight", async () => {
     const held: (() => void)[] = [];
-    const tools = new Tools().register({
+    const agent = api.agent("stream-support");
+    agent.tools.register({
       name: "slow",
       description: "Takes a while",
       run: () => new Promise<string>((resolve) => held.push(() => resolve("done"))),
     });
-    const dispatch = new Dispatch({ client: api }).host("stream-support", tools);
+    const dispatch = new Dispatch({ client: api }).host(agent);
 
     const running = dispatch.run();
     const connection = await router.socket();
@@ -400,14 +403,15 @@ describe("Dispatch", () => {
   });
 
   it("tells the router a hosted tool failed, since a model is waiting on it", async () => {
-    const tools = new Tools().register({
+    const agent = api.agent("stream-support");
+    agent.tools.register({
       name: "investigate_sdk",
       description: "Read SDK source",
       run: () => {
         throw new Error("the checkout is missing");
       },
     });
-    const dispatch = new Dispatch({ client: api }).host("stream-support", tools);
+    const dispatch = new Dispatch({ client: api }).host(agent);
 
     const running = dispatch.run();
     const connection = await router.socket();
@@ -430,8 +434,9 @@ describe("Dispatch", () => {
   });
 
   it("stops waiting when the router refuses its tools, saying for which agent and why", async () => {
-    const tools = new Tools().register({ name: "lookup", description: "Look up", run: () => "" });
-    const dispatch = new Dispatch({ client: api }).host("stream-support", tools);
+    const agent = api.agent("stream-support");
+    agent.tools.register({ name: "lookup", description: "Look up", run: () => "" });
+    const dispatch = new Dispatch({ client: api }).host(agent);
 
     const running = dispatch.run();
     const connection = await router.socket();

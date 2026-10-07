@@ -210,6 +210,18 @@ agents.NewDispatch(agents.DispatchOptions{
 })
 ```
 
+A worker can also host an agent's tools for every session opened under it, including one a
+browser opened, where the session's own process cannot reach what the tool needs:
+
+```go
+agent := api.Agent("my-agent")
+agent.Tools().Add(LookupOrder{})
+dispatch.Host(agent, time.Minute)
+```
+
+The router offers them to each session naming the agent and sends every call here. `Run`
+works with only hosted tools and no handler, and stops if the router refuses them.
+
 `sdks/go/examples/dispatch` is the whole of it, and
 `examples/voice_agents/chat_support` is the Python one.
 

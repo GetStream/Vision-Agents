@@ -8,11 +8,11 @@ use axum::http::Method;
 use serde_json::json;
 use support::{Server, claims, response, session};
 use tokio::sync::mpsc;
-use vision_agents::{Agent, Dispatch, Error, InboundCall, InboundMessage, Tools};
+use vision_agents::{Agent, AgentRef, Client, Dispatch, Error, InboundCall, InboundMessage};
 
-fn investigate_sdk() -> Tools {
-    let tools = Tools::new();
-    tools.register(
+fn stream_support(client: &Client) -> AgentRef {
+    let agent = client.agent("stream-support");
+    agent.tools.register(
         "investigate_sdk",
         "Read SDK source",
         json!({"type": "object", "properties": {"sdk": {"type": "string"}}}),
@@ -23,7 +23,7 @@ fn investigate_sdk() -> Tools {
             Ok::<_, String>(format!("read {}", arguments["sdk"].as_str().unwrap_or("")))
         },
     );
-    tools
+    agent
 }
 
 #[tokio::test]
@@ -31,8 +31,7 @@ async fn a_hosted_function_is_declared_and_answered_over_the_dispatch_socket() {
     let server = Server::start().await;
     let dispatch = Dispatch::new(server.client());
     dispatch.host(
-        "stream-support",
-        investigate_sdk(),
+        &stream_support(&server.client()),
         Some(Duration::from_secs(60)),
     );
 
@@ -95,7 +94,7 @@ async fn a_hosted_function_is_declared_and_answered_over_the_dispatch_socket() {
 async fn a_worker_tells_the_router_what_it_hosts_every_time_it_is_ready() {
     let server = Server::start().await;
     let dispatch = Dispatch::new(server.client());
-    dispatch.host("stream-support", investigate_sdk(), None);
+    dispatch.host(&stream_support(&server.client()), None);
 
     let running = {
         let dispatch = dispatch.clone();
@@ -119,7 +118,7 @@ async fn a_worker_tells_the_router_what_it_hosts_every_time_it_is_ready() {
 async fn a_worker_whose_tools_are_refused_stops_waiting() {
     let server = Server::start().await;
     let dispatch = Dispatch::new(server.client());
-    dispatch.host("stream-support", investigate_sdk(), None);
+    dispatch.host(&stream_support(&server.client()), None);
 
     let running = {
         let dispatch = dispatch.clone();

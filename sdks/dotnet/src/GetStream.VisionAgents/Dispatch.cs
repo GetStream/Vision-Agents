@@ -40,8 +40,8 @@ public sealed record DispatchOptions
 /// shared between them.
 /// </para>
 /// <para>
-/// A worker can also <see cref="Host"/> tools: the router offers them to every session
-/// opened under an agent id, and sends each call down this connection.
+/// A worker can also <see cref="Host"/> an agent's tools: the router offers them to every
+/// session opened under that agent, and sends each call down this connection.
 /// </para>
 /// </remarks>
 public sealed class Dispatch
@@ -139,20 +139,22 @@ public sealed class Dispatch
     }
 
     /// <summary>
-    /// Runs these tools for every session opened under an agent id, whoever opened it.
+    /// Runs an agent's <see cref="Agent.Tools"/> for every session opened under it, whoever opened it.
     /// </summary>
     /// <remarks>
     /// A session's own tools run in the process that opened it, which is no use to a
     /// conversation opened from a browser. Hosting is the other direction: the router offers
-    /// these to each session naming the agent and sends every call here. Call before
-    /// <see cref="RunAsync"/>.
+    /// them to each session whose agent id or config name is the agent's
+    /// <see cref="Agent.Name"/>, and sends every call here. Call before <see cref="RunAsync"/>.
     /// </remarks>
-    /// <param name="agentId">The agent whose sessions are offered the tools.</param>
-    /// <param name="tools">The tools, registered the way <see cref="Agent.Tools"/> are.</param>
-    /// <param name="timeout">How long the router gives one call; null takes its default.</param>
-    public Dispatch Host(string agentId, Tools tools, TimeSpan? timeout = null)
+    /// <param name="agent">The agent, usually <see cref="VisionAgentsClient.Agent"/>, whose tools are hosted.</param>
+    /// <param name="toolTimeout">
+    /// How long the router waits for one tool call to be answered before telling the model it
+    /// failed, not how long the worker runs; null takes the router's default of two minutes.
+    /// </param>
+    public Dispatch Host(Agent agent, TimeSpan? toolTimeout = null)
     {
-        _hosted.Add((agentId, tools, timeout ?? TimeSpan.Zero));
+        _hosted.Add((agent.Name, agent.Tools, toolTimeout ?? TimeSpan.Zero));
         return this;
     }
 

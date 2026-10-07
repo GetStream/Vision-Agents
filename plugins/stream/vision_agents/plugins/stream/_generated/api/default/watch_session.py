@@ -109,9 +109,14 @@ def sync_detailed(
     execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end
     user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and
     title_link: a client shows it as a button opening authorize_url. Once the user finishes that login
-    the message is sent again with the attachment's status set to connected. Activity states are
-    thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes
-    tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
+    the message is sent again with the attachment's status set to connected. A connector_authorization
+    attachment asks the end user to connect a connector binding the reply needed with their own account,
+    with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url,
+    handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as
+    for createAuthorization. Once the user finishes that login the message is sent again with status
+    connected and no handoff_token, and the agent carries on by itself. Activity states are thinking,
+    queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool,
+    turn_id and started_at; tool_ran also includes tool_call_id.
     A respond command carrying command_id emits command_accepted with a nested command receipt
     (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text returns the existing IDs without invoking the
@@ -208,9 +213,14 @@ def sync(
     execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end
     user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and
     title_link: a client shows it as a button opening authorize_url. Once the user finishes that login
-    the message is sent again with the attachment's status set to connected. Activity states are
-    thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes
-    tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
+    the message is sent again with the attachment's status set to connected. A connector_authorization
+    attachment asks the end user to connect a connector binding the reply needed with their own account,
+    with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url,
+    handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as
+    for createAuthorization. Once the user finishes that login the message is sent again with status
+    connected and no handoff_token, and the agent carries on by itself. Activity states are thinking,
+    queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool,
+    turn_id and started_at; tool_ran also includes tool_call_id.
     A respond command carrying command_id emits command_accepted with a nested command receipt
     (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text returns the existing IDs without invoking the
@@ -302,9 +312,14 @@ async def asyncio_detailed(
     execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end
     user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and
     title_link: a client shows it as a button opening authorize_url. Once the user finishes that login
-    the message is sent again with the attachment's status set to connected. Activity states are
-    thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes
-    tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
+    the message is sent again with the attachment's status set to connected. A connector_authorization
+    attachment asks the end user to connect a connector binding the reply needed with their own account,
+    with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url,
+    handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as
+    for createAuthorization. Once the user finishes that login the message is sent again with status
+    connected and no handoff_token, and the agent carries on by itself. Activity states are thinking,
+    queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool,
+    turn_id and started_at; tool_ran also includes tool_call_id.
     A respond command carrying command_id emits command_accepted with a nested command receipt
     (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text returns the existing IDs without invoking the
@@ -399,9 +414,14 @@ async def asyncio(
     execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end
     user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and
     title_link: a client shows it as a button opening authorize_url. Once the user finishes that login
-    the message is sent again with the attachment's status set to connected. Activity states are
-    thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes
-    tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
+    the message is sent again with the attachment's status set to connected. A connector_authorization
+    attachment asks the end user to connect a connector binding the reply needed with their own account,
+    with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url,
+    handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as
+    for createAuthorization. Once the user finishes that login the message is sent again with status
+    connected and no handoff_token, and the agent carries on by itself. Activity states are thinking,
+    queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool,
+    turn_id and started_at; tool_ran also includes tool_call_id.
     A respond command carrying command_id emits command_accepted with a nested command receipt
     (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text returns the existing IDs without invoking the

@@ -17,10 +17,13 @@ use GetStream\VisionAgents\Generated\AgentConfigPatch;
 final readonly class AgentHandle
 {
     public Sessions $sessions;
+    /** Functions run for every session of this agent, whoever opened it, once a `Dispatch` hosts them. */
+    public Tools $tools;
 
     public function __construct(private Client $client, public string $name)
     {
         $this->sessions = new Sessions($client, $name);
+        $this->tools = new Tools();
     }
 
     /**

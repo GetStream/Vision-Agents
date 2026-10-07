@@ -61,6 +61,8 @@ class AgentConfig:
         llm (str | Unset):
         mcp_servers (list[McpServer] | Unset):
         plugin_events (list[PluginEvent] | Unset):
+        progressive_tools (bool | Unset): Whether tools from plugins, MCP servers and connectors are offered by a
+            summary, the first call to each returning its full description instead of running it.
         sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
             code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
             everything out in its head.
@@ -102,6 +104,7 @@ class AgentConfig:
     llm: str | Unset = UNSET
     mcp_servers: list[McpServer] | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
+    progressive_tools: bool | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     sandbox_options: SandboxOptions | Unset = UNSET
     search: str | Unset = UNSET
@@ -191,6 +194,8 @@ class AgentConfig:
             for plugin_events_item_data in self.plugin_events:
                 plugin_events_item = plugin_events_item_data.to_dict()
                 plugin_events.append(plugin_events_item)
+
+        progressive_tools = self.progressive_tools
 
         sandbox: str | Unset = UNSET
         if not isinstance(self.sandbox, Unset):
@@ -282,6 +287,8 @@ class AgentConfig:
             field_dict["mcp_servers"] = mcp_servers
         if plugin_events is not UNSET:
             field_dict["plugin_events"] = plugin_events
+        if progressive_tools is not UNSET:
+            field_dict["progressive_tools"] = progressive_tools
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
         if sandbox_options is not UNSET:
@@ -425,6 +432,8 @@ class AgentConfig:
 
                 plugin_events.append(plugin_events_item)
 
+        progressive_tools = d.pop("progressive_tools", UNSET)
+
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
         if isinstance(_sandbox, Unset):
@@ -516,6 +525,7 @@ class AgentConfig:
             llm=llm,
             mcp_servers=mcp_servers,
             plugin_events=plugin_events,
+            progressive_tools=progressive_tools,
             sandbox=sandbox,
             sandbox_options=sandbox_options,
             search=search,

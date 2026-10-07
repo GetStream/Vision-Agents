@@ -70,6 +70,11 @@ class AgentConfigRequest:
         plugin_events (list[PluginEvent] | Unset): MCP events the agent subscribes to on the plugins it names, with
             every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login
             it came through.
+        progressive_tools (bool | Unset): Whether the agent is offered its plugin, MCP server and connector tools by the
+            first line of each one's description, with its arguments' descriptions left out, and the first call to a tool
+            returns its full description and input schema instead of running it. It saves context on an agent with many
+            tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an
+            update, the stored setting stays.
         sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
             code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
             everything out in its head.
@@ -119,6 +124,7 @@ class AgentConfigRequest:
     mcp_servers: list[McpServer] | Unset = UNSET
     mode: AgentMode | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
+    progressive_tools: bool | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     sandbox_options: SandboxOptions | Unset = UNSET
     search: str | Unset = UNSET
@@ -203,6 +209,8 @@ class AgentConfigRequest:
             for plugin_events_item_data in self.plugin_events:
                 plugin_events_item = plugin_events_item_data.to_dict()
                 plugin_events.append(plugin_events_item)
+
+        progressive_tools = self.progressive_tools
 
         sandbox: str | Unset = UNSET
         if not isinstance(self.sandbox, Unset):
@@ -290,6 +298,8 @@ class AgentConfigRequest:
             field_dict["mode"] = mode
         if plugin_events is not UNSET:
             field_dict["plugin_events"] = plugin_events
+        if progressive_tools is not UNSET:
+            field_dict["progressive_tools"] = progressive_tools
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
         if sandbox_options is not UNSET:
@@ -432,6 +442,8 @@ class AgentConfigRequest:
 
                 plugin_events.append(plugin_events_item)
 
+        progressive_tools = d.pop("progressive_tools", UNSET)
+
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
         if isinstance(_sandbox, Unset):
@@ -518,6 +530,7 @@ class AgentConfigRequest:
             mcp_servers=mcp_servers,
             mode=mode,
             plugin_events=plugin_events,
+            progressive_tools=progressive_tools,
             sandbox=sandbox,
             sandbox_options=sandbox_options,
             search=search,

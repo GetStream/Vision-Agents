@@ -31,7 +31,7 @@ type AgentLog struct {
 	Message    string                  `json:"message"`
 	OccurredAt time.Time               `json:"occurred_at"`
 	SessionId  string                  `json:"session_id"`
-	Severity   AgentLogSeverity        `json:"severity" enum:"info,error"`
+	Severity   AgentLogSeverity        `json:"severity" enum:"info,warn,error"`
 	Source     AgentLogSource          `json:"source" enum:"user,agent,tool,system"`
 	UserId     *string                 `json:"user_id,omitempty"`
 }
@@ -43,6 +43,7 @@ type AgentLogSeverity string
 const (
 	AgentLogSeverityError AgentLogSeverity = "error"
 	AgentLogSeverityInfo  AgentLogSeverity = "info"
+	AgentLogSeverityWarn  AgentLogSeverity = "warn"
 )
 
 // Valid indicates whether the value is a known member of the AgentLogSeverity enum.
@@ -51,6 +52,8 @@ func (e AgentLogSeverity) Valid() bool {
 	case AgentLogSeverityError:
 		return true
 	case AgentLogSeverityInfo:
+		return true
+	case AgentLogSeverityWarn:
 		return true
 	default:
 		return false

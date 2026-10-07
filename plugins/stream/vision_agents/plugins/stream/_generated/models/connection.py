@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from ..models.connection_inputs import ConnectionInputs
     from ..models.connection_metadata import ConnectionMetadata
     from ..models.connection_owner import ConnectionOwner
+    from ..models.connection_use import ConnectionUse
 
 
 T = TypeVar("T", bound="Connection")
@@ -41,6 +42,9 @@ class Connection:
         status (ConnectionStatus): pending until an account is connected, then connected, needs_reauthorization once the
             provider stops accepting its credential, and disconnected when it is deleted.
         updated_at (datetime.datetime):
+        used_by (list[ConnectionUse] | None): The agent config bindings that name this connection as their fixed
+            connection, which deleting it would break. A binding a session fills with the caller's own connection names
+            none, so it is never listed.
         account_id (str | Unset): The provider account, known once it is connected.
         expires_at (datetime.datetime | Unset): When the current credential expires. Absent when there is none or it
             does not.
@@ -59,6 +63,7 @@ class Connection:
     revision: int
     status: ConnectionStatus
     updated_at: datetime.datetime
+    used_by: list[ConnectionUse] | None
     account_id: str | Unset = UNSET
     expires_at: datetime.datetime | Unset = UNSET
     label: str | Unset = UNSET
@@ -94,6 +99,16 @@ class Connection:
 
         updated_at = self.updated_at.isoformat()
 
+        used_by: list[dict[str, Any]] | None
+        if isinstance(self.used_by, list):
+            used_by = []
+            for used_by_type_0_item_data in self.used_by:
+                used_by_type_0_item = used_by_type_0_item_data.to_dict()
+                used_by.append(used_by_type_0_item)
+
+        else:
+            used_by = self.used_by
+
         account_id = self.account_id
 
         expires_at: str | Unset = UNSET
@@ -118,6 +133,7 @@ class Connection:
                 "revision": revision,
                 "status": status,
                 "updated_at": updated_at,
+                "used_by": used_by,
             }
         )
         if account_id is not UNSET:
@@ -134,6 +150,7 @@ class Connection:
         from ..models.connection_inputs import ConnectionInputs
         from ..models.connection_metadata import ConnectionMetadata
         from ..models.connection_owner import ConnectionOwner
+        from ..models.connection_use import ConnectionUse
 
         d = dict(src_dict)
         auth_scheme = d.pop("auth_scheme")
@@ -173,6 +190,28 @@ class Connection:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        def _parse_used_by(data: object) -> list[ConnectionUse] | None:
+            if data is None:
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                used_by_type_0 = []
+                _used_by_type_0 = data
+                for used_by_type_0_item_data in _used_by_type_0:
+                    used_by_type_0_item = ConnectionUse.from_dict(
+                        used_by_type_0_item_data
+                    )
+
+                    used_by_type_0.append(used_by_type_0_item)
+
+                return used_by_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[ConnectionUse] | None, data)
+
+        used_by = _parse_used_by(d.pop("used_by"))
+
         account_id = d.pop("account_id", UNSET)
 
         _expires_at = d.pop("expires_at", UNSET)
@@ -197,6 +236,7 @@ class Connection:
             revision=revision,
             status=status,
             updated_at=updated_at,
+            used_by=used_by,
             account_id=account_id,
             expires_at=expires_at,
             label=label,

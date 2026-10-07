@@ -26,6 +26,9 @@ type Connectors struct {
 	// Consents begins a consent for the caller's own connection when a tool call needs one
 	// (connector_login.go). Nil leaves such a binding out of the session, as it was before.
 	Consents Consents
+	// Limiter holds a connector's calls after its provider answered 429, until Retry-After
+	// passes. Nil, as without Redis, limits nothing.
+	Limiter *core.Limiter
 }
 
 // defaultConnectorTimeout bounds one connector tool call whose binding sets no timeout_ms.
@@ -117,7 +120,8 @@ func (m *Manager) attachConnectors(ctx context.Context, spec *Spec) (*dispatcher
 	if spec.ConfigID == "" {
 		return nil, nil, nil, stack.Wrap(errors.New("session: connector bindings come from a stored agent config, and this session names none"))
 	}
-	d := &dispatcher{store: m.options.Store, spec: *spec, routes: map[string]route{}, invocations: m.invocations}
+	d := &dispatcher{store: m.options.Store, spec: *spec, routes: map[string]route{}, invocations: m.invocations,
+		limiter: m.options.Connectors.Limiter}
 	// Opened on the context a call runs on (dispatcher.correlated): a refresh while the tools
 	// are listed is audited as one during a call is, with no request or session id for an
 	// incognito session. The MCP client keeps the values of the context it connected on for
@@ -272,7 +276,8 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 				continue
 			}
 			d.routes[tool.Name] = route{binding: binding, connection: connection, toolset: toolset,
-				tool: name, digest: digests[name], timeout: timeout}
+				tool: name, digest: digests[name], timeout: timeout,
+				limit: manifest.RateLimitKey(connection.CustomerID, resolved.Connection)}
 			d.tools = append(d.tools, harness.Tool{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters})
 			offered++
 		}

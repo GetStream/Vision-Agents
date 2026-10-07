@@ -117,13 +117,15 @@ hands what end users write to the worker with the running `SessionId` (and `Comm
 is cancelled, after the work in hand has finished. A connection the router drops is opened
 again, telling the router how much is still being handled.
 
-A worker can also host tools for every session opened under an agent id, including
+A worker can also host an agent's tools for every session opened under that agent, including
 sessions opened from a browser. The router sends each call here. Handlers are optional:
 
 ```csharp
-var tools = new Tools().Register<Weather, string>("get_weather", "Get the current weather for a city",
+using var client = new VisionAgentsClient();
+var agent = client.Agent("my-agent");
+agent.Tools.Register<Weather, string>("get_weather", "Get the current weather for a city",
     (weather, cancellationToken) => WeatherAsync(weather.City, cancellationToken));
-await new Dispatch().Host("my-agent", tools, timeout: TimeSpan.FromMinutes(1)).RunAsync(stopping);
+await new Dispatch(new DispatchOptions { Client = client }).Host(agent, toolTimeout: TimeSpan.FromMinutes(1)).RunAsync(stopping);
 ```
 
 If the router refuses the tools, `RunAsync` throws `InvalidOperationException` with the
