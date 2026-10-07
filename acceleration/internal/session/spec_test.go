@@ -85,6 +85,27 @@ func (s *SpecSuite) TestAConnectorBindingWinsOverAPluginEntryForTheSameProvider(
 	s.Equal([]store.PluginEntry{{Name: "gong"}}, spec.UserPlugins)
 }
 
+// TestAVoiceSessionIsKeyedUnderTheAgentIDItNamesBeforeNormalize: KeyedAgentID is what
+// Normalize keys a voice session under, its call id when it names no agent id.
+func (s *SpecSuite) TestAVoiceSessionIsKeyedUnderTheAgentIDItNamesBeforeNormalize() {
+	spec := Spec{CustomerID: "acme", CallID: "call-1"}
+	keyed := spec.KeyedAgentID()
+
+	s.Require().NoError(spec.Normalize())
+
+	s.Equal("call-1", keyed)
+	s.Equal(keyed, spec.AgentID)
+}
+
+// TestATextSessionNamingNoAgentIDIsKeyedUnderNoneACallerNamed: Normalize gives it a new id.
+func (s *SpecSuite) TestATextSessionNamingNoAgentIDIsKeyedUnderNoneACallerNamed() {
+	spec := Spec{CustomerID: "acme", Text: true}
+
+	s.Empty(spec.KeyedAgentID())
+	s.Require().NoError(spec.Normalize())
+	s.NotEmpty(spec.AgentID)
+}
+
 // TestWithoutABindingThePluginsAreLeftExactlyAsConfigured: Normalize's same-provider rule
 // is a no-op for a config that binds no connector, down to an empty list staying empty.
 func (s *SpecSuite) TestWithoutABindingThePluginsAreLeftExactlyAsConfigured() {
