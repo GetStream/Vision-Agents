@@ -223,7 +223,7 @@ func (s *InvocationLogSuite) TestTheLogDoesNotHoldUpTheCall() {
 	s.Less(took, 2*time.Second, "the call came back while its row could not be written")
 	s.Never(func() bool {
 		var written int
-		s.Require().NoError(held.QueryRowContext(s.ctx, "SELECT count(*) FROM connector_invocations WHERE connection_id = $1", app).Scan(&written))
+		s.Require().NoError(held.QueryRowContext(s.ctx, "SELECT count(*) FROM connector_invocations WHERE connection_id = ?", app).Scan(&written))
 		return written > 0
 	}, 300*time.Millisecond, 50*time.Millisecond, "the write was held by the lock")
 	s.Require().NoError(held.Commit())
