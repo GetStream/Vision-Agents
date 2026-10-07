@@ -2771,7 +2771,9 @@ func (s *AgentSuite) TestASecondToolDoesNotStartACompetingReply() {
 	s.says(participant, "where are my orders")
 
 	s.eventually(func() bool { return len(s.runner.asked()) == 2 }, "both tools should run")
-	s.eventually(func() bool { return s.spokenText("Both came back") },
+	// The agent goes quiet once the results have been answered, so what it asked the model
+	// is counted then: a second answer follows the first within microseconds.
+	s.eventually(func() bool { return s.spokenText("Both came back") && !s.agent.Busy() },
 		"the caller was left in silence after the second tool stole the floor")
 	s.Len(s.model.requests(), 2, "a second tool must not start a competing generate")
 }
@@ -2837,6 +2839,26 @@ func (s *AgentSuite) TestAToolResultIsLeftOwedWhileAnotherTurnIsBeingWritten() {
 	s.agent.generating = false
 	s.agent.mu.Unlock()
 	s.True(owed, "follow can still deliver the result")
+}
+
+func (s *AgentSuite) TestTheToolThatReturnedFirstDoesNotAnswerAgainWhatTheLastAnswered() {
+	// Both tools return before either goroutine gets as far as queueing the reply, and the
+	// one that returned first is the slower to get there.
+	s.join(false)
+	s.agent.mu.Lock()
+	s.agent.pendingTools = 2
+	s.agent.mu.Unlock()
+	s.agent.owesToolReply(s.ctx)
+	s.agent.noteToolDone()
+	s.agent.owesToolReply(s.ctx)
+	s.agent.noteToolDone()
+
+	s.agent.queueToolReply()
+	s.eventually(func() bool { return len(s.model.requests()) == 1 && !s.agent.Busy() },
+		"the results were never answered")
+	s.agent.queueToolReply()
+
+	s.Len(s.model.requests(), 1, "the results the turn already answered were answered again")
 }
 
 func (s *AgentSuite) TestAToolResultDoesNotCutOffTheReplyAlreadyBeingSpoken() {

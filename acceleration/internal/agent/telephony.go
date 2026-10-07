@@ -176,24 +176,29 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		}
 		return
 	}
+	// A tool result is not something the caller can hear. Whether it worked or not,
+	// somebody asked a question and is waiting on the answer, so the agent says it
+	// rather than sitting on it until they happen to speak again.
+	//
+	// Pressing at a menu is the exception: the digits are the whole point of the
+	// tool and the menu is what answers next, so talking over it would be talking to
+	// nobody.
+	//
+	// Voice calls stop automatic follow-ups after one tool round, so a broken
+	// transfer cannot keep the phone line open by retrying itself. Text sessions
+	// must continue: a docs lookup can lead to source research, whose result still
+	// needs a final answer even though it was requested in a tool follow-up turn.
+	replies := !left && requested.Call.Name != toolPress &&
+		(a.options.Text || !strings.HasPrefix(requested.TurnID, toolPrefix))
+	if replies {
+		a.owesToolReply(ctx)
+	}
 	a.noteToolDone()
 	if ctx.Err() != nil {
 		return
 	}
 	if !left {
-		// A tool result is not something the caller can hear. Whether it worked or not,
-		// somebody asked a question and is waiting on the answer, so the agent says it
-		// rather than sitting on it until they happen to speak again.
-		//
-		// Pressing at a menu is the exception: the digits are the whole point of the
-		// tool and the menu is what answers next, so talking over it would be talking to
-		// nobody.
-		//
-		// Voice calls stop automatic follow-ups after one tool round, so a broken
-		// transfer cannot keep the phone line open by retrying itself. Text sessions
-		// must continue: a docs lookup can lead to source research, whose result still
-		// needs a final answer even though it was requested in a tool follow-up turn.
-		if requested.Call.Name != toolPress && (a.options.Text || !strings.HasPrefix(requested.TurnID, toolPrefix)) {
+		if replies {
 			a.queueToolReply()
 		}
 		return
