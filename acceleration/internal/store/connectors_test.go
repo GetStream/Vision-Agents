@@ -32,8 +32,8 @@ func (s *StoreSuite) TestSeedingAnEmptyTableStoresEachShippedBuiltInAtTheRevisio
 
 	listed, err := s.store.ListConnectorDefinitions(s.ctx, "acme", ConnectorDefinitionFilter{})
 	s.Require().NoError(err)
-	s.Require().Len(listed, 8)
-	for i, id := range []string{"calcom", "calendly", "github", "gong", "linear", "salesforce", "slack", "slack_bot"} {
+	s.Require().Len(listed, 15)
+	for i, id := range []string{"calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "linear", "salesforce", "sentry", "shopify", "slack", "slack_bot"} {
 		s.Equal(id, listed[i].ID)
 		s.Equal(BuiltinCustomer, listed[i].CustomerID)
 		s.Equal(shipped[i].Revision, listed[i].Revision, "stored at the revision its file names")
@@ -230,11 +230,11 @@ func (s *StoreSuite) TestACustomDefinitionIsOnlyItsOwnCustomers() {
 
 	theirs, err := s.store.ListConnectorDefinitions(s.ctx, "globex", ConnectorDefinitionFilter{})
 	s.Require().NoError(err)
-	s.Equal([]string{"calcom", "calendly", "github", "gong", "linear", "salesforce", "slack", "slack_bot"}, definitionIDs(theirs), "another customer sees the built-ins alone")
+	s.Equal([]string{"calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "linear", "salesforce", "sentry", "shopify", "slack", "slack_bot"}, definitionIDs(theirs), "another customer sees the built-ins alone")
 
 	ours, err := s.store.ListConnectorDefinitions(s.ctx, "acme", ConnectorDefinitionFilter{})
 	s.Require().NoError(err)
-	s.Equal([]string{"calcom", "calendly", "github", "gong", "linear", "salesforce", "slack", "slack_bot", "custom_crm"}, definitionIDs(ours), "built-ins first, then the customer's own")
+	s.Equal([]string{"calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "linear", "salesforce", "sentry", "shopify", "slack", "slack_bot", "custom_crm"}, definitionIDs(ours), "built-ins first, then the customer's own")
 }
 
 func (s *StoreSuite) TestAnUnknownRevisionIsNoDefinition() {

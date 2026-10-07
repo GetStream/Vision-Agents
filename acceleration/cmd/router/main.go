@@ -119,6 +119,7 @@ const usage = `usage: router [--config path] [command]
   keys create           mint a credential for an app, printing the secret once
   replicate             copy another deployment's data here and follow its changes
   stream-apps           look after the Stream apps customers registered in app mode
+  plugins migrate       move the plugin rows onto connectors, by hand; --apply writes
 `
 
 func main() {
@@ -200,6 +201,8 @@ func dispatchCommand(command string, args []string, settings config.Config, logg
 		return runReplicate(args, settings, logger)
 	case "stream-apps":
 		return runStreamApps(args, settings, logger)
+	case "plugins":
+		return runPlugins(args, settings, logger)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil

@@ -247,6 +247,17 @@ func checkOAuthClient(manifest core.Manifest, sent ConnectorOAuthClientRequest) 
 // a secret put again is the one the next refresh sends. Without a store or a keyring no record
 // is read.
 func ConnectorClients(records *store.Store, secrets *auth.Sealer, getenv func(string) string) oauth2code.ClientLookup {
+	return connectorClients(records, secrets, getenv, true)
+}
+
+// ConnectorClientsReadOnly is ConnectorClients that never seals a secret again: a record sealed
+// under an older key version is opened and left as it is. For router plugins migrate, whose dry
+// run writes nothing, and whose keyring may be newer than the routers' that read the record.
+func ConnectorClientsReadOnly(records *store.Store, secrets *auth.Sealer, getenv func(string) string) oauth2code.ClientLookup {
+	return connectorClients(records, secrets, getenv, false)
+}
+
+func connectorClients(records *store.Store, secrets *auth.Sealer, getenv func(string) string, rewrap bool) oauth2code.ClientLookup {
 	environment := oauth2code.EnvClients(getenv)
 	return func(ctx context.Context, ref core.ConnectionRef, m core.ResolvedManifest, registration core.ClientRegistrationMethod) (oauth2code.Client, bool, error) {
 		if records != nil && secrets != nil {
@@ -255,7 +266,7 @@ func ConnectorClients(records *store.Store, secrets *auth.Sealer, getenv func(st
 				return oauth2code.Client{}, false, err
 			}
 			if err == nil && record.Registration == registration {
-				return openOAuthClient(ctx, records, secrets, record)
+				return openOAuthClient(ctx, records, secrets, record, rewrap)
 			}
 		}
 		if registration == core.ClientOperator {
@@ -269,7 +280,8 @@ func ConnectorClients(records *store.Store, secrets *auth.Sealer, getenv func(st
 // an older key version is sealed again under the current one, as pgsealed does for a
 // connection's credentials, so an old key can be removed once every record was used
 // (auth.NewSealerWithKeyring). A managed or operator record has no put through the API to do it.
-func openOAuthClient(ctx context.Context, records *store.Store, secrets *auth.Sealer, record store.ConnectorOAuthClient) (oauth2code.Client, bool, error) {
+// Without rewrap it is left as it is.
+func openOAuthClient(ctx context.Context, records *store.Store, secrets *auth.Sealer, record store.ConnectorOAuthClient, rewrap bool) (oauth2code.Client, bool, error) {
 	client := oauth2code.Client{ID: record.ClientID, AuthMethod: record.AuthMethod}
 	if len(record.SecretSealed) == 0 {
 		return client, true, nil
@@ -280,7 +292,7 @@ func openOAuthClient(ctx context.Context, records *store.Store, secrets *auth.Se
 		return oauth2code.Client{}, false, stack.Wrap(fmt.Errorf("api: the %s OAuth client of %s does not open: %w", record.Registration, record.ConnectorID, err))
 	}
 	client.Secret = secret
-	if record.KEKVersion != secrets.CurrentVersion() {
+	if rewrap && record.KEKVersion != secrets.CurrentVersion() {
 		rewrapOAuthClient(ctx, record, "client secret", secret, oauthClientAAD(record.CustomerID, record.ConnectorID), secrets,
 			func(sealed []byte, version int) (bool, error) {
 				return records.RewrapConnectorOAuthClientSecret(ctx, record.CustomerID, record.ConnectorID, record.SecretSealed, sealed, version)
@@ -353,6 +365,17 @@ func providerAppAAD(customerID, connectorID, providerAppID string) []byte {
 func oauthClientAAD(customerID, connectorID string) []byte {
 	return fmt.Appendf(nil, "accelerate:connector-oauth-client:v1:%d:%s:%d:%s",
 		len(customerID), customerID, len(connectorID), connectorID)
+}
+
+// SealConnectorOAuthClientSecret seals a client secret for the customer's record of the
+// connector as a put through the API does, under the keyring's current version, so a record
+// router plugins migrate writes opens where the API's do.
+func SealConnectorOAuthClientSecret(secrets *auth.Sealer, customerID, connectorID, secret string) ([]byte, int, error) {
+	sealed, err := secrets.SealWithAAD(secret, oauthClientAAD(customerID, connectorID))
+	if err != nil {
+		return nil, 0, err
+	}
+	return sealed, secrets.CurrentVersion(), nil
 }
 
 func oauthClientOf(record store.ConnectorOAuthClient) ConnectorOAuthClient {

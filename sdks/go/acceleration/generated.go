@@ -3370,6 +3370,9 @@ type Connector struct {
 
 	// Scopes The scopes a consent asks for.
 	Scopes *[]string `json:"scopes"`
+
+	// Setup What a person does at the provider before the first consent.
+	Setup *ConnectorSetup `json:"setup,omitempty"`
 }
 
 // ConnectorClient How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint.
@@ -3515,6 +3518,21 @@ type ConnectorProviderAppRequest struct {
 
 	// Name The app's name in the customer's workspace.
 	Name string `json:"name"`
+}
+
+// ConnectorSetup What a person does at the provider before the first consent.
+type ConnectorSetup struct {
+	// Steps In order.
+	Steps []ConnectorSetupStep `json:"steps"`
+
+	// Url Where the steps start, a page of the provider's.
+	Url *string `json:"url,omitempty"`
+}
+
+// ConnectorSetupStep One step of a provider's setup.
+type ConnectorSetupStep struct {
+	Description string `json:"description"`
+	Title       string `json:"title"`
 }
 
 // ConnectorToolGrant One tool a binding allows.

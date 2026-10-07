@@ -275,6 +275,29 @@ func (s *StoreSuite) TestListingByOwnerPagesFromWhereTheLastPageEnded() {
 	s.Equal(oldest.ID, next[1].ID)
 }
 
+// TestAConnectionUnderAChosenIDIsMadeOnce: a second create under the same id, even once the
+// first was deleted, writes nothing, and the deleted one is still found by its id.
+func (s *StoreSuite) TestAConnectionUnderAChosenIDIsMadeOnce() {
+	s.seed(acmeManifest)
+	id := newID()
+	first := appConnection()
+	first.CustomerID = "acme-app"
+	s.Require().NoError(s.store.CreateConnectorConnectionWithID(s.ctx, testSchemes, first, id))
+	s.Equal(id, first.ID)
+	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, "acme-app", id))
+
+	second := appConnection()
+	second.CustomerID = "acme-app"
+	err := s.store.CreateConnectorConnectionWithID(s.ctx, testSchemes, second, id)
+
+	s.ErrorIs(err, ErrConnectorConnectionExists)
+	found, err := s.store.ConnectorConnectionEvenDeleted(s.ctx, "acme-app", id)
+	s.Require().NoError(err)
+	s.NotNil(found.DeletedAt)
+	_, err = s.store.ConnectorConnectionEvenDeleted(s.ctx, "another-app", id)
+	s.ErrorIs(err, ErrNoConnectorConnection, "only its own customer's")
+}
+
 func (s *StoreSuite) TestADeletedConnectionCannotBeRead() {
 	connection := s.connection("acme-app", nil)
 	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, "acme-app", connection.ID))

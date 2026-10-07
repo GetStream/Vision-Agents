@@ -1,0 +1,1 @@
+{"id":"calcom","revision":2,"name":"Cal.com","category":"Scheduling","description":"Manage bookings, event types and schedules.","endpoints":{"mcp":"https://mcp.cal.com/mcp"},"schemes":["oauth2_code"],"client":{"registration":["dcr"]},"sources":[{"kind":"mcp","endpoint":"mcp"}]}

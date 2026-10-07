@@ -2,7 +2,10 @@
 
 package store
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // boundConfig stores a config of the customer's carrying bindings.
 func (s *StoreSuite) boundConfig(customerID string, bindings ...ConnectorBinding) AgentConfig {
@@ -71,6 +74,65 @@ func (s *StoreSuite) TestAnUpdateKeepsABindingAForcedDeleteLeftBehind() {
 	s.Require().NoError(err)
 	s.Equal("be brief", read.Instructions)
 	s.Equal([]ConnectorBinding{fixed(connection.ID)}, read.Connectors)
+}
+
+// TestAnEditCommittedWhileABindingWaitsIsKept: another writer holds the config row with an
+// uncommitted edit of another column; AddConnectorBinding waits for its lock, and once the edit
+// commits, both it and the binding are there.
+func (s *StoreSuite) TestAnEditCommittedWhileABindingWaitsIsKept() {
+	config := s.boundConfig("acme-app")
+	binding := fixed(s.connection("acme-app", nil).ID)
+	tx, err := s.store.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	// A failed wait below still lets the binding finish; after the commit this does nothing.
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(s.ctx, "UPDATE agent_configs SET instructions = 'edited meanwhile' WHERE id = ?", config.ID)
+	s.Require().NoError(err)
+
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := s.store.AddConnectorBinding(s.ctx, "acme-app", config.ID, binding)
+		done <- err
+	}()
+	s.Require().Eventually(func() bool {
+		var waiting int
+		s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+			"SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'").Scan(&waiting))
+		return waiting > 0
+	}, 5*time.Second, 10*time.Millisecond, "the binding waits on the edit's row lock")
+	s.Require().NoError(tx.Commit())
+	s.Require().NoError(<-done)
+
+	read, err := s.store.AgentConfig(s.ctx, "acme-app", config.ID)
+	s.Require().NoError(err)
+	s.Equal("edited meanwhile", read.Instructions)
+	s.Equal([]ConnectorBinding{binding}, read.Connectors)
+}
+
+// TestABindingIsAddedOnceAndOnlyToALiveConnection: a second binding of the same name adds
+// nothing, and a fixed binding to a connection that is not live is refused.
+func (s *StoreSuite) TestABindingIsAddedOnceAndOnlyToALiveConnection() {
+	config := s.boundConfig("acme-app")
+	binding := fixed(s.connection("acme-app", nil).ID)
+
+	after, added, err := s.store.AddConnectorBinding(s.ctx, "acme-app", config.ID, binding)
+	s.Require().NoError(err)
+	_, again, err := s.store.AddConnectorBinding(s.ctx, "acme-app", config.ID, binding)
+	s.Require().NoError(err)
+
+	s.True(added)
+	s.False(again)
+	s.Equal(config.Name, after.Name)
+	read, err := s.store.AgentConfig(s.ctx, "acme-app", config.ID)
+	s.Require().NoError(err)
+	s.Equal([]ConnectorBinding{binding}, read.Connectors)
+
+	deleted := s.connection("acme-app", nil)
+	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, "acme-app", deleted.ID))
+	gone := fixed(deleted.ID)
+	gone.Name = "gone"
+	_, _, err = s.store.AddConnectorBinding(s.ctx, "acme-app", config.ID, gone)
+	s.ErrorIs(err, ErrNoConnectorConnection)
 }
 
 func (s *StoreSuite) TestAConfigWithoutBindingsStoresAnEmptyList() {
