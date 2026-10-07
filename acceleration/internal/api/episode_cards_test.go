@@ -240,6 +240,50 @@ func (s *EpisodeCardsSuite) TestACallsCardIsSummarizedWhenTheCallEnds() {
 	s.Equal(store.EpisodeSummarized, custom["status"])
 }
 
+// The summary is written off the hook: Stream has its 200 while the model is still writing,
+// and the episode is ended until the summary lands.
+func (s *EpisodeCardsSuite) TestTheCallHookAnswersBeforeTheSummaryIsWritten() {
+	s.config = s.agentConfigOn(true, "holding/holding-model")
+	call := s.called("sip-" + s.number)
+	omni := s.omniChannel(s.number)
+	s.cards(omni, 1)
+	episode := s.callEpisode(call)
+	s.say(call, "sip-"+s.number, "I need to move my appointment to Tuesday")
+	s.holding.holds()
+	s.T().Cleanup(s.holding.answers)
+	request := s.request(phone.CallHookPath, s.sessionEnded(call), sign(s.sessionEnded(call), suiteStreamSecret))
+	answered := make(chan int, 1)
+	go func() {
+		response, err := s.server.Client().Do(request)
+		if err != nil {
+			answered <- 0
+			return
+		}
+		_ = response.Body.Close()
+		answered <- response.StatusCode
+	}()
+
+	select {
+	case status := <-answered:
+		s.Equal(http.StatusOK, status)
+	case <-time.After(settleFor):
+		s.Fail("the hook waited for the summary")
+	}
+	s.Require().Eventually(func() bool {
+		for _, asked := range s.holding.requests() {
+			if asked.ID == "summary-"+episode {
+				return true
+			}
+		}
+		return false
+	}, settleFor, 10*time.Millisecond, "the summary was asked for")
+	s.Equal(store.EpisodeEnded, s.episodeStatus(episode), "the model has not answered yet")
+
+	s.holding.answers()
+
+	s.Require().Eventually(func() bool { return s.episodeStatus(episode) == store.EpisodeSummarized }, settleFor, 10*time.Millisecond)
+}
+
 // Before T55 the call.session_ended hook released the call's trunks and answered 200 with no
 // body. A call under a config that did not turn the cards on has no episode, so the hook
 // answers the same, writes no row and asks nothing of Stream.

@@ -3,9 +3,13 @@
 package store
 
 import (
+	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/uptrace/bun"
 )
 
 // episodeOf is a thread episode of the acme-app customer for a contact, which a test changes
@@ -369,6 +373,149 @@ func (s *StoreSuite) TestAnyEpisodeCardsIsWhetherAConfigTurnedThemOn() {
 	any, err = s.store.AnyEpisodeCards(s.ctx)
 	s.Require().NoError(err)
 	s.False(any, "a deleted config writes no card")
+}
+
+// A message being written holds its episode open: a sweep that runs meanwhile leaves it to
+// the message, however long it has been since the one before.
+func (s *StoreSuite) TestAnEpisodeAMessageIsTouchingIsNotClosed() {
+	person := s.mapped("+15550100")
+	episode := s.threadAt(person, "agent:thread-one", s.base)
+	s.threadAt(person, "agent:thread-one", s.base.Add(time.Minute))
+	touching, err := s.store.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = touching.Rollback() }()
+	now := s.base.Add(2 * time.Hour)
+	var touched Episode
+	s.Require().NoError(touching.NewRaw(touchThreadEpisodeQuery, "acme-app", "agent:thread-one", now).Scan(s.ctx, &touched))
+	s.Require().Equal(episode.ID, touched.ID, "the message found the episode open")
+	// A sweep that waited for the episode would wait until the message commits.
+	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
+	defer cancel()
+
+	closed, err := s.store.CloseIdleEpisodes(ctx, now.Add(-time.Hour), now, 50, now.Add(5*time.Minute))
+
+	s.Require().NoError(err, "the sweep waited for the message")
+	s.Empty(closed, "the sweep closed an episode a message was touching")
+	s.Require().NoError(touching.Commit())
+	s.Empty(s.closeIdle(s.store, now), "the message keeps the episode open")
+	s.Equal(episodeInProgress, s.episodeStatus(episode.ID))
+}
+
+// A sweep's batch is idle episodes only: a thread that started earlier but is still talking
+// takes no place in it.
+func (s *StoreSuite) TestASweepsBatchHoldsOnlyIdleEpisodes() {
+	person := s.mapped("+15550100")
+	s.threadAt(person, "agent:thread-talking", s.base)
+	s.threadAt(person, "agent:thread-talking", s.base.Add(100*time.Minute))
+	idle := s.threadAt(person, "agent:thread-idle", s.base.Add(time.Minute))
+	now := s.base.Add(2 * time.Hour)
+
+	closed, err := s.store.CloseIdleEpisodes(s.ctx, now.Add(-time.Hour), now, 1, now.Add(5*time.Minute))
+
+	s.Require().NoError(err)
+	s.Require().Len(closed, 1)
+	s.Equal(idle.ID, closed[0].ID)
+}
+
+// A router that is taking an episode's summary holds its lease until it commits. Another
+// sweep leaves it to that router rather than waiting for it.
+func (s *StoreSuite) TestALeaseAnotherRouterIsTakingIsLeftToIt() {
+	episode := s.threadAt(s.mapped("+15550100"), "agent:thread-one", s.base)
+	closedAt := s.base.Add(time.Hour)
+	s.closeIdle(s.store, closedAt)
+	late := closedAt.Add(6 * time.Minute)
+	taking, err := s.store.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = taking.Rollback() }()
+	_, err = taking.ExecContext(s.ctx, "UPDATE episode_activity SET summary_lease_until = ? WHERE episode_id = ?", late.Add(5*time.Minute), episode.ID)
+	s.Require().NoError(err)
+
+	// A claim that waited for the lease would wait until the other router commits.
+	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
+	defer cancel()
+
+	taken, err := s.store.ClaimEpisodeSummaries(ctx, late, 10, late.Add(5*time.Minute))
+
+	s.Require().NoError(err, "the claim waited for the other router")
+	s.Empty(taken)
+}
+
+// previousEpisode is store.Episode as the release before episode_activity has it
+// (accelerate-v0.6.23, internal/store/episodes.go), which reads the cards with ep.*.
+type previousEpisode struct {
+	bun.BaseModel `bun:"table:episodes,alias:ep"`
+
+	ID            string     `bun:"id,pk"`
+	CustomerID    string     `bun:"customer_id,notnull"`
+	ContactID     string     `bun:"contact_id,notnull"`
+	Source        string     `bun:"source,notnull"`
+	ThreadChannel string     `bun:"thread_channel,notnull"`
+	CallID        string     `bun:"call_id,nullzero"`
+	SessionID     string     `bun:"session_id,nullzero"`
+	CardMessageID string     `bun:"card_message_id,notnull"`
+	Status        string     `bun:"status,notnull"`
+	StartedAt     time.Time  `bun:"started_at,notnull"`
+	EndedAt       *time.Time `bun:"ended_at"`
+	StreamAppPK   int64      `bun:"stream_app_pk,nullzero"`
+	CreatedAt     time.Time  `bun:"created_at,notnull,default:current_timestamp"`
+}
+
+// previousCard is store.EpisodeCard as that release has it.
+type previousCard struct {
+	previousEpisode `bun:",extend"`
+	Until           *time.Time `bun:"until,scanonly"`
+	ContactKind     string     `bun:"contact_kind,scanonly"`
+	ContactAddress  string     `bun:"contact_address,scanonly"`
+}
+
+// A router of the previous release still serving once this one migrated, in a rollout or a
+// rollback, reads the cards as it did: closing an episode adds no column to episodes, which
+// that release's ep.* would refuse.
+func (s *StoreSuite) TestThePreviousReleaseStillReadsTheCards() {
+	person := s.mapped("+15550100")
+	s.threadAt(person, "agent:thread-one", s.base)
+	s.threadAt(person, "agent:thread-one", s.base.Add(time.Minute))
+	s.closeIdle(s.store, s.base.Add(2*time.Hour))
+	s.threadAt(person, "agent:thread-two", s.base.Add(3*time.Hour))
+	s.threadAt(person, "agent:thread-two", s.base.Add(3*time.Hour+time.Minute))
+
+	// accelerate-v0.6.23's store.EpisodeCards, word for word.
+	var cards []previousCard
+	err := s.store.db.NewSelect().Model(&cards).
+		ColumnExpr("ep.*").
+		ColumnExpr("cm.kind AS contact_kind, cm.address AS contact_address").
+		ColumnExpr(`LEAST(ep.ended_at, asn.closed_at, (SELECT min(nx.started_at) FROM episodes AS nx
+			WHERE nx.customer_id = ep.customer_id AND nx.thread_channel = ep.thread_channel
+			AND nx.started_at > ep.started_at)) AS until`).
+		Join("JOIN contact_map AS cm ON cm.id = ep.contact_id").
+		Join("LEFT JOIN agent_sessions AS asn ON asn.id = ep.session_id AND asn.customer_id = ep.customer_id").
+		Where("ep.customer_id = ?", "acme-app").
+		Where("cm.customer_id = ?", "acme-app").
+		Where("cm.agent_config_id = ?", "agent-one").
+		Where("cm.conversation_id = ?", "agent:omni-+15550100").
+		Where("ep.thread_channel <> ?", "").
+		Where("ep.session_id IS DISTINCT FROM ?", "").
+		OrderExpr("ep.started_at DESC").
+		Limit(10).
+		Scan(s.ctx)
+
+	s.Require().NoError(err)
+	s.Len(cards, 2)
+}
+
+// The call hook ends a call's episodes for every call that ends in the app, video calls
+// included, so it finds them by an index rather than by reading every episode.
+func (s *StoreSuite) TestACallsEpisodesAreFoundByTheirCall() {
+	var plan []string
+	err := s.store.db.RunInTx(s.ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SET LOCAL enable_seqscan = off"); err != nil {
+			return err
+		}
+		return tx.NewRaw("EXPLAIN "+endCallEpisodesQuery, s.base, "call-one", AppScope{App: 4242}.clause(), s.base).Scan(ctx, &plan)
+	})
+
+	s.Require().NoError(err)
+	s.Contains(strings.Join(plan, "\n"), "episodes_open_call")
 }
 
 // episodeRows is how many episodes there are.

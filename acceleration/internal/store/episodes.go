@@ -56,13 +56,6 @@ type Episode struct {
 	Status        string     `bun:"status,notnull"`
 	StartedAt     time.Time  `bun:"started_at,notnull"`
 	EndedAt       *time.Time `bun:"ended_at"`
-	// LastMessageAt is when the latest message of a thread episode came in; nil on a call
-	// and on a row from before it was kept, which reads as StartedAt
-	// (20261008130000_episodes_close.sql).
-	LastMessageAt *time.Time `bun:"last_message_at"`
-	// SummaryLeaseUntil is until when the router that closed the episode, or took it
-	// again, has it to summarize; nil once its summary is written or failed.
-	SummaryLeaseUntil *time.Time `bun:"summary_lease_until"`
 	// StreamAppPK is the Stream app the omni-channel is in; zero, stored as NULL, is the
 	// deployment's own.
 	StreamAppPK int64     `bun:"stream_app_pk,nullzero"`
@@ -74,11 +67,12 @@ type Episode struct {
 // opened it, and so whether its card is still to be written. Two first messages of one
 // thread at once open one episode: the unique indexes decide which.
 //
-// Each message of a thread is the thread's last one for now, so it sets the episode's
-// LastMessageAt to StartedAt's time, which keeps the episode from closing as idle
-// (CloseIdleEpisodes). The touch finds the episode open, or misses it, in one statement: an
-// episode the idle sweeper closed after the insert found it open is missed, and the message
-// opens the next one.
+// Each message of a thread is the thread's last one for now, so a message that finds the
+// episode open sets its last_message_at (episode_activity, 20261008140000_episodes_close.sql)
+// to StartedAt's time, which keeps the episode from closing as idle (CloseIdleEpisodes); the
+// first message is its started_at. The touch finds the episode open, or misses it, in one
+// statement, and holds its row against a close until it commits: an episode the idle sweeper
+// closed after the insert found it open is missed, and the message opens the next one.
 func (s *Store) OpenEpisode(ctx context.Context, episode *Episode) (opened bool, err error) {
 	if episode.CustomerID == "" || episode.ContactID == "" || episode.Source == "" || episode.ThreadChannel == "" {
 		return false, stack.Wrap(errors.New("store: a customer, a contact, a source and a thread channel are required"))
@@ -97,10 +91,7 @@ func (s *Store) OpenEpisode(ctx context.Context, episode *Episode) (opened bool,
 		episode.StartedAt = time.Now()
 	}
 	episode.StartedAt = episode.StartedAt.UTC().Truncate(time.Microsecond)
-	if episode.SessionID == "" {
-		at := episode.StartedAt
-		episode.LastMessageAt = &at
-	}
+	at := episode.StartedAt
 	// Twice at most: a second miss is the thread's episode closed and another opened between
 	// the insert and the touch, twice over.
 	for range 2 {
@@ -123,14 +114,7 @@ func (s *Store) OpenEpisode(ctx context.Context, episode *Episode) (opened bool,
 			}
 			return false, nil
 		}
-		err = s.db.NewUpdate().Model((*Episode)(nil)).
-			Set("last_message_at = ?", episode.LastMessageAt).
-			Where("customer_id = ?", episode.CustomerID).
-			Where("thread_channel = ?", episode.ThreadChannel).
-			Where("status = ?", episodeInProgress).
-			Where("session_id IS NULL").
-			Returning("*").
-			Scan(ctx, episode)
+		err = s.db.NewRaw(touchThreadEpisodeQuery, episode.CustomerID, episode.ThreadChannel, at).Scan(ctx, episode)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
@@ -142,45 +126,78 @@ func (s *Store) OpenEpisode(ctx context.Context, episode *Episode) (opened bool,
 	return false, stack.Wrap(errors.New("store: open episode: the thread's episode closed twice while a message opened it"))
 }
 
-// ClosedEpisode is an episode a closer holds to summarize: the episode and, from its contact
-// map row, the omni-channel its card is in, the agent config whose LLM writes the summary and
-// how the person is known, which a call's lines are checked against.
+// touchThreadEpisodeQuery sets the last message of the thread's episode in progress, and
+// reads the episode. open holds the episode's row until the message commits, so a sweep
+// skips it meanwhile (closeIdleEpisodesQuery), and a touch that waited for a close finds the
+// episode no longer open.
+const touchThreadEpisodeQuery = `
+WITH open AS (
+    SELECT id FROM episodes
+    WHERE customer_id = ? AND thread_channel = ? AND status = 'in_progress' AND session_id IS NULL
+    FOR SHARE
+), touched AS (
+    INSERT INTO episode_activity (episode_id, last_message_at)
+    SELECT id, ? FROM open
+    ON CONFLICT (episode_id) DO UPDATE SET last_message_at = excluded.last_message_at
+    RETURNING episode_id
+)
+SELECT ep.* FROM episodes AS ep JOIN touched ON touched.episode_id = ep.id`
+
+// ClosedEpisode is an episode a closer holds to summarize: the episode, until when it holds
+// it (episode_activity, 20261008140000_episodes_close.sql) and, from its contact map row, the
+// omni-channel its card is in, the agent config whose LLM writes the summary and how the
+// person is known, which a call's lines are checked against.
 type ClosedEpisode struct {
-	Episode        `bun:",extend"`
-	ConversationID string `bun:"conversation_id,scanonly"`
-	AgentConfigID  string `bun:"agent_config_id,scanonly"`
-	ContactKind    string `bun:"contact_kind,scanonly"`
-	ContactAddress string `bun:"contact_address,scanonly"`
+	Episode `bun:",extend"`
+	// SummaryLeaseUntil is until when the router that closed the episode, or took it again,
+	// has it to summarize.
+	SummaryLeaseUntil *time.Time `bun:"summary_lease_until,scanonly"`
+	ConversationID    string     `bun:"conversation_id,scanonly"`
+	AgentConfigID     string     `bun:"agent_config_id,scanonly"`
+	ContactKind       string     `bun:"contact_kind,scanonly"`
+	ContactAddress    string     `bun:"contact_address,scanonly"`
 }
 
-// closedWithContact ends each statement that closes or takes episodes: the rows the CTE
-// closed changed, with their contact map row.
-const closedWithContact = `
-SELECT closed.*, cm.conversation_id, cm.agent_config_id, cm.kind AS contact_kind, cm.address AS contact_address
-FROM closed JOIN contact_map AS cm ON cm.id = closed.contact_id`
+// leasedWithContact ends each statement that closes episodes: the closed CTE's rows are
+// leased to this router until the one argument it takes, and read with their lease and their
+// contact map row.
+const leasedWithContact = `, leased AS (
+    INSERT INTO episode_activity (episode_id, summary_lease_until)
+    SELECT id, ? FROM closed
+    ON CONFLICT (episode_id) DO UPDATE SET summary_lease_until = excluded.summary_lease_until
+    RETURNING episode_id, summary_lease_until
+)
+SELECT closed.*, leased.summary_lease_until,
+    cm.conversation_id, cm.agent_config_id, cm.kind AS contact_kind, cm.address AS contact_address
+FROM closed
+JOIN leased ON leased.episode_id = closed.id
+JOIN contact_map AS cm ON cm.id = closed.contact_id`
 
-// closeIdleEpisodesQuery closes at most limit thread episodes whose last message, or whose
-// start while they have none, is at or before the idle cutoff. due locks the rows it takes
-// and skips the ones another router holds; the update checks the status and the last
-// message again on the row it locked, as claimConnectionEventSubscriptionsQuery does. An
-// episode another router closed, or a message touched, after the statement started is left
-// alone, so each episode is closed once, by one router.
+// idleEpisodesQuery locks at most limit thread episodes whose last message, or whose start
+// while they have none, is at or before the idle cutoff, and skips the ones another router,
+// or a message (touchThreadEpisodeQuery), holds.
+const idleEpisodesQuery = `
+SELECT ep.id FROM episodes AS ep
+LEFT JOIN episode_activity AS act ON act.episode_id = ep.id
+WHERE ep.status = 'in_progress' AND ep.session_id IS NULL
+  AND COALESCE(act.last_message_at, ep.started_at) <= ?
+ORDER BY ep.started_at
+LIMIT ?
+FOR UPDATE OF ep SKIP LOCKED`
+
+// closeIdleEpisodesQuery closes the episodes idleEpisodesQuery locked, which no other router
+// can close meanwhile, so each episode is closed once, by one router. It is a statement of
+// its own, so it reads the last messages as they are once the rows are locked: it checks the
+// last message again, and leaves alone an episode a message touched after idleEpisodesQuery
+// started.
 const closeIdleEpisodesQuery = `
-WITH due AS (
-    SELECT id FROM episodes
-    WHERE status = 'in_progress' AND session_id IS NULL
-      AND COALESCE(last_message_at, started_at) <= ?
-    ORDER BY started_at
-    LIMIT ?
-    FOR UPDATE SKIP LOCKED
-), closed AS (
+WITH closed AS (
     UPDATE episodes AS ep
-    SET status = 'ended', ended_at = ?, summary_lease_until = ?
-    FROM due
-    WHERE ep.id = due.id AND ep.status = 'in_progress'
-      AND COALESCE(ep.last_message_at, ep.started_at) <= ?
+    SET status = 'ended', ended_at = ?
+    WHERE ep.id IN (?)
+      AND COALESCE((SELECT act.last_message_at FROM episode_activity AS act WHERE act.episode_id = ep.id), ep.started_at) <= ?
     RETURNING ep.*
-)` + closedWithContact
+)` + leasedWithContact
 
 // CloseIdleEpisodes ends, at now, at most limit thread episodes of any customer with no
 // message since idleSince, each leased to this router for its summary until leaseUntil. A
@@ -190,8 +207,16 @@ func (s *Store) CloseIdleEpisodes(ctx context.Context, idleSince, now time.Time,
 	if limit < 1 {
 		return closed, nil
 	}
-	err := s.db.NewRaw(closeIdleEpisodesQuery, idleSince.UTC(), limit, now.UTC(), leaseUntil.UTC(), idleSince.UTC()).
-		Scan(ctx, &closed)
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var due []string
+		if err := tx.NewRaw(idleEpisodesQuery, idleSince.UTC(), limit).Scan(ctx, &due); err != nil {
+			return err
+		}
+		if len(due) == 0 {
+			return nil
+		}
+		return tx.NewRaw(closeIdleEpisodesQuery, now.UTC(), bun.In(due), idleSince.UTC(), leaseUntil.UTC()).Scan(ctx, &closed)
+	})
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: close idle episodes: %w", err))
 	}
@@ -200,14 +225,15 @@ func (s *Store) CloseIdleEpisodes(ctx context.Context, idleSince, now time.Time,
 
 // endCallEpisodesQuery ends the call episodes still in progress of one call in one app. The
 // status is checked on the row the update locks, so the event delivered twice, to two
-// routers, ends each episode once.
+// routers, ends each episode once. session_id IS NOT NULL is every call episode
+// (20261007042100_episodes.sql), named so episodes_open_call finds them.
 const endCallEpisodesQuery = `
 WITH closed AS (
     UPDATE episodes
-    SET status = 'ended', ended_at = ?, summary_lease_until = ?
-    WHERE source = 'call' AND call_id = ? AND status = 'in_progress' AND (?)
+    SET status = 'ended', ended_at = ?
+    WHERE source = 'call' AND session_id IS NOT NULL AND call_id = ? AND status = 'in_progress' AND (?)
     RETURNING *
-)` + closedWithContact
+)` + leasedWithContact
 
 // EndCallEpisodes ends, at now, the episodes in progress of the call callID in the app scope
 // names, each leased to this router for its summary until leaseUntil. A call id is unique
@@ -219,7 +245,7 @@ func (s *Store) EndCallEpisodes(ctx context.Context, scope AppScope, callID stri
 	if callID == "" {
 		return closed, nil
 	}
-	err := s.db.NewRaw(endCallEpisodesQuery, now.UTC(), leaseUntil.UTC(), callID, scope.clause()).Scan(ctx, &closed)
+	err := s.db.NewRaw(endCallEpisodesQuery, now.UTC(), callID, scope.clause(), leaseUntil.UTC()).Scan(ctx, &closed)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: end call episodes: %w", err))
 	}
@@ -227,23 +253,29 @@ func (s *Store) EndCallEpisodes(ctx context.Context, scope AppScope, callID stri
 }
 
 // claimEpisodeSummariesQuery takes at most limit ended episodes whose summary lease ran out:
-// a router closed them and stopped before it wrote their summary. due locks the rows it takes
-// and skips the ones another router holds; the update checks the lease again on the row it
-// locked.
+// a router closed them and stopped before it wrote their summary. Only an ended episode has a
+// lease: closing sets both, and finishing drops both (FinishEpisodeSummary). due locks the
+// leases it takes and skips the ones another router holds; one that another router took or
+// finished after the statement started is checked again as it locks it, and left alone.
 const claimEpisodeSummariesQuery = `
 WITH due AS (
-    SELECT id FROM episodes
-    WHERE status = 'ended' AND summary_lease_until <= ?
+    SELECT episode_id FROM episode_activity
+    WHERE summary_lease_until <= ?
     ORDER BY summary_lease_until
     LIMIT ?
     FOR UPDATE SKIP LOCKED
-), closed AS (
-    UPDATE episodes AS ep
+), leased AS (
+    UPDATE episode_activity AS act
     SET summary_lease_until = ?
     FROM due
-    WHERE ep.id = due.id AND ep.status = 'ended' AND ep.summary_lease_until <= ?
-    RETURNING ep.*
-)` + closedWithContact
+    WHERE act.episode_id = due.episode_id
+    RETURNING act.episode_id, act.summary_lease_until
+)
+SELECT ep.*, leased.summary_lease_until,
+    cm.conversation_id, cm.agent_config_id, cm.kind AS contact_kind, cm.address AS contact_address
+FROM leased
+JOIN episodes AS ep ON ep.id = leased.episode_id
+JOIN contact_map AS cm ON cm.id = ep.contact_id`
 
 // ClaimEpisodeSummaries takes at most limit ended episodes whose summary lease ran out at now,
 // each leased to this router until leaseUntil.
@@ -252,12 +284,23 @@ func (s *Store) ClaimEpisodeSummaries(ctx context.Context, now time.Time, limit 
 	if limit < 1 {
 		return claimed, nil
 	}
-	err := s.db.NewRaw(claimEpisodeSummariesQuery, now.UTC(), limit, leaseUntil.UTC(), now.UTC()).Scan(ctx, &claimed)
+	err := s.db.NewRaw(claimEpisodeSummariesQuery, now.UTC(), limit, leaseUntil.UTC()).Scan(ctx, &claimed)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: claim episode summaries: %w", err))
 	}
 	return claimed, nil
 }
+
+// finishEpisodeSummaryQuery sets an ended episode's status and drops its lease, in one
+// statement.
+const finishEpisodeSummaryQuery = `
+WITH finished AS (
+    UPDATE episodes SET status = ?
+    WHERE customer_id = ? AND id = ? AND status = 'ended'
+    RETURNING id
+)
+UPDATE episode_activity AS act SET summary_lease_until = NULL
+FROM finished WHERE act.episode_id = finished.id`
 
 // FinishEpisodeSummary sets an ended episode summarized or summary_failed and drops its
 // lease. An episode no longer ended, finished already, is left as it is.
@@ -265,13 +308,7 @@ func (s *Store) FinishEpisodeSummary(ctx context.Context, customerID, id, status
 	if status != EpisodeSummarized && status != EpisodeSummaryFailed {
 		return stack.Wrap(fmt.Errorf("store: %q is not a status a summary finishes with", status))
 	}
-	_, err := s.db.NewUpdate().Model((*Episode)(nil)).
-		Set("status = ?", status).
-		Set("summary_lease_until = NULL").
-		Where("customer_id = ?", customerID).
-		Where("id = ?", id).
-		Where("status = ?", EpisodeEnded).
-		Exec(ctx)
+	_, err := s.db.NewRaw(finishEpisodeSummaryQuery, status, customerID, id).Exec(ctx)
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: finish episode summary: %w", err))
 	}

@@ -64,7 +64,9 @@ func (s *EpisodeSweeperSuite) SetupTest() {
 	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE agent_configs SET episode_cards = false")
 	s.Require().NoError(err)
 	_, err = s.store.DB().ExecContext(s.ctx,
-		"UPDATE episodes SET status = 'summary_failed', summary_lease_until = NULL WHERE status IN ('in_progress', 'ended')")
+		"UPDATE episodes SET status = 'summary_failed' WHERE status IN ('in_progress', 'ended')")
+	s.Require().NoError(err)
+	_, err = s.store.DB().ExecContext(s.ctx, "UPDATE episode_activity SET summary_lease_until = NULL")
 	s.Require().NoError(err)
 	s.settings.Connectors.Enabled = false
 

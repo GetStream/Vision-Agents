@@ -71,10 +71,12 @@ type CloserOptions struct {
 	// IdleAfter is how long a thread episode goes without a message before it closes
 	// (config.Episodes.IdleAfter). Required.
 	IdleAfter time.Duration
-	// Every is how often the sweeper looks, and Lease how long a router has to summarize an
-	// episode it closed. Zero is sweepEvery and summaryLease; a test sets them shorter.
-	Every time.Duration
-	Lease time.Duration
+	// Every is how often the sweeper looks, Lease how long a router has to summarize an
+	// episode it closed, and SummaryTimeout how long one summary may take. Zero is
+	// sweepEvery, summaryLease and summaryTimeout; a test sets them shorter.
+	Every          time.Duration
+	Lease          time.Duration
+	SummaryTimeout time.Duration
 	// Logger is slog.Default when nil.
 	Logger *slog.Logger
 }
@@ -90,7 +92,7 @@ type CloserOptions struct {
 // message.updated «when a message is updated» and message.new only «when a new message is
 // added on a channel» (https://getstream.io/chat/docs/go-golang/event_object/); the message
 // hook asks for message.new only (chat.messageHookEvents), so no update of a card reaches it. Several routers close and summarize each episode once: the store closes each
-// with one statement that one of them wins (store.CloseIdleEpisodes, store.EndCallEpisodes),
+// in one transaction that one of them wins (store.CloseIdleEpisodes, store.EndCallEpisodes),
 // and leases its summary to the winner.
 type Closer struct {
 	store  *store.Store
@@ -99,7 +101,9 @@ type Closer struct {
 	idle   time.Duration
 	every  time.Duration
 	lease  time.Duration
-	logger *slog.Logger
+	// timeout bounds one summary.
+	timeout time.Duration
+	logger  *slog.Logger
 
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -114,12 +118,15 @@ func NewCloser(options CloserOptions) (*Closer, error) {
 	if options.IdleAfter <= 0 {
 		return nil, stack.Wrap(fmt.Errorf("omnichannel: the idle period must be positive, got %s", options.IdleAfter))
 	}
-	every, lease := options.Every, options.Lease
+	every, lease, timeout := options.Every, options.Lease, options.SummaryTimeout
 	if every <= 0 {
 		every = sweepEvery
 	}
 	if lease <= 0 {
 		lease = summaryLease
+	}
+	if timeout <= 0 {
+		timeout = summaryTimeout
 	}
 	logger := options.Logger
 	if logger == nil {
@@ -128,7 +135,7 @@ func NewCloser(options CloserOptions) (*Closer, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Closer{
 		store: options.Store, stream: options.Stream, llm: options.LLM, idle: options.IdleAfter,
-		every: every, lease: lease, logger: logger, ctx: ctx, cancel: cancel,
+		every: every, lease: lease, timeout: timeout, logger: logger, ctx: ctx, cancel: cancel,
 	}, nil
 }
 
@@ -216,7 +223,7 @@ func (c *Closer) finish(ctx context.Context, closed, left []store.ClosedEpisode)
 // summarize writes an ended episode's summary into its card and sets it summarized, or sets
 // it summary_failed. Stopping leaves it ended, for its lease to run out.
 func (c *Closer) summarize(parent context.Context, episode store.ClosedEpisode) {
-	ctx, cancel := context.WithTimeout(parent, summaryTimeout)
+	ctx, cancel := context.WithTimeout(parent, c.timeout)
 	defer cancel()
 	status := store.EpisodeSummarized
 	err := c.write(ctx, episode)

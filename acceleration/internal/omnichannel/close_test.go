@@ -73,7 +73,9 @@ func (s *CloserSuite) SetupTest() {
 	// A sweep takes every customer's episodes, so an earlier test's, or an earlier run's,
 	// left open or ended would be swept with this test's. The database is the suite's own.
 	_, err := s.store.DB().ExecContext(s.ctx,
-		"UPDATE episodes SET status = 'summary_failed', summary_lease_until = NULL WHERE status IN ('in_progress', 'ended')")
+		"UPDATE episodes SET status = 'summary_failed' WHERE status IN ('in_progress', 'ended')")
+	s.Require().NoError(err)
+	_, err = s.store.DB().ExecContext(s.ctx, "UPDATE episode_activity SET summary_lease_until = NULL")
 	s.Require().NoError(err)
 	s.chat = chattest.NewServer(s.T())
 	s.apps = streamapp.NewClients(streamapp.NewDeployment(streamapp.DeploymentOptions{
@@ -335,6 +337,33 @@ func (s *CloserSuite) TestARouterStoppingMidSummaryLeavesTheEpisodeEnded() {
 	s.Equal(store.EpisodeEnded, s.status(opened))
 	custom, _ := s.card(opened)["custom"].(map[string]any)
 	s.Equal(store.EpisodeEnded, custom["status"])
+}
+
+// A summary is bounded: a model that never answers fails it once its time is up, and what is
+// left is still recorded, though the summary's own time ran out.
+func (s *CloserSuite) TestASummaryTheModelNeverAnswersFailsOnceItsTimeIsUp() {
+	s.fast.hold = true
+	closer, err := NewCloser(CloserOptions{
+		Store: s.store, Stream: s.apps, LLM: s.router, IdleAfter: time.Hour,
+		SummaryTimeout: 200 * time.Millisecond, Logger: slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(closer.Close)
+	opened, thread := s.idleThread("where is my order 12?")
+	before := s.chat.Stored(thread)
+	// Far longer than the summary's time: a summary bounded by this only fails to finish.
+	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
+	defer cancel()
+
+	s.Require().NoError(closer.Sweep(ctx))
+
+	s.Require().NoError(ctx.Err(), "the summary ran until the sweep's own time ran out")
+	s.Equal(store.EpisodeSummaryFailed, s.status(opened))
+	card := s.card(opened)
+	custom, _ := card["custom"].(map[string]any)
+	s.Equal(store.EpisodeSummaryFailed, custom["status"])
+	s.Equal(cardText, card["text"])
+	s.Equal(before, s.chat.Stored(thread), "the raw thread is as it was")
 }
 
 // summarizer is a model that answers every request with reply, fails it, or holds it until
