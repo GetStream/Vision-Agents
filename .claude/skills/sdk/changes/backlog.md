@@ -1,26 +1,29 @@
 ---
 pending: [js, swift, kotlin, dart]
-split: 0f7ed337aa147c18b2f49f9ebcde6f5ba672846f
 ---
 
 # Backlog
 
 This is the queue that was at the bottom of the sdk skill and not yet in
-`sdks/go/.sdk_update_log/SKILL.md` when the notes moved out, at `0f7ed337`.
-It is a snapshot of that moment. Do not append to it. New notes are their own
-file in this directory; the format is under "SDK updates" in the sdk skill.
+`sdks/go/.sdk_update_log/SKILL.md` when the notes moved out. It is a snapshot
+of that moment. Do not append to it. New notes are their own file in this
+directory; the format is under "SDK updates" in the sdk skill.
 
 `pending` is the work an OpenAPI diff does not carry. Swift, Kotlin, and Dart
 are on it, and so is `js` for the browser client. A port of one of those reads
-the paragraphs that name it, does that work, and then removes its name. Server
-SDKs are not on this list; they still read the file while it exists.
+the paragraphs that name it, does that work, and then removes its name. Step 4
+of a generated-client update does not remove a name from this file: `js` stays
+until the browser client has drawn the `plugin_authorization` button and left
+`connector_authorization` unrendered. Server SDKs are not on this list; they
+still read the file while it exists.
 
 Delete this file only when `pending` is empty and every server SDK's
-`openapi.yaml` snapshot is at or after `0f7ed337`. A checkout gives every
-snapshot the same mtime, so compare commits:
+`openapi.yaml` snapshot was committed with or after the commit that last
+changed this file. A squash does not keep an earlier SHA, so take it from git.
+A checkout gives every snapshot the same mtime, so compare commits:
 
 ```
-git merge-base --is-ancestor 0f7ed337 "$(git log -1 --format=%H -- <sdk>/.sdk_update_log/openapi.yaml)"
+git merge-base --is-ancestor "$(git log -1 --format=%H -- .claude/skills/sdk/changes/backlog.md)" "$(git log -1 --format=%H -- <sdk>/.sdk_update_log/openapi.yaml)"
 ```
 
 The server snapshots are `sdks/go`, `sdks/js`, `plugins/stream`, `sdks/dotnet`,

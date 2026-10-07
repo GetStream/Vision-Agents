@@ -81,14 +81,16 @@ empty. Python's log is `plugins/stream/.sdk_update_log/`; the others are
 `sdks/<lang>/.sdk_update_log/`.
 
 `changes/backlog.md` is the queue that sat at the bottom of this file when the
-notes moved out, at `0f7ed337`. Read it while it exists, and do not append to
-it. Its `pending` is the client work an OpenAPI diff does not carry. Delete it
-only when that list is empty and every server SDK's `openapi.yaml` snapshot is
-at or after that commit. A checkout gives every snapshot the same mtime, so
-compare commits, not mtimes:
+notes moved out. Read it while it exists, and do not append to it. Its
+`pending` is the client work an OpenAPI diff does not carry. Delete it only
+when that list is empty and every server SDK's `openapi.yaml` snapshot was
+committed with or after the commit that last changed `changes/backlog.md`.
+Do not pin a SHA: a squash of the PR that added the file does not keep that
+commit. A checkout gives every snapshot the same mtime, so compare commits,
+not mtimes:
 
 ```
-git merge-base --is-ancestor 0f7ed337 "$(git log -1 --format=%H -- <sdk>/.sdk_update_log/openapi.yaml)"
+git merge-base --is-ancestor "$(git log -1 --format=%H -- .claude/skills/sdk/changes/backlog.md)" "$(git log -1 --format=%H -- <sdk>/.sdk_update_log/openapi.yaml)"
 ```
 
 The server snapshots are `sdks/go`, `sdks/js`, `plugins/stream`, `sdks/dotnet`,
@@ -99,7 +101,7 @@ To bring one SDK up to date:
 1. Diff `acceleration/api/openapi.yaml` against that SDK's `.sdk_update_log/openapi.yaml`.
 2. Read `changes/backlog.md` while it exists, and every other file in `changes/` whose `pending` names this SDK.
 3. Copy `openapi.yaml` into that `.sdk_update_log/`. Do not copy this skill.
-4. Remove this SDK from `pending` on each file that lists it. Delete a file only when its `pending` key is present and the list is empty. Do not delete `backlog.md` here.
+4. Remove this SDK from `pending` on each file that lists it, other than `changes/backlog.md`. Delete a file only when its `pending` key is present and the list is empty. Do not delete `backlog.md` here, and do not remove a name from it. `js` on that list is the browser client: it comes off only after the paragraphs that name the browser client are done, not when the generated client is regenerated.
 
 ## Client side SDKs
 

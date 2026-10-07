@@ -146,9 +146,10 @@ The queue is `.claude/skills/sdk/changes/` (see "SDK updates" in the sdk skill).
 2. Hand-written resources only change for a new behaviour, not a new field.
 3. Unit tests, PHPStan, then the live suite once.
 4. Copy `acceleration/api/openapi.yaml` byte for byte into `sdks/php/.sdk_update_log/`.
-   Do not copy the sdk skill. Remove `php` from `pending` where a file lists it.
+   Do not copy the sdk skill. Remove `php` from `pending` where a file lists it,
+   except `changes/backlog.md`: do not edit that list here.
    Delete a file only when its `pending` key is present and the list is empty.
-   `changes/backlog.md` has no `php` on its list and is not deleted from this step.
+   Do not delete `changes/backlog.md` from this step.
 
 ## Review checklist
 
