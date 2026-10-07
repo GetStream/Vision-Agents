@@ -505,8 +505,8 @@ func (s *AgentSuite) TestAToolsPreSpeechIsSaidInsteadOfTheAgentsOwnFiller() {
 	for _, phrase := range workingPhrases {
 		s.False(s.spokenText(phrase), "the agent said its own filler as well: %q", phrase)
 	}
-	started, ok := firstOf[ToolStarted](s.reported())
-	s.Require().True(ok)
+	s.eventually(func() bool { return countOf[ToolStarted](s.reported()) == 1 }, "the tool never started")
+	started, _ := firstOf[ToolStarted](s.reported())
 	s.Equal("Let me pull up your order.", started.PreSpeech)
 }
 
@@ -525,8 +525,8 @@ func (s *AgentSuite) TestAToolWithoutPreSpeechGetsTheAgentsOwnFillerAsBefore() {
 	s.says(participant, "where is my order")
 
 	s.eventually(func() bool { return s.spokenText(workingPhrases[0]) }, "the agent's own filler was not said")
-	started, ok := firstOf[ToolStarted](s.reported())
-	s.Require().True(ok)
+	s.eventually(func() bool { return countOf[ToolStarted](s.reported()) == 1 }, "the tool never started")
+	started, _ := firstOf[ToolStarted](s.reported())
 	s.Empty(started.PreSpeech)
 }
 
