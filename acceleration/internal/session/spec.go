@@ -516,6 +516,29 @@ func joinedCallID(id string) string {
 	return strings.TrimSpace(id)
 }
 
+// ConversationChannel is the id, without its type, of the agent channel ConversationID names:
+// the channel a call's transcript is written into (chatlog.Options.Channel). Empty for a
+// ConversationID that names no agent channel, whose transcript goes into the agent id's.
+func (s Spec) ConversationChannel() string {
+	channel := strings.TrimPrefix(s.ConversationID, streamapp.AgentChannelType+":")
+	if channel == s.ConversationID {
+		return ""
+	}
+	return channel
+}
+
+// TranscriptChannel is the cid of the channel a call's transcript is written into: the
+// conversation's agent channel, else the agent id's, as chatlog.New picks it from
+// ConversationChannel. Example: conversation_id "messaging:X" under agent id "front-desk" is
+// written into agent:front-desk.
+func (s Spec) TranscriptChannel() string {
+	channel := s.ConversationChannel()
+	if channel == "" {
+		channel = s.AgentID
+	}
+	return streamapp.AgentChannelType + ":" + channel
+}
+
 // Shared reports whether more than one verified person writes in the conversation: a thread
 // channel (persistent.ThreadChannelPrefix), where everyone in the external thread does, such
 // as a thread in a Slack channel. Such a session uses the app's connections only, never one

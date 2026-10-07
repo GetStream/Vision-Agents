@@ -53,6 +53,8 @@ func newCallCards(pgStore *store.Store, stream *streamapp.Clients, logger *slog.
 // cards existed. A session in writing, an incognito one, which records nothing, and one with
 // no agent config, whose omni-channel the contact map cannot key, get none either.
 func (c *callCards) started(created *Session, stream streamapp.Bound) {
+	// The spec as the session started, read here, on the caller: the card is written off the
+	// start, while SetSettings may change created.spec.
 	spec := created.spec
 	if c == nil || !spec.EpisodeCards || spec.Text || spec.CallID == "" || spec.Incognito || spec.ConfigID == "" || stream.Client == nil {
 		return
@@ -67,7 +69,7 @@ func (c *callCards) started(created *Session, stream streamapp.Bound) {
 		defer c.running.Done()
 		ctx, cancel := context.WithTimeout(c.ctx, callCardTimeout)
 		defer cancel()
-		if err := c.write(ctx, created, stream); err != nil {
+		if err := c.write(ctx, created, spec, stream); err != nil {
 			c.logger.Error("could not write a call's episode card", "session", created.id, "call", spec.CallID, "error", err)
 		}
 	}()
@@ -133,8 +135,7 @@ func (c *callCards) Close() {
 	c.running.Wait()
 }
 
-func (c *callCards) write(ctx context.Context, created *Session, stream streamapp.Bound) error {
-	spec := created.spec
+func (c *callCards) write(ctx context.Context, created *Session, spec Spec, stream streamapp.Bound) error {
 	number, err := calledParty(ctx, spec, stream)
 	if err != nil || number == "" {
 		return err

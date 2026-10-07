@@ -562,9 +562,69 @@ func (s *EpisodeReadingSuite) TestACallsEpisodeNamesTheChannelItsTranscriptIsWri
 
 	// The cards are written off the start: the barred call's would have been opened with the
 	// other's, which is waited for.
-	s.Require().Eventually(func() bool { return len(s.callEpisodes(written)) == 1 }, settleFor, 10*time.Millisecond)
-	s.Never(func() bool { return len(s.callEpisodes(barred)) > 0 }, 200*time.Millisecond, 20*time.Millisecond)
+	db := s.store
+	s.Require().Eventually(func() bool { return len(callEpisodesIn(db, written)) == 1 }, settleFor, 10*time.Millisecond)
+	s.Never(func() bool { return len(callEpisodesIn(db, barred)) > 0 }, 200*time.Millisecond, 20*time.Millisecond)
 	s.Equal(map[string]string{written: cid}, s.callEpisodes(barred, written))
+	s.Zero(s.contactRows("+15550100100")(), "the barred caller is not even put in the contact map")
+}
+
+// A call on a conversation_id of another channel type, messaging:X, would be transcribed into
+// its agent id's channel (chatlog.New; Spec.TranscriptChannel, which SpecSuite covers). No
+// such call opens: its conversation is read back first, and one that is no agent channel is
+// refused (conversation.Openable), so it makes no card and no contact row.
+func (s *EpisodeReadingSuite) TestACallOnAnotherChannelTypesConversationMakesNoCard() {
+	call := "call-" + uuid.NewString()
+	s.chat.PutCall("agent", call, "sip-+15550100100")
+
+	_, err := s.manager.Create(s.ctx, Spec{
+		CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena", EpisodeCards: true, CallID: call,
+		AgentID: "front-desk-" + uuid.NewString(), ConversationID: "messaging:" + uuid.NewString(),
+		LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency", Instructions: "be brief",
+	})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "invalid conversation channel")
+	rows := s.contactRows("+15550100100")
+	s.Never(func() bool { return rows() > 0 }, 200*time.Millisecond, 20*time.Millisecond)
+}
+
+// The review's probe: a newer card with nothing to say, a call in a channel its session
+// named, leaves the older SMS card to be read.
+func (s *EpisodeReadingSuite) TestReviewProbeAnEmptyNewerCardKeepsTheOlderOnes() {
+	s.at(-120)
+	older := s.thread("sms-author")
+	s.episode(omnichannel.Episode{Person: s.phone("+15550100100"), Source: "sms", ThreadChannel: older, StartedAt: s.now.Add(-120 * time.Second)})
+	s.write(older, "sms-author", "is the clinic open on Sunday?", nil)
+	s.at(-60)
+	named := s.channel("front-desk-"+uuid.NewString(), "agent-user")
+	s.episode(omnichannel.Episode{Person: s.phone("+15550100100"), Source: store.EpisodeCall, ThreadChannel: named,
+		CallID: "call-" + uuid.NewString(), SessionID: "session-" + uuid.NewString(), StartedAt: s.now.Add(-60 * time.Second)})
+	s.write(named, "sip-+15550100100", "said on the named channel", said(false))
+	s.at(10)
+	thread, _ := s.smsThread("+15550100100", "sms-author", "hello")
+
+	handed := s.handed(s.textSession(thread, true, "hello"))
+
+	s.Require().Len(handed, 1)
+	s.Equal("sms", handed[0]["source"])
+}
+
+// contactRows is how many contact map rows the suite's agent has for a number. The condition
+// it returns reads only what it was given, so one still polling after its test ended reads
+// nothing the next test sets; a failed read counts as a row, which fails a Never.
+func (s *EpisodeReadingSuite) contactRows(number string) func() int {
+	db, customer, config := s.store, s.customerID, s.configID
+	return func() int {
+		var count int
+		err := db.DB().QueryRowContext(context.Background(),
+			"SELECT count(*) FROM contact_map WHERE customer_id = ? AND agent_config_id = ? AND address = ?",
+			customer, config, number).Scan(&count)
+		if err != nil {
+			return 1
+		}
+		return count
+	}
 }
 
 // callUnder joins a call under agentID with the cards on, and returns the session's id.
@@ -580,17 +640,29 @@ func (s *EpisodeReadingSuite) callUnder(ctx context.Context, agentID, caller str
 }
 
 // callEpisodes is the thread channel of each of these sessions' call episodes.
+// It reads nothing of the suite but its store, which is the suite's own, so a condition that
+// still polls it after its test ended reads nothing the next test sets. A failed read is nil.
 func (s *EpisodeReadingSuite) callEpisodes(sessions ...string) map[string]string {
-	rows, err := s.store.DB().QueryContext(s.ctx, "SELECT session_id, thread_channel FROM episodes WHERE session_id IN (?)", bun.In(sessions))
-	s.Require().NoError(err)
+	return callEpisodesIn(s.store, sessions...)
+}
+
+func callEpisodesIn(db *store.Store, sessions ...string) map[string]string {
+	rows, err := db.DB().QueryContext(context.Background(), "SELECT session_id, thread_channel FROM episodes WHERE session_id IN (?)", bun.In(sessions))
+	if err != nil {
+		return nil
+	}
 	defer rows.Close()
 	found := map[string]string{}
 	for rows.Next() {
 		var session, channel string
-		s.Require().NoError(rows.Scan(&session, &channel))
+		if rows.Scan(&session, &channel) != nil {
+			return nil
+		}
 		found[session] = channel
 	}
-	s.Require().NoError(rows.Err())
+	if rows.Err() != nil {
+		return nil
+	}
 	return found
 }
 

@@ -597,8 +597,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if written == "" {
 		written = streamapp.AgentChannelType + ":" + spec.AgentID
 	}
+	// Where the transcript actually goes, as the transcript factory picks it.
 	if !persistent.Barred(ctx, written) {
-		created.transcribedInto = written
+		created.transcribedInto = spec.TranscriptChannel()
 	}
 	if m.options.Transcript != nil && conv == nil && !spec.Incognito && !persistent.Barred(ctx, written) {
 		// A transcript that cannot be opened is not a reason to refuse the call. What was
