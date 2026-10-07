@@ -2,6 +2,7 @@ package harness
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -53,6 +54,22 @@ func (s *ToolsSuite) TestTheBuiltInSetIsUsable() {
 
 	_, known = tools.Lookup("press")
 	s.True(known)
+}
+
+func (s *ToolsSuite) TestOnlyAModelWithToolsIsToldHowToUseThem() {
+	s.Empty(Tools{}.Prompt(), "a harness without tools adds nothing to the system prompt")
+	s.Equal(usePolicy, testTools().Prompt())
+}
+
+func (s *ToolsSuite) TestTheUsePolicyIsShortAndNamesNoToolOrDeployment() {
+	s.LessOrEqual(len(strings.Fields(usePolicy)), 90)
+	s.GreaterOrEqual(len(strings.Fields(usePolicy)), 60)
+	built, err := DefaultTools()
+	s.Require().NoError(err)
+	for _, tool := range append(built.Tools, testTools().Tools...) {
+		s.NotContains(strings.ToLower(usePolicy), strings.ToLower(tool.Name),
+			"the policy is about any tool, not one of them")
+	}
 }
 
 func (s *ToolsSuite) TestLoadFallsBackToTheBuiltInSet() {

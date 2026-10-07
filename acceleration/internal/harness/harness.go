@@ -699,7 +699,21 @@ func (h *Harness) consumeTasks() {
 // may hand over, and whatever has come back since it last spoke. It must be called with
 // the lock held, because taking the notes is what clears them.
 func (h *Harness) instructions(agent, note string) string {
-	parts := make([]string, 0, 4)
+	// Taking the notes is also what settles which skills this turn is reporting on, so a
+	// reply written to deliver an answer cannot ask for that answer again.
+	h.reporting = nil
+	h.asking = false
+	lines := make([]string, 0, len(h.notes))
+	for _, written := range h.notes {
+		lines = append(lines, written.text)
+		if written.skill != "" {
+			h.reporting = append(h.reporting, written.skill)
+		}
+		h.asking = h.asking || written.asking
+	}
+	h.notes = nil
+
+	parts := make([]string, 0, 5)
 	if agent != "" {
 		parts = append(parts, agent)
 	}
@@ -712,21 +726,13 @@ func (h *Harness) instructions(agent, note string) string {
 			parts = append(parts, index)
 		}
 	}
-	// Taking the notes is also what settles which skills this turn is reporting on, so a
-	// reply written to deliver an answer cannot ask for that answer again.
-	h.reporting = nil
-	h.asking = false
-	if len(h.notes) > 0 {
-		lines := make([]string, 0, len(h.notes))
-		for _, written := range h.notes {
-			lines = append(lines, written.text)
-			if written.skill != "" {
-				h.reporting = append(h.reporting, written.skill)
-			}
-			h.asking = h.asking || written.asking
-		}
+	// A reply carrying a colleague's question is offered no tools, so it is not told how to
+	// use them either.
+	if use := h.options.Tools.Prompt(); !h.asking && use != "" {
+		parts = append(parts, use)
+	}
+	if len(lines) > 0 {
 		parts = append(parts, strings.Join(lines, "\n"))
-		h.notes = nil
 	}
 	if note != "" {
 		parts = append(parts, note)

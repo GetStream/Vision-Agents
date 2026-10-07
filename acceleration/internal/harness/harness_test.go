@@ -477,6 +477,29 @@ func (s *HarnessSuite) TestWithoutToolsTheRequestOffersNone() {
 	s.Nil(s.fast.requests()[0].Tools)
 }
 
+func (s *HarnessSuite) TestTheModelIsToldHowToUseTheToolsItIsOffered() {
+	s.tools = testTools()
+	s.build(false)
+
+	s.respond("turn-1", "put me through to someone")
+
+	s.Require().Len(s.fast.requests(), 1)
+	instructions := s.fast.requests()[0].Instructions
+	s.Contains(instructions, "be brief", "the agent's own instructions come first")
+	s.Contains(instructions, s.tools.Prompt())
+	s.Contains(instructions, "same turn", "a tool is called once what it requires is known")
+}
+
+func (s *HarnessSuite) TestWithoutToolsTheModelIsToldNothingAboutThem() {
+	s.build(true)
+
+	s.respond("turn-1", "hello")
+
+	s.Require().Len(s.fast.requests(), 1)
+	s.NotContains(s.fast.requests()[0].Instructions, usePolicy)
+	s.Equal("be brief\n\n"+s.skills.Prompt(), s.fast.requests()[0].Instructions)
+}
+
 func (s *HarnessSuite) TestAToolCallIsReportedForSomebodyElseToRun() {
 	// The harness cannot transfer a call it does not know exists, so what it does with a
 	// tool call is say that one was asked for.
@@ -802,6 +825,8 @@ func (s *HarnessSuite) TestTheReplyCarryingAColleaguesQuestionIsOfferedNoTools()
 	s.Require().Len(s.fast.requests(), 2)
 	s.NotEmpty(s.fast.requests()[0].Tools)
 	s.Empty(s.fast.requests()[1].Tools, "there is nobody to ask but the caller")
+	s.Contains(s.fast.requests()[0].Instructions, usePolicy)
+	s.NotContains(s.fast.requests()[1].Instructions, usePolicy, "nor how to use what it does not have")
 }
 
 func (s *HarnessSuite) TestTheReplyCarryingAColleaguesAnswerKeepsItsTools() {
@@ -818,6 +843,7 @@ func (s *HarnessSuite) TestTheReplyCarryingAColleaguesAnswerKeepsItsTools() {
 
 	s.Require().Len(s.fast.requests(), 2)
 	s.NotEmpty(s.fast.requests()[1].Tools)
+	s.Contains(s.fast.requests()[1].Instructions, usePolicy)
 }
 
 func (s *HarnessSuite) TestANewerRequestSupersedesTheOneItReplaces() {
