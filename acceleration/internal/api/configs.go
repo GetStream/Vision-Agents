@@ -1475,7 +1475,7 @@ type deleteAgentConfigRequest struct {
 // AgentConfigRequest is the AgentConfigRequest schema.
 type AgentConfigRequest struct {
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
-	EpisodeCards       *bool                    `json:"episode_cards,omitempty" doc:"Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. Off by default, and then a call runs as it always did. Left out on an update, the stored setting stays."`
+	EpisodeCards       *bool                    `json:"episode_cards,omitempty" doc:"Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays."`
 	Greeting           *string                  `json:"greeting,omitempty"`
 	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered."`
 	Harness            *Harness                 `json:"harness,omitempty"`
@@ -1510,7 +1510,7 @@ type AgentConfigRequest struct {
 type AgentConfig struct {
 	CreatedAt          time.Time                `json:"created_at"`
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
-	EpisodeCards       *bool                    `json:"episode_cards,omitempty" doc:"Whether each phone call under this agent writes an episode card into the caller's omni-channel."`
+	EpisodeCards       *bool                    `json:"episode_cards,omitempty" doc:"Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards."`
 	Greeting           *string                  `json:"greeting,omitempty"`
 	Guardrail          *string                  `json:"guardrail,omitempty"`
 	Harness            *Harness                 `json:"harness,omitempty"`
