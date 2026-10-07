@@ -172,8 +172,8 @@ func (s *ForwarderSuite) TestAnAttemptWithinTheProvidersWindowCarriesItsSignatur
 }
 
 // AI-926: with connectors on and no forward queued, a router sends Postgres nothing for
-// forwarding once it has looked at start. The worker before it claimed once each poll: at this
-// suite's 10 ms, about 50 claims in the 500 ms watched here.
+// forwarding after its look at start until a lease (1 min) has passed. The worker before it
+// claimed once each poll: at this suite's 10 ms, about 50 claims in the 500 ms watched here.
 func (s *ForwarderSuite) TestAForwarderWithNothingQueuedSendsNoQuery() {
 	_, err := s.store.DB().ExecContext(s.ctx, "DELETE FROM connector_event_deliveries")
 	s.Require().NoError(err)
@@ -207,6 +207,49 @@ func (s *ForwarderSuite) TestAForwardQueuedBeforeTheForwarderStartedIsSent() {
 	s.forwarder(target.Client())
 
 	s.Require().Eventually(func() bool { return s.pending(customer) == 0 }, 5*time.Second, 10*time.Millisecond)
+	s.Equal(int32(1), hits.Load())
+}
+
+// The review of #778: router B starts and finds nothing queued; then router A queues a
+// forward and stops before it sends it, so no Forward and no finished send wakes B. B looks
+// again a lease after its last look and sends it. Here the lease is 200 ms; the bound, 2 s, is
+// far over that and the 10 ms poll, and far under forever, which is what B waited before.
+func (s *ForwarderSuite) TestAnIdleRouterSendsAForwardAnotherRouterLeftQueued() {
+	_, err := s.store.DB().ExecContext(s.ctx, "DELETE FROM connector_event_deliveries")
+	s.Require().NoError(err)
+	var hits atomic.Int32
+	target := s.destination(func(w http.ResponseWriter, _ *http.Request) { hits.Add(1) })
+	s.routerAfterItsFirstLook(target.Client())
+	stopped, err := New(Options{Store: s.store, Secrets: s.sealer, HTTP: target.Client()})
+	s.Require().NoError(err)
+	customer := s.destinationOf(stopped, target.URL)
+
+	s.Require().NoError(stopped.Forward(s.ctx, Event{CustomerID: customer, ConnectorID: "slack_bot", Body: []byte(`{"left":1}`)}))
+
+	s.Require().Eventually(func() bool { return hits.Load() == 1 }, 2*time.Second, 10*time.Millisecond)
+	s.Require().Eventually(func() bool { return s.pending(customer) == 0 }, 2*time.Second, 10*time.Millisecond)
+}
+
+// The same with a retry queued an hour out: B waits a lease, not the hour, before it looks
+// again and finds what router A left.
+func (s *ForwarderSuite) TestARouterWaitingOnALaterRetryStillSendsAForwardAnotherRouterLeft() {
+	_, err := s.store.DB().ExecContext(s.ctx, "DELETE FROM connector_event_deliveries")
+	s.Require().NoError(err)
+	var hits atomic.Int32
+	target := s.destination(func(w http.ResponseWriter, _ *http.Request) { hits.Add(1) })
+	stopped, err := New(Options{Store: s.store, Secrets: s.sealer, HTTP: target.Client()})
+	s.Require().NoError(err)
+	later := s.destinationOf(stopped, target.URL)
+	_, err = s.store.QueueEventDeliveries(s.ctx, later, "slack_bot", []string{store.ForwardAll},
+		store.EventDelivery{ID: "msg_later", Body: []byte(`{"later":1}`), NextAttemptAt: time.Now().Add(time.Hour)})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { s.dropForwards(later) })
+	s.routerAfterItsFirstLook(target.Client())
+	customer := s.destinationOf(stopped, target.URL)
+
+	s.Require().NoError(stopped.Forward(s.ctx, Event{CustomerID: customer, ConnectorID: "slack_bot", Body: []byte(`{"left":2}`)}))
+
+	s.Require().Eventually(func() bool { return s.pending(customer) == 0 }, 2*time.Second, 10*time.Millisecond)
 	s.Equal(int32(1), hits.Load())
 }
 
@@ -278,6 +321,22 @@ func (s *ForwarderSuite) sentHeaders(headersUntil time.Time) http.Header {
 		s.FailNow("the destination got no forward")
 		return nil
 	}
+}
+
+// routerAfterItsFirstLook starts router B, on a pool of its own, with a 200 ms lease, and
+// returns once B's look at start is over (a claim and when the next forward is due), so what
+// is queued after that only a later look of B's finds.
+func (s *ForwarderSuite) routerAfterItsFirstLook(client *http.Client) {
+	own, err := store.Open(s.dsn)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { s.Require().NoError(own.Close()) })
+	queries := &queryCount{}
+	own.DB().AddQueryHook(queries)
+	router, err := New(Options{Store: own, Secrets: s.sealer, HTTP: client, Poll: 10 * time.Millisecond, Lease: 200 * time.Millisecond})
+	s.Require().NoError(err)
+	router.Start()
+	s.T().Cleanup(router.Close)
+	s.Require().Eventually(func() bool { return queries.Load() >= 2 }, 5*time.Second, 10*time.Millisecond, "router B's look at start")
 }
 
 // dropForwards deletes the forwards of a customer not yet done with.

@@ -52,6 +52,10 @@ const attemptTimeout = 15 * time.Second
 // router takes it while it is sent: longer than one attempt's attemptTimeout, so a live worker
 // never loses one, and short enough that one a stopped router held is sent again within a
 // minute. A choice, not a spec value.
+//
+// It is also the longest a worker waits between looks for deliveries, even when none is queued
+// or the first is due later (sendDue): a forward another router queued or leased and then
+// stopped with is sent within about two leases, at 2 queries a lease from an idle router.
 const lease = time.Minute
 
 // defaultPoll is the shortest wait before a worker looks again for deliveries while some are
@@ -110,7 +114,10 @@ type Options struct {
 	Retries []time.Duration
 	// Poll is the shortest wait between looks for due deliveries while some are queued. Zero is
 	// defaultPoll.
-	Poll   time.Duration
+	Poll time.Duration
+	// Lease is how far a claim pushes a delivery's next attempt, and the longest wait between
+	// looks. Zero is lease. Tests shorten it.
+	Lease  time.Duration
 	Logger *slog.Logger
 }
 
@@ -122,6 +129,7 @@ type Forwarder struct {
 	publicURL func(ctx context.Context, raw string) error
 	retries   []time.Duration
 	poll      time.Duration
+	lease     time.Duration
 	logger    *slog.Logger
 
 	// kick wakes the worker: a delivery was queued, or a slot freed.
@@ -188,6 +196,10 @@ func New(options Options) (*Forwarder, error) {
 	if poll <= 0 {
 		poll = defaultPoll
 	}
+	leaseFor := options.Lease
+	if leaseFor <= 0 {
+		leaseFor = lease
+	}
 	logger := options.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -200,6 +212,7 @@ func New(options Options) (*Forwarder, error) {
 		publicURL: publicURL,
 		retries:   retries,
 		poll:      poll,
+		lease:     leaseFor,
 		logger:    logger,
 		kick:      make(chan struct{}, 1),
 		slots:     make(chan struct{}, inFlight),
@@ -209,9 +222,10 @@ func New(options Options) (*Forwarder, error) {
 	}, nil
 }
 
-// Start runs the worker until Close. It looks for deliveries once at start, for the ones a
-// router queued before it stopped, and after that only while some are queued or when Forward
-// or a finished send wakes it: with no deliveries it sends Postgres nothing (AI-926).
+// Start runs the worker until Close. It looks for deliveries at start, for the ones a router
+// queued before it stopped, then when Forward or a finished send wakes it, at the first one
+// due, and at least once a lease: with no deliveries it sends Postgres 2 queries a minute, not
+// one a second (AI-926).
 func (f *Forwarder) Start() {
 	f.working.Add(1)
 	go func() {
@@ -399,11 +413,12 @@ func (f *Forwarder) wake() {
 // one destination's counting the ones it is still sending, and sends each on its own
 // goroutine, until none is due or no slot is free.
 //
-// It returns how long to wait before looking again, with again false when only Forward or a
-// finished send needs to wake the worker: every slot is busy, or no delivery is queued. While
-// deliveries are queued it waits until the first is due, its retry or another router's lease
-// running out, and at least the poll, so rows another router is claiming at that moment are
-// not looked for in a busy loop.
+// It returns how long to wait before looking again, with again false when only a finished send
+// needs to wake the worker: every slot is busy. While deliveries are queued it waits until the
+// first is due, its retry or another router's lease running out, and at least the poll, so
+// rows another router is claiming at that moment are not looked for in a busy loop. It waits
+// a lease at most, also when none is queued: a router that queued or leased one and then
+// stopped wakes nobody else (the review of #778).
 func (f *Forwarder) sendDue() (wait time.Duration, again bool) {
 	for {
 		if f.ctx.Err() != nil {
@@ -417,7 +432,7 @@ func (f *Forwarder) sendDue() (wait time.Duration, again bool) {
 		f.mu.Lock()
 		sending := maps.Clone(f.sending)
 		f.mu.Unlock()
-		claimed, err := f.store.ClaimEventDeliveries(f.ctx, now, free, perDestination, sending, now.Add(lease))
+		claimed, err := f.store.ClaimEventDeliveries(f.ctx, now, free, perDestination, sending, now.Add(f.lease))
 		if err != nil {
 			if f.ctx.Err() == nil {
 				f.logger.Error("could not take the event forwards due", "error", err)
@@ -456,9 +471,9 @@ func (f *Forwarder) sendDue() (wait time.Duration, again bool) {
 		}
 		return f.poll, true
 	case !queued:
-		return 0, false
+		return f.lease, true
 	}
-	return max(time.Until(next), f.poll), true
+	return min(max(time.Until(next), f.poll), f.lease), true
 }
 
 // attempt sends a delivery once and records what came of it: gone when the destination took
