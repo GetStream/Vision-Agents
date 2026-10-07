@@ -5,7 +5,7 @@ The channel bridge (T57, AI-878). It moves messages between an external thread, 
 ## Why here
 
 - Not under `internal/connectors/`: that tree is the connector layer, adapters that import `core`. The bridge writes to Stream Chat, which the connector layer must not know (channels.md, «Dependency direction»).
-- Not under `internal/channels/`: that package is the older WhatsApp, SMS and iMessage lines on agent configs, with its own hook path. The bridge does not share its code or its tables.
+- Not under `internal/channels/`: that directory is the WhatsApp, SMS and iMessage lines of `internal/channels`, which move onto the bridge in T62 (AI-921). Until then they keep their own hook path and tables, and the bridge shares neither.
 
 ## Flow
 
@@ -24,6 +24,7 @@ Slack -> POST /v1/connectors/events/{connector}/{app}   api.receiveProviderAppEv
     support_customer_id, support_agent_id), message without source -> Stream Chat
 Stream Chat -> message.new -> api.receiveMessageEvent -> api.answerThread
   claim (thread channel, turn, Stream message id)
+  lease the turn on channel_threads (one router per thread at a time)
   the session on the channel (ByAgentWhere), else a persistent text session from
   the channel's agent config, ConversationID agent:thread-<uuid>
   Session.FollowUp(text): the reply is written into the thread channel
@@ -33,7 +34,8 @@ conversation flush: final text stored (UpdateMessagePartial, no webhook)
     Bridge.send                               off the caller
       manifest reply template (ResolvedManifest.Reply)
       core.Transports: resolver credential, scheme Wrap, egress
-      2xx and reply.accepted (Slack: ok true)
+      2xx and reply.accepted (Slack: ok true); no answer, 5xx, 429: again
+      after 2 s, 10 s, 30 s, then unclaimed
       refused: scheme.Classify; invalid_grant -> Resolver.Invalidate
 ```
 
@@ -52,10 +54,16 @@ conversation flush: final text stored (UpdateMessagePartial, no webhook)
 - **The person's message has no `source`.** That is how the message hook (`api.addressed`) knows a person wrote it, and how the conversation on the channel reads it back as a user turn (`conversation.messageFromThread`). The session is told it with `FollowUp`, which writes no second copy.
 - **A thread channel is a conversation.** The session that answers holds its persistent conversation on the thread channel, so the reply is kept there: the Router's own session (`api.threadSession`) and one a caller opens through `POST /v1/agents/sessions` with `agent_id` naming the channel (`api.threadConversation`). The hook does not hand a thread channel's message to a dispatch worker.
 - **One hand-off point for replies.** The conversation calls `Reply` once a reply's final text is stored; the webhook never carries it (`UpdateMessagePartial` sends none). `Reply` claims the reply by its Stream message id, so a reply written again is sent once. Example: a reply a login later marks is told twice and leaves once.
+- **One turn per thread, across routers.** The hook leases the thread's turn on its `channel_threads` row (`store.TakeChannelThreadTurn`) before it tells the session, and lets go after the reply; a router that stops holds it at most `askTimeout` + 30 s. A session the hook opens is closed after the turn, so the next turn on any router reopens the conversation from the channel. Example: router A answers Alice; Bob's message reaches router B, which waits for A's lease, then answers with Alice's turn in its history.
+- **A failed send is sent again.** No answer, a 5xx, a 429, or a refusal the scheme reads as transient or rate limited: the reply is sent again after each of `Options.RetryBackoff` (2 s, 10 s, 30 s). The claim stays while it is retried; a reply never sent is unclaimed, so its next hand-off sends it.
 - **A refusal the transport cannot see still ends the grant.** Slack answers a revoked token with HTTP 200 `invalid_auth`; the scheme's `Classify` reads it and `Reply` calls `Resolver.Invalidate`.
 - **One agent per connection.** The agent that answers is the one agent config of the customer that binds the connection as `fixed`. None or two: the message is dropped and logged.
 - **Replies leave only through `core.Transports`**, so the credential, the scheme and the egress checks are the connector layer's. The bridge holds no token.
 - **No text and no author in logs.** They are a person's.
+
+## Open
+
+- **Missed messages are not recovered.** Slack retries an event three times over about five minutes (https://docs.slack.dev/apis/events-api/); an event every delivery of which failed is lost. The design for the recovery, not built: keep the newest provider ts of each thread on its `channel_threads` row; when the events route has failed deliveries or after a router restart, read `conversations.replies` (thread) and `conversations.history` (top-level) since that ts through `core.Transports`, and hand each message to `Deliver`, whose inbound claim drops what was already taken.
 
 ## Tests
 
