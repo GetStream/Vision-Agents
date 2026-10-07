@@ -39,7 +39,7 @@ type ConsentRequest struct {
 	// UserID is the verified caller, who owns the connection.
 	UserID string
 	// ConnectionID is the connection to reconnect. Empty for none chosen: the caller's newest
-	// connection to the connector that was never connected, or a new one.
+	// connection to the connector in any status, or a new one.
 	ConnectionID string
 }
 
@@ -68,6 +68,11 @@ type logins struct {
 	// ask shows a consent on the reply being written, in the session's own conversation
 	// (conversation.AskToConnect).
 	ask func(owner string, found persistent.ConnectorAuthorization) bool
+	// canAsk reports whether ask would show owner a login now (conversation.CanAskToConnect),
+	// checked before a consent begins so none is begun that nobody would see.
+	canAsk func(owner string) bool
+	// chose keeps a connection a login opened as the session's selection (Session.chose).
+	chose func(name, connectionID string)
 	// shows reports whether the reply being written already shows an attempt's login, and
 	// connected marks one finished (conversation.ShowsLogin, conversation.ConnectorConnected).
 	shows     func(authorizationID string) bool
@@ -92,6 +97,11 @@ type login struct {
 	name  string
 	// last is the newest consent begun, reused while the reply being written shows it.
 	last Consent
+	// asked is whether a consent was begun, and connectedBefore the connection's connected_at
+	// when it was: the connection opens without a hand-back only once a consent since then
+	// connected it (a later connected_at), never because it was connected already.
+	asked           bool
+	connectedBefore *time.Time
 	// opened holds the binding's routes once the login is made. Nil before.
 	opened *dispatcher
 }
@@ -153,10 +163,13 @@ func loginTools(alias string) []harness.Tool {
 	}
 }
 
-// askIn has the logins ask in conv, the session's own conversation.
-func (d *dispatcher) askIn(conv *persistent.Conversation) {
+// askIn has the logins ask in conv, the session's own conversation, and keep what they open
+// with chose.
+func (d *dispatcher) askIn(conv *persistent.Conversation, chose func(name, connectionID string)) {
 	if d.logins != nil && conv != nil {
-		d.logins.ask, d.logins.shows, d.logins.connected = conv.AskToConnect, conv.ShowsLogin, conv.ConnectorConnected
+		d.logins.ask, d.logins.canAsk = conv.AskToConnect, conv.CanAskToConnect
+		d.logins.shows, d.logins.connected = conv.ShowsLogin, conv.ConnectorConnected
+		d.logins.chose = chose
 	}
 }
 
@@ -202,6 +215,11 @@ func (d *dispatcher) runLogin(ctx context.Context, l *login, call llm.ToolCall) 
 // connection in the store, so the connection is read before anybody is asked again: once
 // it is connected and the binding may use it, the binding opens here. The plugin path does
 // the same by reading its login on every call (userPluginRunner.connect).
+//
+// A connection the chat asked to consent on again, which was connected already, opens only
+// once that consent connected it anew (connectedBefore): the person consents in this chat
+// before the session uses it, and a consent that came back with another account
+// (account_mismatch) leaves connected_at as it was.
 func (d *dispatcher) openOrAsk(ctx context.Context, l *login) (*dispatcher, string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -212,6 +230,7 @@ func (d *dispatcher) openOrAsk(ctx context.Context, l *login) (*dispatcher, stri
 		connection, err := d.store.ConnectorConnection(ctx, d.spec.CustomerID, l.connectionID)
 		if err == nil && connection.Status == store.ConnectionConnected &&
 			connection.ConnectorID == l.binding.ConnectorID && mayUse(d.spec, l.binding, connection) &&
+			(!l.asked || connectedSince(connection.ConnectedAt, l.connectedBefore)) &&
 			d.openLogin(ctx, l, connection.ID) {
 			for _, begun := range l.begun {
 				if d.logins.connected != nil {
@@ -237,13 +256,16 @@ func (d *dispatcher) openLogin(ctx context.Context, l *login, connectionID strin
 		return false
 	}
 	l.opened = opened
-	// An incognito session has no row to record it on.
-	if d.store != nil && d.spec.ID != "" && !d.spec.Incognito {
-		if err := d.store.ChooseSessionConnection(ctx, d.spec.CustomerID, d.spec.ID, l.binding.Name, connectionID); err != nil {
-			d.logins.logger.Warn("could not record the connection a login chose", "connector", l.binding.Name, "error", err)
-		}
+	if d.logins.chose != nil {
+		d.logins.chose(l.binding.Name, connectionID)
 	}
 	return true
+}
+
+// connectedSince reports whether a connection connected at now was connected anew after
+// before, its connected_at when a consent was begun (nil for never).
+func connectedSince(now, before *time.Time) bool {
+	return now != nil && (before == nil || now.After(*before))
 }
 
 // askToLogIn begins a consent for the caller's own connection and shows it on the reply being
@@ -254,7 +276,7 @@ func (d *dispatcher) openLogin(ctx context.Context, l *login, connectionID strin
 // the config no longer declares as the caller's own begins no consent. A second call in the
 // reply that already shows a consent still open reuses it rather than begin another.
 func (d *dispatcher) askToLogIn(ctx context.Context, l *login) string {
-	if !d.stillWaits(ctx, l.binding) {
+	if !d.stillWaits(ctx, l.binding) || d.logins.canAsk == nil || !d.logins.canAsk(d.spec.Caller.UserID) {
 		return loginUnavailable(l.binding.Name)
 	}
 	if last := l.last; last.AuthorizationID != "" && time.Now().Before(last.ExpiresAt) &&
@@ -276,6 +298,12 @@ func (d *dispatcher) askToLogIn(ctx context.Context, l *login) string {
 	})
 	if !shown {
 		return loginUnavailable(l.binding.Name)
+	}
+	if !l.asked {
+		l.asked = true
+		if connection, err := d.store.ConnectorConnection(ctx, d.spec.CustomerID, consent.ConnectionID); err == nil {
+			l.connectedBefore = connection.ConnectedAt
+		}
 	}
 	l.connectionID, l.name, l.last = consent.ConnectionID, consent.Name, consent
 	l.begun = append(l.begun, consent.AuthorizationID)

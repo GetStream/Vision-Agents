@@ -502,6 +502,25 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string)
 	return receipt, s.openTurn(turnID, text), nil
 }
 
+// chose keeps connectionID as the session's selection for the connector binding called name,
+// once a login in its conversation opened it: in the spec, so a fork of the live session
+// (Spec) chooses it again, and on the row, so a fork of an ended one or a reopened chat does.
+// An incognito session has no recorder, so nothing is written.
+func (s *Session) chose(name, connectionID string) {
+	s.labelMu.Lock()
+	kept := make([]ConnectorSelection, 0, len(s.spec.ConnectorSelections)+1)
+	for _, selection := range s.spec.ConnectorSelections {
+		if selection.Name != name {
+			kept = append(kept, selection)
+		}
+	}
+	s.spec.ConnectorSelections = append(kept, ConnectorSelection{Name: name, ConnectionID: connectionID})
+	s.labelMu.Unlock()
+	if s.records != nil {
+		s.records.Chose(s.spec.CustomerID, s.id, name, connectionID)
+	}
+}
+
 // FollowUp answers text the way RespondCommand does with no message of the end user's
 // shown for it: the model is told text, and the conversation shows only the reply.
 func (s *Session) FollowUp(ctx context.Context, text string) error {

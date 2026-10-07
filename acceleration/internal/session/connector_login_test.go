@@ -147,12 +147,13 @@ func (s *ConnectorLoginSuite) TestALoginTheConversationCannotShowIsNotAskedFor()
 	s.begun = Consent{ConnectionID: "unused", AuthorizationID: "attempt-alice", Name: "CRM"}
 	d, _, _, err := s.attachWithConsents(s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "bob", nil)))
 	s.Require().NoError(err)
-	d.logins.ask = func(string, persistent.ConnectorAuthorization) bool { return false }
+	d.logins.canAsk = func(string) bool { return false }
 
 	said, err := s.call(d, "crm__list_tools", `{}`)
 
 	s.Require().NoError(err)
 	s.Contains(said, `"status":"unavailable"`)
+	s.Zero(s.begins, "no consent is begun that nobody would see")
 	_, finished := d.loginFinished(s.ctx, "attempt-alice", "unused")
 	s.False(finished, "nothing was asked, so nothing carries on")
 }
@@ -240,6 +241,29 @@ func (s *ConnectorLoginSuite) TestAConfigThatDroppedTheBindingBeginsNoConsent() 
 	s.Empty(s.shown)
 }
 
+// TestAConnectionConnectedBeforeOpensOnlyOnceTheChatsConsentConnectsItAnew: the router asks
+// on the caller's connection that is connected already (a new chat with no selection). The
+// session does not use it on its own: only a consent since then, a later connected_at, opens
+// it.
+func (s *ConnectorLoginSuite) TestAConnectionConnectedBeforeOpensOnlyOnceTheChatsConsentConnectsItAnew() {
+	mine := s.connection("alice", "primary")
+	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM"}
+	d, _, _, err := s.attachWithConsents(s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", nil)))
+	s.Require().NoError(err)
+
+	asked, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+	s.Require().NoError(err)
+	still, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+	s.Require().NoError(err)
+	s.setState(mine, func(state *core.CredentialState) { state.ConnectedAt = time.Now().UTC() })
+	said, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+
+	s.Require().NoError(err)
+	s.Contains(asked, `"status":"authorization_required"`)
+	s.Contains(still, `"status":"authorization_required"`, "connected before the chat asked is not a consent in it")
+	s.Equal("primary", said)
+}
+
 // pending is a connection of user's to account that was never connected.
 func (s *ConnectorLoginSuite) pending(user, account string) string {
 	connection := &store.ConnectorConnection{
@@ -275,6 +299,7 @@ func (s *ConnectorLoginSuite) attachWithConsents(spec Spec) (*dispatcher, []harn
 		s.T().Cleanup(d.Close)
 		s.T().Cleanup(d.closeLogins)
 		if d.logins != nil {
+			d.logins.canAsk = func(string) bool { return true }
 			d.logins.ask = func(owner string, _ persistent.ConnectorAuthorization) bool {
 				s.shown = append(s.shown, owner)
 				return true

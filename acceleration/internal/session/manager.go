@@ -494,7 +494,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		tools = append(tools, connectorTools...)
 		connectors.next = runner
 		runner = connectors
-		connectors.askIn(conv)
+		connectors.askIn(conv, created.chose)
 		created.connectors = connectors
 		created.closers = append(created.closers, connectors.Close, connectors.closeLogins)
 	}
