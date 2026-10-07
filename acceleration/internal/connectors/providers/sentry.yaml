@@ -37,6 +37,8 @@ client:
 # grant keeps what it was granted, and a new consent asks for what the plugin asked for.
 # No identity, capture or refresh policy: neither [mcp] nor [as] documents a token response,
 # token lifetimes or rotation. # unverified
+# So refresh.rotating is left unset, which is unknown: router plugins migrate moves a grant
+# with a refresh token here only with --include-rotating (internal/pluginmigrate).
 sources:
   - kind: mcp
     endpoint: mcp

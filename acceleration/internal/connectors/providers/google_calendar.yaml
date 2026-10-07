@@ -78,8 +78,10 @@ scopes:
 # No identity: the plugin asks for no openid scope, so the token response carries no id_token
 # and no account id.
 refresh:
-  # Not rotating: stress-test row 7 (Google Workspace) of «Stress test: 12 awkward providers»
-  # in acceleration/docs/connectors/architecture.md on connectors/planning. The token
+  # Not rotating: «Refresh tokens are valid until the user revokes access or the refresh
+  # token expires» ([web], opened 2026-10-07), so a refresh does not retire it; stress-test
+  # row 7 (Google Workspace) of «Stress test: 12 awkward providers» in
+  # acceleration/docs/connectors/architecture.md on connectors/planning says the same. The token
   # response carries expires_in ([web]), so no access_ttl.
   rotating: false
 rate_limit:

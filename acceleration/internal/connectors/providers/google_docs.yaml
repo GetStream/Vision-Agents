@@ -64,7 +64,8 @@ scopes:
     - https://www.googleapis.com/auth/drive.readonly
 # No identity, as google_calendar.yaml.
 refresh:
-  # Not rotating: stress-test row 7 of the architecture doc.
+  # Not rotating: «Refresh tokens are valid until the user revokes access or the refresh
+  # token expires» ([web], opened 2026-10-07); stress-test row 7 of the architecture doc.
   rotating: false
 rate_limit:
   # Per OAuth app: row 7.

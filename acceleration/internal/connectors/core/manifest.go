@@ -136,8 +136,11 @@ type ScopePolicy struct {
 
 // RefreshPolicy is what the OAuth scheme reads to decide when and how to refresh.
 type RefreshPolicy struct {
-	// Rotating means each refresh returns a new refresh token and retires the old one.
-	Rotating bool `yaml:"rotating,omitempty" json:"rotating,omitempty"`
+	// Rotating means each refresh returns a new refresh token and retires the old one. Nil
+	// is a manifest that does not say, which a reader that depends on it treats as unknown
+	// (router plugins migrate does). A pointer, so an explicit false is kept: a nil and a
+	// true marshal as a bool did, so a stored manifest reads back unchanged.
+	Rotating *bool `yaml:"rotating,omitempty" json:"rotating,omitempty"`
 	// Margin is how long before expiry a token is refreshed.
 	Margin Duration `yaml:"margin,omitempty" json:"margin,omitzero"`
 	// Grace is how long a retired refresh token still works after a rotation.

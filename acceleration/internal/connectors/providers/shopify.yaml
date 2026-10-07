@@ -59,6 +59,8 @@ client:
 # No identity: the shop is the account (the fixture, stress-test row 4), but the plugin never
 # recorded one, so a moved grant has none either. No refresh policy: no page opened documents
 # this server's tokens. # unverified
+# So refresh.rotating is left unset, which is unknown: router plugins migrate moves a grant
+# with a refresh token here only with --include-rotating (internal/pluginmigrate).
 sources:
   - kind: mcp
     endpoint: mcp

@@ -49,6 +49,8 @@ client:
 # [plugin] asks for none.
 # No identity, capture or refresh policy: «OAuth access tokens expire after a set period»
 # ([setup]) and nothing more. # unverified
+# So refresh.rotating is left unset, which is unknown: router plugins migrate moves a grant
+# with a refresh token here only with --include-rotating (internal/pluginmigrate).
 sources:
   - kind: mcp
     endpoint: mcp

@@ -159,7 +159,8 @@ func (s *ConsentSuite) TestGitHubTakesACustomersClientBeforeTheOperators() {
 func (s *ConsentSuite) TestGitHubNamesNoAccessLifetimeForATokenThatDoesNotExpire() {
 	refresh := s.resolve("github", nil).Refresh
 	s.Zero(refresh.AccessTTL)
-	s.True(refresh.Rotating)
+	s.Require().NotNil(refresh.Rotating)
+	s.True(*refresh.Rotating)
 }
 
 func (s *ConsentSuite) TestGitHubWithoutAPreregisteredClientIsRefusedRatherThanRegistered() {
