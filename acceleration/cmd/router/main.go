@@ -35,6 +35,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2cc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/slackapps"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
@@ -1023,6 +1024,15 @@ func run(settings config.Config, logger *slog.Logger) error {
 				conversations.OnFinishedReply(bridge.Reply)
 			}
 		}
+	}
+	// The customer's Slack app (managed) and Stream's own (operator) are written only where
+	// connector secrets can be sealed. Slack is reached through egress, as every scheme is.
+	if connectorSecrets != nil {
+		options.SlackApps, err = slackapps.New(slackapps.Config{HTTP: egress.NewClient(connectorHTTPTimeout, nil)})
+		if err != nil {
+			return err
+		}
+		options.OperatorProviderApps = api.ConnectorOperatorApps(os.Getenv)
 	}
 	if streamClients.PerApp() {
 		// Each registered app signs its own hooks and mints its own tokens, so only work in

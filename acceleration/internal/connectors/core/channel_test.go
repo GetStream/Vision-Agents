@@ -112,6 +112,25 @@ func (s *ChannelSuite) TestAChannelManifestStoredAsJSONReadsBackTheSame() {
 	}
 }
 
+func (s *ChannelSuite) TestSubscriptionsAreKeptInTheirOrder() {
+	m, err := ParseManifest(minimal(baseChannel + "  subscriptions: [message.channels, message.im, tokens_revoked]\n"))
+
+	s.Require().NoError(err)
+	s.Equal([]string{"message.channels", "message.im", "tokens_revoked"}, m.Channel.Subscriptions)
+}
+
+func (s *ChannelSuite) TestASubscriptionThatIsNotAnEventTypeIsRefusedWithItsField() {
+	_, err := ParseManifest(minimal(baseChannel + "  subscriptions: [message.im, \"Message IM\"]\n"))
+
+	s.ErrorContains(err, `channel.subscriptions[1]: "Message IM" is not a lowercase event type such as message.im`)
+}
+
+func (s *ChannelSuite) TestASubscriptionListedTwiceIsRefused() {
+	_, err := ParseManifest(minimal(baseChannel + "  subscriptions: [message.im, message.im]\n"))
+
+	s.ErrorContains(err, `channel.subscriptions[1]: "message.im" is listed twice`)
+}
+
 func (s *ChannelSuite) TestAnUnknownVerifierKindIsRefusedWithItsField() {
 	err := s.variant("kind: secret_header", "kind: jwt_set")
 	s.ErrorContains(err, `channel.verifier.kind: "jwt_set" is not one of [hmac_header secret_header standard_webhooks]`)

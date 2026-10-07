@@ -17,8 +17,9 @@
 #   [revoked]   https://docs.slack.dev/reference/events/tokens_revoked
 #   [uninstalled] https://docs.slack.dev/reference/events/app_uninstalled
 id: slack_bot
-# A new revision for any change to what this file says; see AGENTS.md.
-revision: 1
+# A new revision for any change to what this file says; see AGENTS.md. 2 adds
+# channel.subscriptions, the events an app the router creates subscribes to (T54).
+revision: 2
 name: Slack bot
 category: Communication
 description: Answer people in Slack threads as the workspace's own bot.
@@ -72,6 +73,15 @@ channel:
   format: json
   # [handshake]: {"type": "url_verification", "challenge": "..."}, answered with the challenge.
   challenge: $.challenge
+  # The bot events an app the router creates subscribes to, which its manifest sends as
+  # settings.event_subscriptions.bot_events, «event types the app subscribes to», at most 100
+  # (https://docs.slack.dev/reference/app-manifest). A customer's own app (customer) is
+  # configured at Slack by the customer and does not read this. message.channels («A message
+  # was posted to a channel», scope channels:history, [channels]) and message.im (scope
+  # im:history, [im]) both arrive as event.type message, which messages.match reads.
+  # tokens_revoked is one the app must subscribe to ([revoked]); app_uninstalled is
+  # «automatically-delivered» ([uninstalled]), so it is not listed.
+  subscriptions: [message.channels, message.im, tokens_revoked]
   messages:
     # [message]: a message event is event.type message, in a channel ([channels]) or a direct
     # message ([im]). app_mention is not read: an app subscribed to both gets the same post

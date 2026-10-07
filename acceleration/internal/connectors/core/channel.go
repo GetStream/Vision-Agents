@@ -36,6 +36,12 @@ type ChannelRule struct {
 	Reply    ReplyRule   `yaml:"reply,omitempty" json:"reply,omitzero"`
 	// Signals are the events that say a grant ended, each read into one Signal per account.
 	Signals []SignalRule `yaml:"signals,omitempty" json:"signals,omitempty"`
+	// Subscriptions are the event types a provider app the router creates for the customer
+	// (ClientManaged) asks the provider to deliver, as the provider names them. They are not
+	// what the messages and signals match on: a provider may deliver several subscriptions as
+	// one event type, as Slack delivers message.channels and message.im as event.type message.
+	// Empty asks for none.
+	Subscriptions []string `yaml:"subscriptions,omitempty" json:"subscriptions,omitempty"`
 }
 
 // SignalRule is one kind of event that says what happened to the grants of an account, and
@@ -243,6 +249,10 @@ var (
 	// headerName is the letters, digits and hyphens of every header the fixtures name: a
 	// subset of an RFC 9110 section 5.1 token.
 	headerName = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
+	// subscriptionName is a lowercase event type with dot-separated parts, the shape of every
+	// event type in Slack's event reference (message.channels, tokens_revoked:
+	// https://docs.slack.dev/reference/events, opened October 7, 2026).
+	subscriptionName = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`)
 )
 
 // ChannelEvent is what ChannelRule.Read found in one verified body.
@@ -274,6 +284,15 @@ type ReplyValues struct {
 // checkChannel reports every problem in the channel block, each naming its field.
 func (m Manifest) checkChannel(fail func(field, format string, args ...any), inputs map[string]Input, captures map[string]CaptureRule) {
 	c := m.Channel
+	for i, name := range c.Subscriptions {
+		field := fmt.Sprintf("channel.subscriptions[%d]", i)
+		if !subscriptionName.MatchString(name) {
+			fail(field, "%q is not a lowercase event type such as message.im", name)
+		}
+		if slices.Index(c.Subscriptions, name) != i {
+			fail(field, "%q is listed twice", name)
+		}
+	}
 	v := c.Verifier
 	if !slices.Contains(verifierKinds, v.Kind) {
 		fail("channel.verifier.kind", "%q is not one of %v", v.Kind, verifierKinds)

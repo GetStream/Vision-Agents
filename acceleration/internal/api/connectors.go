@@ -82,9 +82,10 @@ type ConnectorClientRegistrationMethod string
 
 func (ConnectorClientRegistrationMethod) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "ConnectorClientRegistrationMethod",
-		"operator is this deployment's own client, customer one the app registered, dcr one "+
-			"registered on the fly (RFC 7591) and cimd one named by a metadata document.",
-		string(core.ClientOperator), string(core.ClientCustomer), string(core.ClientDCR), string(core.ClientCIMD))
+		"operator is this deployment's own client, customer one the app registered, managed "+
+			"one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), "+
+			"dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.",
+		string(core.ClientOperator), string(core.ClientCustomer), string(core.ClientManaged), string(core.ClientDCR), string(core.ClientCIMD))
 }
 
 // ConnectorClientAuthMethod is how an OAuth client authenticates at the token endpoint.
