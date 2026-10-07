@@ -515,6 +515,13 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### A log severity is the least serious level to show, not the only one
+
+`severity` on `GET /v1/agents/logs` was an exact match, so asking for `error` hid the warnings
+next to it and there was no way to ask for both. It now names the floor: `warn` answers with
+warnings and errors, `info` with everything, and `error` is unchanged. `warn` is also a severity
+a log can be written at, which it was in the data but not in the enum.
+
 ### The router records who changed the app's configuration
 
 Every change to an agent config, a skill, a knowledge document or url, a router config, a

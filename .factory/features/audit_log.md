@@ -137,8 +137,9 @@ does not have is a client that has seen nothing, which is where it started.
 
 `src/components/dashboard/agents/` in volt-dashboard:
 
-- **Activity** (`/agents/activity/`) — every change to the app, filtered by agent, type or
-  client, paged by the same cursor. In the sidebar under the ungrouped block, beside Logs.
+- **Audit log** (`/agents/audit-log/`) — every change to the app, filtered by agent, type or
+  client, paged by the same cursor. In the sidebar under the ungrouped block. The Logs page
+  is not in the sidebar: it shows what went wrong, reached from the overview's error count.
 - **Recent changes** — the last five changes to one agent, at the bottom of its Behavior
   tab, so somebody about to edit an agent sees that a colleague or a sync got there first,
   with a link to the full history filtered to that agent.

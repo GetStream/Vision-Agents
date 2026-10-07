@@ -534,6 +534,7 @@ components:
         severity:
           enum:
             - info
+            - warn
             - error
           type: string
         source:
@@ -10535,11 +10536,13 @@ paths:
           name: user_id
           schema:
             type: string
-        - in: query
+        - description: 'The least serious level to show, not the only one: warn is warnings and errors.'
+          in: query
           name: severity
           schema:
             enum:
               - info
+              - warn
               - error
             type: string
         - description: Comma-separated user/agent/tool/system sources.
@@ -10643,11 +10646,13 @@ paths:
           name: user_id
           schema:
             type: string
-        - in: query
+        - description: 'The least serious level to show, not the only one: warn is warnings and errors.'
+          in: query
           name: severity
           schema:
             enum:
               - info
+              - warn
               - error
             type: string
         - description: Comma-separated user/agent/tool/system sources.
