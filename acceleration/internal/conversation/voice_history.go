@@ -39,6 +39,26 @@ func messageFromVoice(wire getstream.MessageResponse, voiceAgent string) (Messag
 	return m, m.Text != "" || len(m.Artifacts) > 0
 }
 
+// messageFromThread reads a person's message the channel bridge wrote into a thread channel:
+// one with text and no source, which is how the bridge writes it so the message hook takes
+// it as written to the agent. Everything the conversation itself writes has a source, so in
+// a thread channel a message without one is a person's. The text is untrusted user content.
+func messageFromThread(wire getstream.MessageResponse, thread bool) (Message, bool) {
+	if !thread || wire.DeletedAt != nil || wire.CreatedAt.Time == nil || wire.ID == "" || len(wire.ID) > 128 ||
+		wire.User.ID == "" || wire.Text == "" {
+		return Message{}, false
+	}
+	if _, sourced := wire.Custom["source"]; sourced {
+		return Message{}, false
+	}
+	m := Message{ID: wire.ID, Role: "user", Text: wire.Text, State: "completed", Saved: true,
+		StartedAt: *wire.CreatedAt.Time, authorID: wire.User.ID, written: true}
+	if wire.User.Name != nil {
+		m.authorName = *wire.User.Name
+	}
+	return m, true
+}
+
 // artifactsFromAttachments reads back the artifacts ChatAttachments wrote, keeping only the
 // fields an artifact has and only artifacts that are valid.
 func artifactsFromAttachments(attachments []getstream.Attachment) []ArtifactAttachment {

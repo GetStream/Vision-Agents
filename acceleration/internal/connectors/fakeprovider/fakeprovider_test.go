@@ -19,6 +19,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
 )
 
 // The suite is an outside package on purpose: it uses only what another package's test can.
@@ -876,6 +877,102 @@ func (s *FakeProviderSuite) getStatus(srv *fakeprovider.Server, path string) int
 	s.Require().NoError(err)
 	s.Require().NoError(response.Body.Close())
 	return response.StatusCode
+}
+
+// An event Deliver posts is one the core's Slack bot fixture verifies and reads, retry
+// headers and all (https://docs.slack.dev/apis/events-api/, «Retries»).
+func (s *FakeProviderSuite) TestSlackChannelDeliversAnEventSignedAsSlackSignsIt() {
+	srv := fakeprovider.New(s.T(), fakeprovider.SlackChannel)
+	manifest, err := core.ParseManifest(s.read("../core/testdata/manifests/slack_bot.yaml"))
+	s.Require().NoError(err)
+	var read core.VerifiedEvent
+	var retry string
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		read, err = hmacheader.New().Verify(r, body, manifest, []byte("synthetic-signing-secret"))
+		retry = r.Header.Get("X-Slack-Retry-Num")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer endpoint.Close()
+
+	status, _ := srv.Deliver(endpoint.URL, "synthetic-signing-secret", s.read("../core/testdata/recorded/slack_bot.message.json"), 2)
+
+	s.Equal(http.StatusOK, status)
+	s.Require().NoError(err)
+	s.Require().Len(read.Messages, 1)
+	s.Equal("1759740000.000200", read.Messages[0].ProviderMessageID)
+	s.Equal("2", retry)
+}
+
+func (s *FakeProviderSuite) TestSlackChannelPostsAReplyWithTheBotTokenItIssued() {
+	srv := fakeprovider.New(s.T(), fakeprovider.SlackChannel)
+	token := srv.InstallBot()
+
+	answer := s.postMessage(srv, token, `{"channel":"C0000CHAN","thread_ts":"1759740000.000100","text":"Done"}`)
+
+	s.Equal(true, answer["ok"])
+	s.NotEmpty(answer["ts"])
+	posts := srv.Posts()
+	s.Require().Len(posts, 1)
+	s.Equal(fakeprovider.Post{Channel: "C0000CHAN", ThreadTS: "1759740000.000100", Text: "Done", Token: posts[0].Token}, posts[0])
+	s.True(posts[0].Token == token)
+}
+
+// Slack refuses with HTTP 200 and ok false (https://docs.slack.dev/reference/methods/chat.postMessage).
+func (s *FakeProviderSuite) TestSlackChannelRefusesATokenItDidNotIssueOrThatWasRevokedWithOkFalse() {
+	srv := fakeprovider.New(s.T(), fakeprovider.SlackChannel)
+	token := srv.InstallBot()
+	srv.RevokeBot(token)
+
+	s.Equal(map[string]any{"ok": false, "error": "invalid_auth"}, s.postMessage(srv, token, `{"channel":"C0000CHAN","text":"Done"}`))
+	s.Equal(map[string]any{"ok": false, "error": "invalid_auth"}, s.postMessage(srv, "xoxb-not-issued", `{"channel":"C0000CHAN","text":"Done"}`))
+	s.Empty(srv.Posts())
+}
+
+func (s *FakeProviderSuite) TestSlackChannelFailsTheNextPostsItIsToldToAndThenPosts() {
+	srv := fakeprovider.New(s.T(), fakeprovider.SlackChannel)
+	token := srv.InstallBot()
+	srv.FailPosts(1)
+	request, err := http.NewRequest(http.MethodPost, srv.URL+fakeprovider.PathChatPostMessage, strings.NewReader(`{"channel":"C0000CHAN","text":"Done"}`))
+	s.Require().NoError(err)
+	request.Header.Set("Authorization", "Bearer "+token)
+
+	response, err := srv.Client().Do(request)
+	s.Require().NoError(err)
+	_ = response.Body.Close()
+
+	s.Equal(http.StatusServiceUnavailable, response.StatusCode)
+	s.Empty(srv.Posts())
+	s.Equal(true, s.postMessage(srv, token, `{"channel":"C0000CHAN","text":"Done"}`)["ok"])
+	s.Len(srv.Posts(), 1)
+}
+
+func (s *FakeProviderSuite) TestChatPostMessageIsNotServedWithoutSlackChannel() {
+	srv := fakeprovider.New(s.T())
+	request, err := http.NewRequest(http.MethodPost, srv.URL+fakeprovider.PathChatPostMessage, strings.NewReader(`{}`))
+	s.Require().NoError(err)
+
+	response, err := srv.Client().Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+}
+
+// postMessage calls chat.postMessage with token and returns its answer, which is HTTP 200 in
+// every case.
+func (s *FakeProviderSuite) postMessage(srv *fakeprovider.Server, token, body string) map[string]any {
+	request, err := http.NewRequest(http.MethodPost, srv.URL+fakeprovider.PathChatPostMessage, strings.NewReader(body))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err := srv.Client().Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	var answer map[string]any
+	s.Require().NoError(json.NewDecoder(response.Body).Decode(&answer))
+	return answer
 }
 
 // apply runs a core fixture manifest's capture and identity rules over what the fake sent.

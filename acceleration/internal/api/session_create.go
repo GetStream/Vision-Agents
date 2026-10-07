@@ -38,6 +38,7 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 	}
 
 	spec := specOf(*request.Body, customerID, config)
+	s.threadConversation(ctx, customerID, &spec)
 	// Who asked comes from the credential rather than from specOf, which merges the request
 	// with the config and so only ever sees what the caller was willing to say about
 	// themselves. Both halves are recorded, because the name is only worth what the kind

@@ -36,6 +36,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
@@ -176,6 +177,10 @@ type RouterSuite struct {
 	ears      *quietSTT
 	knowledge *knowledgeBase
 	memories  *keptMemories
+	// noted are the "noted" models opened so far, one per session, newest last, for a test
+	// whose sessions each need a model of their own to read back.
+	notedMu sync.Mutex
+	noted   []*scriptedLLM
 
 	// chat is the Stream Chat the conversations are written to and transcripts read from:
 	// the deployment's own app. apps gives a customer an app of its own instead, and
@@ -204,6 +209,11 @@ type RouterSuite struct {
 	// takes no events and drops messages, as a deployment without them does.
 	eventSecrets EventSecretLookup
 	bridge       ChannelBridge
+	// channelProvider, set by a suite about the channel bridge before it starts the harness,
+	// gives the router the real bridge (internal/channelbridge), whose replies dial the address
+	// it returns at the time, whatever host a manifest's reply names: the test's own fake
+	// provider. Nil leaves bridge as the suite set it.
+	channelProvider func() string
 	// resolver is the router's connector resolver over the suite's store and sealer, with
 	// connectors' schemes, set by SetupSuite.
 	resolver *resolver.Resolver
@@ -352,6 +362,9 @@ func (s *RouterSuite) SetupSuite() {
 	transports, err := core.NewTransports(core.TransportsConfig{Resolver: s.resolver, Timeout: suiteConnectorTimeout,
 		NewClient: loopbackClients(s.connectorHTTP)})
 	s.Require().NoError(err)
+	if s.channelProvider != nil {
+		s.bridge = s.channelBridge(logger)
+	}
 
 	server, err := NewServer(Options{
 		Routers:       s.modalities,
@@ -404,6 +417,35 @@ func (s *RouterSuite) SetupSuite() {
 	public.PublicURL = listener.URL
 	s.server = listener
 	s.T().Cleanup(s.server.Close)
+}
+
+// channelBridge is the router's channel bridge over the suite's store, Stream Chat and
+// resolver, whose replies leave through core.Transports, as cmd/router builds it, with a
+// client that dials channelProvider instead of the egress client, which refuses loopback.
+func (s *RouterSuite) channelBridge(logger *slog.Logger) *channelbridge.Bridge {
+	transports, err := core.NewTransports(core.TransportsConfig{
+		Resolver: s.resolver,
+		NewClient: func(timeout time.Duration, wrap func(http.RoundTripper) http.RoundTripper) *http.Client {
+			base := &http.Transport{
+				DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+					return (&net.Dialer{}).DialContext(ctx, network, s.channelProvider())
+				},
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // the test's own fake provider
+			}
+			return &http.Client{Timeout: timeout, Transport: wrap(base)}
+		},
+	})
+	s.Require().NoError(err)
+	bridge, err := channelbridge.New(channelbridge.Options{
+		Store: s.store, Stream: s.stream, Schemes: s.connectors.Schemes, Transports: transports, Resolver: s.resolver, Logger: logger,
+		// A reply sent again waits milliseconds here, not the production seconds.
+		RetryBackoff: []time.Duration{10 * time.Millisecond, 10 * time.Millisecond},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(bridge.Close)
+	// As cmd/router hands it the finished replies of the conversations on thread channels.
+	s.conversations.OnFinishedReply(bridge.Reply)
+	return bridge
 }
 
 // pluginEvents subscribes against pluginMCP, whatever host a catalog plugin names, so a
@@ -517,7 +559,13 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	reasoning.Register("vision", func(routing.Spec) (llmrouter.Provider, error) { return s.vision, nil })
 	reasoning.Register("echo", func(routing.Spec) (llmrouter.Provider, error) { return &scriptedLLM{echoes: true}, nil })
 	reasoning.Register("recites", func(routing.Spec) (llmrouter.Provider, error) { return &scriptedLLM{recites: true}, nil })
-	reasoning.Register("noted", func(routing.Spec) (llmrouter.Provider, error) { return &scriptedLLM{reply: "Noted."}, nil })
+	reasoning.Register("noted", func(routing.Spec) (llmrouter.Provider, error) {
+		opened := &scriptedLLM{reply: "Noted."}
+		s.notedMu.Lock()
+		defer s.notedMu.Unlock()
+		s.noted = append(s.noted, opened)
+		return opened, nil
+	})
 
 	// A model that is a while in the writing, for a command that has to still be running
 	// when the test asks it to stop.

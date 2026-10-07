@@ -515,7 +515,7 @@ func (r *memoryResolver) Invalidate(context.Context, core.ConnectionRef, core.Ac
 	return nil
 }
 
-func (r *memoryResolver) Revoke(context.Context, core.ConnectionRef, core.SignalKind) error {
+func (r *memoryResolver) Revoke(context.Context, core.ConnectionRef, core.SignalKind, time.Time) error {
 	return nil
 }
 

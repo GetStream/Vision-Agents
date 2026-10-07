@@ -165,6 +165,13 @@ const (
 	// (core/testdata/recorded/salesforce.token.json). That the client credentials response
 	// carries it too is unverified.
 	IdentityURL Personality = "identity_url"
+	// SlackChannel plays Slack as an inbound channel (channel.go): Deliver posts an Events API
+	// event signed as Slack signs it (docs.slack.dev/authentication/verifying-requests-from-slack),
+	// and PathChatPostMessage takes a reply with a bot token InstallBot issued, answering as
+	// chat.postMessage does, a refusal included, which comes as HTTP 200 with ok false
+	// (docs.slack.dev/reference/methods/chat.postMessage). Without it PathChatPostMessage is
+	// 404. Only Slack has these shapes, so it is named for Slack.
+	SlackChannel Personality = "slack_channel"
 )
 
 // tokenEndpoint are the personalities that decide what the token endpoint does; at most one
@@ -212,6 +219,10 @@ type Server struct {
 	lostOnce bool
 	// metadataClient fetches client metadata documents under ClientMetadataDocuments.
 	metadataClient *http.Client
+	// posts are the messages chat.postMessage took under SlackChannel.
+	posts []Post
+	// failPosts is how many more posts answer 503 (FailPosts).
+	failPosts int
 	// account is the user the next consent is by: UserID until SwitchAccount.
 	account string
 }
@@ -426,6 +437,7 @@ func (s *Server) routes() http.Handler {
 	// asks of a server without the GET stream or sessions (Streamable HTTP, «Earlier
 	// Streamable HTTP Revisions»).
 	mux.HandleFunc("POST "+PathMCP, s.mcp)
+	mux.HandleFunc("POST "+PathChatPostMessage, s.chatPostMessage)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		s.hits[r.URL.Path]++

@@ -243,8 +243,8 @@ type Options struct {
 	// (ConnectorEventSecrets reads the operator's from the environment). Absent, the
 	// endpoint takes no events.
 	ConnectorEventSecrets EventSecretLookup
-	// ChannelBridge takes the messages a verified provider event carries. Absent, they are
-	// logged and dropped, until the channel bridge (T57) registers here.
+	// ChannelBridge takes the messages a verified provider event carries
+	// (internal/channelbridge). Absent, they are logged and dropped.
 	ChannelBridge ChannelBridge
 	// TrustedProxies are the ranges this deployment's own proxies sit in, and they decide
 	// how much of X-Forwarded-For is believed when working out who a request is from.
@@ -509,6 +509,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+ConnectorCallbackPath, s.finishConnectorConsent)
 	mux.HandleFunc("GET "+ConnectorClientMetadataPath, s.serveConnectorClientMetadata)
 	mux.HandleFunc("POST "+connectorEventsPath+"{connector_id}", s.receiveConnectorEvent)
+	mux.HandleFunc("POST "+providerAppEventsPath+"{connector_id}/{provider_app_id}", s.receiveProviderAppEvent)
 	mux.HandleFunc("GET /v1/agents/plugins/{plugin_id}/logo", s.servePluginLogo)
 	mux.HandleFunc("POST "+plugins.EventsPath+"{token}", s.receivePluginEvent)
 	mux.HandleFunc("GET "+channels.HookPath+"{token}", s.receiveChannelMessage)
