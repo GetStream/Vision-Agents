@@ -204,7 +204,12 @@ func (r *Resolver) Invalidate(ctx context.Context, ref core.ConnectionRef, rejec
 // runs under the credential store's lock, so a refresh in flight on another router commits
 // first and the status this writes is the last one. Invalidate with a zero credential is not
 // the same call: its revision check would leave the status alone.
-func (r *Resolver) Revoke(ctx context.Context, ref core.ConnectionRef, why core.SignalKind) error {
+//
+// endedAt is when the provider says the grant ended, zero when it does not say. A connection
+// a consent connected after it holds a newer grant, such as a reconnect between Slack's first
+// delivery of tokens_revoked and its retry minutes later, and keeps its status. endedAt is
+// to the second, so the grant must have begun after the whole second it names.
+func (r *Resolver) Revoke(ctx context.Context, ref core.ConnectionRef, why core.SignalKind, endedAt time.Time) error {
 	lastError, known := revokedErrors[why]
 	if !known {
 		return stack.Wrap(fmt.Errorf("resolver: %q is not a signal that ends a grant", why))
@@ -212,6 +217,9 @@ func (r *Resolver) Revoke(ctx context.Context, ref core.ConnectionRef, why core.
 	r.drop(ref)
 	return stack.Wrap(r.credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
 		if state.Status != store.ConnectionConnected {
+			return false, nil
+		}
+		if !endedAt.IsZero() && state.ConnectedAt.After(endedAt.Add(time.Second)) {
 			return false, nil
 		}
 		state.Status, state.LastError = store.ConnectionNeedsReauthorization, lastError

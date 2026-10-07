@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
@@ -126,6 +128,11 @@ type Spec struct {
 	// the fork's own transcript goes into its own channel, so continuing a conversation
 	// twice gives two transcripts rather than one with both halves interleaved.
 	Recall *Recall
+	// History is the conversation so far as the caller kept it, for a caller that holds its
+	// own thread and opens a session to answer in it. The model is handed it before the
+	// first response, where a resumed conversation's history goes, and it is recorded
+	// nowhere: not as turns, not in a transcript, not in Chat.
+	History []persistent.HistoryLine
 
 	Instructions string
 	// Greeting is said on joining without going through the model. Empty means the agent
@@ -312,6 +319,12 @@ func (s *Spec) Normalize() error {
 		return stack.Wrap(fmt.Errorf("session: the id %q is not a UUID", s.ID))
 	}
 
+	// Checked before incognito clears the conversation id, so naming both is refused
+	// whatever else the request says.
+	if err := checkHistory(s.History, s.ConversationID); err != nil {
+		return err
+	}
+
 	// Incognito is honoured here rather than at each of the places that records something,
 	// because one place that forgot would be a conversation kept against its caller's
 	// wishes. Everything downstream reads the spec, so turning persistence off here turns
@@ -411,6 +424,41 @@ func (s *Spec) Normalize() error {
 		return err
 	}
 	return harness.Tools{Tools: s.Tools}.Validate()
+}
+
+// checkHistory refuses history from the caller that the model would not be handed whole.
+// The limits are the ones history read back from Chat is cut to, so a caller's thread is
+// held to what the router's own would be; a caller is told rather than cut, since only
+// it knows which messages matter.
+func checkHistory(lines []persistent.HistoryLine, conversationID string) error {
+	if len(lines) == 0 {
+		return nil
+	}
+	if conversationID != "" {
+		return stack.Wrap(errors.New("session: history and conversation_id both say what was said " +
+			"before; a resumed conversation reads its own, so name one"))
+	}
+	if len(lines) > persistent.MaxHistoryMessages {
+		return stack.Wrap(fmt.Errorf("session: history holds %d messages, more than the %d a session opens with",
+			len(lines), persistent.MaxHistoryMessages))
+	}
+	size := 0
+	for i, line := range lines {
+		switch {
+		case line.Role != "user" && line.Role != "assistant":
+			return stack.Wrap(fmt.Errorf("session: history[%d].role is %q; it must be user or assistant", i, line.Role))
+		case line.Text == "":
+			return stack.Wrap(fmt.Errorf("session: history[%d].text is empty", i))
+		case utf8.RuneCountInString(line.Name) > persistent.MaxAuthorName:
+			return stack.Wrap(fmt.Errorf("session: history[%d].name is longer than %d characters", i, persistent.MaxAuthorName))
+		}
+		size += utf8.RuneCountInString(line.Text)
+	}
+	if size > persistent.MaxHistoryRunes {
+		return stack.Wrap(fmt.Errorf("session: history holds %d characters of text, more than the %d a session opens with",
+			size, persistent.MaxHistoryRunes))
+	}
+	return nil
 }
 
 // Native reports whether this session is held by one speech-to-speech model rather than

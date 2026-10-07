@@ -33,6 +33,29 @@ type Result struct {
 	Parts []llm.ContentPart
 }
 
+// MaxResultBytes is the most of a tool's result a Toolset hands back to the model: a longer
+// one is cut to fit and ends with TruncatedMarker, within the same bound. 32 KiB is the
+// architecture doc's SourceContract («a result over 32 KiB is cut with the marker»,
+// architecture.md on connectors/planning) and the prototype's maxMCPToolResultBytes
+// (internal/mcp/mcp.go:26 on codex/connector-support at cf62af0d). Unverified, not measured:
+// a choice that keeps one result from taking over the model's context.
+const MaxResultBytes = 32 << 10
+
+// TruncatedMarker ends a result that was cut at MaxResultBytes, so the model knows it read
+// part of it. The prototype's truncatedToolResultNotice (internal/mcp/mcp.go:27 at cf62af0d).
+const TruncatedMarker = "\n[connector result truncated]"
+
+// ToolError is a tool that ran and reported its own failure, such as an MCP result with
+// isError. Its Message is the tool's, for the model to read and act on; any other error from
+// Toolset.Call is the call failing to happen or to come back.
+type ToolError struct {
+	Message string
+}
+
+func (e *ToolError) Error() string {
+	return e.Message
+}
+
 // ResolvedBinding is one binding resolved against one connection.
 type ResolvedBinding struct {
 	Binding    Binding
@@ -73,6 +96,10 @@ type ToolSpec struct {
 	Description  string
 	InputSchema  map[string]any
 	SchemaDigest string
+	// NeedsScopes are the scopes a call of the tool needs, from the manifest's ToolRule, so a
+	// grant that lacks one is found when the connection is validated, not when a call fails.
+	// Empty when nothing says. They are not part of SchemaDigest, which is what the model sees.
+	NeedsScopes []string
 }
 
 // Connection is one account at one connector, owned by the app or by one user.

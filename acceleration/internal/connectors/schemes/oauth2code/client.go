@@ -89,9 +89,10 @@ var registrationOrder = []core.ClientRegistrationMethod{core.ClientCustomer, cor
 // looked up again at each use.
 var preregistered = []core.ClientRegistrationMethod{core.ClientCustomer, core.ClientManaged, core.ClientOperator}
 
-// pickClient is the first client the manifest's client.registration allows that is available.
-func (s *Scheme) pickClient(ctx context.Context, ref core.ConnectionRef, m core.ResolvedManifest, d server, redirectURI string) (client, error) {
-	for _, registration := range registrationOrder {
+// pickClient is the first client the manifest's client.registration allows that is available,
+// trying the registrations of order, in that order.
+func (s *Scheme) pickClient(ctx context.Context, ref core.ConnectionRef, m core.ResolvedManifest, d server, redirectURI string, order []core.ClientRegistrationMethod) (client, error) {
+	for _, registration := range order {
 		if !slices.Contains(m.Client.Registration, registration) {
 			continue
 		}

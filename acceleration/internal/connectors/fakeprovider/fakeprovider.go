@@ -165,6 +165,18 @@ const (
 	// (core/testdata/recorded/salesforce.token.json). That the client credentials response
 	// carries it too is unverified.
 	IdentityURL Personality = "identity_url"
+	// SlackChannel plays Slack as an inbound channel (channel.go): Deliver posts an Events API
+	// event signed as Slack signs it (docs.slack.dev/authentication/verifying-requests-from-slack),
+	// and PathChatPostMessage takes a reply with a bot token InstallBot issued, answering as
+	// chat.postMessage does, a refusal included, which comes as HTTP 200 with ok false
+	// (docs.slack.dev/reference/methods/chat.postMessage). Without it PathChatPostMessage is
+	// 404. Only Slack has these shapes, so it is named for Slack.
+	SlackChannel Personality = "slack_channel"
+	// SlowConfigRotation holds every tooling.tokens.rotate for slowRotationDelay before it
+	// answers, so two callers that rotate one configuration token without a lock between
+	// them overlap at the server. Not a Slack behaviour: a slow network, which any caller can
+	// meet.
+	SlowConfigRotation Personality = "slow_config_rotation"
 )
 
 // tokenEndpoint are the personalities that decide what the token endpoint does; at most one
@@ -212,8 +224,20 @@ type Server struct {
 	lostOnce bool
 	// metadataClient fetches client metadata documents under ClientMetadataDocuments.
 	metadataClient *http.Client
+	// posts are the messages chat.postMessage took under SlackChannel.
+	posts []Post
+	// failPosts is how many more posts answer 503 (FailPosts).
+	failPosts int
 	// account is the user the next consent is by: UserID until SwitchAccount.
 	account string
+
+	// The fake Slack (slack.go): configuration tokens by token, refresh tokens with whether
+	// they were spent, successful rotations, and apps by id in the order they were made.
+	configTokens    map[string]*configToken
+	configRefresh   map[string]bool
+	configRotations int
+	slackApps       map[string]*SlackApp
+	slackOrder      []string
 }
 
 type client struct {
@@ -285,6 +309,9 @@ func New(t testing.TB, personalities ...Personality) *Server {
 		access:        map[string]*accessToken{},
 		refresh:       map[string]*refreshToken{},
 		hits:          map[string]int{},
+		configTokens:  map[string]*configToken{},
+		configRefresh: map[string]bool{},
+		slackApps:     map[string]*SlackApp{},
 	}
 	s.account = s.UserID
 	s.clients[s.ClientID] = &client{
@@ -426,6 +453,8 @@ func (s *Server) routes() http.Handler {
 	// asks of a server without the GET stream or sessions (Streamable HTTP, «Earlier
 	// Streamable HTTP Revisions»).
 	mux.HandleFunc("POST "+PathMCP, s.mcp)
+	mux.HandleFunc("POST "+PathChatPostMessage, s.chatPostMessage)
+	s.slackRoutes(mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		s.hits[r.URL.Path]++
@@ -441,6 +470,13 @@ func (s *Server) now() time.Time {
 
 func (s *Server) is(p Personality) bool {
 	return s.personalities[p]
+}
+
+// isOn is is for a caller that does not hold mu.
+func (s *Server) isOn(p Personality) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.is(p)
 }
 
 func (s *Server) resource() string {

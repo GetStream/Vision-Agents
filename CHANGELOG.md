@@ -501,6 +501,10 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### A session can be opened with the history the caller kept
+
+`POST /v1/agents/sessions` takes `history`: the conversation so far, oldest first, as up to 100 `HistoryMessage`s with a `role` of `user` or `assistant`, `text`, and an optional author `name` and `created_at`. It is for a backend that keeps its own thread, such as one in its own Slack app, that outlives a session: open a new session with the thread here, then send the next message to `POST /v1/agents/sessions/{id}/responses`. The model is handed the history before the first response, the way a resumed conversation's is, and once any message names its author or time each user message is quoted with them behind a note that names are labels, not authority. The router records none of it, as turns, transcript or Chat messages; with `incognito` it keeps nothing at all. More than 100 messages or 60000 characters of text, a role other than `user` or `assistant`, and `history` with `conversation_id` are 400s, and a device sending it is a 403. Go (`client.SessionOptions.History`) and Python (`SessionOptions.history`) take it, and JavaScript's `SessionSpec` from the regenerated types; other SDKs follow.
+
 ### Every router response carries an `X-Request-Id`, and a 500 is logged with its stack
 
 The router answers every request with `X-Request-Id`, keeping one a proxy sent (printable
@@ -513,6 +517,10 @@ request id to find the rest in the logs.
 ### A provider can tell the router that a connection's grant ended
 
 `POST /v1/agents/connectors/events/{connector_id}` (`receiveConnectorEvent`, `security: []`, not client-accessible) takes a built-in connector's provider events. Each request is checked by the verifier the manifest's `channel.verifier` names, with the operator's secret, and an unsigned or stale one is a 401 that changes nothing. Slack's `tokens_revoked` moves the revoked user's connections to `needs_reauthorization`, and `app_uninstalled` moves every connection in that workspace; the next credential resolve on any router then fails at once. A URL verification is answered with its challenge. Point the operator's Slack app's Request URL at `/v1/agents/connectors/events/slack`, subscribe it to both events, and set `SLACK_MCP_SIGNING_SECRET`. A manifest's `channel` block takes `signals`, and may have them without `messages` and `reply`. The Go client and the JavaScript types are regenerated; no SDK wraps the route.
+
+### An agent answers in Slack threads through the app's own Slack app
+
+`POST /v1/connectors/events/{connector_id}/{provider_app_id}` (`receiveProviderAppEvent`, `security: []`, not client-accessible) is the Request URL of one customer's provider app, checked with that app's own signing secret. On the new built-in `slack_bot` connector, a person's message in a Slack channel or DM is written into a thread channel in Stream Chat (one per Slack thread, `agent:thread-<uuid>`, naming the agent config that binds the app's `slack_bot` connection). The router answers it itself: the message hook tells the persistent text session held on that thread channel, starting one from the agent config when none runs, so the reply is kept in the thread channel, and once its final text is stored it goes back into the same Slack thread with `chat.postMessage` and the workspace's bot token. A thread channel's message is not handed to a dispatch worker. A session created with `agent_id` naming a thread channel keeps its conversation there (its `conversation_id` is `agent:thread-<uuid>`). One thread is answered by one router at a time, and a reply Slack did not take (no answer, 5xx, 429) is sent again. A retried delivery, a repeated `message.new`, a reply told twice, the bot's own messages and `message` events with a `subtype` are each acted on at most once or not at all. Slack refusing the bot token (`invalid_auth`, `token_revoked`, `account_inactive`, answered with HTTP 200) moves the connection to `needs_reauthorization`. `tokens_revoked` and `app_uninstalled` on this URL move only that customer's connection, and not one reconnected after the event was dispatched. The Go client and the JavaScript types are regenerated; no SDK wraps the route.
 
 ### An app can put its own OAuth client for a connector
 
@@ -1573,6 +1581,9 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- An incognito session records nothing, as it promised. It still wrote a `calls` row with its
+  id, caller and instructions, turn timings under its agent id, and, on a call, the decisions
+  with the words that were heard. Its voice minutes no longer appear in the activity report.
 - A login card in a tool result is attached to the reply only when it comes from a server
   each end user logs into: a plugin under `user_plugins`, or an `mcp_servers` entry with
   `user: true`. A server the app logs into, or one with no login, can no longer put one in

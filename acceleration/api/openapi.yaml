@@ -1634,6 +1634,23 @@ components:
         - created_at
         - updated_at
       type: object
+    ConnectionCredentials:
+      additionalProperties: false
+      description: Credentials for a connection, under the revision the caller last read. An unknown field is refused rather than ignored.
+      properties:
+        expected_revision:
+          description: The connection's revision as last read. A connection that has moved past it is refused with a 409, so two writers never replace each other's credentials unseen.
+          format: int64
+          minimum: 1
+          type: integer
+        values:
+          additionalProperties:
+            type: string
+          description: 'What the connection''s auth_scheme takes, write-only. api_key: api_key and header. bearer: token. none: nothing, which activates the connection. oauth2_client_credentials: client_id and client_secret, which are tried at the token endpoint at once. oauth2_code: a grant the provider already issued, as access_token, refresh_token (optional), expires_at (RFC 3339) and scope (the granted scopes joined as the connector''s scopes are); its endpoints and client are the connector''s, never the caller''s.'
+          type: object
+      required:
+        - expected_revision
+      type: object
     ConnectionOwner:
       additionalProperties: false
       description: 'Whose a connection is: the app''s, which any of its agents may be bound to, or one user''s.'
@@ -1704,6 +1721,103 @@ components:
         - connected
         - needs_reauthorization
         - disconnected
+      type: string
+    ConnectionTool:
+      properties:
+        description:
+          type: string
+        input_schema:
+          additionalProperties: {}
+          description: The JSON Schema of its arguments.
+          type: object
+        name:
+          description: The tool's name at the provider. An agent config grants it by this name.
+          type: string
+        needs_scopes:
+          description: The scopes a call of the tool needs, as the connector says. Absent when it says none.
+          items:
+            type: string
+          nullable: true
+          type: array
+        schema_digest:
+          description: The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again.
+          type: string
+      required:
+        - name
+        - description
+        - input_schema
+        - schema_digest
+      type: object
+    ConnectionTools:
+      description: 'The tools a connection offered when it was last validated, in one piece: the provider''s own list, not a page of one.'
+      properties:
+        checked_at:
+          description: When the list was read. Absent until a validate listed it.
+          format: date-time
+          type: string
+        connection_id:
+          type: string
+        digest:
+          description: The digest of the whole list. Absent until a validate listed it.
+          type: string
+        tools:
+          items:
+            $ref: '#/components/schemas/ConnectionTool'
+          nullable: true
+          type: array
+      required:
+        - connection_id
+        - tools
+      type: object
+    ConnectionValidation:
+      description: Whether a connection's credential works, found by asking the provider for its tools.
+      properties:
+        checked_at:
+          description: When the tools were listed. Absent until a validate listed them.
+          format: date-time
+          type: string
+        code:
+          description: 'What a program branches on when the status is not connected: connector_scope_required with needs_scopes. More may be added.'
+          type: string
+        connection_id:
+          type: string
+        error:
+          description: Why the status is not connected, for a person to read.
+          type: string
+        missing_scopes:
+          description: 'With needs_scopes: the scopes the checked tools need that the grant lacks, sorted.'
+          items:
+            type: string
+          nullable: true
+          type: array
+        status:
+          $ref: '#/components/schemas/ConnectionValidationStatus'
+        tools_digest:
+          description: The digest of the tools the connection offers, as GET .../tools shows them. Absent until a validate listed them.
+          type: string
+      required:
+        - connection_id
+        - status
+      type: object
+    ConnectionValidationRequest:
+      additionalProperties: false
+      description: What a validate checks the grant's scopes against. An unknown field is refused rather than ignored.
+      properties:
+        tools:
+          description: 'The tools to check the granted scopes against, by name: those an agent config will grant. Left out, every tool the connection offers.'
+          items:
+            type: string
+          nullable: true
+          type: array
+      type: object
+    ConnectionValidationStatus:
+      description: 'connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.'
+      enum:
+        - connected
+        - pending
+        - needs_reauthorization
+        - needs_scopes
+        - failed
       type: string
     Connector:
       description: 'A connector: an account elsewhere an agent may reach, built in or the app''s own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.'
@@ -1792,10 +1906,11 @@ components:
         - tls_client_auth
       type: string
     ConnectorClientRegistrationMethod:
-      description: operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+      description: operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
       enum:
         - operator
         - customer
+        - managed
         - dcr
         - cimd
       type: string
@@ -1893,6 +2008,63 @@ components:
       required:
         - items
         - has_more
+      type: object
+    ConnectorProviderApp:
+      description: The customer's app at a connector's provider, such as a Slack app. Its client secret and signing secret are kept sealed and never returned.
+      properties:
+        client_id:
+          description: The app's OAuth client, which every consent of the connector's connections uses.
+          readOnly: true
+          type: string
+        connector_id:
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        provider_app_id:
+          description: The provider's id for the app, such as a Slack app id.
+          readOnly: true
+          type: string
+        registration:
+          $ref: '#/components/schemas/ConnectorClientRegistrationMethod'
+          description: 'managed: the router created the app in the customer''s workspace. operator: Stream''s own app, which serves Stream''s own agents.'
+          readOnly: true
+        updated_at:
+          format: date-time
+          readOnly: true
+          type: string
+      required:
+        - connector_id
+        - registration
+        - provider_app_id
+        - client_id
+        - created_at
+        - updated_at
+      type: object
+    ConnectorProviderAppRequest:
+      additionalProperties: false
+      description: The app the router creates and keeps in the customer's workspace. An unknown field is refused rather than ignored.
+      properties:
+        allowed_ip_address_ranges:
+          description: IP addresses or CIDR ranges the app's tokens work from, at most 10. Left out, they work from anywhere.
+          items:
+            type: string
+          maxItems: 10
+          nullable: true
+          type: array
+        config_refresh_token:
+          description: The refresh token of an app configuration token a workspace admin generated in Slack's app settings. Required the first time; the router rotates it and keeps the result sealed. Sent again, it replaces the one kept. Never returned.
+          type: string
+          writeOnly: true
+        name:
+          description: The app's name in the customer's workspace.
+          maxLength: 35
+          minLength: 1
+          type: string
+      required:
+        - name
       type: object
     ConnectorToolGrant:
       description: One tool a binding allows.
@@ -2039,6 +2211,12 @@ components:
         greeting:
           description: Said on joining without going through the model. Empty means the agent waits to be spoken to.
           type: string
+        history:
+          description: 'The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread''s messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation''s history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent''s mouth.'
+          items:
+            $ref: '#/components/schemas/HistoryMessage'
+          maxItems: 100
+          type: array
         id:
           description: The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7.
           type: string
@@ -2461,6 +2639,35 @@ components:
         - status
         - dependencies
       type: object
+    HistoryMessage:
+      properties:
+        created_at:
+          description: When it was said. The model is shown it beside a person's message, so it can tell an hour ago from just now.
+          format: date-time
+          type: string
+        name:
+          description: Who said it, when several people share the thread. The model is shown it as a label, never as who is asking now.
+          maxLength: 256
+          type: string
+        role:
+          $ref: '#/components/schemas/HistoryRole'
+        text:
+          maxLength: 60000
+          minLength: 1
+          type: string
+      required:
+        - role
+        - text
+      type: object
+    HistoryRole:
+      description: user is what a person said, assistant what the agent answered. These are the only turns a resumed conversation hands the model; instructions say anything a system message would.
+      enum:
+        - user
+        - assistant
+      type: string
+      x-enum-varnames:
+        - HistoryRoleUser
+        - HistoryRoleAssistant
     IMessageProfile:
       properties:
         consent_method:
@@ -8207,6 +8414,122 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Start a consent
+  /v1/agents/connections/{id}/credentials:
+    put:
+      description: |-
+        Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: putConnectionCredentials
+      parameters:
+        - description: The connection, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connection, as returned when it was created.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectionCredentials'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Connection'
+          description: The connection, connected
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Set a connection's credentials
+  /v1/agents/connections/{id}/tools:
+    get:
+      description: |-
+        The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: listConnectionTools
+      parameters:
+        - description: The connection, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connection, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionTools'
+          description: The connection's tools
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: List a connection's tools
+  /v1/agents/connections/{id}/validate:
+    post:
+      description: |-
+        Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: validateConnection
+      parameters:
+        - description: The connection, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connection, as returned when it was created.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectionValidationRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionValidation'
+          description: What the validate found
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Validate a connection
   /v1/agents/connectors:
     get:
       description: |-
@@ -8396,6 +8719,115 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Set the app's own OAuth client for a connector
+  /v1/agents/connectors/{id}/provider-app:
+    delete:
+      description: |-
+        Deletes the customer's Slack app with Slack's apps.manifest.delete, then its record and the configuration token the router kept. An app already deleted in Slack is removed here too. Connections consented with it need a reconnect.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: deleteConnectorProviderApp
+      parameters:
+        - description: The connector, such as slack.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connector, such as slack.
+            type: string
+      responses:
+        "204":
+          description: The app is deleted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Too Many Requests
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Service Unavailable
+      summary: Delete the app the router keeps at the connector's provider
+    put:
+      description: |-
+        Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: setConnectorProviderApp
+      parameters:
+        - description: The connector, such as slack.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connector, such as slack.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectorProviderAppRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorProviderApp'
+          description: The app exists; its manifest was applied again
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorProviderApp'
+          description: The app was created
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Too Many Requests
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Service Unavailable
+      summary: Create or update the app the router keeps at the connector's provider
   /v1/agents/connectors/events/{connector_id}:
     post:
       description: 'Where a provider delivers the events of a built-in connector: Slack''s tokens_revoked and app_uninstalled to the operator''s Slack app''s Request URL, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector''s manifest names (channel.verifier) against the operator''s secret, and an unsigned or stale one changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves every connection of that account to needs_reauthorization; a message goes to the channel bridge. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.'
@@ -9283,6 +9715,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "401":
           $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
         "409":
@@ -10880,6 +11314,40 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
           description: The classifier is overloaded or could not be reached. Ask again after a wait.
       summary: Ask a classifier typed questions about a piece of text
+  /v1/connectors/events/{connector_id}/{provider_app_id}:
+    post:
+      description: 'Where a provider delivers the events of one customer''s provider app: the Request URL of a customer''s Slack app, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector''s manifest names (channel.verifier) against that app''s own signing secret, so an event signed for another app is refused and changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves the app''s customer''s connections of that account to needs_reauthorization, unless they connected after the event. A message goes to the channel bridge, which writes it into the thread channel of its external thread in Stream Chat; a retried delivery is dropped. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.'
+      operationId: receiveProviderAppEvent
+      parameters:
+        - description: The connector the provider app is of, such as slack_bot.
+          in: path
+          name: connector_id
+          required: true
+          schema:
+            type: string
+        - description: The provider's id for the app, such as a Slack app id.
+          in: path
+          name: provider_app_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: The event is taken, or a URL verification's challenge, echoed
+        "401":
+          description: The request is not signed with the app's signing secret, or its signed timestamp is more than the manifest's max_age from now
+        "404":
+          description: No such provider app, or its connector takes no events here
+        "413":
+          description: The event is over 256 KiB
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Receive a provider app's event
   /v1/data/changes:
     get:
       description: |-
@@ -11069,6 +11537,99 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Draw pictures from a prompt, and return them
+  /v1/ops/customers/{customer_id}/connectors/{id}/provider-app:
+    delete:
+      description: |-
+        Removes the record setOperatorProviderApp made. The app itself is Stream's and stays.
+
+        Stream staff only: it needs the ops key.
+      operationId: deleteOperatorProviderApp
+      parameters:
+        - description: The customer Stream's app serves.
+          in: path
+          name: customer_id
+          required: true
+          schema:
+            description: The customer Stream's app serves.
+            type: string
+        - description: The built-in connector, such as slack.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The built-in connector, such as slack.
+            type: string
+      responses:
+        "204":
+          description: The record is removed
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - OpsKey: []
+      summary: Stop Stream's own app being a customer's provider app
+    put:
+      description: |-
+        Records this deployment's own app for a built-in connector, as its environment holds it (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the customer's provider app, so its events reach that customer. One customer per app: another customer's record of it is a conflict.
+
+        Stream staff only: it needs the ops key.
+      operationId: setOperatorProviderApp
+      parameters:
+        - description: The customer Stream's app serves.
+          in: path
+          name: customer_id
+          required: true
+          schema:
+            description: The customer Stream's app serves.
+            type: string
+        - description: The built-in connector, such as slack.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The built-in connector, such as slack.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorProviderApp'
+          description: The record was replaced
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorProviderApp'
+          description: The record was stored
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - OpsKey: []
+      summary: Make Stream's own app a customer's provider app
   /v1/ops/use-cases:
     get:
       description: |-

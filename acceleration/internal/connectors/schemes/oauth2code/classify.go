@@ -129,6 +129,17 @@ var errorCodes = map[string]core.OutcomeKind{
 	// made both Uncertain (internal/mcp/oauth.go:576-578 at cf62af0d).
 	"internal_error": core.OutcomeUncertain,
 	"fatal_error":    core.OutcomeUncertain,
+	// Slack's Web API names for a token that no longer works, answered as HTTP 200 with
+	// «"ok": false» (docs.slack.dev/reference/methods/chat.postMessage, opened 2026-10-06):
+	// invalid_auth «Some aspect of authentication cannot be validated», token_revoked
+	// «Authentication token is for a deleted user or workspace or the app has been removed»,
+	// account_inactive «Authentication token is for a deleted user or workspace when using a
+	// bot token». Only a new consent helps. invalid_auth also covers «the request originates
+	// from an IP address disallowed», which a new consent does not fix; it still means no
+	// call with this token will pass, so it ends the grant as the others do.
+	"invalid_auth":     core.OutcomeInvalidGrant,
+	"token_revoked":    core.OutcomeInvalidGrant,
+	"account_inactive": core.OutcomeInvalidGrant,
 	// RFC 6749 section 5.2's other codes, which only a token endpoint answers: a refusal,
 	// so nothing was spent and a later attempt may pass. The prototype kept such a
 	// connection connected and «temporarily unavailable» (internal/connectors/runtime.go:

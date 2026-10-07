@@ -376,6 +376,37 @@ func TestAnIncognitoSessionAsksToKeepNothing(t *testing.T) {
 	}
 }
 
+func TestHistoryTheCallerKeptGoesOverInOrder(t *testing.T) {
+	backend := newRouter(t)
+	agent := backend.client(t).Agent("docs")
+	ann := "Ann"
+
+	session, err := agent.Sessions.Create(t.Context(), SessionOptions{
+		Incognito: true,
+		History: []acceleration.HistoryMessage{
+			{Role: acceleration.HistoryRoleUser, Text: "Where is order 4471?", Name: &ann},
+			{Role: acceleration.HistoryRoleAssistant, Text: "It ships on Friday."},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(t.Context())
+
+	history, _ := backend.body(t, "POST", "/v1/agents/sessions")["history"].([]any)
+	if len(history) != 2 {
+		t.Fatalf("the history went over as %v", history)
+	}
+	first, _ := history[0].(map[string]any)
+	second, _ := history[1].(map[string]any)
+	if first["role"] != "user" || first["text"] != "Where is order 4471?" || first["name"] != "Ann" {
+		t.Errorf("the first message went over as %v", first)
+	}
+	if second["role"] != "assistant" || second["text"] != "It ships on Friday." {
+		t.Errorf("the second message went over as %v", second)
+	}
+}
+
 func TestQueryingNarrowsToTheAgentAndTheFiltersGiven(t *testing.T) {
 	backend := newRouter(t)
 	backend.sessions = []acceleration.Session{{Id: "session-1", State: "closed"}}

@@ -30,6 +30,9 @@ type ResolvedManifest struct {
 	Capture   []CaptureRule
 	Refresh   RefreshPolicy
 	RateLimit RateLimitRule
+	// Sources are the tool sources the connector offers. A ToolSource finds its own by Kind
+	// and reads its endpoint from Endpoints under the role the rule names.
+	Sources []SourceRule
 	// Channel is the manifest's channel block, or nil when the connector is no inbound
 	// channel. It is the Manifest's own, not a copy, as Client and Scopes are: Reply only reads
 	// it.

@@ -19,6 +19,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
 )
 
 // The suite is an outside package on purpose: it uses only what another package's test can.
@@ -878,6 +879,102 @@ func (s *FakeProviderSuite) getStatus(srv *fakeprovider.Server, path string) int
 	return response.StatusCode
 }
 
+// An event Deliver posts is one the core's Slack bot fixture verifies and reads, retry
+// headers and all (https://docs.slack.dev/apis/events-api/, «Retries»).
+func (s *FakeProviderSuite) TestSlackChannelDeliversAnEventSignedAsSlackSignsIt() {
+	srv := fakeprovider.New(s.T(), fakeprovider.SlackChannel)
+	manifest, err := core.ParseManifest(s.read("../core/testdata/manifests/slack_bot.yaml"))
+	s.Require().NoError(err)
+	var read core.VerifiedEvent
+	var retry string
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		read, err = hmacheader.New().Verify(r, body, manifest, []byte("synthetic-signing-secret"))
+		retry = r.Header.Get("X-Slack-Retry-Num")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer endpoint.Close()
+
+	status, _ := srv.Deliver(endpoint.URL, "synthetic-signing-secret", s.read("../core/testdata/recorded/slack_bot.message.json"), 2)
+
+	s.Equal(http.StatusOK, status)
+	s.Require().NoError(err)
+	s.Require().Len(read.Messages, 1)
+	s.Equal("1759740000.000200", read.Messages[0].ProviderMessageID)
+	s.Equal("2", retry)
+}
+
+func (s *FakeProviderSuite) TestSlackChannelPostsAReplyWithTheBotTokenItIssued() {
+	srv := fakeprovider.New(s.T(), fakeprovider.SlackChannel)
+	token := srv.InstallBot()
+
+	answer := s.postMessage(srv, token, `{"channel":"C0000CHAN","thread_ts":"1759740000.000100","text":"Done"}`)
+
+	s.Equal(true, answer["ok"])
+	s.NotEmpty(answer["ts"])
+	posts := srv.Posts()
+	s.Require().Len(posts, 1)
+	s.Equal(fakeprovider.Post{Channel: "C0000CHAN", ThreadTS: "1759740000.000100", Text: "Done", Token: posts[0].Token}, posts[0])
+	s.True(posts[0].Token == token)
+}
+
+// Slack refuses with HTTP 200 and ok false (https://docs.slack.dev/reference/methods/chat.postMessage).
+func (s *FakeProviderSuite) TestSlackChannelRefusesATokenItDidNotIssueOrThatWasRevokedWithOkFalse() {
+	srv := fakeprovider.New(s.T(), fakeprovider.SlackChannel)
+	token := srv.InstallBot()
+	srv.RevokeBot(token)
+
+	s.Equal(map[string]any{"ok": false, "error": "invalid_auth"}, s.postMessage(srv, token, `{"channel":"C0000CHAN","text":"Done"}`))
+	s.Equal(map[string]any{"ok": false, "error": "invalid_auth"}, s.postMessage(srv, "xoxb-not-issued", `{"channel":"C0000CHAN","text":"Done"}`))
+	s.Empty(srv.Posts())
+}
+
+func (s *FakeProviderSuite) TestSlackChannelFailsTheNextPostsItIsToldToAndThenPosts() {
+	srv := fakeprovider.New(s.T(), fakeprovider.SlackChannel)
+	token := srv.InstallBot()
+	srv.FailPosts(1)
+	request, err := http.NewRequest(http.MethodPost, srv.URL+fakeprovider.PathChatPostMessage, strings.NewReader(`{"channel":"C0000CHAN","text":"Done"}`))
+	s.Require().NoError(err)
+	request.Header.Set("Authorization", "Bearer "+token)
+
+	response, err := srv.Client().Do(request)
+	s.Require().NoError(err)
+	_ = response.Body.Close()
+
+	s.Equal(http.StatusServiceUnavailable, response.StatusCode)
+	s.Empty(srv.Posts())
+	s.Equal(true, s.postMessage(srv, token, `{"channel":"C0000CHAN","text":"Done"}`)["ok"])
+	s.Len(srv.Posts(), 1)
+}
+
+func (s *FakeProviderSuite) TestChatPostMessageIsNotServedWithoutSlackChannel() {
+	srv := fakeprovider.New(s.T())
+	request, err := http.NewRequest(http.MethodPost, srv.URL+fakeprovider.PathChatPostMessage, strings.NewReader(`{}`))
+	s.Require().NoError(err)
+
+	response, err := srv.Client().Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+}
+
+// postMessage calls chat.postMessage with token and returns its answer, which is HTTP 200 in
+// every case.
+func (s *FakeProviderSuite) postMessage(srv *fakeprovider.Server, token, body string) map[string]any {
+	request, err := http.NewRequest(http.MethodPost, srv.URL+fakeprovider.PathChatPostMessage, strings.NewReader(body))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err := srv.Client().Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	var answer map[string]any
+	s.Require().NoError(json.NewDecoder(response.Body).Decode(&answer))
+	return answer
+}
+
 // apply runs a core fixture manifest's capture and identity rules over what the fake sent.
 func (s *FakeProviderSuite) apply(manifestPath string, callback url.Values, token map[string]any) core.AccountInfo {
 	manifest, err := core.ParseManifest(s.read(manifestPath))
@@ -907,4 +1004,77 @@ func hmacHex(secret, message string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(message))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func (s *FakeProviderSuite) TestAConfigRefreshTokenRotatesOnce() {
+	srv := fakeprovider.New(s.T())
+	refresh := srv.NewConfigToken()
+
+	first := s.slack(srv, "tooling.tokens.rotate", "", url.Values{"refresh_token": {refresh}})
+	second := s.slack(srv, "tooling.tokens.rotate", "", url.Values{"refresh_token": {refresh}})
+
+	s.Equal(true, first["ok"])
+	s.Equal(first["iat"].(float64)+fakeprovider.ConfigTokenTTL.Seconds(), first["exp"])
+	s.Equal("invalid_refresh_token", second["error"])
+	s.Equal(1, srv.ConfigTokenRotations())
+}
+
+func (s *FakeProviderSuite) TestASlackAppIsMadeOnlyWithAConfigTokenThatHasNotExpired() {
+	srv := fakeprovider.New(s.T())
+	token := s.configToken(srv)
+	manifest := url.Values{"manifest": {`{"display_information":{"name":"Acme"},"settings":{}}`}}
+
+	created := s.slack(srv, "apps.manifest.create", token, manifest)
+	srv.Advance(fakeprovider.ConfigTokenTTL)
+	expired := s.slack(srv, "apps.manifest.create", token, manifest)
+
+	s.Equal(true, created["ok"])
+	s.Equal(created["app_id"], srv.SlackApps()[0].AppID)
+	s.Equal("token_expired", expired["error"])
+	s.Len(srv.SlackApps(), 1)
+}
+
+func (s *FakeProviderSuite) TestADeletedSlackAppIsNotFound() {
+	srv := fakeprovider.New(s.T())
+	token := s.configToken(srv)
+	manifest := `{"display_information":{"name":"Acme"},"settings":{}}`
+	app := s.slack(srv, "apps.manifest.create", token, url.Values{"manifest": {manifest}})["app_id"].(string)
+
+	s.Equal(true, s.slack(srv, "apps.manifest.delete", token, url.Values{"app_id": {app}})["ok"])
+	s.Equal("app_not_found", s.slack(srv, "apps.manifest.delete", token, url.Values{"app_id": {app}})["error"])
+	s.Equal("app_not_found", s.slack(srv, "apps.manifest.update", token, url.Values{"app_id": {app}, "manifest": {manifest}})["error"])
+}
+
+func (s *FakeProviderSuite) TestASlowConfigRotationAnswersOnlyAfterItsDelay() {
+	srv := fakeprovider.New(s.T(), fakeprovider.SlowConfigRotation)
+	started := time.Now()
+
+	s.configToken(srv)
+
+	s.GreaterOrEqual(time.Since(started), 200*time.Millisecond)
+}
+
+// configToken is a configuration token rotated from one the fake's admin generated.
+func (s *FakeProviderSuite) configToken(srv *fakeprovider.Server) string {
+	token, ok := s.slack(srv, "tooling.tokens.rotate", "", url.Values{"refresh_token": {srv.NewConfigToken()}})["token"].(string)
+	s.Require().True(ok)
+	return token
+}
+
+// slack posts form to one of the fake Slack's methods, with token as a bearer token when one
+// is given, and returns the JSON it answered.
+func (s *FakeProviderSuite) slack(srv *fakeprovider.Server, method, token string, form url.Values) map[string]any {
+	request, err := http.NewRequest(http.MethodPost, srv.URL+fakeprovider.PathSlackAPI+method, strings.NewReader(form.Encode()))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	response, err := srv.Client().Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	var answered map[string]any
+	s.Require().NoError(json.NewDecoder(response.Body).Decode(&answered))
+	return answered
 }

@@ -282,7 +282,7 @@ func (s *ResolverSuite) TestRevokeOnAnotherRouterFailsTheNextResolveHereFast() {
 	_, err := here.Resolve(s.f.ctx, ref, core.CredentialRequest{})
 	s.Require().NoError(err)
 
-	s.Require().NoError(s.f.router(s.f.srv.Client()).Revoke(s.f.ctx, ref, core.SignalRevoked))
+	s.Require().NoError(s.f.router(s.f.srv.Client()).Revoke(s.f.ctx, ref, core.SignalRevoked, time.Time{}))
 
 	stored := s.f.stored(ref)
 	s.Equal(store.ConnectionNeedsReauthorization, stored.Status)
@@ -301,7 +301,7 @@ func (s *ResolverSuite) TestRevokeEndsAGrantAnotherRouterJustRenewed() {
 	s.Require().NoError(err)
 	s.Require().Equal(1, s.f.srv.Refreshes())
 
-	s.Require().NoError(s.f.router(s.f.srv.Client()).Revoke(s.f.ctx, ref, core.SignalUninstalled))
+	s.Require().NoError(s.f.router(s.f.srv.Client()).Revoke(s.f.ctx, ref, core.SignalUninstalled, time.Time{}))
 
 	stored := s.f.stored(ref)
 	s.Equal(renewed.Revision, stored.Revision, "the stored credentials stay; only the status moves")
@@ -309,10 +309,31 @@ func (s *ResolverSuite) TestRevokeEndsAGrantAnotherRouterJustRenewed() {
 	s.Equal(uninstalled, stored.LastError)
 }
 
+// Slack retries an event it got no 2xx for up to 5 minutes later
+// (https://docs.slack.dev/apis/events-api/, «Retries»). A tokens_revoked that ended the old
+// grant, retried after the account reconnected, is not about the new one.
+func (s *ResolverSuite) TestRevokeLeavesAGrantConnectedAfterTheSignalConnected() {
+	ref := s.f.connected()
+	endedAt := time.Now().UTC().Add(-2 * time.Minute)
+
+	s.Require().NoError(s.f.router(s.f.srv.Client()).Revoke(s.f.ctx, ref, core.SignalRevoked, endedAt))
+
+	s.Equal(store.ConnectionConnected, s.f.stored(ref).Status)
+}
+
+func (s *ResolverSuite) TestRevokeEndsAGrantConnectedBeforeTheSignal() {
+	ref := s.f.connected()
+	endedAt := time.Now().UTC().Add(time.Minute)
+
+	s.Require().NoError(s.f.router(s.f.srv.Client()).Revoke(s.f.ctx, ref, core.SignalRevoked, endedAt))
+
+	s.Equal(store.ConnectionNeedsReauthorization, s.f.stored(ref).Status)
+}
+
 func (s *ResolverSuite) TestRevokeLeavesAPendingConnectionPending() {
 	ref := s.f.pending()
 
-	s.Require().NoError(s.f.router(s.f.srv.Client()).Revoke(s.f.ctx, ref, core.SignalRevoked))
+	s.Require().NoError(s.f.router(s.f.srv.Client()).Revoke(s.f.ctx, ref, core.SignalRevoked, time.Time{}))
 
 	s.Equal(store.ConnectionPending, s.f.stored(ref).Status)
 }
@@ -320,7 +341,7 @@ func (s *ResolverSuite) TestRevokeLeavesAPendingConnectionPending() {
 func (s *ResolverSuite) TestRevokeRefusesAKindThatIsNoSignal() {
 	ref := s.f.connected()
 
-	s.Error(s.f.router(s.f.srv.Client()).Revoke(s.f.ctx, ref, core.SignalKind("paused")))
+	s.Error(s.f.router(s.f.srv.Client()).Revoke(s.f.ctx, ref, core.SignalKind("paused"), time.Time{}))
 	s.Equal(store.ConnectionConnected, s.f.stored(ref).Status)
 }
 

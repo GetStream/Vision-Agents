@@ -509,6 +509,9 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 		// Unknown here: the expiry is inside the scheme's stored credentials, and the
 		// resolver (T12) sets it the first time it retrieves an access credential.
 		state.ExpiresAt = time.Time{}
+		// The grant begins here; a provider's signal about an older one leaves it alone
+		// (Resolver.Revoke).
+		state.ConnectedAt = time.Now().UTC()
 		return true, nil
 	})
 	if err != nil {

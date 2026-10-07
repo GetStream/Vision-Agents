@@ -724,6 +724,72 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/connections/{id}/credentials": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set a connection's credentials
+         * @description Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly put: operations["putConnectionCredentials"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connections/{id}/tools": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List a connection's tools
+         * @description The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listConnectionTools"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connections/{id}/validate": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Validate a connection
+         * @description Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["validateConnection"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/connectors": {
         readonly parameters: {
             readonly query?: never;
@@ -797,6 +863,34 @@ export type paths = {
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly delete: operations["deleteConnectorOAuthClient"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connectors/{id}/provider-app": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Create or update the app the router keeps at the connector's provider
+         * @description Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly put: operations["setConnectorProviderApp"];
+        readonly post?: never;
+        /**
+         * Delete the app the router keeps at the connector's provider
+         * @description Deletes the customer's Slack app with Slack's apps.manifest.delete, then its record and the configuration token the router kept. An app already deleted in Slack is removed here too. Connections consented with it need a reconnect.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteConnectorProviderApp"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -2063,6 +2157,26 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/connectors/events/{connector_id}/{provider_app_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive a provider app's event
+         * @description Where a provider delivers the events of one customer's provider app: the Request URL of a customer's Slack app, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector's manifest names (channel.verifier) against that app's own signing secret, so an event signed for another app is refused and changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves the app's customer's connections of that account to needs_reauthorization, unless they connected after the event. A message goes to the channel bridge, which writes it into the thread channel of its external thread in Stream Chat; a retried delivery is dropped. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.
+         */
+        readonly post: operations["receiveProviderAppEvent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/data/changes": {
         readonly parameters: {
             readonly query?: never;
@@ -2170,6 +2284,34 @@ export type paths = {
          */
         readonly post: operations["generateImage"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/ops/customers/{customer_id}/connectors/{id}/provider-app": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Make Stream's own app a customer's provider app
+         * @description Records this deployment's own app for a built-in connector, as its environment holds it (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the customer's provider app, so its events reach that customer. One customer per app: another customer's record of it is a conflict.
+         *
+         *     Stream staff only: it needs the ops key.
+         */
+        readonly put: operations["setOperatorProviderApp"];
+        readonly post?: never;
+        /**
+         * Stop Stream's own app being a customer's provider app
+         * @description Removes the record setOperatorProviderApp made. The app itself is Stream's and stays.
+         *
+         *     Stream staff only: it needs the ops key.
+         */
+        readonly delete: operations["deleteOperatorProviderApp"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -3879,6 +4021,18 @@ export type components = {
             /** Format: date-time */
             readonly updated_at: string;
         };
+        /** @description Credentials for a connection, under the revision the caller last read. An unknown field is refused rather than ignored. */
+        readonly ConnectionCredentials: {
+            /**
+             * Format: int64
+             * @description The connection's revision as last read. A connection that has moved past it is refused with a 409, so two writers never replace each other's credentials unseen.
+             */
+            readonly expected_revision: number;
+            /** @description What the connection's auth_scheme takes, write-only. api_key: api_key and header. bearer: token. none: nothing, which activates the connection. oauth2_client_credentials: client_id and client_secret, which are tried at the token endpoint at once. oauth2_code: a grant the provider already issued, as access_token, refresh_token (optional), expires_at (RFC 3339) and scope (the granted scopes joined as the connector's scopes are); its endpoints and client are the connector's, never the caller's. */
+            readonly values?: {
+                readonly [key: string]: string;
+            };
+        };
         /** @description Whose a connection is: the app's, which any of its agents may be bound to, or one user's. */
         readonly ConnectionOwner: {
             readonly type: components["schemas"]["ConnectionOwnerType"];
@@ -3915,6 +4069,59 @@ export type components = {
          * @enum {string}
          */
         readonly ConnectionStatus: "pending" | "connected" | "needs_reauthorization" | "disconnected";
+        readonly ConnectionTool: {
+            readonly description: string;
+            /** @description The JSON Schema of its arguments. */
+            readonly input_schema: {
+                readonly [key: string]: unknown;
+            };
+            /** @description The tool's name at the provider. An agent config grants it by this name. */
+            readonly name: string;
+            /** @description The scopes a call of the tool needs, as the connector says. Absent when it says none. */
+            readonly needs_scopes?: readonly string[] | null;
+            /** @description The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again. */
+            readonly schema_digest: string;
+        };
+        /** @description The tools a connection offered when it was last validated, in one piece: the provider's own list, not a page of one. */
+        readonly ConnectionTools: {
+            /**
+             * Format: date-time
+             * @description When the list was read. Absent until a validate listed it.
+             */
+            readonly checked_at?: string;
+            readonly connection_id: string;
+            /** @description The digest of the whole list. Absent until a validate listed it. */
+            readonly digest?: string;
+            readonly tools: readonly components["schemas"]["ConnectionTool"][] | null;
+        };
+        /** @description Whether a connection's credential works, found by asking the provider for its tools. */
+        readonly ConnectionValidation: {
+            /**
+             * Format: date-time
+             * @description When the tools were listed. Absent until a validate listed them.
+             */
+            readonly checked_at?: string;
+            /** @description What a program branches on when the status is not connected: connector_scope_required with needs_scopes. More may be added. */
+            readonly code?: string;
+            readonly connection_id: string;
+            /** @description Why the status is not connected, for a person to read. */
+            readonly error?: string;
+            /** @description With needs_scopes: the scopes the checked tools need that the grant lacks, sorted. */
+            readonly missing_scopes?: readonly string[] | null;
+            readonly status: components["schemas"]["ConnectionValidationStatus"];
+            /** @description The digest of the tools the connection offers, as GET .../tools shows them. Absent until a validate listed them. */
+            readonly tools_digest?: string;
+        };
+        /** @description What a validate checks the grant's scopes against. An unknown field is refused rather than ignored. */
+        readonly ConnectionValidationRequest: {
+            /** @description The tools to check the granted scopes against, by name: those an agent config will grant. Left out, every tool the connection offers. */
+            readonly tools?: readonly string[] | null;
+        };
+        /**
+         * @description connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
+         * @enum {string}
+         */
+        readonly ConnectionValidationStatus: "connected" | "pending" | "needs_reauthorization" | "needs_scopes" | "failed";
         /** @description A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router. */
         readonly Connector: {
             readonly category?: string;
@@ -3959,10 +4166,10 @@ export type components = {
          */
         readonly ConnectorClientAuthMethod: "none" | "client_secret_post" | "client_secret_basic" | "private_key_jwt" | "tls_client_auth";
         /**
-         * @description operator is this deployment's own client, customer one the app registered, dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+         * @description operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
          * @enum {string}
          */
-        readonly ConnectorClientRegistrationMethod: "operator" | "customer" | "dcr" | "cimd";
+        readonly ConnectorClientRegistrationMethod: "operator" | "customer" | "managed" | "dcr" | "cimd";
         readonly ConnectorInput: {
             /** @description Used when the connection gives no value. An input without one is required. */
             readonly default?: string;
@@ -4005,6 +4212,29 @@ export type components = {
             readonly items: readonly components["schemas"]["Connector"][] | null;
             /** @description Pass as cursor for the next page, with the same q. Absent on the last one. */
             readonly next_cursor?: string;
+        };
+        /** @description The customer's app at a connector's provider, such as a Slack app. Its client secret and signing secret are kept sealed and never returned. */
+        readonly ConnectorProviderApp: {
+            /** @description The app's OAuth client, which every consent of the connector's connections uses. */
+            readonly client_id: string;
+            readonly connector_id: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            /** @description The provider's id for the app, such as a Slack app id. */
+            readonly provider_app_id: string;
+            /** @description managed: the router created the app in the customer's workspace. operator: Stream's own app, which serves Stream's own agents. */
+            readonly registration: components["schemas"]["ConnectorClientRegistrationMethod"];
+            /** Format: date-time */
+            readonly updated_at: string;
+        };
+        /** @description The app the router creates and keeps in the customer's workspace. An unknown field is refused rather than ignored. */
+        readonly ConnectorProviderAppRequest: {
+            /** @description IP addresses or CIDR ranges the app's tokens work from, at most 10. Left out, they work from anywhere. */
+            readonly allowed_ip_address_ranges?: readonly string[] | null;
+            /** @description The refresh token of an app configuration token a workspace admin generated in Slack's app settings. Required the first time; the router rotates it and keeps the result sealed. Sent again, it replaces the one kept. Never returned. */
+            readonly config_refresh_token?: string;
+            /** @description The app's name in the customer's workspace. */
+            readonly name: string;
         };
         /** @description One tool a binding allows. */
         readonly ConnectorToolGrant: {
@@ -4081,6 +4311,8 @@ export type components = {
             readonly description?: string;
             /** @description Said on joining without going through the model. Empty means the agent waits to be spoken to. */
             readonly greeting?: string;
+            /** @description The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth. */
+            readonly history?: readonly components["schemas"]["HistoryMessage"][];
             /** @description The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7. */
             readonly id?: string;
             /**
@@ -4350,6 +4582,22 @@ export type components = {
             /** @enum {string} */
             readonly status: "ok" | "degraded";
         };
+        readonly HistoryMessage: {
+            /**
+             * Format: date-time
+             * @description When it was said. The model is shown it beside a person's message, so it can tell an hour ago from just now.
+             */
+            readonly created_at?: string;
+            /** @description Who said it, when several people share the thread. The model is shown it as a label, never as who is asking now. */
+            readonly name?: string;
+            readonly role: components["schemas"]["HistoryRole"];
+            readonly text: string;
+        };
+        /**
+         * @description user is what a person said, assistant what the agent answered. These are the only turns a resumed conversation hands the model; instructions say anything a system message would.
+         * @enum {string}
+         */
+        readonly HistoryRole: "user" | "assistant";
         readonly ImageContentPart: {
             readonly image_url: components["schemas"]["ImageSource"];
             /** @enum {string} */
@@ -8199,6 +8447,107 @@ export interface operations {
             readonly 500: components["responses"]["InternalError"];
         };
     };
+    readonly putConnectionCredentials: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectionCredentials"];
+            };
+        };
+        readonly responses: {
+            /** @description The connection, connected */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Connection"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listConnectionTools: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The connection's tools */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionTools"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly validateConnection: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectionValidationRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description What the validate found */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionValidation"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
     readonly listConnectors: {
         readonly parameters: {
             readonly query?: {
@@ -8360,6 +8709,127 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly setConnectorProviderApp: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector, such as slack. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectorProviderAppRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The app exists; its manifest was applied again */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorProviderApp"];
+                };
+            };
+            /** @description The app was created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorProviderApp"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description Service Unavailable */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly deleteConnectorProviderApp: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector, such as slack. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The app is deleted */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description Service Unavailable */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly receiveConnectorEvent: {
@@ -9204,6 +9674,7 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             /** @description A session with that id already exists */
             readonly 409: {
@@ -10621,6 +11092,53 @@ export interface operations {
             };
         };
     };
+    readonly receiveProviderAppEvent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector the provider app is of, such as slack_bot. */
+                readonly connector_id: string;
+                /** @description The provider's id for the app, such as a Slack app id. */
+                readonly provider_app_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The event is taken, or a URL verification's challenge, echoed */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "text/plain": string;
+                };
+            };
+            /** @description The request is not signed with the app's signing secret, or its signed timestamp is more than the manifest's max_age from now */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such provider app, or its connector takes no events here */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The event is over 256 KiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
     readonly listDataChanges: {
         readonly parameters: {
             readonly query?: {
@@ -10793,6 +11311,89 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly setOperatorProviderApp: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The customer Stream's app serves. */
+                readonly customer_id: string;
+                /** @description The built-in connector, such as slack. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The record was replaced */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorProviderApp"];
+                };
+            };
+            /** @description The record was stored */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorProviderApp"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deleteOperatorProviderApp: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The customer Stream's app serves. */
+                readonly customer_id: string;
+                /** @description The built-in connector, such as slack. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The record is removed */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 500: components["responses"]["InternalError"];
         };
     };

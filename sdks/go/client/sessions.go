@@ -43,6 +43,10 @@ type SessionOptions struct {
 	CallType string
 	// ConversationID resumes the channel an earlier session was held in.
 	ConversationID string
+	// History is the conversation so far, oldest first, for a backend that keeps its own
+	// thread: the model is handed it before the first response and the router records none
+	// of it. Up to 100 messages; not with ConversationID. Server side only.
+	History []acceleration.HistoryMessage
 	// Instructions overrides the agent's own system prompt for this conversation.
 	Instructions string
 	// UserID is who the conversation belongs to, for a backend opening one on somebody's
@@ -267,6 +271,10 @@ func (s *Sessions) requestOf(options SessionOptions) acceleration.CreateSessionR
 	if len(options.Custom) > 0 {
 		custom := options.Custom
 		request.Custom = &custom
+	}
+	if len(options.History) > 0 {
+		history := options.History
+		request.History = &history
 	}
 	// Held in writing unless a call was named, which is what the resource surface is mostly
 	// for: a conversation somebody comes back to.

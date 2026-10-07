@@ -26,8 +26,10 @@ type Resolver interface {
 	// because the provider said the grant ended (a verified Signal of kind why). Unlike
 	// Invalidate it names no credential: the provider ended the grant itself, whatever
 	// revision the stored credentials are at, so the status moves under the lock whichever
-	// router renewed them last.
-	Revoke(ctx context.Context, ref ConnectionRef, why SignalKind) error
+	// router renewed them last. endedAt is when the provider says the grant ended
+	// (Signal.At), zero when it does not say: a connection a consent connected after it
+	// holds a newer grant than the one the signal is about, and stays connected.
+	Revoke(ctx context.Context, ref ConnectionRef, why SignalKind, endedAt time.Time) error
 }
 
 // CredentialRequest is what one call asks of a credential.
@@ -79,4 +81,7 @@ type CredentialState struct {
 	AccountID string
 	Metadata  map[string]string
 	Scopes    []string
+	// ConnectedAt is when a consent last stored Credentials: when the grant they belong to
+	// began. A refresh keeps it. Zero for a connection connected before it was kept.
+	ConnectedAt time.Time
 }

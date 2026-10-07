@@ -222,6 +222,18 @@ func (s *Server) Messages(id string) []string {
 	return texts
 }
 
+// Stored are a channel's messages as Chat holds them, in the order they were written: what a
+// test needs to deliver the message.new Chat would send for one.
+func (s *Server) Stored(id string) []map[string]any {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	var stored []map[string]any
+	for _, message := range s.db.messagesIn(id) {
+		stored = append(stored, maps.Clone(message))
+	}
+	return stored
+}
+
 // refuse answers the way Chat does when it will not do what was asked.
 func refuse(w http.ResponseWriter, message string) {
 	w.WriteHeader(http.StatusBadRequest)

@@ -128,8 +128,12 @@ type Session struct {
 	// disturbing the others.
 	watchers    map[uint64]*watcher
 	nextWatcher uint64
-	state       State
-	modality    string
+	// detachedGrace is how long a persistent text session outlives its last watcher, and
+	// unwatched is the timer counting it down, nil while somebody is watching.
+	detachedGrace time.Duration
+	unwatched     *time.Timer
+	state         State
+	modality      string
 
 	// said is the conversation as it happens, kept so a finished call can be reviewed
 	// without reading back what was written to chat. It has a lock of its own so
@@ -348,6 +352,10 @@ func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
 	id := s.nextWatcher
 	s.nextWatcher++
 	s.watchers[id] = attached
+	if s.unwatched != nil {
+		s.unwatched.Stop()
+		s.unwatched = nil
+	}
 	if replayVoiceTools && !s.spec.Text && s.persisted == nil && s.tools != nil {
 		for _, pending := range s.tools.Pending() {
 			attached.send(pending)
@@ -358,19 +366,46 @@ func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
 	return attached.events, func() {
 		s.mu.Lock()
 		delete(s.watchers, id)
-		detached := len(s.watchers) == 0 && s.persisted != nil
+		// Persistent text clients own no call; a disconnected operator leaves no tool host.
+		// The session ends once nobody has watched it for detachedGrace, which is what a
+		// page left and come back to, or a login finished in another tab, has to carry on
+		// in. A reopen of the saved channel does not wait for it: Create takes the
+		// conversation over from a session nobody is watching.
+		if len(s.watchers) == 0 && s.persisted != nil && s.state != Ended {
+			if s.unwatched != nil {
+				s.unwatched.Stop()
+			}
+			s.unwatched = time.AfterFunc(s.detachedGrace, s.endUnwatched)
+		}
 		s.mu.Unlock()
 		attached.close()
-		// Persistent text clients own no call; a disconnected operator leaves no tool host.
-		// End this session so the saved channel can be reopened after a terminal crash.
-		if detached {
-			go func() {
-				// Interrupt belongs to the same one-time teardown as Close. A late
-				// detach from an ended session must not cancel a reopened conversation.
-				s.closeOnce.Do(func() { s.Interrupt(); _ = s.close() })
-			}()
-		}
 	}
+}
+
+// endUnwatched ends a persistent text session nobody came back to watch.
+func (s *Session) endUnwatched() {
+	s.mu.Lock()
+	watched := len(s.watchers) > 0
+	s.mu.Unlock()
+	if watched {
+		return
+	}
+	s.abandon()
+}
+
+// abandon ends a persistent text session somebody stopped watching, with what it was
+// still saying. Interrupt belongs to the same one-time teardown as Close: a late detach
+// from an ended session must not cancel a reopened conversation.
+func (s *Session) abandon() {
+	s.closeOnce.Do(func() { s.Interrupt(); _ = s.close() })
+}
+
+// unwatchedFor reports whether the session holds the persistent conversation cid and
+// nobody is watching it.
+func (s *Session) unwatchedFor(cid string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.persisted != nil && s.persisted.CID() == cid && len(s.watchers) == 0 && s.state != Ended
 }
 
 // Say speaks a piece of text without going through the model.
@@ -857,6 +892,10 @@ func (s *Session) close() error {
 	s.state = Ended
 	watchers := s.watchers
 	s.watchers = map[uint64]*watcher{}
+	if s.unwatched != nil {
+		s.unwatched.Stop()
+		s.unwatched = nil
+	}
 	s.mu.Unlock()
 
 	for _, attached := range watchers {

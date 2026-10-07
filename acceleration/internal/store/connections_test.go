@@ -981,6 +981,36 @@ func (s *StoreSuite) TestASaveThatStaysConnectedKeepsTheProviderUnitTheRowHolds(
 	s.Equal(connection.ID, found.ID)
 }
 
+func (s *StoreSuite) TestValidatedToolsSurviveACredentialsSaveThatReadTheRowBefore() {
+	connection := s.connection("acme-app", nil)
+	readBefore, err := s.store.ConnectorConnection(s.ctx, "acme-app", connection.ID)
+	s.Require().NoError(err)
+	tools := []ConnectorTool{{Name: "search", Description: "Finds a message.", InputSchema: map[string]any{"type": "object"}, SchemaDigest: "digest-1"}}
+	checked := time.Now()
+	s.Require().NoError(s.store.SetConnectorConnectionTools(s.ctx, "acme-app", connection.ID, tools, "list-1", checked))
+
+	readBefore.Revision++
+	readBefore.CredentialsSealed = []byte("renewed")
+	readBefore.CredentialsKEKVersion = 1
+	s.Require().NoError(s.store.SaveConnectorConnectionAtRevision(s.ctx, &readBefore, readBefore.Revision-1))
+
+	found, err := s.store.ConnectorConnection(s.ctx, "acme-app", connection.ID)
+	s.Require().NoError(err)
+	s.Equal(tools, found.CachedTools)
+	s.Equal("list-1", found.ToolsDigest)
+	s.Require().NotNil(found.ToolsCheckedAt)
+	s.WithinDuration(checked, *found.ToolsCheckedAt, time.Millisecond)
+}
+
+func (s *StoreSuite) TestToolsAreNotStoredOnADeletedConnection() {
+	connection := s.connection("acme-app", nil)
+	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, "acme-app", connection.ID))
+
+	err := s.store.SetConnectorConnectionTools(s.ctx, "acme-app", connection.ID, nil, "list-1", time.Now())
+
+	s.ErrorIs(err, ErrNoConnectorConnection)
+}
+
 func (s *StoreSuite) TestAConnectionThatIsNotConnectedTakesNoProviderUnit() {
 	connection := s.lineConnection("acme-app", lineManifest)
 	s.moveTo(connection, ConnectionPending)
