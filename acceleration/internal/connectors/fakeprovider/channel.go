@@ -56,6 +56,14 @@ func (s *Server) RevokeBot(token string) {
 	}
 }
 
+// FailPosts has the next n calls to chat.postMessage answer HTTP 503 and post nothing, as a
+// provider that is down does (RFC 9110 section 15.6.4).
+func (s *Server) FailPosts(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failPosts = n
+}
+
 // Posts are the messages chat.postMessage took, oldest first.
 func (s *Server) Posts() []Post {
 	s.mu.Lock()
@@ -103,6 +111,11 @@ func (s *Server) chatPostMessage(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	if !s.is(SlackChannel) {
 		http.NotFound(w, r)
+		return
+	}
+	if s.failPosts > 0 {
+		s.failPosts--
+		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

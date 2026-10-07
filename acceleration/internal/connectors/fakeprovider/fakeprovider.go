@@ -221,6 +221,8 @@ type Server struct {
 	metadataClient *http.Client
 	// posts are the messages chat.postMessage took under SlackChannel.
 	posts []Post
+	// failPosts is how many more posts answer 503 (FailPosts).
+	failPosts int
 	// account is the user the next consent is by: UserID until SwitchAccount.
 	account string
 }

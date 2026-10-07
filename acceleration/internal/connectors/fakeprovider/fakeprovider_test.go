@@ -929,6 +929,24 @@ func (s *FakeProviderSuite) TestSlackChannelRefusesATokenItDidNotIssueOrThatWasR
 	s.Empty(srv.Posts())
 }
 
+func (s *FakeProviderSuite) TestSlackChannelFailsTheNextPostsItIsToldToAndThenPosts() {
+	srv := fakeprovider.New(s.T(), fakeprovider.SlackChannel)
+	token := srv.InstallBot()
+	srv.FailPosts(1)
+	request, err := http.NewRequest(http.MethodPost, srv.URL+fakeprovider.PathChatPostMessage, strings.NewReader(`{"channel":"C0000CHAN","text":"Done"}`))
+	s.Require().NoError(err)
+	request.Header.Set("Authorization", "Bearer "+token)
+
+	response, err := srv.Client().Do(request)
+	s.Require().NoError(err)
+	_ = response.Body.Close()
+
+	s.Equal(http.StatusServiceUnavailable, response.StatusCode)
+	s.Empty(srv.Posts())
+	s.Equal(true, s.postMessage(srv, token, `{"channel":"C0000CHAN","text":"Done"}`)["ok"])
+	s.Len(srv.Posts(), 1)
+}
+
 func (s *FakeProviderSuite) TestChatPostMessageIsNotServedWithoutSlackChannel() {
 	srv := fakeprovider.New(s.T())
 	request, err := http.NewRequest(http.MethodPost, srv.URL+fakeprovider.PathChatPostMessage, strings.NewReader(`{}`))

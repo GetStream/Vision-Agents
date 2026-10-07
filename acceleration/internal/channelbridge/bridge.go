@@ -80,8 +80,17 @@ type Options struct {
 	// Resolver is told when the provider refuses a reply's credential in an answer the
 	// transport does not read, such as Slack's HTTP 200 invalid_auth.
 	Resolver core.Resolver
-	Logger   *slog.Logger
+	// RetryBackoff is how long to wait before each send of a reply again after one that
+	// failed for a reason a later send can get past. Nil is defaultRetryBackoff.
+	RetryBackoff []time.Duration
+	Logger       *slog.Logger
 }
+
+// defaultRetryBackoff is a choice, not a vendor's figure: three more sends within about 45 s,
+// spaced so a provider that answered 5xx or 429 has time to recover. Slack posts «1 message
+// per second to a specific channel» (https://docs.slack.dev/reference/methods/chat.postMessage),
+// which the first wait already respects. Retry-After is not read yet.
+var defaultRetryBackoff = []time.Duration{2 * time.Second, 10 * time.Second, 30 * time.Second}
 
 // Bridge is the channel bridge. Its writes into Stream Chat and its replies run off the
 // request that brought them, so Close waits for the ones in flight.
@@ -91,7 +100,9 @@ type Bridge struct {
 	schemes    map[string]core.Scheme
 	transports *core.Transports
 	resolver   core.Resolver
-	logger     *slog.Logger
+	// retries are the waits before each send of a reply again (Options.RetryBackoff).
+	retries []time.Duration
+	logger  *slog.Logger
 
 	working sync.WaitGroup
 	mu      sync.Mutex
@@ -103,6 +114,10 @@ func New(options Options) (*Bridge, error) {
 	if options.Store == nil || options.Stream == nil || options.Transports == nil || options.Resolver == nil {
 		return nil, stack.Wrap(errors.New("channelbridge: a store, Stream clients, transports and a resolver are required"))
 	}
+	retries := options.RetryBackoff
+	if retries == nil {
+		retries = defaultRetryBackoff
+	}
 	logger := options.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -113,6 +128,7 @@ func New(options Options) (*Bridge, error) {
 		schemes:    options.Schemes,
 		transports: options.Transports,
 		resolver:   options.Resolver,
+		retries:    retries,
 		logger:     logger,
 		turns:      map[string]*holder{},
 	}, nil
@@ -155,22 +171,26 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 // Reply sends an agent's finished reply in a thread channel to its external thread. The
 // persistent conversation holding the channel calls it once the final text is stored
 // (conversation.Service.OnFinishedReply), the one place a reply leaves. It claims the reply
-// by its Stream Chat id first, so a reply written, and so told, again is sent once. It runs
-// off the caller, which is the conversation's writer; a reply it cannot send is logged.
+// by its Stream Chat id first, so a reply written, and so told, again is sent once. A send
+// that fails for a reason a later one can get past (no answer, a 5xx, a 429) is sent again
+// after each of the bridge's retry backoffs; a reply still not sent is unclaimed again, so a
+// later hand-off of it sends it. It runs off the caller, which is the conversation's writer;
+// a reply it cannot send is logged.
 func (b *Bridge) Reply(reply conversation.FinishedReply) {
 	b.working.Add(1)
 	go func() {
 		defer b.working.Done()
-		ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
-		defer cancel()
-		if err := b.reply(ctx, reply); err != nil {
+		if err := b.reply(reply); err != nil {
 			b.logger.Error("could not send a reply to its external thread", "conversation", reply.CID, "error", err)
 		}
 	}()
 }
 
-// reply finds the thread a finished reply is in, claims it, and sends it.
-func (b *Bridge) reply(ctx context.Context, reply conversation.FinishedReply) error {
+// reply finds the thread a finished reply is in, claims it, and sends it, again on a failure
+// a later send can get past.
+func (b *Bridge) reply(reply conversation.FinishedReply) error {
+	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+	defer cancel()
 	thread, err := b.store.ChannelThread(ctx, strings.TrimPrefix(reply.CID, chatlog.ChannelType+":"))
 	if errors.Is(err, store.ErrNoChannelThread) {
 		return nil
@@ -185,8 +205,35 @@ func (b *Bridge) reply(ctx context.Context, reply conversation.FinishedReply) er
 	if err != nil || !fresh {
 		return err
 	}
-	return b.send(ctx, thread, reply.Text)
+	for attempt := 0; ; attempt++ {
+		sending, done := context.WithTimeout(context.Background(), sendTimeout)
+		err = b.send(sending, thread, reply.Text)
+		done()
+		var again retryable
+		if err == nil || !errors.As(err, &again) {
+			return err
+		}
+		if attempt == len(b.retries) {
+			break
+		}
+		time.Sleep(b.retries[attempt])
+	}
+	// Not sent, so not claimed: whoever hands it over next sends it.
+	releasing, done := context.WithTimeout(context.Background(), sendTimeout)
+	defer done()
+	if released := b.store.ReleaseChannelThreadMessage(releasing, thread.ChannelID, store.ClaimReply, reply.MessageID); released != nil {
+		return errors.Join(err, released)
+	}
+	return err
 }
+
+// retryable is a send that failed for a reason a later send can get past: no answer, a 5xx or
+// a 429 (RFC 9110 sections 15.6 and 6585 section 4), or an answer the scheme classifies as
+// transient or rate limited.
+type retryable struct{ err error }
+
+func (r retryable) Error() string { return r.err.Error() }
+func (r retryable) Unwrap() error { return r.err }
 
 // take finds who a message is for and claims it. fresh is false for a message nobody answers
 // and for one already taken.
@@ -357,12 +404,15 @@ func (b *Bridge) send(ctx context.Context, thread store.ChannelThread, text stri
 	ref := core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}
 	response, err := b.transports.Client(ref, scheme).Do(request)
 	if err != nil {
-		return stack.Wrap(err)
+		return retryable{stack.Wrap(err)}
 	}
 	defer response.Body.Close() //nolint:errcheck // the answer has been read
 	answer, err := io.ReadAll(io.LimitReader(response.Body, maxAnswerBytes))
 	if err != nil {
-		return stack.Wrap(err)
+		return retryable{stack.Wrap(err)}
+	}
+	if response.StatusCode >= http.StatusInternalServerError || response.StatusCode == http.StatusTooManyRequests {
+		return retryable{stack.Wrap(fmt.Errorf("channelbridge: %s answered a reply with %d", connection.ConnectorID, response.StatusCode))}
 	}
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		return stack.Wrap(fmt.Errorf("channelbridge: %s answered a reply with %d", connection.ConnectorID, response.StatusCode))
@@ -372,8 +422,12 @@ func (b *Bridge) send(ctx context.Context, thread store.ChannelThread, text stri
 		return stack.Wrap(fmt.Errorf("channelbridge: %s answered a reply with a body it does not read: %w", connection.ConnectorID, err))
 	}
 	if !sent {
-		b.refused(ctx, ref, scheme, response, answer)
-		return stack.Wrap(fmt.Errorf("channelbridge: %s refused a reply in a %d answer", connection.ConnectorID, response.StatusCode))
+		refusal := stack.Wrap(fmt.Errorf("channelbridge: %s refused a reply in a %d answer", connection.ConnectorID, response.StatusCode))
+		switch b.refused(ctx, ref, scheme, response, answer) {
+		case core.OutcomeTransient, core.OutcomeRateLimited:
+			return retryable{refusal}
+		}
+		return refusal
 	}
 	return nil
 }
@@ -384,18 +438,22 @@ func (b *Bridge) send(ctx context.Context, thread store.ChannelThread, text stri
 // Classify reads the answer, as it does any provider answer. The credential is the one the
 // resolver hands out now, the same one the reply was sent with unless another router
 // renewed it meanwhile, in which case Invalidate leaves the connection as it is.
-func (b *Bridge) refused(ctx context.Context, ref core.ConnectionRef, scheme core.Scheme, response *http.Response, answer []byte) {
+//
+// It returns what the scheme read the refusal as, so the caller can tell one a later send
+// can get past.
+func (b *Bridge) refused(ctx context.Context, ref core.ConnectionRef, scheme core.Scheme, response *http.Response, answer []byte) core.OutcomeKind {
 	outcome := scheme.Classify(response, answer, nil)
 	if outcome.Kind != core.OutcomeInvalidGrant && outcome.Kind != core.OutcomeScopeRequired {
-		return
+		return outcome.Kind
 	}
 	sent, err := b.resolver.Resolve(ctx, ref, core.CredentialRequest{})
 	if err != nil {
-		return
+		return outcome.Kind
 	}
 	if err := b.resolver.Invalidate(ctx, ref, sent, outcome); err != nil {
 		b.logger.Error("could not mark a connection whose reply was refused", "connection", ref.ConnectionID, "error", err)
 	}
+	return outcome.Kind
 }
 
 // authorUserID is the Stream Chat user an external author writes as in a thread channel: one

@@ -268,6 +268,53 @@ func (s *SlackChannelSuite) TestAFinishedReplyHandedOverTwiceIsSentOnce() {
 	s.Never(func() bool { return len(s.slack.Posts()) > 1 }, dropped, 20*time.Millisecond)
 }
 
+// Slack answering 503 twice is a reply sent the third time, once.
+func (s *SlackChannelSuite) TestAReplyTheProviderFailsToTakeIsSentAgainOnce() {
+	s.slack.FailPosts(2)
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+
+	s.Equal("Noted.", s.posted(1)[0].Text)
+	s.Never(func() bool { return len(s.slack.Posts()) > 1 }, dropped, 20*time.Millisecond)
+}
+
+// A reply every send of which failed is unclaimed again, so the next hand-off of it sends it,
+// and only once however often it is handed over after that.
+func (s *SlackChannelSuite) TestAReplyThatNeverGotThroughIsSentByTheNextHandOff() {
+	s.slack.FailPosts(3)
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	s.Require().Eventually(func() bool { return s.slack.Hits(fakeprovider.PathChatPostMessage) == 3 }, settleFor, 10*time.Millisecond,
+		"the first send and the two the backoff allows")
+	s.Require().Eventually(func() bool { return s.claimed(channel, "reply") == 0 }, settleFor, 10*time.Millisecond,
+		"after its last failed send the reply is unclaimed")
+	reply := s.agentsReply(channel)
+	s.Empty(s.slack.Posts())
+	finished := conversation.FinishedReply{Customer: s.customerID(), CID: "agent:" + channel, MessageID: reply["id"].(string), Text: "Noted."}
+
+	s.bridge.(*channelbridge.Bridge).Reply(finished)
+	s.posted(1)
+	s.bridge.(*channelbridge.Bridge).Reply(finished)
+
+	s.Never(func() bool { return len(s.slack.Posts()) > 1 }, dropped, 20*time.Millisecond)
+}
+
+// Another router holds the thread's turn: this one waits, and answers once it is let go.
+func (s *SlackChannelSuite) TestAThreadAnotherRouterIsAnsweringWaitsForItsTurn() {
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	taken, err := s.store.TakeChannelThreadTurn(context.Background(), channel, "another-router", time.Now().Add(time.Minute))
+	s.Require().NoError(err)
+	s.Require().True(taken)
+
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+
+	s.Never(func() bool { return len(s.slack.Posts()) > 0 }, 500*time.Millisecond, 20*time.Millisecond,
+		"two routers never answer one thread at once")
+	s.Require().NoError(s.store.ReleaseChannelThreadTurn(context.Background(), channel, "another-router"))
+	s.posted(1)
+}
+
 // A worker that opens a session for a thread channel through POST /v1/agents/sessions names
 // it by agent_id, as the Go SDK's Dispatch.Conversation does; the session keeps its
 // conversation in the thread channel, where the hook's turns and the bridge find it.
@@ -319,6 +366,14 @@ func (s *SlackChannelSuite) agentsReply(channel string) map[string]any {
 	}
 	s.FailNow("the thread channel holds no reply of its agent")
 	return nil
+}
+
+// claimed is how many of a thread channel's messages one step holds claimed.
+func (s *SlackChannelSuite) claimed(channel, kind string) int {
+	var count int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM channel_thread_messages WHERE channel_id = ? AND kind = ?", channel, kind).Scan(&count))
+	return count
 }
 
 // told is whether one request to a model of the suite's held every text in its input.
