@@ -540,6 +540,7 @@ func timelineOf(turns []store.Turn, said []chatlog.Spoken, models []store.Reques
 			ModelToFirstTextMs:   turn.ModelToFirstTextMs,
 			TextToTtsMs:          turn.TextToTTSMs,
 			TtsToAudioMs:         turn.TTSToAudioMs,
+			ReplyHoldMs:          turn.ReplyHoldMs,
 			RoundtripMs:          turn.RoundtripMs,
 			SttLatencyMs:         turn.STTLatencyMs,
 			LlmTtftMs:            turn.LLMTTFTMs,
@@ -1075,14 +1076,15 @@ type TimelineEntry struct {
 	LlmTtftMs            *float64           `json:"llm_ttft_ms,omitempty" doc:"The wait between asking the model and its first token." nullable:"true"`
 	ModelCalls           *[]ModelCallTiming `json:"model_calls,omitempty" doc:"Individual model requests for this turn, including flow and delegated work."`
 	ModelToFirstTextMs   *float64           `json:"model_to_first_text_ms,omitempty" doc:"Main model request to the first text delta admitted to the voice pipeline."`
-	RoundtripMs          *float64           `json:"roundtrip_ms,omitempty" doc:"Last transcript revision to first audio published; includes cadence settling."`
+	ReplyHoldMs          *float64           `json:"reply_hold_ms,omitempty" doc:"How long the first audio of the reply was held for the caller to have been quiet, which tts_to_audio_ms, roundtrip_ms and the fields that run to the first frame include. Absent where it was not held." nullable:"true"`
+	RoundtripMs          *float64           `json:"roundtrip_ms,omitempty" doc:"Last transcript revision to first audio published; includes cadence settling and any hold of the reply for the caller to have been quiet."`
 	Said                 *string            `json:"said,omitempty" doc:"What the agent answered."`
 	SpeechEndToAudioMs   *float64           `json:"speech_end_to_audio_ms,omitempty" doc:"Last input audio to first output audio, estimated using provider STT processing time plus roundtrip. It excludes network transport and playback." nullable:"true"`
 	SpeechEndToAudibleMs *float64           `json:"speech_end_to_audible_ms,omitempty" doc:"Last input audio to the outgoing track taking the first frame of the reply that was not silence, estimated like speech_end_to_audio_ms. It excludes network transport and playback." nullable:"true"`
 	StartedAt            time.Time          `json:"started_at"`
 	SttLatencyMs         *float64           `json:"stt_latency_ms,omitempty" doc:"The provider's decode time for the transcript that settled the turn." nullable:"true"`
 	TextToTtsMs          *float64           `json:"text_to_tts_ms,omitempty" doc:"First text delta to the first TTS request."`
-	TtsToAudioMs         *float64           `json:"tts_to_audio_ms,omitempty" doc:"First TTS request to the first audio chunk published to the edge."`
+	TtsToAudioMs         *float64           `json:"tts_to_audio_ms,omitempty" doc:"First TTS request to the first audio chunk published to the edge; includes any hold of the reply for the caller to have been quiet."`
 	TtsTtfbMs            *float64           `json:"tts_ttfb_ms,omitempty" doc:"The wait between sending the first sentence and the first audio." nullable:"true"`
 	TurnId               string             `json:"turn_id"`
 }

@@ -6272,7 +6272,12 @@ export type components = {
             readonly model_to_first_text_ms?: number;
             /**
              * Format: double
-             * @description Last transcript revision to first audio published; includes cadence settling.
+             * @description How long the first audio of the reply was held for the caller to have been quiet, which tts_to_audio_ms, roundtrip_ms and the fields that run to the first frame include. Absent where it was not held.
+             */
+            readonly reply_hold_ms?: number | null;
+            /**
+             * Format: double
+             * @description Last transcript revision to first audio published; includes cadence settling and any hold of the reply for the caller to have been quiet.
              */
             readonly roundtrip_ms?: number;
             /** @description What the agent answered. */
@@ -6301,7 +6306,7 @@ export type components = {
             readonly text_to_tts_ms?: number;
             /**
              * Format: double
-             * @description First TTS request to the first audio chunk published to the edge.
+             * @description First TTS request to the first audio chunk published to the edge; includes any hold of the reply for the caller to have been quiet.
              */
             readonly tts_to_audio_ms?: number;
             /**

@@ -9,6 +9,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
 const (
@@ -61,11 +62,6 @@ const (
 type voiceActivity struct {
 	mu       sync.Mutex
 	speakers map[string]*voiceSpeaker
-
-	// waiting holds the one timer a wait uses, so waiting allocates nothing once it exists,
-	// and serialises the waits that share it.
-	waiting sync.Mutex
-	timer   *time.Timer
 }
 
 // voiceSpeaker is what is known of one participant's audio.
@@ -172,24 +168,6 @@ func (v *voiceActivity) holdFor(participantID string, window, longest time.Durat
 	return min(window-quiet, remaining), false
 }
 
-// wait blocks for up to d. It returns early when either context ends. The caller works out
-// which of those it was.
-func (v *voiceActivity) wait(d time.Duration, first, second context.Context) {
-	v.waiting.Lock()
-	defer v.waiting.Unlock()
-	if v.timer == nil {
-		v.timer = time.NewTimer(d)
-	} else {
-		v.timer.Reset(d)
-	}
-	defer v.timer.Stop()
-	select {
-	case <-v.timer.C:
-	case <-first.Done():
-	case <-second.Done():
-	}
-}
-
 // heldReply is a reply to a caller's words, and who the caller is, whose first audio waits
 // for that caller to have been quiet. It is the reply until the first of its audio has been
 // let out, which is what makes it one nobody has heard any of.
@@ -199,11 +177,28 @@ type heldReply struct {
 	// confident says the turn was decided by an acoustic end-of-turn score high enough to be
 	// sure of, which shortens the silence the caller is waited for.
 	confident bool
-	// readyAt is when the first audio of the reply arrived and the hold began. Zero before.
+	// readyAt is when the first audio of the reply arrived and the hold began, if it had to
+	// wait. Zero before.
 	readyAt time.Time
 	// committed is how long the history was once the reply's own entry had been added to it, so
 	// that a reply nobody heard any of can take that entry back. Zero until it was added.
 	committed int
+}
+
+// heldTurn is the first audio of a reply that is waiting for the caller to have been quiet, with
+// the events of its synthesis that arrived after it, which are only acted on once it has been let
+// out, in the order they came.
+type heldTurn struct {
+	turn        string
+	participant string
+	// readyAt is when the first audio arrived and the hold began, and window how long the caller
+	// has to have been quiet to end it.
+	readyAt time.Time
+	window  time.Duration
+	// ctx ends when the reply is abandoned, and stop gives up what waits on it.
+	ctx    context.Context
+	stop   func() bool
+	events []tts.Event
 }
 
 // silenceFor is how long the caller must have been quiet for a held reply to be let out. A turn
@@ -216,67 +211,115 @@ func (a *Agent) silenceFor(held heldReply) time.Duration {
 	return a.replySilence
 }
 
-// admitFirstFrame says whether the first frame of a turn's audio may be published now.
+// holdFirstFrame says what is to be done with the first frame of a turn's audio, which arrived
+// at the time now: the hold it is to wait in, or otherwise whether it may be published.
 //
 // A reply that answers a caller's words is only let out once the caller has been silent for
 // the reply silence since they were last heard to voice anything, however ready it is, because
 // the words it answers were settled on a pause that may turn out to be a breath. The silence is
-// shorter for a turn that the acoustic end-of-turn model was sure had ended. A caller who
-// has been quiet for that long is not waited for. One who has not is waited on until they have,
-// but never for longer than the longest hold after the reply was ready: a line that does not go
-// quiet, because of a conversation in the room or a steady babble, would otherwise keep it for as
-// long as that lasted, and the reply is let out when the hold runs out.
+// shorter for a turn that the acoustic end-of-turn model was sure had ended. A caller who has
+// been quiet for that long is not waited for. One who has not is waited on until they have, but
+// never for longer than the longest hold after the reply was ready: a line that does not go
+// quiet, because of a conversation in the room or a steady babble, would otherwise keep it for
+// as long as that lasted, and the reply is let out when the hold runs out.
 //
 // The hold only delays. A voice while it lasts, a cough or a word, only restarts the count of
 // quiet, and the reply is never dropped for it: whether the caller really went on is told by
 // their words, and those cancel the reply the way they cancel any other.
 //
-// Only the speaking goroutine asks, and it is the one that waits: no lock is held while it
-// does, the wait ends the moment the reply is abandoned or the pipeline stops, and the frames
-// of the reply after the first are never asked about. A turn that is not a reply to a caller,
-// such as a greeting, a murmur or a follow-up nobody asked for, is let straight through.
-func (a *Agent) admitFirstFrame(p *pipeline, publishCtx context.Context, turnID string) bool {
+// Nothing waits here: the audio is held by whoever asked, and the rest of what the voice says
+// carries on being read. The frames of the reply after the first are never asked about, and a
+// turn that is not a reply to a caller, such as a greeting, a murmur or a follow-up nobody asked
+// for, is let straight through. A reply that has been abandoned or whose pipeline has stopped is
+// let out no more.
+func (a *Agent) holdFirstFrame(p *pipeline, publishCtx context.Context, turnID string, now time.Time) (hold *heldTurn, publish bool) {
 	a.mu.Lock()
 	held := a.gated
-	if held.turn == "" || held.turn != turnID {
-		a.mu.Unlock()
-		return true
-	}
-	readyAt := time.Now()
-	a.gated.readyAt = readyAt
-	window, longest := a.silenceFor(held), a.replySilenceMax
+	window := a.silenceFor(held)
 	a.mu.Unlock()
-
+	if held.turn == "" || held.turn != turnID {
+		return nil, true
+	}
+	if publishCtx.Err() != nil || p.ctx.Err() != nil {
+		return nil, false
+	}
 	voiced := a.voiced
 	if voiced == nil || window <= 0 {
-		return true
+		return nil, true
 	}
-	waited := false
-	for {
-		if publishCtx.Err() != nil || p.ctx.Err() != nil {
-			return false
-		}
-		now := time.Now()
-		left, capped := voiced.holdFor(held.participant.ID, window, longest, readyAt, now)
-		if left <= 0 {
-			// Guarded, because formatting a line is an allocation on the path of every reply.
-			if capped && a.logger.Enabled(publishCtx, slog.LevelDebug) {
-				a.logger.Debug("the caller never went quiet, so the reply was let out after the longest hold",
-					"turn", turnID, "participant", held.participant.ID, "held", now.Sub(readyAt))
-			} else if waited && a.logger.Enabled(publishCtx, slog.LevelDebug) {
-				a.logger.Debug("the caller stayed quiet, so the reply was let out",
-					"turn", turnID, "participant", held.participant.ID, "held", now.Sub(readyAt))
-			}
-			return true
-		}
-		if !waited {
-			waited = true
-			if a.logger.Enabled(publishCtx, slog.LevelDebug) {
-				a.logger.Debug("holding the reply until the caller has been quiet",
-					"turn", turnID, "participant", held.participant.ID, "window", window, "longest", longest,
-					"confident", held.confident)
-			}
-		}
-		voiced.wait(left, publishCtx, p.ctx)
+	if left, _ := voiced.holdFor(held.participant.ID, window, a.replySilenceMax, now, now); left <= 0 {
+		return nil, true
 	}
+	a.mu.Lock()
+	if a.gated.turn == turnID {
+		a.gated.readyAt = now
+	}
+	a.mu.Unlock()
+	if a.logger.Enabled(publishCtx, slog.LevelDebug) {
+		a.logger.Debug("holding the reply until the caller has been quiet",
+			"turn", turnID, "participant", held.participant.ID, "window", window,
+			"longest", a.replySilenceMax, "confident", held.confident)
+	}
+	return &heldTurn{turn: turnID, participant: held.participant.ID, readyAt: now, window: window,
+		ctx: publishCtx}, false
+}
+
+// holdLeft is how much longer a held reply is to be held at the time now, which is zero once it
+// may be let out, and whether it is let out because the longest hold has passed rather than
+// because the caller has been quiet.
+func (a *Agent) holdLeft(hold *heldTurn, now time.Time) (left time.Duration, capped bool) {
+	return a.voiced.holdFor(hold.participant, hold.window, a.replySilenceMax, hold.readyAt, now)
+}
+
+// heldBy is the hold that an event of a synthesis belongs to, which is the one for its turn,
+// or nil when the turn is not being held or the event is not about a synthesis.
+func heldBy(holds []*heldTurn, event tts.Event) *heldTurn {
+	if len(holds) == 0 {
+		return nil
+	}
+	var synthesisID string
+	switch typed := event.(type) {
+	case tts.AudioChunk:
+		synthesisID = typed.SynthesisID
+	case tts.SynthesisComplete:
+		synthesisID = typed.SynthesisID
+	case tts.Error:
+		synthesisID = typed.SynthesisID
+	default:
+		return nil
+	}
+	turnID := turnOf(synthesisID)
+	for _, hold := range holds {
+		if hold.turn == turnID {
+			return hold
+		}
+	}
+	return nil
+}
+
+// giveUpHold deals with the events of a reply that will not be let out. The audio of it was
+// synthesised and paid for and never published, which the turn says; what else the voice said
+// of it is acted on as it would be for any turn, since a completion still settles the synthesis.
+func (a *Agent) giveUpHold(hold *heldTurn, speak func(tts.Event)) {
+	for _, event := range hold.events {
+		if chunk, ok := event.(tts.AudioChunk); ok {
+			a.turns.dropped(hold.turn, chunk.Audio.DurationMs())
+			continue
+		}
+		speak(event)
+	}
+}
+
+// logHoldEnded says why a held reply was let out.
+func (a *Agent) logHoldEnded(hold *heldTurn, capped bool, now time.Time) {
+	if !a.logger.Enabled(hold.ctx, slog.LevelDebug) {
+		return
+	}
+	if capped {
+		a.logger.Debug("the caller never went quiet, so the reply was let out after the longest hold",
+			"turn", hold.turn, "participant", hold.participant, "held", now.Sub(hold.readyAt))
+		return
+	}
+	a.logger.Debug("the caller stayed quiet, so the reply was let out",
+		"turn", hold.turn, "participant", hold.participant, "held", now.Sub(hold.readyAt))
 }

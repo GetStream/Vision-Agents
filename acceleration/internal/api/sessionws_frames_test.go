@@ -59,6 +59,27 @@ func TestATurnFrameCarriesWhenTheFirstFrameWasQueuedAndHeard(t *testing.T) {
 	require.JSONEq(t, `1060`, string(mustField(t, raw, "speech_end_to_audible_ms")))
 }
 
+func TestATurnFrameCarriesHowLongTheReplyWasHeld(t *testing.T) {
+	sent, ok := frameOf(agent.Turn{TurnID: "turn-1", TTSToAudioMs: 900, ReplyHoldMs: 620})
+
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	require.JSONEq(t, `620`, string(mustField(t, raw, "reply_hold_ms")))
+	require.JSONEq(t, `900`, string(mustField(t, raw, "tts_to_audio_ms")), "the leg that includes it is kept")
+}
+
+func TestATimelineEntryCarriesHowLongTheReplyWasHeld(t *testing.T) {
+	held := 620.0
+	turns := []store.Turn{{TurnID: "turn-1", ReplyHoldMs: &held}, {TurnID: "turn-2"}}
+
+	timeline := timelineOf(turns, nil, nil)
+
+	require.Len(t, timeline, 2)
+	require.Equal(t, &held, timeline[0].ReplyHoldMs)
+	require.Nil(t, timeline[1].ReplyHoldMs, "a reply that was not held leaves it out")
+}
+
 func TestATimelineEntryCarriesWhenTheFirstFrameWasQueuedAndHeard(t *testing.T) {
 	queued, audible, speechEnd, roundtrip := 880.0, 940.0, 1060.0, 1400.0
 	turns := []store.Turn{

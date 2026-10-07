@@ -714,6 +714,7 @@ func (a *Agent) finishTurn(turn Turn) {
 		"stt_ms", turn.STTLatencyMs, "cadence_ms", turn.CadenceMs,
 		"decision_ms", turn.DecisionMs, "model_to_first_text_ms", turn.ModelToFirstTextMs,
 		"text_to_tts_ms", turn.TextToTTSMs, "tts_to_audio_ms", turn.TTSToAudioMs,
+		"reply_hold_ms", turn.ReplyHoldMs,
 		"transcript_to_audio_ms", turn.RoundtripMs,
 		"speech_end_to_audio_ms", turn.SpeechEndToAudioMs,
 		"first_frame_queued_ms", turn.FirstFrameQueuedMs,
@@ -2860,6 +2861,12 @@ func fillsPause(completionID string, calls []llm.ToolCall) bool {
 }
 
 // consumeTTS publishes the agent's speech to the edge as it is synthesised.
+//
+// The first audio of a reply to a caller's words may have to wait for the caller to have been
+// quiet. It waits in a buffer of its own, with the events of its synthesis that follow it, and
+// the events of every other turn carry on being read in the meantime, so a held reply never
+// leaves the voice with nobody reading it. When the hold ends the buffer is acted on in the
+// order it arrived in, or, if the reply was abandoned, given up.
 func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	defer p.running.Done()
 
@@ -2869,8 +2876,18 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	// released is the turn whose first frame has been let out, so none of its later frames is
 	// held to the caller's silence again.
 	released := ""
+	// holds are the replies waiting on the caller's silence, which is none almost always, and
+	// wake is told when one of them is abandoned, so that it is given up at once.
+	var holds []*heldTurn
+	wake := make(chan struct{}, 1)
+	nudge := func() {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}
 
-	for event := range voice.Events() {
+	speak := func(event tts.Event) {
 		switch typed := event.(type) {
 		case tts.AudioChunk:
 			// Every active synthesis carries the publication epoch it began in. Normal
@@ -2884,12 +2901,19 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 					a.logger.Debug("dropping audio for a turn the agent has left behind",
 						"synthesis", typed.SynthesisID, "turn", turnOf(typed.SynthesisID))
 				}
-				continue
+				return
 			}
 			if turnID := turnOf(typed.SynthesisID); turnID != released {
-				if !a.admitFirstFrame(p, publishCtx, turnID) {
+				hold, publish := a.holdFirstFrame(p, publishCtx, turnID, time.Now())
+				if hold != nil {
+					hold.stop = context.AfterFunc(publishCtx, nudge)
+					hold.events = append(hold.events, event)
+					holds = append(holds, hold)
+					return
+				}
+				if !publish {
 					a.turns.dropped(turnID, typed.Audio.DurationMs())
-					continue
+					return
 				}
 				released = turnID
 			}
@@ -2909,18 +2933,18 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 					publishCtx.Err() != nil {
 					a.mu.Unlock()
 					a.turns.dropped(turnOf(typed.SynthesisID), typed.Audio.DurationMs())
-					continue
+					return
 				}
 				err = a.options.Edge.PublishAudio(typed.Audio)
 				a.mu.Unlock()
 			}
 			if errors.Is(err, context.Canceled) || publishCtx.Err() != nil {
 				a.turns.dropped(turnOf(typed.SynthesisID), typed.Audio.DurationMs())
-				continue
+				return
 			}
 			if err != nil {
 				a.fail(err, "edge")
-				continue
+				return
 			}
 			a.mu.Lock()
 			stillActive := a.synthesisCtx[typed.SynthesisID] == publishCtx && publishCtx.Err() == nil
@@ -2937,7 +2961,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			a.mu.Unlock()
 			if !stillActive {
 				a.turns.dropped(turnOf(typed.SynthesisID), typed.Audio.DurationMs())
-				continue
+				return
 			}
 
 		case tts.SynthesisStarted:
@@ -2975,7 +2999,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			if typed.Clean {
 				a.logger.Debug("the voice closed",
 					"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
-				continue
+				return
 			}
 			a.logger.Warn("the voice dropped, the agent has lost its speech",
 				"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
@@ -2992,6 +3016,79 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				a.respondQueued()
 				a.followUp()
 			}
+		}
+	}
+
+	// settle acts on the holds that have ended, and says when the next of the rest does. A hold ends
+	// when the caller has been quiet or the longest hold has passed, which lets the reply out, or
+	// when the reply was abandoned or the pipeline stopped, which gives it up.
+	settle := func() (next time.Duration) {
+		now := time.Now()
+		for i := 0; i < len(holds); {
+			hold := holds[i]
+			left, capped := a.holdLeft(hold, now)
+			abandoned := hold.ctx.Err() != nil || p.ctx.Err() != nil
+			if !abandoned && left > 0 {
+				if next == 0 || left < next {
+					next = left
+				}
+				i++
+				continue
+			}
+			holds = slices.Delete(holds, i, i+1)
+			hold.stop()
+			if abandoned {
+				a.giveUpHold(hold, speak)
+				continue
+			}
+			a.logHoldEnded(hold, capped, now)
+			released = hold.turn
+			a.turns.held(hold.turn, now.Sub(hold.readyAt))
+			for _, event := range hold.events {
+				speak(event)
+			}
+		}
+		return next
+	}
+
+	var timer *time.Timer
+	var due <-chan time.Time
+	events := voice.Events()
+	stopped := p.ctx.Done()
+	for {
+		select {
+		case event, open := <-events:
+			if !open {
+				for _, hold := range holds {
+					hold.stop()
+					a.giveUpHold(hold, speak)
+				}
+				return
+			}
+			if hold := heldBy(holds, event); hold != nil {
+				// What follows the first audio of a reply waits behind it, so it is not
+				// said, or reported as said, before it.
+				hold.events = append(hold.events, event)
+				continue
+			}
+			speak(event)
+		case <-due:
+		case <-wake:
+		case <-stopped:
+			stopped = nil
+		}
+		if len(holds) == 0 {
+			continue
+		}
+		if next := settle(); next > 0 {
+			if timer == nil {
+				timer = time.NewTimer(next)
+			} else {
+				timer.Reset(next)
+			}
+			due = timer.C
+		} else {
+			due = nil
 		}
 	}
 }

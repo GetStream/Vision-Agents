@@ -820,6 +820,22 @@ are on the `turn` event of the session socket, in the turn log, in the `turns` t
 `GET /v1/agents/calls/{id}/timeline`, and absent where the edge does not report them. The
 older fields are unchanged.
 
+### A held reply no longer holds up the voice, and a turn says how long it was held
+
+The first audio of a reply that is waiting for the caller to have been quiet was held by the
+goroutine that reads the voice, so everything else the voice said, the audio and the end of
+other utterances and the statistics recorded as the voice's events went by, waited behind it for
+as long as the hold lasted. It is now held in a buffer of its own, with the events of its
+utterance that follow it, while the events of every other turn carry on being read, and
+the buffer is acted on in the order it arrived in when the hold ends. A reply that is abandoned
+while it is held, or whose pipeline stops, is given up with its audio counted as dropped.
+
+A turn also says how long its first audio was held: `reply_hold_ms` on the `turn` event of the
+session socket, in the turn log, in the `turns` table and in `GET /v1/agents/calls/{id}/timeline`,
+absent where the reply was not held. The hold is inside `tts_to_audio_ms` and so inside
+`roundtrip_ms`, the turn log's `transcript_to_audio_ms` and `speech_end_to_audio_ms`, and the
+first-frame fields, which already included the wait.
+
 ### A session says whether the user wrote, spoke or showed video
 
 Every session now has a `modality`: `text` for a conversation held in writing, `voice` for a

@@ -437,6 +437,23 @@ func (s *StoreSuite) TestWhenAReplyWasQueuedAndHeardIsReadBackWithItsTurn() {
 	s.Nil(turns[1].FirstAudibleFrameMs)
 }
 
+func (s *StoreSuite) TestHowLongAReplyWasHeldIsReadBackWithItsTurn() {
+	heldMs := 620.0
+	turn := s.turn("turn-1", s.base.Add(time.Minute), 1400)
+	turn.ReplyHoldMs = &heldMs
+	unheld := s.turn("turn-2", s.base.Add(2*time.Minute), 900)
+	s.Require().NoError(s.store.RecordTurn(s.ctx, turn))
+	s.Require().NoError(s.store.RecordTurn(s.ctx, unheld))
+
+	turns, err := s.store.CallTurns(s.ctx, "acme", "agent-1", s.base, nil)
+
+	s.Require().NoError(err)
+	s.Require().Len(turns, 2)
+	s.Require().NotNil(turns[0].ReplyHoldMs)
+	s.InDelta(620, *turns[0].ReplyHoldMs, 0.001)
+	s.Nil(turns[1].ReplyHoldMs, "a reply that was not held leaves it out")
+}
+
 func (s *StoreSuite) TestALegThatNeverHappenedIsNotCountedAsInstant() {
 	// A realtime model that hears and speaks for itself has no transcription leg, and
 	// counting that as zero would flatter the percentiles.

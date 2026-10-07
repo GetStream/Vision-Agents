@@ -49,6 +49,9 @@ type openTurn struct {
 	firstTextAt  time.Time
 	ttsAt        time.Time
 	firstAudioAt time.Time
+	// holdMs is how long the first audio of the reply waited for the caller to have been quiet,
+	// before it was published. Zero when it did not wait.
+	holdMs float64
 	// queuedAt is when the edge queued the first frame of the reply for its outgoing track, and
 	// pulledAt when the track took the first frame that was not silence. Only an edge that
 	// reports them sets them, and firstAudioAt is when publishing returned, which for a chunk
@@ -168,6 +171,16 @@ func (t *turnTracker) firstAudio(turnID string, at time.Time) {
 	}
 	current.firstAudioAt = at
 	current.roundtripMs = msBetween(current.transcriptAt, at)
+}
+
+// held records how long the first audio of a reply waited for the caller to have been quiet. It is
+// inside the turn's roundtrip and the legs from its text to its audio, which it explains.
+func (t *turnTracker) held(turnID string, waited time.Duration) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil {
+		current.holdMs = float64(waited.Microseconds()) / 1000
+	}
 }
 
 // marksFor returns what an edge reports the first frames of a reply to, or nil when the turn
@@ -341,6 +354,7 @@ func measure(turnID string, current *openTurn) Turn {
 		ModelToFirstTextMs:  leg(textWaitAt, current.firstTextAt),
 		TextToTTSMs:         leg(current.firstTextAt, current.ttsAt),
 		TTSToAudioMs:        leg(current.ttsAt, current.firstAudioAt),
+		ReplyHoldMs:         current.holdMs,
 		FirstFrameQueuedMs:  leg(current.transcriptAt, current.queuedAt),
 		FirstAudibleFrameMs: leg(current.transcriptAt, current.pulledAt),
 		LLMTTFTMs:           current.llmTTFTMs,
@@ -429,6 +443,7 @@ func (r *turnRecorder) Record(turn Turn) {
 		ModelToFirstTextMs:   measured(turn.ModelToFirstTextMs),
 		TextToTTSMs:          measured(turn.TextToTTSMs),
 		TTSToAudioMs:         measured(turn.TTSToAudioMs),
+		ReplyHoldMs:          measured(turn.ReplyHoldMs),
 		STTLatencyMs:         measured(turn.STTLatencyMs),
 		LLMTTFTMs:            measured(turn.LLMTTFTMs),
 		TTSTTFBMs:            measured(turn.TTSTTFBMs),

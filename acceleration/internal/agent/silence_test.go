@@ -16,6 +16,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 )
 
@@ -125,55 +126,51 @@ func TestVoiceActivityForgetsSomebodyWhoLeft(t *testing.T) {
 	require.True(t, v.lastVoiced("alice").IsZero())
 }
 
-func TestAReplyIsLetOutAtOnceWhenTheCallerHasBeenQuietLongEnough(t *testing.T) {
+func TestAReplyIsNotHeldWhenTheCallerHasBeenQuietLongEnough(t *testing.T) {
 	a, p := gateFixture(t, 500*time.Millisecond, 5*time.Second)
-	a.voiced.observe("alice", chunkAt(3000), time.Now().Add(-time.Second))
+	now := time.Now()
+	a.voiced.observe("alice", chunkAt(3000), now.Add(-time.Second))
 	a.holdReplyFor("alice")
 
-	start := time.Now()
-	admitted := a.admitFirstFrame(p, context.Background(), "turn-1")
+	hold, publish := a.holdFirstFrame(p, context.Background(), "turn-1", now)
 
-	require.True(t, admitted)
-	require.Less(t, time.Since(start), 100*time.Millisecond, "a caller who has been quiet is not waited for")
+	require.Nil(t, hold, "a caller who has been quiet is not waited for")
+	require.True(t, publish)
 }
 
-func TestAReplyIsLetOutWhenNothingHasEverBeenHeardFromTheCaller(t *testing.T) {
+func TestAReplyIsNotHeldWhenNothingHasEverBeenHeardFromTheCaller(t *testing.T) {
 	a, p := gateFixture(t, 500*time.Millisecond, 5*time.Second)
-	a.voiced.observe("alice", chunkAt(0), time.Now())
+	now := time.Now()
+	a.voiced.observe("alice", chunkAt(0), now)
 	a.holdReplyFor("alice")
 
-	start := time.Now()
+	hold, publish := a.holdFirstFrame(p, context.Background(), "turn-1", now)
 
-	require.True(t, a.admitFirstFrame(p, context.Background(), "turn-1"))
-	require.Less(t, time.Since(start), 100*time.Millisecond)
+	require.Nil(t, hold)
+	require.True(t, publish)
 }
 
 func TestAReplyIsHeldUntilTheCallerHasBeenQuietForTheWindow(t *testing.T) {
 	window := 300 * time.Millisecond
 	a, p := gateFixture(t, window, 5*time.Second)
-	voicedAt := time.Now().Add(-100 * time.Millisecond)
-	a.voiced.observe("alice", chunkAt(3000), voicedAt)
+	now := time.Now()
+	a.voiced.observe("alice", chunkAt(3000), now.Add(-100*time.Millisecond))
 	a.holdReplyFor("alice")
 
-	admitted := a.admitFirstFrame(p, context.Background(), "turn-1")
+	hold, publish := a.holdFirstFrame(p, context.Background(), "turn-1", now)
 
-	require.True(t, admitted)
-	require.GreaterOrEqual(t, time.Since(voicedAt), window, "the reply was let out before the silence was confirmed")
-}
-
-func TestAReplyIsLetOutWhenTheSilenceIsConfirmedBeforeTheLongestHold(t *testing.T) {
-	window, longest := 200*time.Millisecond, time.Second
-	a, p := gateFixture(t, window, longest)
-	voicedAt := time.Now()
-	a.voiced.observe("alice", chunkAt(3000), voicedAt)
-	a.holdReplyFor("alice")
-
-	admitted := a.admitFirstFrame(p, context.Background(), "turn-1")
-
-	held := time.Since(voicedAt)
-	require.True(t, admitted)
-	require.GreaterOrEqual(t, held, window, "the reply was let out before the silence was confirmed")
-	require.Less(t, held, longest-200*time.Millisecond, "the reply waited for the longest hold when the silence was already confirmed")
+	require.NotNil(t, hold)
+	require.False(t, publish)
+	require.Equal(t, window, hold.window)
+	left, capped := a.holdLeft(hold, now)
+	require.Equal(t, 200*time.Millisecond, left, "the silence is counted from the caller's last voice")
+	require.False(t, capped)
+	left, _ = a.holdLeft(hold, now.Add(200*time.Millisecond))
+	require.Zero(t, left, "the reply is let out when the silence is confirmed")
+	a.mu.Lock()
+	require.Equal(t, now, a.gated.readyAt, "the reply says when its hold began")
+	require.Equal(t, "turn-1", a.gated.turn, "it stays a reply nobody has heard until some of it is let out")
+	a.mu.Unlock()
 }
 
 func TestAReplyIsLetOutAtTheLongestHoldWhileTheLineNeverGoesQuiet(t *testing.T) {
@@ -184,33 +181,26 @@ func TestAReplyIsLetOutAtTheLongestHoldWhileTheLineNeverGoesQuiet(t *testing.T) 
 	} {
 		t.Run(name, func(t *testing.T) {
 			a, p := gateFixture(t, 5*time.Second, longest)
-			a.voiced.observe("alice", chunkAt(3000), time.Now())
-			a.holdReplyFor("alice")
-			stop, done := make(chan struct{}), make(chan struct{})
-			go func() {
-				defer close(done)
-				ticker := time.NewTicker(5 * time.Millisecond)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-stop:
-						return
-					case <-ticker.C:
-						a.voiced.observe("alice", chunkAt(3000), time.Now())
-						a.voiced.hearsSilence("alice", breath, time.Now())
-					}
-				}
-			}()
-
 			start := time.Now()
-			admitted := a.admitFirstFrame(p, context.Background(), "turn-1")
-			held := time.Since(start)
-			close(stop)
-			<-done
+			a.voiced.observe("alice", chunkAt(3000), start)
+			a.holdReplyFor("alice")
+			hold, _ := a.holdFirstFrame(p, context.Background(), "turn-1", start)
+			require.NotNil(t, hold)
 
-			require.True(t, admitted, "a line that never went quiet is not a caller starting again")
-			require.GreaterOrEqual(t, held, longest, "the reply was let out before the longest hold")
-			require.Less(t, held, longest+300*time.Millisecond, "the reply was held past the longest hold")
+			// The line is voiced every few milliseconds, with a breath after each voice.
+			var letOutAt time.Duration
+			for at := 5 * time.Millisecond; at <= 2*longest; at += 5 * time.Millisecond {
+				now := start.Add(at)
+				a.voiced.observe("alice", chunkAt(3000), now)
+				a.voiced.hearsSilence("alice", breath, now)
+				if left, capped := a.holdLeft(hold, now); left <= 0 {
+					require.True(t, capped, "the line never went quiet, so the longest hold ended it")
+					letOutAt = at
+					break
+				}
+			}
+
+			require.Equal(t, longest, letOutAt, "the reply was not let out at the longest hold")
 		})
 	}
 }
@@ -271,21 +261,21 @@ func TestAReplyIsHeldForNobodyNeverHeardToVoiceAnything(t *testing.T) {
 func TestACoughWhileAReplyIsHeldDelaysItAndDoesNotDropIt(t *testing.T) {
 	window := 300 * time.Millisecond
 	a, p := gateFixture(t, window, 5*time.Second)
-	a.voiced.observe("alice", chunkAt(3000), time.Now().Add(-100*time.Millisecond))
+	now := time.Now()
+	a.voiced.observe("alice", chunkAt(3000), now.Add(-100*time.Millisecond))
 	a.holdReplyFor("alice")
-	var coughAt time.Time
-	coughed := make(chan struct{})
-	time.AfterFunc(50*time.Millisecond, func() {
-		defer close(coughed)
-		coughAt = time.Now()
-		a.voiced.observe("alice", chunkAt(3000), coughAt)
-	})
+	hold, _ := a.holdFirstFrame(p, context.Background(), "turn-1", now)
+	require.NotNil(t, hold)
 
-	admitted := a.admitFirstFrame(p, context.Background(), "turn-1")
+	coughAt := now.Add(50 * time.Millisecond)
+	a.voiced.observe("alice", chunkAt(3000), coughAt)
 
-	<-coughed
-	require.True(t, admitted, "a cough dropped the reply")
-	require.GreaterOrEqual(t, time.Since(coughAt), window, "the silence was counted from before the cough")
+	left, capped := a.holdLeft(hold, coughAt)
+	require.Equal(t, window, left, "the cough restarted the count of quiet")
+	require.False(t, capped)
+	require.False(t, hold.ctx.Err() != nil, "the cough did not abandon the reply")
+	left, _ = a.holdLeft(hold, coughAt.Add(window))
+	require.Zero(t, left, "the reply is let out once the caller has been quiet since the cough")
 }
 
 func TestAConfidentEndingIsHeldForTheShorterOfTheTwoSilences(t *testing.T) {
@@ -301,49 +291,56 @@ func TestAConfidentEndingIsHeldForTheShorterOfTheTwoSilences(t *testing.T) {
 	require.Zero(t, a.silenceFor(heldReply{confident: true}), "zero lets a sure ending out at once")
 }
 
-func TestAReplyToAConfidentEndingIsLetOutAfterTheShorterSilence(t *testing.T) {
+func TestAReplyToAConfidentEndingIsHeldForTheShorterSilence(t *testing.T) {
 	a, p := gateFixture(t, 5*time.Second, 10*time.Second)
 	a.replySilenceConfident = 100 * time.Millisecond
-	voicedAt := time.Now()
-	a.voiced.observe("alice", chunkAt(3000), voicedAt)
+	now := time.Now()
+	a.voiced.observe("alice", chunkAt(3000), now)
 	a.gated = heldReply{turn: "turn-1", participant: stt.Participant{ID: "alice"}, confident: true}
 
-	require.True(t, a.admitFirstFrame(p, context.Background(), "turn-1"))
+	hold, _ := a.holdFirstFrame(p, context.Background(), "turn-1", now)
 
-	held := time.Since(voicedAt)
-	require.GreaterOrEqual(t, held, 100*time.Millisecond)
-	require.Less(t, held, time.Second, "a sure ending was waited on for the reply silence")
+	require.NotNil(t, hold)
+	require.Equal(t, 100*time.Millisecond, hold.window)
+	left, _ := a.holdLeft(hold, now.Add(100*time.Millisecond))
+	require.Zero(t, left, "a sure ending was waited on for the reply silence")
 }
 
-func TestAHeldReplyIsLetGoOfWhenItIsAbandonedOrThePipelineStops(t *testing.T) {
+func TestAReplyThatIsAbandonedOrWhosePipelineHasStoppedIsLetOutNoMore(t *testing.T) {
 	a, p := gateFixture(t, 5*time.Second, 10*time.Second)
-	a.voiced.observe("alice", chunkAt(3000), time.Now())
+	now := time.Now()
+	a.voiced.observe("alice", chunkAt(3000), now)
 
 	abandoned, abandon := context.WithCancel(context.Background())
+	abandon()
 	a.holdReplyFor("alice")
-	time.AfterFunc(50*time.Millisecond, abandon)
-	require.False(t, a.admitFirstFrame(p, abandoned, "turn-1"), "an abandoned reply is not let out")
+	hold, publish := a.holdFirstFrame(p, abandoned, "turn-1", now)
+	require.Nil(t, hold)
+	require.False(t, publish, "an abandoned reply is not let out")
 
+	p.cancel()
 	a.holdReplyFor("alice")
-	time.AfterFunc(50*time.Millisecond, p.cancel)
-	require.False(t, a.admitFirstFrame(p, context.Background(), "turn-1"), "a stopped pipeline lets nothing out")
+	hold, publish = a.holdFirstFrame(p, context.Background(), "turn-1", now)
+	require.Nil(t, hold)
+	require.False(t, publish, "a stopped pipeline lets nothing out")
 }
 
 func TestATurnThatIsNotAReplyToTheCallerIsNeverHeld(t *testing.T) {
 	a, p := gateFixture(t, 5*time.Second, 10*time.Second)
-	a.voiced.observe("alice", chunkAt(3000), time.Now())
+	now := time.Now()
+	a.voiced.observe("alice", chunkAt(3000), now)
 	a.holdReplyFor("alice")
 
-	start := time.Now()
+	hold, publish := a.holdFirstFrame(p, context.Background(), "say-1", now)
 
-	require.True(t, a.admitFirstFrame(p, context.Background(), "say-1"), "a greeting is not waiting on anybody")
-	require.Less(t, time.Since(start), 100*time.Millisecond)
+	require.Nil(t, hold, "a greeting is not waiting on anybody")
+	require.True(t, publish)
 	a.mu.Lock()
 	require.Equal(t, "turn-1", a.gated.turn, "the reply that is waiting is still the one that was named")
 	a.mu.Unlock()
 }
 
-func TestHearingAndAdmittingAudioDoNotAllocate(t *testing.T) {
+func TestHearingAudioAndDecidingWhetherToHoldItDoNotAllocate(t *testing.T) {
 	window, longest := 40*time.Millisecond, 10*time.Millisecond
 	a, p := gateFixture(t, window, longest)
 	chunk := chunkAt(3000)
@@ -356,32 +353,29 @@ func TestHearingAndAdmittingAudioDoNotAllocate(t *testing.T) {
 	}), "hearing a chunk of audio")
 
 	require.Zero(t, testing.AllocsPerRun(100, func() {
-		a.admitFirstFrame(p, ctx, "say-1")
+		a.holdFirstFrame(p, ctx, "say-1", time.Now())
 	}), "a turn nobody is waiting on")
 
 	require.Zero(t, testing.AllocsPerRun(100, func() {
+		now := time.Now()
 		a.voiced.mu.Lock()
-		a.voiced.speakers["alice"].last = time.Now().Add(-time.Second)
+		a.voiced.speakers["alice"].last = now.Add(-time.Second)
 		a.voiced.mu.Unlock()
 		a.gated = heldReply{turn: "turn-1", participant: alice}
-		a.admitFirstFrame(p, ctx, "turn-1")
+		a.holdFirstFrame(p, ctx, "turn-1", now)
 	}), "a reply to a caller who has been quiet")
 
-	require.Zero(t, testing.AllocsPerRun(20, func() {
-		a.voiced.mu.Lock()
-		a.voiced.speakers["alice"].last = time.Now().Add(2*time.Millisecond - window)
-		a.voiced.mu.Unlock()
-		a.gated = heldReply{turn: "turn-1", participant: alice}
-		a.admitFirstFrame(p, ctx, "turn-1")
-	}), "a reply held for a moment")
-
-	require.Zero(t, testing.AllocsPerRun(20, func() {
-		a.voiced.observe("alice", chunk, time.Now())
-		a.gated = heldReply{turn: "turn-1", participant: alice}
-		if !a.admitFirstFrame(p, ctx, "turn-1") {
-			t.Error("a reply held to the longest hold was dropped")
-		}
-	}), "a reply held to the longest hold by a line that does not go quiet")
+	now := time.Now()
+	a.voiced.observe("alice", chunk, now)
+	a.gated = heldReply{turn: "turn-1", participant: alice}
+	hold, _ := a.holdFirstFrame(p, ctx, "turn-1", now)
+	require.NotNil(t, hold)
+	require.Zero(t, testing.AllocsPerRun(100, func() {
+		a.holdLeft(hold, now.Add(2*time.Millisecond))
+	}), "asking how much longer a reply is held for")
+	require.Zero(t, testing.AllocsPerRun(100, func() {
+		a.holdLeft(hold, now.Add(time.Second))
+	}), "asking about a reply that has been held to the longest hold by a line that does not go quiet")
 }
 
 func TestAConfidentEndingIsHeldForThreeHundredMillisecondsUnlessTheScoreAndTheSilenceAreSet(t *testing.T) {
@@ -676,6 +670,90 @@ func (s *AgentSuite) TestNewWordsWhileTheReplyIsHeldCancelItUnheardAndLeaveNothi
 	}
 	s.Equal([]string{"please find a table", "actually make it for four"}, said)
 	s.False(s.interruptionNotePending(), "there is no reply that may have been heard in part")
+}
+
+func (s *AgentSuite) TestAHeldReplyDoesNotKeepTheRestOfWhatTheVoiceSaysWaiting() {
+	window, longest := time.Second, 5*time.Second
+	s.replySilence = &window
+	s.replySilenceMax = &longest
+	s.join(true)
+	s.voice.mu.Lock()
+	s.voice.silent = true
+	s.voice.mu.Unlock()
+	alice := stt.Participant{ID: "alice"}
+	s.speakAloud(alice)
+	s.says(alice, "please find a table")
+	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "the reply never reached the voice")
+	replyID := s.voice.spoken()[0].ID
+	s.synthesises(replyID)
+	s.replyIsHeld()
+	// What the voice goes on to say of the held reply waits behind its first audio.
+	s.voice.emitter.Send(tts.SynthesisComplete{
+		SynthesisID: replyID, AudioDurationMs: 10, TimeToFirstByteMs: 5,
+	})
+
+	s.Require().NoError(s.agent.Say(s.ctx, "Welcome"))
+	spoken := s.voice.spoken()
+	s.synthesises(spoken[len(spoken)-1].ID)
+
+	s.eventually(func() bool { return len(s.edge.heard()) == 1 }, "a held reply kept another turn's audio from going out")
+	s.Zero(countOf[Spoke](s.reported()), "the held reply was reported as spoken before any of it was let out")
+	s.Len(s.edge.heard(), 1)
+
+	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the held reply was never let out")
+	s.Len(s.edge.heard(), 2, "the reply was reported as spoken before its audio was published")
+	spokeEvent, _ := firstOf[Spoke](s.reported())
+	s.Equal(replyID, spokeEvent.TurnID)
+}
+
+func (s *AgentSuite) TestTheHoldOfAReplyIsReportedOnItsTurn() {
+	window := 500 * time.Millisecond
+	s.replySilence = &window
+	var edge *markedEdge
+	s.edgeFactory = func(base *loopbackEdge) Edge {
+		edge = &markedEdge{loopbackEdge: base, trackDelay: 30 * time.Millisecond}
+		return edge
+	}
+	s.join(true)
+	alice := stt.Participant{ID: "alice"}
+	s.speakAloud(alice)
+
+	s.says(alice, "please find a table")
+
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
+	turn, _ := firstOf[Turn](s.reported())
+	s.Positive(turn.ReplyHoldMs, "the reply waited for the caller to have been quiet")
+	s.LessOrEqual(turn.ReplyHoldMs, window.Seconds()*1000, "it waited no longer than the silence")
+	s.LessOrEqual(turn.ReplyHoldMs, turn.TTSToAudioMs, "the hold is inside the leg from the text to the audio")
+	s.LessOrEqual(turn.ReplyHoldMs, turn.RoundtripMs, "and inside the whole wait")
+}
+
+func (s *AgentSuite) TestAReplyThatWasNotHeldReportsNoHold() {
+	s.join(true)
+	alice := stt.Participant{ID: "alice"}
+	s.speak(alice)
+
+	s.says(alice, "please find a table")
+
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
+	turn, _ := firstOf[Turn](s.reported())
+	s.Zero(turn.ReplyHoldMs, "a caller who had been quiet was waited for")
+}
+
+func (s *AgentSuite) TestClosingTheAgentWhileAReplyIsHeldPublishesNothingOfIt() {
+	window, longest := time.Minute, time.Minute
+	s.replySilence = &window
+	s.replySilenceMax = &longest
+	s.join(true)
+	alice := stt.Participant{ID: "alice"}
+	s.speakAloud(alice)
+	s.says(alice, "please find a table")
+	s.replyIsHeld()
+
+	s.Require().NoError(s.agent.Close())
+
+	s.Empty(s.edge.heard(), "a reply that was still held was published when the agent closed")
+	s.Zero(countOf[Spoke](s.reported()))
 }
 
 func (s *AgentSuite) TestFramesAfterTheFirstAreNotHeld() {

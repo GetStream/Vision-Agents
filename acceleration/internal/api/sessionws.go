@@ -482,6 +482,7 @@ func frameOf(event session.Event) (frame, bool) {
 			"model_to_first_text_ms":   typed.ModelToFirstTextMs,
 			"text_to_tts_ms":           typed.TextToTTSMs,
 			"tts_to_audio_ms":          typed.TTSToAudioMs,
+			"reply_hold_ms":            typed.ReplyHoldMs,
 			"llm_ttft_ms":              typed.LLMTTFTMs,
 			"tts_ttfb_ms":              typed.TTSTTFBMs,
 			"roundtrip_ms":             typed.RoundtripMs,

@@ -5697,8 +5697,13 @@ components:
           description: Main model request to the first text delta admitted to the voice pipeline.
           format: double
           type: number
+        reply_hold_ms:
+          description: How long the first audio of the reply was held for the caller to have been quiet, which tts_to_audio_ms, roundtrip_ms and the fields that run to the first frame include. Absent where it was not held.
+          format: double
+          nullable: true
+          type: number
         roundtrip_ms:
-          description: Last transcript revision to first audio published; includes cadence settling.
+          description: Last transcript revision to first audio published; includes cadence settling and any hold of the reply for the caller to have been quiet.
           format: double
           type: number
         said:
@@ -5727,7 +5732,7 @@ components:
           format: double
           type: number
         tts_to_audio_ms:
-          description: First TTS request to the first audio chunk published to the edge.
+          description: First TTS request to the first audio chunk published to the edge; includes any hold of the reply for the caller to have been quiet.
           format: double
           type: number
         tts_ttfb_ms:
