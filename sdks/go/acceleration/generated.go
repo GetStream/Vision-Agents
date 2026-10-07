@@ -617,6 +617,24 @@ func (e ConnectorOAuthClientAuthMethod) Valid() bool {
 	}
 }
 
+// Defines values for ConnectorOnInterrupt.
+const (
+	ConnectorOnInterruptCancel ConnectorOnInterrupt = "cancel"
+	ConnectorOnInterruptWait   ConnectorOnInterrupt = "wait"
+)
+
+// Valid indicates whether the value is a known member of the ConnectorOnInterrupt enum.
+func (e ConnectorOnInterrupt) Valid() bool {
+	switch e {
+	case ConnectorOnInterruptCancel:
+		return true
+	case ConnectorOnInterruptWait:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ContactState.
 const (
 	ContactStateCalling ContactState = "calling"
@@ -2488,6 +2506,9 @@ type AgentConnectorBinding struct {
 	// Name The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place.
 	Name string `json:"name"`
 
+	// Policy How a binding's tool calls behave around speech and interruptions. Every field is optional, and a field left out keeps today's behaviour.
+	Policy *ConnectorBindingPolicy `json:"policy,omitempty"`
+
 	// Required Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
 	Required *bool `json:"required,omitempty"`
 
@@ -3525,6 +3546,18 @@ type ConnectorBindingEvent struct {
 	Instructions *string `json:"instructions,omitempty"`
 }
 
+// ConnectorBindingPolicy How a binding's tool calls behave around speech and interruptions. Every field is optional, and a field left out keeps today's behaviour.
+type ConnectorBindingPolicy struct {
+	// Cancellable Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running to its answer or the binding's timeout, for a tool that is not safe to stop halfway, such as a payment. It only matters with on_interrupt cancel: a wait call is never stopped by an interruption.
+	Cancellable *bool `json:"cancellable,omitempty"`
+
+	// OnInterrupt cancel stops waiting for the call when the turn is interrupted, and tells the provider to stop it unless cancellable is false. wait lets the call finish, up to the binding's timeout, and its result goes into the conversation for the next turn.
+	OnInterrupt *ConnectorOnInterrupt `json:"on_interrupt,omitempty"`
+
+	// PreSpeech What the agent says while one of the binding's tools runs, such as "Let me pull up your calendar.", in place of the phrase it picks itself when the model reached for the tool without a word. A voice session with a separate voice says it; every session reports it on tool_started.
+	PreSpeech *string `json:"pre_speech,omitempty"`
+}
+
 // ConnectorClient How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint.
 type ConnectorClient struct {
 	// Alg How a private_key_jwt assertion is signed, and set only for it.
@@ -3633,6 +3666,9 @@ type ConnectorOAuthClientRequest struct {
 	// ClientSecret Sealed at rest and never returned. Left out for a public client (auth_method none).
 	ClientSecret *string `json:"client_secret,omitempty"`
 }
+
+// ConnectorOnInterrupt cancel stops waiting for the call when the turn is interrupted, and tells the provider to stop it unless cancellable is false. wait lets the call finish, up to the binding's timeout, and its result goes into the conversation for the next turn.
+type ConnectorOnInterrupt string
 
 // ConnectorPage defines model for ConnectorPage.
 type ConnectorPage struct {
