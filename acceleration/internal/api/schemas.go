@@ -279,7 +279,7 @@ type CreateSessionRequest struct {
 	Stt              *string                 `json:"stt,omitempty" doc:"Omit it and the config decides, or en-low-latency when there is no config."`
 	Tags             *map[string]string      `json:"tags,omitempty" doc:"Cost labels, carried onto every request the session makes."`
 	Text             *bool                   `json:"text,omitempty" doc:"Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket." default:"false"`
-	Title            *string                 `json:"title,omitempty" doc:"What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is called is a label on it rather than part of it."`
+	Title            *string                 `json:"title,omitempty" doc:"What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it."`
 	ToolTimeoutMs    *int                    `json:"tool_timeout_ms,omitempty" doc:"How long the model waits for a tool result. Zero is the default."`
 	Tools            *[]SessionTool          `json:"tools,omitempty"`
 	Tts              *string                 `json:"tts,omitempty" doc:"Omit it and the config decides, or en-low-latency when there is no config."`

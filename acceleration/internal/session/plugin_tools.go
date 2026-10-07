@@ -448,7 +448,7 @@ func (r *pluginRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.Conten
 }
 
 // videoRunner marks the session as a video one when the caller hands back frames of the
-// user's video.
+// user's video, and the frames as video.
 type videoRunner struct {
 	next    agent.ToolRunner
 	session *Session
@@ -456,13 +456,18 @@ type videoRunner struct {
 
 func (r *videoRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
 	parts, err := r.next.Run(ctx, call)
-	if err == nil && call.Name == agent.VideoFramesTool {
-		for _, part := range parts {
-			if part.Image != nil {
-				r.session.SawVideo()
-				break
-			}
+	if err != nil || call.Name != agent.VideoFramesTool {
+		return parts, err
+	}
+	saw := false
+	for _, part := range parts {
+		if part.Image != nil {
+			part.Image.Video = true
+			saw = true
 		}
+	}
+	if saw {
+		r.session.SawVideo()
 	}
 	return parts, err
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -123,6 +124,10 @@ type Spec struct {
 	ModelOverwrites store.ModelOverwrites
 	// ForkedFrom is the session this one continued from, empty for one opened fresh.
 	ForkedFrom string
+	// Reopened is when a persistent text session that ended first opened, set to carry it
+	// on under the same id rather than refuse an id already used. A chat is never over for
+	// the person writing in it, so its session ending is not the conversation ending.
+	Reopened time.Time
 	// Recall is the conversation a fork starts from, which is not the conversation it
 	// writes into. The parent's words are read out of its channel and given to the model;
 	// the fork's own transcript goes into its own channel, so continuing a conversation
@@ -349,6 +354,8 @@ func (s *Spec) Normalize() error {
 
 	s.CallID = strings.TrimSpace(s.CallID)
 	switch {
+	case !s.Reopened.IsZero() && !(s.Text && s.PersistConversation && s.ConversationID != ""):
+		return stack.Wrap(errors.New("session: only a persistent text conversation is reopened"))
 	case s.Text && s.CallID != "":
 		return stack.Wrap(errors.New("session: a text session holds no call, so it cannot join one"))
 	case s.Text && s.Native():

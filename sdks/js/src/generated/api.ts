@@ -259,6 +259,26 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/calls/{id}/tokens": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What a call's models read and wrote, and what their prompts were made of
+         * @description Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+         */
+        readonly get: operations["getCallTokens"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/calls/{id}/transcript": {
         readonly parameters: {
             readonly query?: never;
@@ -1645,7 +1665,10 @@ export type paths = {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Answer a piece of text through the model, as though it had been said */
+        /**
+         * Answer a piece of text through the model, as though it had been said
+         * @description A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+         */
         readonly post: operations["respondSession"];
         readonly delete?: never;
         readonly options?: never;
@@ -1778,6 +1801,26 @@ export type paths = {
          *     A conversation in writing has nothing to hang up, so it is usually left running rather than stopped. Stopping is for a call, where the agent is holding a line open.
          */
         readonly post: operations["stopSession"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/sessions/{id}/tools": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List the tools a session's model is offered
+         * @description The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+         */
+        readonly get: operations["listSessionTools"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3806,6 +3849,39 @@ export type components = {
             /** @description The name the other participants see. Defaults to the user id. */
             readonly user_name?: string;
         };
+        /** @description What a call's models read and wrote, summed over every request, with what their prompts were made of. */
+        readonly CallTokens: {
+            /**
+             * Format: int64
+             * @description The part of the prompts a provider served from its own cache.
+             */
+            readonly cached_input_tokens: number;
+            /**
+             * Format: int64
+             * @description Millionths of a dollar, priced from the providers' configured rates.
+             */
+            readonly cost_micros: number;
+            /** @description Where the cost came from, the costliest first. Sources that cost nothing are left out. */
+            readonly cost_sources: readonly components["schemas"]["CostSource"][];
+            readonly input_parts: components["schemas"]["InputParts"];
+            /**
+             * Format: int64
+             * @description Every prompt the models read, the cached part included.
+             */
+            readonly input_tokens: number;
+            /** @description Each model the call used, the busiest first. One billed by audio or characters reads zero tokens. */
+            readonly models: readonly components["schemas"]["ModelTokens"][];
+            /**
+             * Format: int64
+             * @description Everything the models generated, reasoning included.
+             */
+            readonly output_tokens: number;
+            /**
+             * Format: int64
+             * @description How many calls to those models it took.
+             */
+            readonly requests: number;
+        };
         /** @description What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it. */
         readonly CallUsage: {
             /**
@@ -4378,6 +4454,16 @@ export type components = {
             }[];
         };
         readonly ContentPart: components["schemas"]["TextContentPart"] | components["schemas"]["ImageContentPart"];
+        /** @description One place a call's cost came from. */
+        readonly CostSource: {
+            /**
+             * Format: int64
+             * @description Millionths of a dollar. A part of the prompt is given its share of what the prompt cost, by tokens.
+             */
+            readonly cost_micros: number;
+            /** @description For a model billed by tokens, the part of its prompt (instructions, messages, tool_definitions, tool_use, images or video), output for what it wrote, or input for prompt tokens recorded without a breakdown. For any other model, its modality: stt, tts, search and the rest. */
+            readonly source: string;
+        };
         readonly CreateOptOutRequest: {
             readonly channel: components["schemas"]["OptOutChannel"];
             /** @description The number, in E.164. */
@@ -4472,7 +4558,7 @@ export type components = {
              * @default false
              */
             readonly text?: boolean;
-            /** @description What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is called is a label on it rather than part of it. */
+            /** @description What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it. */
             readonly title?: string;
             /** @description How long the model waits for a tool result. Zero is the default. */
             readonly tool_timeout_ms?: number;
@@ -4851,6 +4937,39 @@ export type components = {
              */
             readonly namespace: string;
         };
+        /** @description What prompts were made of, in tokens. Estimated from each request and scaled to what the provider counted, so the parts sum to the input tokens and only the split between them is a guess. Requests recorded before the split was kept read zero throughout. */
+        readonly InputParts: {
+            /**
+             * Format: int64
+             * @description Pictures, attached or returned by a tool.
+             */
+            readonly images: number;
+            /**
+             * Format: int64
+             * @description The system prompt: the agent's instructions, skills and plugin guidance.
+             */
+            readonly instructions: number;
+            /**
+             * Format: int64
+             * @description The conversation's words, from either side.
+             */
+            readonly messages: number;
+            /**
+             * Format: int64
+             * @description The tools the model was offered: their names, descriptions and schemas.
+             */
+            readonly tool_definitions: number;
+            /**
+             * Format: int64
+             * @description The tools the model called, and what they returned.
+             */
+            readonly tool_use: number;
+            /**
+             * Format: int64
+             * @description Frames of a video, from the call's camera or an attached clip.
+             */
+            readonly video: number;
+        };
         readonly InstructionsRequest: {
             readonly instructions: string;
         };
@@ -5092,11 +5211,55 @@ export type components = {
              */
             readonly verbosity?: "low" | "medium" | "high";
         };
+        /** @description What one model read and wrote over a call. */
+        readonly ModelTokens: {
+            /** Format: int64 */
+            readonly cached_input_tokens: number;
+            /** Format: int64 */
+            readonly cost_micros: number;
+            readonly input_parts: components["schemas"]["InputParts"];
+            /** Format: int64 */
+            readonly input_tokens: number;
+            /** @description What the model does: llm for a language model, sts for speech-to-speech, and so on. */
+            readonly modality: string;
+            readonly model: string;
+            /** Format: int64 */
+            readonly output_tokens: number;
+            readonly provider: string;
+            /** Format: int64 */
+            readonly requests: number;
+        };
         readonly NumberSearchResult: {
             /** @description What the vendors are offering, cheapest first. */
             readonly numbers: readonly components["schemas"]["AvailableNumber"][];
             /** @description Vendors that were not part of the answer. A search that reached two of eight vendors found what two vendors had, and deciding whether to buy needs to know which. */
             readonly skipped: readonly components["schemas"]["SkippedVendor"][];
+        };
+        /** @description One tool as the model sees it. */
+        readonly OfferedTool: {
+            /** @description What the model is told the tool does. */
+            readonly description: string;
+            /** @description How the model asks for it. */
+            readonly name: string;
+            /** @description The JSON Schema of its arguments. */
+            readonly parameters?: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Format: int64
+             * @description Roughly what offering it costs on every request, in tokens: its name, description and schema at four characters a token.
+             */
+            readonly tokens: number;
+        };
+        /** @description The tools a session's conversation model is offered, as they are sent to it. */
+        readonly OfferedTools: {
+            /**
+             * Format: int64
+             * @description Roughly what offering them all costs on every request, in tokens.
+             */
+            readonly tokens: number;
+            /** @description Every tool, in the order the model is offered them. */
+            readonly tools: readonly components["schemas"]["OfferedTool"][] | null;
         };
         /** @description Somebody who asked not to be reached. Nothing is texted or dialled to them on the channel, or on any for all, until the opt-out is revoked or they text START. */
         readonly OptOut: {
@@ -7622,6 +7785,34 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["CallToken"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getCallTokens: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The call's tokens */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CallTokens"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
@@ -10497,6 +10688,33 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listSessionTools: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The tools */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["OfferedTools"];
+                };
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];

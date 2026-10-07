@@ -141,8 +141,8 @@ type Session struct {
 	saidMu sync.Mutex
 	said   []spoken
 
-	// naming is how an unnamed persistent conversation gets its title. Nil when the caller
-	// named it, or when there is no channel to name.
+	// naming is how a persistent conversation gets its title from what was said. Nil when
+	// there is no channel to name.
 	naming *naming
 	// labelMu guards title and description, which are what naming last called the
 	// conversation, over the spec's own. It also guards the spec's labels, which Describe
@@ -687,6 +687,9 @@ func (s *Session) Busy() bool { return s.voiceAgent.Busy() }
 
 // Tools names what the agent may do rather than say.
 func (s *Session) Tools() []string { return s.voiceAgent.Tools() }
+
+// ToolDefinitions is what the conversation model is offered, as it is sent.
+func (s *Session) ToolDefinitions() []llm.Tool { return s.voiceAgent.ToolDefinitions() }
 
 // SetInstructions changes what the agent is told to be from the next turn on.
 func (s *Session) SetInstructions(text string) {

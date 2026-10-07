@@ -110,7 +110,7 @@ func frames(ctx context.Context, client *http.Client, source string, count int) 
 		if err != nil {
 			return nil, 0, stack.Wrap(err)
 		}
-		sampled = append(sampled, Frame{At: at, Image: llm.ImagePart{MIME: "image/jpeg", Data: jpeg}})
+		sampled = append(sampled, Frame{At: at, Image: llm.ImagePart{MIME: "image/jpeg", Data: jpeg, Video: true}})
 	}
 	return sampled, length, nil
 }
