@@ -76,13 +76,18 @@ func migratePlugins(ctx context.Context, settings config.Config, logger *slog.Lo
 		return err
 	}
 	defer pgStore.Close()
-	pending, err := pgStore.PendingMigrations(ctx)
+	pending, unknown, err := pgStore.MigrationDrift(ctx)
 	if err != nil {
 		return err
 	}
 	if len(pending) > 0 {
 		return fmt.Errorf("the database is behind this binary: %d migrations not applied (the newest %d); "+
 			"deploy this build first, which migrates it, then run this again", len(pending), pending[len(pending)-1])
+	}
+	// A newer build migrated it: this one may read or write its tables as they no longer are.
+	if len(unknown) > 0 {
+		return fmt.Errorf("the database is newer than this binary: %d migrations applied that it does not carry (the newest %d); "+
+			"run the build that applied them", len(unknown), unknown[len(unknown)-1])
 	}
 	secrets, err := loadKeyring(settings, "router plugins migrate needs")
 	if err != nil {
@@ -95,7 +100,8 @@ func migratePlugins(ctx context.Context, settings config.Config, logger *slog.Lo
 	}
 	defer configs.Close()
 
-	clients := api.ConnectorClients(pgStore, secrets, os.Getenv)
+	// Read only: a client secret under an older key version is never sealed again from here.
+	clients := api.ConnectorClientsReadOnly(pgStore, secrets, os.Getenv)
 	// The registry serve builds with connectors on. A dry run reads it on a deployment with
 	// them off too: it writes nothing.
 	enabled := settings

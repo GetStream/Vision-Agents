@@ -272,6 +272,69 @@ func (s *PluginMigrateSuite) TestARotatingConnectorsGrantIsSkippedUnlessAskedFor
 	s.Equal(pluginmigrate.Written, s.row(asked, pluginmigrate.KindBinding, config+" agent_plugins").Action)
 }
 
+// TestAGrantWhoseRotationIsUnknownIsSkippedUnlessAskedFor: a manifest that does not say
+// whether refresh tokens rotate (as sentry, hubspot and shopify do not) is taken as one that
+// may, and a login with no refresh token has nothing to rotate, so it moves.
+func (s *PluginMigrateSuite) TestAGrantWhoseRotationIsUnknownIsSkippedUnlessAskedFor() {
+	config := s.config([]store.PluginEntry{{Name: unknownPlugin}}, nil)
+	login := s.loginTo(config, "", unknownPlugin, s.provider.ClientID, s.provider.URL+fakeprovider.PathToken, store.PluginConnected)
+	other := s.config([]store.PluginEntry{{Name: unknownPlugin}}, nil)
+	accessOnly := s.loginTo(other, "", unknownPlugin, s.provider.ClientID, s.provider.URL+fakeprovider.PathToken, store.PluginConnected)
+	_, err := s.store.DB().ExecContext(context.Background(), "UPDATE agent_plugin_connections SET refresh_token = '' WHERE id = ?", accessOnly)
+	s.Require().NoError(err)
+
+	report := s.run(true)
+
+	row := s.row(report, pluginmigrate.KindConnection, login)
+	s.Equal(pluginmigrate.Skipped, row.Action)
+	s.Contains(row.Note, "refresh rotation unknown")
+	s.Contains(row.Note, "--include-rotating")
+	s.Equal(pluginmigrate.Written, s.row(report, pluginmigrate.KindConnection, accessOnly).Action)
+
+	asked := s.runWith(true, true)
+
+	s.Equal(pluginmigrate.Written, s.row(asked, pluginmigrate.KindConnection, login).Action)
+}
+
+// credentialsAfterAnotherRun is the credential store with another run's save landing just
+// before this run's: its first Update runs fn twice, under the lock each time, the first time
+// as the other run. Two real pgsealed writers, nothing faked.
+type credentialsAfterAnotherRun struct {
+	core.CredentialStore
+	done bool
+}
+
+func (c *credentialsAfterAnotherRun) Update(ctx context.Context, ref core.ConnectionRef, fn func(*core.CredentialState, func() error) (bool, error)) error {
+	if !c.done {
+		c.done = true
+		if err := c.CredentialStore.Update(ctx, ref, fn); err != nil {
+			return err
+		}
+	}
+	return c.CredentialStore.Update(ctx, ref, fn)
+}
+
+// TestAConnectionFinishedWhileARunWaitsIsAlreadyMoved: a run that read the connection pending,
+// and finds it finished by another run once it holds the lock, writes nothing and says so.
+func (s *PluginMigrateSuite) TestAConnectionFinishedWhileARunWaitsIsAlreadyMoved() {
+	config := s.config([]store.PluginEntry{{Name: movedPlugin}}, nil)
+	s.pluginClient(config, s.provider.ClientID, s.provider.ClientSecret)
+	login := s.login(config, "", s.provider.ClientID)
+	options := s.options(false)
+	options.Credentials = &credentialsAfterAnotherRun{CredentialStore: options.Credentials}
+
+	report, err := pluginmigrate.Run(context.Background(), options, true)
+	s.Require().NoError(err)
+
+	row := s.row(report, pluginmigrate.KindConnection, login)
+	s.Equal(pluginmigrate.Exists, row.Action)
+	s.Equal("already moved", row.Note)
+	s.Zero(report.Count(pluginmigrate.KindConnection, pluginmigrate.Written))
+	moved, err := s.store.ConnectorConnection(context.Background(), s.customerID(), pluginmigrate.MovedConnectionID(login))
+	s.Require().NoError(err)
+	s.Equal(2, moved.Revision, "one save, the other run's")
+}
+
 // TestASkippedLoginNamesTheEnvTheConnectorReads: the plugin read its operator client from
 // SHAREDCRM_MCP_*, the connector reads SHARED_MCP_*, and nothing set the second, so the row
 // says which to set, as for the four Google connectors.
@@ -333,18 +396,22 @@ func (s *PluginMigrateSuite) TestNothingConfiguredMovesNothing() {
 	s.Equal(before, s.connectorRows())
 }
 
-// The other two plugins of the suite's catalog, each a connector at the fake as crm is: one
-// whose refresh tokens rotate, and one whose operator client is read from a shared env.
+// The other plugins of the suite's catalog, each a connector at the fake as crm is: one whose
+// refresh tokens rotate, one whose manifest does not say, and one whose operator client is
+// read from a shared env.
 const (
 	rotatingPlugin  = "rotatingcrm"
+	unknownPlugin   = "unknowncrm"
 	sharedEnvPlugin = "sharedcrm"
 )
 
-// seedConnectors stores the suite's built-in connectors at the fake.
+// seedConnectors stores the suite's built-in connectors at the fake. crm and sharedcrm say
+// their refresh tokens do not rotate, so a grant to them moves by default.
 func (s *PluginMigrateSuite) seedConnectors() {
-	s.seedConnector(movedPlugin, "client:\n  registration: [customer, dcr]\n")
+	s.seedConnector(movedPlugin, "client:\n  registration: [customer, dcr]\nrefresh:\n  rotating: false\n")
 	s.seedConnector(rotatingPlugin, "client:\n  registration: [customer, dcr]\nrefresh:\n  rotating: true\n")
-	s.seedConnector(sharedEnvPlugin, "client:\n  registration: [operator]\n  env: SHARED\n")
+	s.seedConnector(unknownPlugin, "client:\n  registration: [customer, dcr]\n")
+	s.seedConnector(sharedEnvPlugin, "client:\n  registration: [operator]\n  env: SHARED\nrefresh:\n  rotating: false\n")
 }
 
 // seedConnector stores the built-in connector id at the fake, as the next revision so a rerun
@@ -372,7 +439,7 @@ schemes: [oauth2_code]
 
 // catalog is the plugin catalog with the suite's three in it, hosted MCP servers at the fake.
 func (s *PluginMigrateSuite) catalog(id string) (plugins.Plugin, bool) {
-	if id == movedPlugin || id == rotatingPlugin || id == sharedEnvPlugin {
+	if id == movedPlugin || id == rotatingPlugin || id == unknownPlugin || id == sharedEnvPlugin {
 		return plugins.Plugin{ID: id, Name: "CRM", URL: s.provider.URL + fakeprovider.PathMCP, Auth: "oauth"}, true
 	}
 	return plugins.Lookup(id)

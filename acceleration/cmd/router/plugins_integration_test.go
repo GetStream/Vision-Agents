@@ -15,9 +15,13 @@ import (
 	"github.com/stretchr/testify/suite"
 	"github.com/uptrace/bun"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginmigrate"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
@@ -72,10 +76,13 @@ func (s *PluginsMigrateSuite) SetupTest() {
 // run leave the schema version and the built-in connectors as they were. The seven built-ins
 // this branch adds are not there, so a login to one would be a skipped row.
 func (s *PluginsMigrateSuite) TestARunNeitherMigratesNorSeeds() {
+	// An app of its own: the runs read no other test's rows. Opening the database, the drift
+	// check and the seeding the old command did are the same whatever app is asked for.
+	customer := "app-" + store.NewID()
 	before := s.schema()
 
-	s.migrate(false, "")
-	s.migrate(true, "")
+	s.migrate(false, customer)
+	s.migrate(true, customer)
 
 	s.Equal(before, s.schema())
 	s.Contains(before, "slack:")
@@ -105,6 +112,27 @@ func (s *PluginsMigrateSuite) TestADatabaseBehindThisBinaryIsRefusedAndLeftAsItI
 	s.Equal(before, s.schema(), "nothing was migrated")
 }
 
+// TestADatabaseNewerThanThisBinaryIsRefusedAndLeftAsItIs: a build this one does not know
+// applied a migration, so the command says so and writes nothing.
+func (s *PluginsMigrateSuite) TestADatabaseNewerThanThisBinaryIsRefusedAndLeftAsItIs() {
+	// A version past any this repository will carry: migration names are timestamps.
+	const future = int64(99991231235959)
+	_, err := s.db.DB().ExecContext(s.ctx, "INSERT INTO goose_db_version (version_id, is_applied) VALUES (?, true)", future)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() {
+		_, err := s.db.DB().ExecContext(context.Background(), "DELETE FROM goose_db_version WHERE version_id = ?", future)
+		s.NoError(err)
+	})
+	before := s.schema()
+
+	var out bytes.Buffer
+	err = migratePlugins(s.ctx, s.settings, slog.Default(), pluginmigrate.Options{}, false, &out)
+
+	s.ErrorContains(err, fmt.Sprintf("the database is newer than this binary: 1 migrations applied that it does not carry (the newest %d)", future))
+	s.Empty(out.String())
+	s.Equal(before, s.schema())
+}
+
 // schema is the goose versions applied and every built-in connector revision, as text.
 func (s *PluginsMigrateSuite) schema() string {
 	var out string
@@ -126,6 +154,39 @@ func (s *PluginsMigrateSuite) TestAnAppWithNoPluginRowsMovesNothing() {
 // TestALoginItCannotMoveIsPrintedWithWhy: a login to an MCP server named by its URL, and one
 // to a catalog plugin whose config is gone, each print a row saying why, and a real run moves
 // neither.
+// TestADryRunLeavesAClientSecretUnderAnOlderKeyAsItIs: the app's GitHub client record was sealed
+// under key version 1, and the command's keyring writes version 2. The dry run opens it to
+// compare it with the plugin's, and seals nothing again: a router still on version 1 could not
+// open what it wrote.
+func (s *PluginsMigrateSuite) TestADryRunLeavesAClientSecretUnderAnOlderKeyAsItIs() {
+	customer := "app-" + store.NewID()
+	older, err := loadKeyring(s.settings, "the test needs")
+	s.Require().NoError(err)
+	s.T().Setenv(authKEKEnvVar+"_V2", "second-key")
+	s.T().Setenv(authKEKVersionEnvVar, "2")
+	sealed, version, err := api.SealConnectorOAuthClientSecret(older, customer, "github", "app-secret")
+	s.Require().NoError(err)
+	s.Require().Equal(1, version)
+	record := store.ConnectorOAuthClient{CustomerID: customer, ConnectorID: "github", Registration: core.ClientCustomer,
+		ClientID: "app-client", SecretSealed: sealed, KEKVersion: version, SigningSecretSealed: []byte{}}
+	_, err = s.db.PutConnectorOAuthClient(s.ctx, &record)
+	s.Require().NoError(err)
+	config := "config-" + store.NewID()
+	pluginSecret, err := session.SealPluginClientSecret(older, plugins.Owner{CustomerID: customer, ConfigID: config}, "github", "app-secret")
+	s.Require().NoError(err)
+	s.Require().NoError(s.db.SavePluginClient(s.ctx, &store.PluginClient{CustomerID: customer, ConfigID: config,
+		PluginID: "github", ClientID: "app-client", SecretSealed: pluginSecret, SecretKEKVersion: 1}))
+
+	out := s.migrate(false, customer)
+
+	s.Contains(out, "client app-client", "the record was opened and compared")
+	s.Contains(out, "1 rows: 0 would move (dry run; pass --apply to write), 1 already there, 0 skipped")
+	after, err := s.db.ConnectorOAuthClient(s.ctx, customer, "github")
+	s.Require().NoError(err)
+	s.Equal(1, after.KEKVersion)
+	s.True(bytes.Equal(sealed, after.SecretSealed), "the sealed secret is the one written under version 1")
+}
+
 func (s *PluginsMigrateSuite) TestALoginItCannotMoveIsPrintedWithWhy() {
 	customer := "app-" + store.NewID()
 	db := s.db

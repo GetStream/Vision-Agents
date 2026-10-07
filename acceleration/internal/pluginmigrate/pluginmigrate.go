@@ -422,9 +422,14 @@ func (m *migration) moveConnection(ctx context.Context, login store.PluginConnec
 	}
 	// The plugin row keeps its copy of the refresh token, and the plugin still renews it (MCP
 	// Events, T60). With a rotating provider, whichever side renews first retires the other's
-	// copy, so such a grant moves only when asked for.
-	if resolved.Refresh.Rotating && login.RefreshToken != "" && !m.opts.IncludeRotating {
-		return skip(fmt.Sprintf("connector %s rotates refresh tokens, and the plugin row keeps its copy: whichever side renews first retires the other's; pass --include-rotating to move it", login.PluginID))
+	// copy, so such a grant moves only when asked for. A manifest that does not say is taken as
+	// one that may: only an explicit rotating: false moves by default.
+	if rotating := resolved.Refresh.Rotating; login.RefreshToken != "" && !m.opts.IncludeRotating && (rotating == nil || *rotating) {
+		why := "rotates refresh tokens"
+		if rotating == nil {
+			why = "does not say whether refresh tokens rotate (refresh rotation unknown)"
+		}
+		return skip(fmt.Sprintf("connector %s %s, and the plugin row keeps its copy: if they rotate, whichever side renews first retires the other's; pass --include-rotating to move it", login.PluginID, why))
 	}
 	var expires time.Time
 	if login.ExpiresAt != nil {
