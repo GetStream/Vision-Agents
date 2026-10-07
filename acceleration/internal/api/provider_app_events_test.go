@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -129,6 +130,71 @@ func (s *SlackChannelSuite) TestARetriedDeliveryIsWrittenOnce() {
 	channel := s.threadChannel("C0000CHAN:1759740000.000100")
 	s.written(channel, 1)
 	s.Never(func() bool { return len(s.chat.Messages(channel)) > 1 }, dropped, 20*time.Millisecond)
+}
+
+// A thread is one episode: its first message opens one card in the omni-channel of whoever
+// started it, and the messages after it, the starter's or anybody's, open none (T41).
+func (s *SlackChannelSuite) TestAThreadIsOneEpisodeCardInTheOmniChannelOfWhoeverStartedIt() {
+	s.deliver(s.message("U0000ALICE", "<@U0000BOT> is the build green?", "1759740000.000100", ""), 0)
+	s.deliver(s.message("U0000ALICE", "the release one", "1759740000.000200", "1759740000.000100"), 0)
+	s.deliver(s.message("U0000BOB", "it was an hour ago", "1759740000.000300", "1759740000.000100"), 0)
+
+	thread := s.threadChannel("C0000CHAN:1759740000.000100")
+	s.written(thread, 3)
+	omni := s.omniChannel("U0000ALICE")
+	card := s.written(omni, 1)[0]
+	s.Never(func() bool { return len(s.chat.Stored(omni)) > 1 }, dropped, 20*time.Millisecond)
+	custom, _ := card["custom"].(map[string]any)
+	s.Equal("slack", custom["source"])
+	s.Equal("in_progress", custom["status"])
+	s.Equal("agent:"+thread, custom["thread_channel"])
+	s.NotEmpty(custom["started_at"])
+	s.Equal(1, s.threadChannels(), "one thread channel for the thread")
+}
+
+// One person's threads are episodes of one omni-channel: Monday's thread is a card beside
+// Tuesday's, which is how the agent on Tuesday learns of Monday (T56).
+func (s *SlackChannelSuite) TestTheSamePersonsNextThreadIsAnotherCardInTheSameOmniChannel() {
+	s.deliver(s.message("U0000ALICE", "first", "1759740000.000100", ""), 0)
+	s.deliver(s.message("U0000ALICE", "second", "1759740000.000500", ""), 0)
+
+	omni := s.omniChannel("U0000ALICE")
+	cards := s.written(omni, 2)
+	threads := map[any]bool{}
+	for _, card := range cards {
+		custom, _ := card["custom"].(map[string]any)
+		threads[custom["thread_channel"]] = true
+	}
+	s.Len(threads, 2)
+}
+
+// A card has a source, so the message.new Stream Chat sends for it reaches nobody: the
+// omni-channel names its agent config, and a message there without a source would be handed
+// to a worker.
+func (s *SlackChannelSuite) TestAnEpisodeCardStartsNoSession() {
+	s.deliver(s.message("U0000ALICE", "Can you check the build?", "1759740000.000100", ""), 0)
+	omni := s.omniChannel("U0000ALICE")
+	s.written(omni, 1)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+
+	s.Equal(http.StatusOK, s.streamDelivers(omni, 0))
+
+	select {
+	case message := <-worker.Messages():
+		s.Failf("an episode card started a session", "it reached a worker in %s", message.ChannelID)
+	case <-time.After(dropped):
+	}
+}
+
+// omniChannel is the id of the omni-channel the contact map gives a Slack user of the test's
+// workspace, for the test's agent.
+func (s *SlackChannelSuite) omniChannel(user string) string {
+	var cid string
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT conversation_id FROM contact_map WHERE customer_id = ? AND agent_config_id = ? AND kind = 'slack' AND address = ?",
+		s.customerID(), s.config.ID, s.workspace+":"+user).Scan(&cid), "no contact for %s", user)
+	return strings.TrimPrefix(cid, "agent:")
 }
 
 // chat.postMessage answers the bot's reply with its bot_id
