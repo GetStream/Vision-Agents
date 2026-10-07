@@ -216,6 +216,71 @@ func (s *ChatLoginsSuite) TestEachPersonIsAskedForTheirOwnConnection() {
 		"Alice's consent connected nothing of Bob's")
 }
 
+// TestAReopenedChatUsesTheConnectionTheLoginChose: the login records the connection it
+// connected as the session's selection, so the chat reopened after it ended opens the binding
+// on that connection: the tool runs with no second consent and no second connection.
+func (s *ChatLoginsSuite) TestAReopenedChatUsesTheConnectionTheLoginChose() {
+	connector, grant := s.connector()
+	opened := s.client.createSession(s.session(s.config(connector, grant), nil))
+	events := s.client.opens("/v1/agents/sessions/" + opened.Id + "/events")
+	s.ask(opened.Id)
+	asked := s.loginOn(events, "")
+	chosen := asked["connection_id"].(string)
+	b := newBrowser(&s.RouterSuite, s.provider)
+	b.finish(s.consent(b.handOff(s.started(asked))))
+	s.Require().Equal(connectorEchoText, s.carryOn(events).ran["result"])
+	s.Eventually(func() bool {
+		var stored string
+		return s.store.DB().QueryRowContext(context.Background(),
+			"SELECT connector_selections::text FROM agent_sessions WHERE id = ?", opened.Id).Scan(&stored) == nil &&
+			stored == `[{"name": "crm", "connection_id": "`+chosen+`"}]`
+	}, settleFor, 20*time.Millisecond, "the session row keeps the connection the login chose")
+	s.client.stopSession(opened.Id)
+
+	s.ask(opened.Id)
+
+	s.Eventually(func() bool {
+		var ran int
+		return s.store.DB().QueryRowContext(context.Background(),
+			"SELECT count(*) FROM agent_response_items WHERE session_id = ? AND kind = ? AND tool_name = ? AND text = ?",
+			opened.Id, store.ItemToolResult, connectorEcho, connectorEchoText).Scan(&ran) == nil && ran == 1
+	}, settleFor, 20*time.Millisecond, "the reopened chat runs the tool on the connection it chose")
+	connections, err := s.store.ConnectorConnectionsByOwner(context.Background(), s.customerID(),
+		store.ConnectionFilter{OwnerType: store.OwnerUser, OwnerID: s.client.userID, ConnectorID: connector})
+	s.Require().NoError(err)
+	s.Len(connections, 1, "no second connection")
+	var attempts int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM connector_authorization_attempts WHERE connection_id = ?", chosen).Scan(&attempts))
+	s.Equal(1, attempts, "no second consent")
+}
+
+// TestAConsentFinishedWithoutAHandBackIsPickedUpOnTheNextMessage: the connection the chat
+// asked about is connected by a consent the session did not begin (as one that finished on
+// another router is never handed back here). The next message runs the tool on it, with no
+// second consent from the chat.
+func (s *ChatLoginsSuite) TestAConsentFinishedWithoutAHandBackIsPickedUpOnTheNextMessage() {
+	connector, grant := s.connector()
+	opened := s.client.createSession(s.session(s.config(connector, grant), nil))
+	events := s.client.opens("/v1/agents/sessions/" + opened.Id + "/events")
+	s.ask(opened.Id)
+	chosen := s.loginOn(events, "")["connection_id"].(string)
+	var elsewhere Authorization
+	s.Require().Equal(http.StatusCreated, s.serverClient.actingFor(s.client).do(http.MethodPost,
+		"/v1/agents/connections/"+chosen+"/authorizations", nil, &elsewhere))
+	b := newBrowser(&s.RouterSuite, s.provider)
+	s.Require().Equal(s.landing(chosen), b.finish(s.consent(b.handOff(elsewhere))).Header.Get("Location"))
+
+	s.ask(opened.Id)
+	ran := s.carryOn(events).ran
+
+	s.Equal(connectorEchoText, ran["result"])
+	var attempts int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM connector_authorization_attempts WHERE connection_id = ?", chosen).Scan(&attempts))
+	s.Equal(2, attempts, "the chat's and the backend's, no third")
+}
+
 // connector stores a connector of the suite's app at the fake that takes oauth2_code, and
 // the grant of its echo at the digest the fake lists, read through a twin connection of the
 // app's that takes a bearer token.
@@ -433,12 +498,20 @@ func (m *loggingInLLM) Create(_ context.Context, params llm.ResponseParams) (*ll
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	script := llmtest.New(llm.StreamOptions{ResponseID: params.ID, Provider: m.Provider(), Model: m.Model()})
-	offered := slices.ContainsFunc(params.Tools, func(tool llm.Tool) bool { return tool.Name == loginCallTool })
-	if last := len(params.Input) - 1; offered && last >= 0 && params.Input[last].Role == llm.User {
+	offers := func(name string) bool {
+		return slices.ContainsFunc(params.Tools, func(tool llm.Tool) bool { return tool.Name == name })
+	}
+	asked := len(params.Input) > 0 && params.Input[len(params.Input)-1].Role == llm.User
+	switch {
+	case asked && offers(connectorEcho):
+		// The binding opened when the session did, on the connection it chose.
+		script.OutputText("Let me tell Nash.")
+		script.ToolCalls(llm.ToolCall{ID: store.NewID(), Name: connectorEcho, Arguments: `{"text":"` + connectorEchoText + `"}`})
+	case asked && offers(loginCallTool):
 		script.OutputText("Let me tell Nash.")
 		script.ToolCalls(llm.ToolCall{ID: store.NewID(), Name: loginCallTool,
 			Arguments: `{"tool":"echo","arguments":{"text":"` + connectorEchoText + `"}}`})
-	} else {
+	default:
 		script.OutputText("Done.")
 	}
 	script.Done()
