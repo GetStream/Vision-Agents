@@ -31,6 +31,13 @@ const (
 	// defaultReplyConfidentScore is the acoustic end-of-turn score from which it is taken to be
 	// sure.
 	defaultReplyConfidentScore = 0.9
+	// defaultReplyResumeGap is how long a reply must have been silent, once some of it has been
+	// let out, for the next sound it makes to be taken for the agent beginning to speak again
+	// rather than carrying on. A caller who was listening takes their turn in a pause that long
+	// between two sentences, and the sentence after it would be started into their voice, so it
+	// waits for them the way the first sound of a reply does. A shorter gap is how sentences
+	// follow one another, and nobody takes it for an invitation.
+	defaultReplyResumeGap = 200 * time.Millisecond
 	// voicedFloor is the quietest level, as RMS on the 16-bit scale, that a chunk of audio can
 	// have and still be taken for a voice: about -42 dBFS, above the hiss of a quiet line and
 	// below a soft voice.
@@ -76,21 +83,35 @@ func newVoiceActivity() *voiceActivity {
 	return &voiceActivity{speakers: map[string]*voiceSpeaker{}}
 }
 
+// levelOf is the RMS of a chunk of audio on the 16-bit scale.
+func levelOf(samples []int16) float64 {
+	if len(samples) == 0 {
+		return 0
+	}
+	var squares float64
+	for _, sample := range samples {
+		squares += float64(sample) * float64(sample)
+	}
+	return math.Sqrt(squares / float64(len(samples)))
+}
+
+// lengthOf is how long a chunk of audio plays for, which is chunkDuration if it does not say.
+func lengthOf(pcm audio.PcmData) time.Duration {
+	length := time.Duration(pcm.DurationMs() * float64(time.Millisecond))
+	if length <= 0 {
+		return chunkDuration
+	}
+	return length
+}
+
 // observe takes a chunk of a participant's audio, heard at the given time. It allocates only
 // the first time it hears a participant.
 func (v *voiceActivity) observe(participantID string, pcm audio.PcmData, at time.Time) {
 	if participantID == "" || len(pcm.Samples) == 0 {
 		return
 	}
-	var squares float64
-	for _, sample := range pcm.Samples {
-		squares += float64(sample) * float64(sample)
-	}
-	level := math.Sqrt(squares / float64(len(pcm.Samples)))
-	length := time.Duration(pcm.DurationMs() * float64(time.Millisecond))
-	if length <= 0 {
-		length = chunkDuration
-	}
+	level := levelOf(pcm.Samples)
+	length := lengthOf(pcm)
 
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -185,16 +206,21 @@ type heldReply struct {
 	committed int
 }
 
-// heldTurn is the first audio of a reply that is waiting for the caller to have been quiet, with
-// the events of its synthesis that arrived after it, which are only acted on once it has been let
-// out, in the order they came.
+// heldTurn is the audio of a reply that is waiting for the caller to have been quiet, which is its
+// first audio or, once some of it has been let out, the first of a sentence that follows a pause,
+// with the events of its synthesis that arrived after it, which are only acted on once it has been
+// let out, in the order they came.
 type heldTurn struct {
 	turn        string
 	participant string
-	// readyAt is when the first audio arrived and the hold began, and window how long the caller
-	// has to have been quiet to end it.
+	// readyAt is when the audio arrived and the hold began, and window how long the caller has to
+	// have been quiet to end it. longest is how long it may last for however the line sounds.
 	readyAt time.Time
 	window  time.Duration
+	longest time.Duration
+	// resume says it is held before a later sentence, in a reply that is already being heard,
+	// and not before the first sound of one.
+	resume bool
 	// ctx ends when the reply is abandoned, and stop gives up what waits on it.
 	ctx    context.Context
 	stop   func() bool
@@ -228,10 +254,10 @@ func (a *Agent) silenceFor(held heldReply) time.Duration {
 // their words, and those cancel the reply the way they cancel any other.
 //
 // Nothing waits here: the audio is held by whoever asked, and the rest of what the voice says
-// carries on being read. The frames of the reply after the first are never asked about, and a
-// turn that is not a reply to a caller, such as a greeting, a murmur or a follow-up nobody asked
-// for, is let straight through. A reply that has been abandoned or whose pipeline has stopped is
-// let out no more.
+// carries on being read. The frames of the reply after the first are not asked about here, only
+// the ones that follow a pause are, by holdAfterPause, and a turn that is not a reply to a
+// caller, such as a greeting, a murmur or a follow-up nobody asked for, is let straight through.
+// A reply that has been abandoned or whose pipeline has stopped is let out no more.
 func (a *Agent) holdFirstFrame(p *pipeline, publishCtx context.Context, turnID string, now time.Time) (hold *heldTurn, publish bool) {
 	a.mu.Lock()
 	held := a.gated
@@ -261,14 +287,120 @@ func (a *Agent) holdFirstFrame(p *pipeline, publishCtx context.Context, turnID s
 			"longest", a.replySilenceMax, "confident", held.confident)
 	}
 	return &heldTurn{turn: turnID, participant: held.participant.ID, readyAt: now, window: window,
-		ctx: publishCtx}, false
+		longest: a.replySilenceMax, ctx: publishCtx}, false
 }
 
 // holdLeft is how much longer a held reply is to be held at the time now, which is zero once it
 // may be let out, and whether it is let out because the longest hold has passed rather than
 // because the caller has been quiet.
 func (a *Agent) holdLeft(hold *heldTurn, now time.Time) (left time.Duration, capped bool) {
-	return a.voiced.holdFor(hold.participant, hold.window, a.replySilenceMax, hold.readyAt, now)
+	return a.voiced.holdFor(hold.participant, hold.window, hold.longest, hold.readyAt, now)
+}
+
+// outgoing follows the audio that a turn has let out, which is what tells a reply that is
+// starting to speak again after a pause of its own from one that is carrying on. It belongs to the
+// goroutine that publishes the voice's audio and takes no lock.
+type outgoing struct {
+	// turn is the turn the rest is about: the last one whose first audio was let out.
+	turn string
+	// playsUntil is when everything let out so far will have been heard. Each chunk counts from
+	// the moment it was let out or from the end of the one before it, whichever is later, because
+	// a voice sends speech far faster than it is spoken, and when a chunk arrives says little of
+	// when it is heard. voicedUntil is the same for the last chunk that carried a voice, and is
+	// zero until one has.
+	playsUntil  time.Time
+	voicedUntil time.Time
+	// held is how long the turn has been held so far before its later sentences, which the
+	// longest hold limits.
+	held time.Duration
+}
+
+// letOut takes a chunk of the turn's audio that is let out at the time now.
+func (o *outgoing) letOut(voiced bool, length time.Duration, now time.Time) {
+	start := o.playsUntil
+	if now.After(start) {
+		start = now
+	}
+	o.playsUntil = start.Add(length)
+	if voiced {
+		o.voicedUntil = o.playsUntil
+	}
+}
+
+// resumes says whether a chunk let out at the time now carries a voice after at least the gap
+// without one in what the turn has let out, so that the agent is speaking again after a pause and
+// not carrying on. A turn that has not carried a voice yet has nothing to resume: the first sound
+// of a reply is the first-frame gate's.
+func (o *outgoing) resumes(voiced bool, gap time.Duration, now time.Time) bool {
+	if !voiced || o.voicedUntil.IsZero() {
+		return false
+	}
+	start := o.playsUntil
+	if now.After(start) {
+		start = now
+	}
+	return start.Sub(o.voicedUntil) >= gap
+}
+
+// holdAfterPause says whether a chunk of a reply's audio, which arrived at the time now when the
+// reply had already let some of itself out, is to wait for the caller to have been quiet, and if
+// so returns the hold it waits in.
+//
+// The first-frame gate asked about the first sound of the turn, which may be long past. A reply
+// that goes silent for the resume gap and then speaks again is starting a sentence into whatever
+// the caller is doing: they may have begun to talk in the pause, or have been talking over the
+// reply when it reached the end of a sentence. That sentence is held the way the first sound of a
+// reply is, until the caller has been quiet for the silence of a turn that was sure to have ended,
+// since this is a reply they have already heard begin and what is waited out is their voice, not
+// an ending in doubt.
+//
+// The holds of a turn together last no longer than the longest hold, so a line that is never
+// quiet cannot stall one sentence after another: once that is spent the sentences that follow are
+// let out as they come. A hold only delays, as the first one does. Whether the caller really took
+// the floor is told by their words, and those cancel what is held with the rest of the reply.
+func (a *Agent) holdAfterPause(out *outgoing, publishCtx context.Context, turnID string, voiced bool, now time.Time) *heldTurn {
+	if !out.resumes(voiced, a.replyResumeGap, now) {
+		return nil
+	}
+	longest := a.replySilenceMax - out.held
+	if longest <= 0 {
+		return nil
+	}
+	// A turn nobody is answering, a greeting or a murmur, has no caller to wait for.
+	participant := a.turns.participantOf(turnID).ID
+	if participant == "" {
+		return nil
+	}
+	window := a.silenceFor(heldReply{confident: true})
+	if left, _ := a.voiced.holdFor(participant, window, longest, now, now); left <= 0 {
+		return nil
+	}
+	if a.logger.Enabled(publishCtx, slog.LevelDebug) {
+		a.logger.Debug("holding the next sentence until the caller has been quiet",
+			"turn", turnID, "participant", participant, "window", window, "longest", longest)
+	}
+	return &heldTurn{turn: turnID, participant: participant, readyAt: now, window: window,
+		longest: longest, resume: true, ctx: publishCtx}
+}
+
+// now is the time a reply's audio is let out at, which is the wall clock's unless a test moves
+// it.
+func (a *Agent) now() time.Time {
+	a.mu.Lock()
+	clock := a.clock
+	a.mu.Unlock()
+	if clock == nil {
+		return time.Now()
+	}
+	return clock()
+}
+
+// holdsLaterSentences says whether the sentences of a reply that follow a pause are held to the
+// caller's silence at all. They are not when the reply silence, the resume gap or the silence they
+// wait for is off, and there is no telling without the caller's audio.
+func (a *Agent) holdsLaterSentences() bool {
+	return a.voiced != nil && a.replySilence > 0 && a.replyResumeGap > 0 &&
+		a.silenceFor(heldReply{confident: true}) > 0
 }
 
 // heldBy is the hold that an event of a synthesis belongs to, which is the one for its turn,

@@ -171,8 +171,9 @@ type Options struct {
 	// reply to them is let out, measured on their audio rather than on their words. A reply
 	// that is ready sooner waits for it, and a voice in the meantime only restarts the count:
 	// the wait delays the reply and never drops it. Nil leaves it at 700ms, and a pointer to
-	// zero lets a reply start as soon as it is ready. It does not apply to a greeting, a
-	// murmur, or a turn the agent takes without having been spoken to.
+	// zero lets a reply start as soon as it is ready, and turns off the wait before the sentences
+	// that follow a pause, which ReplyResumeGap sets. It does not apply to a greeting, a murmur,
+	// or a turn the agent takes without having been spoken to.
 	ReplySilence *time.Duration
 	// ReplySilenceMax is the longest the first audio of a reply is held for ReplySilence once
 	// it is ready. A caller whose line never goes quiet, because of a conversation in the room
@@ -191,6 +192,14 @@ type Options struct {
 	// ended for sure. It must be between 0 and 1. Nil leaves it at 0.9, and a pointer to zero
 	// turns the shorter silence off.
 	ReplyConfidentScore *float64
+	// ReplyResumeGap is how long a reply must have been silent, once some of it has been let out,
+	// for the next sound it makes to wait for the caller the way the first one does: it is let out
+	// once the caller has been quiet for ReplySilenceConfident, and held for no more than
+	// ReplySilenceMax in all for the turn, after which the sentences that follow are not held. A
+	// caller who starts talking in a pause between sentences, or over the end of one, is not
+	// spoken into. Nil leaves it at 200ms, and a pointer to zero lets every sentence out as it
+	// comes.
+	ReplyResumeGap *time.Duration
 	// PreviewDebounce is how long a caller's words have to hold still before the reply to them
 	// is started, ahead of the wait that decides whether they have finished, so the model has
 	// been working for part of that wait. Words that change again restart it, and words that
@@ -314,6 +323,12 @@ type Agent struct {
 	// end-of-turn score that decided its turn was at least replyConfidentScore.
 	replySilenceConfident time.Duration
 	replyConfidentScore   float64
+	// replyResumeGap is how long a reply must have been silent for the sound that follows to be
+	// held to the caller's silence as the first one is.
+	replyResumeGap time.Duration
+	// clock is where the time comes from for letting a reply's audio out, which is the wall clock
+	// unless a test moves it. It is read under mu.
+	clock func() time.Time
 	// confident are the candidates whose turn such a score decided, until the ruling has been
 	// carried out.
 	confident map[string]struct{}
@@ -567,6 +582,13 @@ func New(options Options) (*Agent, error) {
 	if math.IsNaN(replyConfidentScore) || replyConfidentScore < 0 || replyConfidentScore > 1 {
 		return nil, stack.Wrap(errors.New("agent: the confident score must be between 0 and 1"))
 	}
+	replyResumeGap := defaultReplyResumeGap
+	if options.ReplyResumeGap != nil {
+		replyResumeGap = *options.ReplyResumeGap
+	}
+	if replyResumeGap < 0 {
+		return nil, stack.Wrap(errors.New("agent: the gap that makes a reply resume cannot be negative"))
+	}
 	previewDebounce := defaultPreviewDebounce
 	if options.PreviewDebounce != nil {
 		previewDebounce = *options.PreviewDebounce
@@ -650,6 +672,7 @@ func New(options Options) (*Agent, error) {
 
 		replySilenceConfident: replySilenceConfident,
 		replyConfidentScore:   replyConfidentScore,
+		replyResumeGap:        replyResumeGap,
 		confident:             map[string]struct{}{},
 	}
 	settling.previewing = agent.previewsEarly
@@ -2864,21 +2887,27 @@ func fillsPause(completionID string, calls []llm.ToolCall) bool {
 // consumeTTS publishes the agent's speech to the edge as it is synthesised.
 //
 // The first audio of a reply to a caller's words may have to wait for the caller to have been
-// quiet. It waits in a buffer of its own, with the events of its synthesis that follow it, and
-// the events of every other turn carry on being read in the meantime, so a held reply never
-// leaves the voice with nobody reading it. When the hold ends the buffer is acted on in the
-// order it arrived in, or, if the reply was abandoned, given up.
+// quiet, and so may the first audio of a sentence that follows a pause in the reply, because the
+// caller may have started to talk in it. It waits in a buffer of its own, with the events of its
+// synthesis that follow it, and the events of every other turn carry on being read in the
+// meantime, so a held reply never leaves the voice with nobody reading it. When the hold ends the
+// buffer is acted on in the order it arrived in, or, if the reply was abandoned, given up.
 func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	defer p.running.Done()
 
 	// Abandoned audio arrives a frame at a time, so it is reported once per utterance
 	// rather than once per frame.
 	dropping := ""
-	// released is the turn whose first frame has been let out, so none of its later frames is
-	// held to the caller's silence again. dropped is the turn whose first frame was not, because
+	// out is the turn whose first frame has been let out, and what it has let out since. Its
+	// later frames are not held to the caller's silence as the first one is, except the first
+	// after a pause of its own. dropped is the turn whose first frame was not let out, because
 	// the reply was given up, and none of its later frames is let out either.
-	released := ""
+	var out outgoing
 	dropped := ""
+	resuming := a.holdsLaterSentences()
+	// replaying is set while a hold that has ended is acted on, whose sentence is not asked about
+	// again.
+	replaying := false
 	// holds are the replies waiting on the caller's silence, which is none almost always, and
 	// wake is told when one of them is abandoned, so that it is given up at once.
 	var holds []*heldTurn
@@ -2906,24 +2935,39 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				}
 				return
 			}
-			if turnID := turnOf(typed.SynthesisID); turnID == dropped {
+			var voiced bool
+			var length time.Duration
+			if resuming {
+				voiced, length = levelOf(typed.Audio.Samples) >= voicedFloor, lengthOf(typed.Audio)
+			}
+			turnID, now := turnOf(typed.SynthesisID), a.now()
+			var hold *heldTurn
+			switch {
+			case turnID == dropped:
 				a.turns.dropped(turnID, typed.Audio.DurationMs())
 				return
-			} else if turnID != released {
-				hold, publish := a.holdFirstFrame(p, publishCtx, turnID, time.Now())
-				if hold != nil {
-					hold.stop = context.AfterFunc(publishCtx, nudge)
-					hold.events = append(hold.events, event)
-					a.turns.buffered(turnID, typed.Audio.DurationMs())
-					holds = append(holds, hold)
-					return
+			case turnID != out.turn:
+				var publish bool
+				if hold, publish = a.holdFirstFrame(p, publishCtx, turnID, now); hold == nil {
+					if !publish {
+						dropped = turnID
+						a.turns.dropped(turnID, typed.Audio.DurationMs())
+						return
+					}
+					out = outgoing{turn: turnID}
 				}
-				if !publish {
-					dropped = turnID
-					a.turns.dropped(turnID, typed.Audio.DurationMs())
-					return
-				}
-				released = turnID
+			case resuming && !replaying:
+				hold = a.holdAfterPause(&out, publishCtx, turnID, voiced, now)
+			}
+			if hold != nil {
+				hold.stop = context.AfterFunc(publishCtx, nudge)
+				hold.events = append(hold.events, event)
+				a.turns.buffered(turnID, typed.Audio.DurationMs())
+				holds = append(holds, hold)
+				return
+			}
+			if resuming {
+				out.letOut(voiced, length, now)
 			}
 			var err error
 			if marked, ok := a.options.Edge.(MarkedPlayout); ok {
@@ -3031,7 +3075,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	// when the caller has been quiet or the longest hold has passed, which lets the reply out, or
 	// when the reply was abandoned or the pipeline stopped, which gives it up.
 	settle := func() (next time.Duration) {
-		now := time.Now()
+		now := a.now()
 		for i := 0; i < len(holds); {
 			hold := holds[i]
 			left, capped := a.holdLeft(hold, now)
@@ -3051,12 +3095,22 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				continue
 			}
 			a.logHoldEnded(hold, capped, now)
-			released = hold.turn
-			a.turns.held(hold.turn, now.Sub(hold.readyAt))
+			// The first audio of a turn that was held is the first the turn lets out, and a
+			// sentence that was held after it is counted against what the turn may be held for.
+			if out.turn != hold.turn {
+				out = outgoing{turn: hold.turn}
+			}
+			waited := now.Sub(hold.readyAt)
+			if hold.resume {
+				out.held += waited
+			}
+			a.turns.held(hold.turn, waited)
 			a.turns.unbuffered(hold.turn)
+			replaying = true
 			for _, event := range hold.events {
 				speak(event)
 			}
+			replaying = false
 		}
 		return next
 	}

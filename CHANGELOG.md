@@ -726,9 +726,10 @@ the reply and never drops it, and a caller who really goes on cancels it with th
 way they cancel any other reply, before any of it is heard. Nothing of a reply that was cancelled
 unheard is kept in the conversation as having been said. Quiet is judged on each participant's
 audio, with a level detector that follows their background noise, and not on transcripts. Later
-frames of a reply, a greeting, a murmur and a turn the agent takes without having been spoken to
-are not held, and `first_frame_queued_ms` and `first_audible_frame_ms` include the wait. `0` lets
-a reply start the moment it is ready, and the agent option `ReplySilence` is the same setting.
+frames of a reply are held only after a pause in it, as described below, and a greeting, a murmur
+and a turn the agent takes without having been spoken to are not held. `first_frame_queued_ms`
+and `first_audible_frame_ms` include the wait. `0` lets a reply start the moment it is ready, and
+the agent option `ReplySilence` is the same setting.
 
 A line that never goes quiet, because of a conversation in the room or a steady babble, never
 confirms the silence, and a reply could be held for as long as that lasted. A reply is now
@@ -747,7 +748,32 @@ for `ROUTER_REPLY_CONFIDENT_SCORE` turns the shorter silence off, `0` for
 `ROUTER_REPLY_SILENCE_CONFIDENT` lets such a reply out as soon as it is ready, and the agent
 options `ReplyConfidentScore` and `ReplySilenceConfident` are the same settings. The reply
 silence settings are also flags of `cmd/agent`: `-reply-silence`, `-reply-silence-max`,
-`-reply-silence-confident`, `-reply-confident-score`, `-preview-debounce` and `-preview-quiet`.
+`-reply-silence-confident`, `-reply-confident-score`, `-reply-resume-gap`, `-preview-debounce`
+and `-preview-quiet`.
+
+### A sentence after a pause in a reply waits for the caller too: `ROUTER_REPLY_RESUME_GAP`
+
+The wait for the caller to have been quiet only covered the first sound of a reply. A caller who
+started to talk in a pause between two of its sentences, or who was talking over the reply when it
+reached the end of one, was spoken into by the next sentence, which went on until their words had
+been read and cancelled it. Each turn now follows the audio it lets out: when it has been silent
+for `ROUTER_REPLY_RESUME_GAP`, `200ms` by default, and the next sound it makes carries a voice, that
+sound is held, with the rest of what the voice says of the turn, until the caller's audio has been
+quiet for `ROUTER_REPLY_SILENCE_CONFIDENT`, or for `ROUTER_REPLY_SILENCE` if that is shorter. What
+the turn has let out is counted on the clock it is heard on, so silence inside the audio counts
+towards the gap, and a sentence that the voice sent while the one before it was still playing is
+carrying on and not held. Like the wait for the first sound it only delays: nothing is dropped
+because of a voice, and a caller who really took the floor cancels the held sentence and the rest
+of the reply with their words, which leave the reply in the conversation as one that was
+interrupted. A turn is held this way for at most `ROUTER_REPLY_SILENCE_MAX` in all, `1s` by
+default, after which its later sentences are let out as they come, so a line that never goes quiet
+cannot stall a reply sentence after sentence. A greeting, a murmur and any turn nobody is
+answering are not held. `0` for `ROUTER_REPLY_RESUME_GAP` turns this off, `0` for
+`ROUTER_REPLY_SILENCE` turns it off with the rest of the wait, and the agent option
+`ReplyResumeGap` is the same setting. `reply_hold_ms` now adds these holds to the one before the
+first sound. A hold before the first sound is inside `tts_to_audio_ms`, `roundtrip_ms` and the
+fields that run to the first frame, as before; one before a later sentence comes after them and is
+inside none.
 
 ### A reply starts when the words hold still, not after the wait: `ROUTER_PREVIEW_DEBOUNCE`
 
@@ -828,11 +854,11 @@ utterance that follow it, while the events of every other turn carry on being re
 the buffer is acted on in the order it arrived in when the hold ends. A reply that is abandoned
 while it is held, or whose pipeline stops, is given up with its audio counted as dropped.
 
-A turn also says how long its first audio was held: `reply_hold_ms` on the `turn` event of the
+A turn also says how long its reply was held: `reply_hold_ms` on the `turn` event of the
 session socket, in the turn log, in the `turns` table and in `GET /v1/agents/calls/{id}/timeline`,
-absent where the reply was not held. The hold is inside `tts_to_audio_ms` and so inside
-`roundtrip_ms`, the turn log's `transcript_to_audio_ms` and `speech_end_to_audio_ms`, and the
-first-frame fields, which already included the wait.
+absent where the reply was not held. The hold before the first audio is inside `tts_to_audio_ms`
+and so inside `roundtrip_ms`, the turn log's `transcript_to_audio_ms` and `speech_end_to_audio_ms`,
+and the first-frame fields, which already included the wait.
 
 ### A session says whether the user wrote, spoke or showed video
 

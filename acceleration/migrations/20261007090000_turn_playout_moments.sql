@@ -10,9 +10,10 @@
 -- speech_end_to_audio_ms measured to the second of them. They are null where the edge does
 -- not report them.
 --
--- reply_hold_ms is how long the first audio of the reply was held for the caller to have been
--- quiet. It is inside tts_to_audio_ms, roundtrip_ms and the columns above, and null where the
--- reply was not held.
+-- reply_hold_ms is how long the reply's audio was held for the caller to have been quiet, before
+-- its first sound and before each sentence that followed a pause in it, added together. A hold
+-- before the first sound is inside tts_to_audio_ms, roundtrip_ms and the columns above; one before
+-- a later sentence comes after them and is inside none. It is null where nothing was held.
 ALTER TABLE turns
     ADD COLUMN first_frame_queued_ms DOUBLE PRECISION,
     ADD COLUMN first_audible_frame_ms DOUBLE PRECISION,

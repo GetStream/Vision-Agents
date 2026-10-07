@@ -49,8 +49,9 @@ type openTurn struct {
 	firstTextAt  time.Time
 	ttsAt        time.Time
 	firstAudioAt time.Time
-	// holdMs is how long the first audio of the reply waited for the caller to have been quiet,
-	// before it was published. Zero when it did not wait.
+	// holdMs is how long the reply's audio waited for the caller to have been quiet, before its
+	// first sound and before the sentences that follow a pause, as they were let out. Zero when it
+	// did not wait.
 	holdMs float64
 	// queuedAt is when the edge queued the first frame of the reply for its outgoing track, and
 	// pulledAt when the track took the first frame that was not silence. Only an edge that
@@ -177,14 +178,28 @@ func (t *turnTracker) firstAudio(turnID string, at time.Time) {
 	current.roundtripMs = msBetween(current.transcriptAt, at)
 }
 
-// held records how long the first audio of a reply waited for the caller to have been quiet. It is
-// inside the turn's roundtrip and the legs from its text to its audio, which it explains.
+// held records how long audio of a reply waited for the caller to have been quiet, and adds it
+// to what the turn has waited so far: a reply is held before its first audio and again before the
+// sentences that follow a pause. The wait before the first audio is inside the turn's roundtrip
+// and the legs from its text to its audio, which it explains; one before a later sentence comes
+// after them and is inside neither.
 func (t *turnTracker) held(turnID string, waited time.Duration) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if current := t.open[turnID]; current != nil {
-		current.holdMs = float64(waited.Microseconds()) / 1000
+		current.holdMs += float64(waited.Microseconds()) / 1000
 	}
+}
+
+// participantOf is who the reply of an open turn is for, or the zero participant for a turn that
+// is not open, which is any that nobody was answering.
+func (t *turnTracker) participantOf(turnID string) stt.Participant {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil {
+		return current.participant
+	}
+	return stt.Participant{}
 }
 
 // marksFor returns what an edge reports the first frames of a reply to, or nil when the turn

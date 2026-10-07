@@ -569,6 +569,9 @@ type AgentSuite struct {
 	// test says otherwise.
 	replySilenceConfident *time.Duration
 	replyConfidentScore   *float64
+	// replyResumeGap is how long a reply must be silent before the sound that follows is held to
+	// the caller's silence, and is nil, which leaves the default, unless a test says otherwise.
+	replyResumeGap *time.Duration
 	// remembers is the memory store the agent joins with, when a test gives it one.
 	remembers *stubMemory
 	// incognito holds the session off the record.
@@ -628,6 +631,7 @@ func (s *AgentSuite) SetupTest() {
 	s.previewQuiet = nil
 	s.replySilenceConfident = nil
 	s.replyConfidentScore = nil
+	s.replyResumeGap = nil
 	s.performing = ""
 	if s.agentID == "" {
 		s.agentID = "agent-1"
@@ -831,6 +835,7 @@ func (s *AgentSuite) join(streamingVoice bool) {
 
 		ReplySilenceConfident: s.replySilenceConfident,
 		ReplyConfidentScore:   s.replyConfidentScore,
+		ReplyResumeGap:        s.replyResumeGap,
 	})
 	s.Require().NoError(err)
 	s.agent = agent

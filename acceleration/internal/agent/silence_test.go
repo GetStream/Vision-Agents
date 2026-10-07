@@ -876,3 +876,487 @@ func (s *AgentSuite) TestAGreetingIsNotHeldToTheCallersSilence() {
 
 	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the greeting waited on a caller it was not answering")
 }
+
+// resumeFixture is an agent that can only be asked whether a sentence that follows a pause in a
+// reply is held, in the reply turn-1 to a caller named alice. The sentence waits for her to have
+// been quiet for the window, for no longer than the longest hold in all.
+func resumeFixture(t *testing.T, gap, window, longest time.Duration) *Agent {
+	t.Helper()
+	a := &Agent{
+		logger:                slog.New(slog.DiscardHandler),
+		voiced:                newVoiceActivity(),
+		turns:                 newTurnTracker(func(Turn) {}),
+		replySilence:          700 * time.Millisecond,
+		replySilenceMax:       longest,
+		replySilenceConfident: window,
+		replyResumeGap:        gap,
+	}
+	a.turns.begin("turn-1", stt.Participant{ID: "alice"}, time.Now(), time.Time{}, 0)
+	return a
+}
+
+func TestAReplyThatSpeaksAgainAfterAPauseOfItsOwnIsResuming(t *testing.T) {
+	var out outgoing
+	start := time.Now()
+	out.letOut(true, 100*time.Millisecond, start)
+	pauseBegan := start.Add(100 * time.Millisecond)
+
+	require.False(t, out.resumes(true, 200*time.Millisecond, pauseBegan.Add(199*time.Millisecond)),
+		"a gap shorter than the resume gap is how sentences follow one another")
+	require.True(t, out.resumes(true, 200*time.Millisecond, pauseBegan.Add(200*time.Millisecond)))
+	require.False(t, out.resumes(false, 200*time.Millisecond, pauseBegan.Add(time.Second)),
+		"a chunk with no voice in it is not the agent speaking again")
+}
+
+func TestAReplyThatHasNotCarriedAVoiceHasNothingToResume(t *testing.T) {
+	var out outgoing
+	now := time.Now()
+
+	require.False(t, out.resumes(true, 200*time.Millisecond, now.Add(time.Hour)),
+		"the first sound of a reply is the first-frame gate's, however long ago the turn began")
+
+	out.letOut(false, 100*time.Millisecond, now)
+	require.False(t, out.resumes(true, 200*time.Millisecond, now.Add(time.Hour)),
+		"silence let out first is not a voice that stopped")
+}
+
+func TestSpeechQueuedAheadOfWhatIsStillPlayingIsCarryingOnNotResuming(t *testing.T) {
+	var out outgoing
+	start := time.Now()
+	// A voice sends a sentence far faster than it is spoken, so the next one can arrive while
+	// this is still playing, however long ago the last chunk was let out.
+	out.letOut(true, 3*time.Second, start)
+
+	require.False(t, out.resumes(true, 200*time.Millisecond, start.Add(2*time.Second)), "it is still playing")
+	require.False(t, out.resumes(true, 200*time.Millisecond, start.Add(3100*time.Millisecond)))
+	require.True(t, out.resumes(true, 200*time.Millisecond, start.Add(3200*time.Millisecond)),
+		"it has been silent for the gap since it ended")
+}
+
+func TestSilenceLetOutInsideAReplyCountsTowardsThePause(t *testing.T) {
+	var out outgoing
+	start := time.Now()
+	out.letOut(true, 100*time.Millisecond, start)
+	// A voice that spells out a pause as silence instead of leaving one.
+	out.letOut(false, 150*time.Millisecond, start.Add(100*time.Millisecond))
+
+	require.False(t, out.resumes(true, 200*time.Millisecond, start.Add(290*time.Millisecond)))
+	require.True(t, out.resumes(true, 200*time.Millisecond, start.Add(300*time.Millisecond)),
+		"150 ms of silence let out and 50 ms of nothing is a 200 ms pause")
+}
+
+func TestASentenceAfterAPauseIsHeldWhileTheCallerWhoStartedTalkingInItHasNotBeenQuiet(t *testing.T) {
+	a := resumeFixture(t, 200*time.Millisecond, 300*time.Millisecond, 5*time.Second)
+	start := time.Now()
+	out := outgoing{turn: "turn-1"}
+	out.letOut(true, 20*time.Millisecond, start)
+	a.voiced.observe("alice", chunkAt(3000), start.Add(250*time.Millisecond))
+	now := start.Add(300 * time.Millisecond)
+
+	hold := a.holdAfterPause(&out, context.Background(), "turn-1", true, now)
+
+	require.NotNil(t, hold)
+	require.True(t, hold.resume)
+	require.Equal(t, "alice", hold.participant)
+	require.Equal(t, 300*time.Millisecond, hold.window, "the silence of a turn that was sure to have ended")
+	require.Equal(t, 5*time.Second, hold.longest)
+	left, capped := a.holdLeft(hold, now)
+	require.Equal(t, 250*time.Millisecond, left, "the silence is counted from the caller's last voice")
+	require.False(t, capped)
+	left, _ = a.holdLeft(hold, now.Add(250*time.Millisecond))
+	require.Zero(t, left, "the sentence is let out once the caller has been quiet for the window")
+}
+
+func TestASentenceAfterAPauseIsNotHeldForACallerWhoIsNotVoiced(t *testing.T) {
+	a := resumeFixture(t, 200*time.Millisecond, 300*time.Millisecond, 5*time.Second)
+	start := time.Now()
+	out := outgoing{turn: "turn-1"}
+	out.letOut(true, 20*time.Millisecond, start)
+	now := start.Add(300 * time.Millisecond)
+
+	require.Nil(t, a.holdAfterPause(&out, context.Background(), "turn-1", true, now),
+		"nothing has been heard from the caller")
+
+	a.voiced.observe("alice", chunkAt(0), now)
+	require.Nil(t, a.holdAfterPause(&out, context.Background(), "turn-1", true, now),
+		"neither silence nor the hiss of a line is a voice")
+
+	a.voiced.observe("alice", chunkAt(3000), start)
+	require.Nil(t, a.holdAfterPause(&out, context.Background(), "turn-1", true, now),
+		"a caller who has been quiet for the window is not waited for")
+}
+
+func TestASentenceThatFollowsWithoutAPauseIsNotHeldForAVoicedCaller(t *testing.T) {
+	a := resumeFixture(t, 200*time.Millisecond, 300*time.Millisecond, 5*time.Second)
+	start := time.Now()
+	out := outgoing{turn: "turn-1"}
+	out.letOut(true, 20*time.Millisecond, start)
+	a.voiced.observe("alice", chunkAt(3000), start.Add(100*time.Millisecond))
+
+	require.Nil(t, a.holdAfterPause(&out, context.Background(), "turn-1", true, start.Add(150*time.Millisecond)),
+		"the reply carried on after 130 ms, which is not a pause")
+	require.Nil(t, a.holdAfterPause(&out, context.Background(), "turn-1", false, start.Add(time.Second)),
+		"a chunk with no voice in it is not a sentence starting")
+}
+
+func TestASentenceIsHeldNoLongerThanWhatIsLeftOfTheLongestHoldForTheTurn(t *testing.T) {
+	a := resumeFixture(t, 200*time.Millisecond, 300*time.Millisecond, time.Second)
+	start := time.Now()
+	out := outgoing{turn: "turn-1", held: 900 * time.Millisecond}
+	out.letOut(true, 20*time.Millisecond, start)
+	a.voiced.observe("alice", chunkAt(3000), start.Add(300*time.Millisecond))
+	now := start.Add(300 * time.Millisecond)
+
+	hold := a.holdAfterPause(&out, context.Background(), "turn-1", true, now)
+
+	require.NotNil(t, hold)
+	require.Equal(t, 100*time.Millisecond, hold.longest, "the holds of a turn together last no longer than the longest hold")
+	left, capped := a.holdLeft(hold, now.Add(100*time.Millisecond))
+	require.Zero(t, left)
+	require.True(t, capped, "a line that is never quiet is let out by the longest hold")
+
+	out.held = time.Second
+	require.Nil(t, a.holdAfterPause(&out, context.Background(), "turn-1", true, now),
+		"once the longest hold is spent later sentences are let out as they come")
+}
+
+func TestASentenceOfATurnNobodyIsAnsweringIsNeverHeld(t *testing.T) {
+	a := resumeFixture(t, 200*time.Millisecond, 300*time.Millisecond, 5*time.Second)
+	start := time.Now()
+	out := outgoing{turn: "say-1"}
+	out.letOut(true, 20*time.Millisecond, start)
+	a.voiced.observe("alice", chunkAt(3000), start.Add(300*time.Millisecond))
+
+	require.Nil(t, a.holdAfterPause(&out, context.Background(), "say-1", true, start.Add(300*time.Millisecond)),
+		"a greeting is not waiting on anybody")
+}
+
+func TestASentenceIsWaitedOnForTheShorterOfTheTwoSilences(t *testing.T) {
+	a := resumeFixture(t, 200*time.Millisecond, 300*time.Millisecond, 5*time.Second)
+	a.replySilence = 100 * time.Millisecond
+	start := time.Now()
+	out := outgoing{turn: "turn-1"}
+	out.letOut(true, 20*time.Millisecond, start)
+	a.voiced.observe("alice", chunkAt(3000), start.Add(300*time.Millisecond))
+
+	hold := a.holdAfterPause(&out, context.Background(), "turn-1", true, start.Add(300*time.Millisecond))
+
+	require.NotNil(t, hold)
+	require.Equal(t, 100*time.Millisecond, hold.window,
+		"a sentence is never waited on for longer than the first sound of a reply in doubt")
+}
+
+func TestTheSentencesThatFollowAPauseAreHeldOnlyWhenEverythingTheyNeedIsOn(t *testing.T) {
+	on := func() *Agent {
+		return resumeFixture(t, 200*time.Millisecond, 300*time.Millisecond, time.Second)
+	}
+	require.True(t, on().holdsLaterSentences())
+
+	off := on()
+	off.replyResumeGap = 0
+	require.False(t, off.holdsLaterSentences(), "a resume gap of zero turns them off")
+
+	off = on()
+	off.replySilence = 0
+	require.False(t, off.holdsLaterSentences(), "the reply silence of zero turns off the whole gate")
+
+	off = on()
+	off.replySilenceConfident = 0
+	require.False(t, off.holdsLaterSentences(), "there is nothing to wait for with a silence of zero")
+
+	off = on()
+	off.voiced = nil
+	require.False(t, off.holdsLaterSentences(), "there is no telling without the caller's audio")
+}
+
+func TestDecidingWhetherASentenceAfterAPauseIsHeldDoesNotAllocate(t *testing.T) {
+	a := resumeFixture(t, 200*time.Millisecond, 300*time.Millisecond, time.Second)
+	chunk := chunkAt(3000)
+	ctx := context.Background()
+	now := time.Now()
+	out := outgoing{turn: "turn-1"}
+
+	require.Zero(t, testing.AllocsPerRun(100, func() {
+		out.letOut(levelOf(chunk.Samples) >= voicedFloor, lengthOf(chunk), now)
+	}), "measuring a chunk of the reply and recording that it was let out")
+
+	require.Zero(t, testing.AllocsPerRun(100, func() {
+		out.playsUntil, out.voicedUntil = now, now
+		a.holdAfterPause(&out, ctx, "turn-1", true, now.Add(50*time.Millisecond))
+	}), "a sentence that follows without a pause")
+
+	a.voiced.observe("alice", chunk, now.Add(-time.Second))
+	require.Zero(t, testing.AllocsPerRun(100, func() {
+		out.playsUntil, out.voicedUntil = now, now
+		a.holdAfterPause(&out, ctx, "turn-1", true, now.Add(300*time.Millisecond))
+	}), "a sentence after a pause, for a caller who has been quiet")
+
+	a.voiced.observe("alice", chunk, now.Add(300*time.Millisecond))
+	require.Zero(t, testing.AllocsPerRun(100, func() {
+		out.playsUntil, out.voicedUntil, out.held = now, now, time.Second
+		a.holdAfterPause(&out, ctx, "turn-1", true, now.Add(300*time.Millisecond))
+	}), "a sentence after a pause, once the longest hold is spent")
+}
+
+func TestTheGapThatMakesAReplyResumeDefaultsToTwoHundredMillisecondsAndCanBeTurnedOff(t *testing.T) {
+	options := func(gap *time.Duration) Options {
+		return Options{
+			CustomerID: "acme", Edge: newLoopbackEdge(), LLM: &llmrouter.Router{},
+			STT: &sttrouter.Router{}, TTS: &ttsrouter.Router{}, ReplyResumeGap: gap,
+		}
+	}
+
+	left, err := New(options(nil))
+	require.NoError(t, err)
+	require.Equal(t, 200*time.Millisecond, left.replyResumeGap)
+
+	off := time.Duration(0)
+	disabled, err := New(options(&off))
+	require.NoError(t, err)
+	require.Zero(t, disabled.replyResumeGap)
+
+	negative := -time.Millisecond
+	_, err = New(options(&negative))
+	require.Error(t, err)
+}
+
+// movableClock is the time as the test says it is.
+type movableClock struct {
+	mu sync.Mutex
+	at time.Time
+}
+
+func newMovableClock() *movableClock {
+	return &movableClock{at: time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)}
+}
+
+func (c *movableClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.at
+}
+
+func (c *movableClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.at = c.at.Add(d)
+}
+
+// countingEdge is a loopback edge that remembers how much it was handed, which dropping its
+// speech does not make it forget.
+type countingEdge struct {
+	*loopbackEdge
+
+	mu     sync.Mutex
+	chunks []int
+}
+
+func (e *countingEdge) PublishAudio(pcm audio.PcmData) error {
+	e.mu.Lock()
+	e.chunks = append(e.chunks, len(pcm.Samples))
+	e.mu.Unlock()
+	return e.loopbackEdge.PublishAudio(pcm)
+}
+
+func (e *countingEdge) published() []int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]int(nil), e.chunks...)
+}
+
+// speechChunk is a chunk of speech that carries a voice and plays for the given number of 20 ms.
+func speechChunk(frames int) audio.PcmData {
+	chunk := chunkAt(3000)
+	samples := make([]int16, 0, frames*len(chunk.Samples))
+	for range frames {
+		samples = append(samples, chunk.Samples...)
+	}
+	chunk.Samples = samples
+	return chunk
+}
+
+// synthesisesSpeech has the voice send a chunk of speech that carries a voice for a turn.
+func (s *AgentSuite) synthesisesSpeech(turnID string, frames int) {
+	s.voice.emitter.Send(tts.AudioChunk{SynthesisID: turnID, Audio: speechChunk(frames)})
+}
+
+// looksAtTheHolds has the voice send an event that says nothing, which has the goroutine that
+// reads the voice look again at the replies it is holding, against a clock that has moved.
+func (s *AgentSuite) looksAtTheHolds() {
+	s.voice.emitter.Send(tts.Connected{Provider: "stub"})
+}
+
+// heldMs is how much of a turn's speech is waiting in a hold for the caller to have been quiet.
+func (s *AgentSuite) heldMs(turnID string) float64 {
+	s.agent.turns.mu.Lock()
+	defer s.agent.turns.mu.Unlock()
+	if current := s.agent.turns.open[turnID]; current != nil {
+		return current.audioHeldMs
+	}
+	return 0
+}
+
+// pausesMidReply joins an agent whose reply to a caller has let out its first sentence, 20 ms of
+// speech, and then goes quiet for the given time on a clock the test moves. The voice has nothing
+// more to say until the test has it say more, and the caller has not been heard.
+func (s *AgentSuite) pausesMidReply(pause time.Duration) (clock *movableClock, caller stt.Participant, replyID string) {
+	clock = newMovableClock()
+	s.join(true)
+	s.agent.mu.Lock()
+	s.agent.clock = clock.now
+	s.agent.mu.Unlock()
+	s.voice.mu.Lock()
+	s.voice.silent = true
+	s.voice.mu.Unlock()
+	caller = stt.Participant{ID: "caller"}
+	s.speak(caller)
+
+	replyID, err := s.agent.RespondTo(s.ctx, "please find a table", nil)
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "the reply never reached the voice")
+	s.synthesisesSpeech(replyID, 1)
+	s.eventually(func() bool { return len(s.edge.heard()) == 1 }, "the first sentence was never let out")
+	clock.advance(pause)
+	return clock, caller, replyID
+}
+
+func (s *AgentSuite) TestASentenceAfterAPauseWaitsForACallerWhoStartedTalkingInItAndIsPlayedInOrder() {
+	clock, caller, replyID := s.pausesMidReply(300 * time.Millisecond)
+	s.agent.voiced.observe(caller.ID, chunkAt(4000), clock.now())
+	clock.advance(50 * time.Millisecond)
+
+	// The next sentence, and the rest of what the voice says of the reply, arrive while the caller
+	// is talking.
+	s.synthesisesSpeech(replyID, 2)
+	s.eventually(func() bool { return s.heldMs(replyID) >= 40 }, "the sentence after the pause was not held")
+	s.synthesisesSpeech(replyID, 3)
+	s.voice.emitter.Send(tts.SynthesisComplete{SynthesisID: replyID, AudioDurationMs: 120, TimeToFirstByteMs: 5})
+	s.eventually(func() bool { return s.heldMs(replyID) >= 100 }, "what followed it was not held behind it")
+	s.Len(s.edge.heard(), 1, "the sentence was let out into the caller's voice")
+	s.Zero(countOf[Spoke](s.reported()), "the end of the reply was reported before its last sentences were let out")
+
+	// The caller has been quiet for the confident silence, 300 ms, by now.
+	clock.advance(250 * time.Millisecond)
+	s.looksAtTheHolds()
+
+	s.eventually(func() bool { return len(s.edge.heard()) == 3 }, "the held sentences were never let out")
+	var played []int
+	for _, chunk := range s.edge.heard() {
+		played = append(played, len(chunk.Samples))
+	}
+	s.Equal([]int{320, 640, 960}, played, "the sentences were not played in the order they came in")
+	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the reply was never reported as spoken")
+	s.Zero(s.heldMs(replyID))
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
+	turn, _ := firstOf[Turn](s.reported())
+	s.InDelta(250, turn.ReplyHoldMs, 0.001, "the wait before the sentence is the turn's reply hold")
+	s.False(turn.Interrupted)
+	s.Zero(countOf[Interrupted](s.reported()), "the hold only delays the sentence and never drops it")
+}
+
+func (s *AgentSuite) TestASentenceAfterAPauseIsNotHeldWhenTheCallerIsNotVoiced() {
+	clock, caller, replyID := s.pausesMidReply(300 * time.Millisecond)
+
+	s.synthesisesSpeech(replyID, 2)
+	s.eventually(func() bool { return len(s.edge.heard()) == 2 }, "a sentence was held for a caller who was not talking")
+
+	// Somebody who last spoke before the reply took its pause has been quiet for long enough.
+	s.agent.voiced.observe(caller.ID, chunkAt(4000), clock.now().Add(-300*time.Millisecond))
+	clock.advance(300 * time.Millisecond)
+	s.synthesisesSpeech(replyID, 3)
+
+	s.eventually(func() bool { return len(s.edge.heard()) == 3 }, "a sentence was held for a caller who had been quiet")
+	s.Zero(s.heldMs(replyID))
+}
+
+func (s *AgentSuite) TestASentenceThatFollowsWithoutAPauseIsNotHeldWhileTheCallerTalksOverTheReply() {
+	clock, caller, replyID := s.pausesMidReply(100 * time.Millisecond)
+	s.agent.voiced.observe(caller.ID, chunkAt(4000), clock.now())
+
+	s.synthesisesSpeech(replyID, 2)
+
+	s.eventually(func() bool { return len(s.edge.heard()) == 2 },
+		"a sentence that followed the last without a pause was held")
+}
+
+func (s *AgentSuite) TestSentencesAreHeldNoMoreOnceTheTurnHasBeenHeldForTheLongestHold() {
+	longest := 300 * time.Millisecond
+	s.replySilenceMax = &longest
+	clock, caller, replyID := s.pausesMidReply(300 * time.Millisecond)
+	talks := func() { s.agent.voiced.observe(caller.ID, chunkAt(4000), clock.now()) }
+	talks()
+	s.synthesisesSpeech(replyID, 2)
+	s.eventually(func() bool { return s.heldMs(replyID) >= 40 }, "the sentence after the pause was not held")
+
+	// The caller never goes quiet, so the longest hold lets the sentence out.
+	clock.advance(150 * time.Millisecond)
+	talks()
+	clock.advance(150 * time.Millisecond)
+	talks()
+	s.looksAtTheHolds()
+	s.eventually(func() bool { return len(s.edge.heard()) == 2 }, "the longest hold did not let the sentence out")
+
+	// After another pause the caller is still talking, and what has been spent is all there is.
+	clock.advance(300 * time.Millisecond)
+	talks()
+	s.synthesisesSpeech(replyID, 3)
+
+	s.eventually(func() bool { return len(s.edge.heard()) == 3 }, "a sentence was held after the longest hold was spent")
+	s.Zero(s.heldMs(replyID))
+}
+
+func (s *AgentSuite) TestNoSentenceIsHeldAfterAPauseWhenTheResumeGapIsOff() {
+	off := time.Duration(0)
+	s.replyResumeGap = &off
+	clock, caller, replyID := s.pausesMidReply(300 * time.Millisecond)
+	s.agent.voiced.observe(caller.ID, chunkAt(4000), clock.now())
+
+	s.synthesisesSpeech(replyID, 2)
+
+	s.eventually(func() bool { return len(s.edge.heard()) == 2 }, "a sentence was held with the resume gap off")
+}
+
+func (s *AgentSuite) TestNewWordsWhileASentenceAfterAPauseIsHeldCancelItAndTheRestOfTheReply() {
+	var edge *countingEdge
+	s.edgeFactory = func(base *loopbackEdge) Edge {
+		edge = &countingEdge{loopbackEdge: base}
+		return edge
+	}
+	clock, caller, replyID := s.pausesMidReply(300 * time.Millisecond)
+	s.agent.voiced.observe(caller.ID, chunkAt(4000), clock.now())
+	s.synthesisesSpeech(replyID, 2)
+	s.eventually(func() bool { return s.heldMs(replyID) >= 40 }, "the sentence after the pause was not held")
+	s.synthesisesSpeech(replyID, 3)
+	s.voice.emitter.Send(tts.SynthesisComplete{SynthesisID: replyID, AudioDurationMs: 120, TimeToFirstByteMs: 5})
+	s.eventually(func() bool { return s.heldMs(replyID) >= 100 }, "what followed it was not held behind it")
+	// The words that follow are answered by a reply that never gets going, so any audio there is
+	// can only be the one that was held.
+	s.model.mu.Lock()
+	s.model.then = []string{}
+	s.model.mu.Unlock()
+
+	s.says(caller, "actually make it for four")
+
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 },
+		"the new words did not cancel the reply while a sentence of it was held")
+	interrupted, _ := firstOf[Interrupted](s.reported())
+	s.Equal(replyID, interrupted.TurnID)
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
+	turn, _ := firstOf[Turn](s.reported())
+	s.Equal(replyID, turn.TurnID)
+	s.True(turn.Interrupted)
+	s.InDelta(100, turn.AudioDroppedMs, 0.001, "the speech that was held and never let out was lost from the turn")
+	s.never(func() bool { return len(edge.published()) > 1 }, "a sentence of the cancelled reply was let out")
+	s.Equal([]int{320}, edge.published(), "only the sentence that was played was published")
+	s.Zero(countOf[Spoke](s.reported()), "a reply cut short was reported as spoken")
+
+	// What was generated stays in the history, as it does for any reply that was interrupted, and
+	// the next turn is told that the reply may not have been heard in full.
+	said := "Hello there. How are you?"
+	history := s.agent.History()
+	s.Equal(1, countMessagesWithContent(history, said), "the interrupted reply is kept once")
+	s.Equal(llm.User, history[len(history)-1].Role)
+	s.Equal("actually make it for four", history[len(history)-1].Content)
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the new words were never answered")
+	s.Contains(s.model.requests()[1].Instructions, interruptedReplyNote)
+}

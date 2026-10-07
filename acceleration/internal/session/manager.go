@@ -116,6 +116,10 @@ type ManagerOptions struct {
 	// ReplyConfidentScore is the acoustic end-of-turn score from which a turn is taken to have
 	// ended for sure, for every agent. Nil leaves it at the agent's default.
 	ReplyConfidentScore *float64
+	// ReplyResumeGap is how long a reply must have been silent, once some of it has been let out,
+	// for the next sound it makes to wait for the caller to have been quiet, for every agent. Nil
+	// leaves it at the agent's default, and a pointer to zero lets every sentence out as it comes.
+	ReplyResumeGap *time.Duration
 	// PreviewDebounce is how long a caller's words have to hold still before every agent starts
 	// the reply to them, ahead of the wait that decides whether they have finished. Nil leaves
 	// it at the agent's default, and a pointer to zero starts the reply when that wait is over.
@@ -547,6 +551,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 
 		ReplySilenceConfident: m.options.ReplySilenceConfident,
 		ReplyConfidentScore:   m.options.ReplyConfidentScore,
+		ReplyResumeGap:        m.options.ReplyResumeGap,
 	})
 	if err != nil {
 		return nil, stack.Wrap(err)
