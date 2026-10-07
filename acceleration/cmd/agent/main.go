@@ -104,6 +104,8 @@ func parseOptions(args []string) (options, bool, error) {
 		"the system prompt")
 	flags.StringVar(&parsed.greeting, "greeting", "Hi, I'm listening.",
 		"said on joining, without going through the model")
+	flags.StringVar(&parsed.controllerTarget, "controller", "",
+		"provider/model or shortcut for the flow controller that decides who holds the floor, empty to use the -llm model")
 	flags.StringVar(&parsed.subagentTarget, "subagent", "",
 		"provider/model or shortcut for the model that does the thinking, empty to answer everything on the voice model")
 	flags.StringVar(&parsed.skillsFile, "skills", os.Getenv(skillsEnvVar),
@@ -166,15 +168,16 @@ type options struct {
 	instructions string
 	greeting     string
 
-	subagentTarget string
-	skillsFile     string
-	toolsFile      string
-	tasks          int
-	backchannel    bool
-	checkIn        bool
-	minConfidence  float64
-	demo           bool
-	chatTimings    bool
+	controllerTarget string
+	subagentTarget   string
+	skillsFile       string
+	toolsFile        string
+	tasks            int
+	backchannel      bool
+	checkIn          bool
+	minConfidence    float64
+	demo             bool
+	chatTimings      bool
 
 	replySilence          time.Duration
 	replySilenceMax       time.Duration
@@ -296,35 +299,36 @@ func run(options options, logger *slog.Logger) error {
 	}
 
 	voiceAgent, err := agent.New(agent.Options{
-		Edge:           edge,
-		Instructions:   options.prompt(),
-		CustomerID:     options.customerID,
-		AgentID:        options.agent(),
-		CallID:         options.callID,
-		Tags:           options.tags.Tags,
-		SubagentTarget: options.subagentTarget,
-		Skills:         skills,
-		Telephony:      line,
-		Tools:          tools,
-		Tasks:          options.tasks,
-		Duplex:         options.duplex(),
-		LLM:            routers.llm,
-		LLMTarget:      options.llmTarget,
-		STT:            routers.stt,
-		STTTarget:      options.sttTarget,
-		TTS:            routers.tts,
-		TTSTarget:      options.ttsTarget,
-		Voice:          options.voice,
-		LanguageHints:  options.languages(),
-		Memory:         remembering,
-		AppID:          options.appID,
-		SessionID:      options.callID,
-		Store:          routers.store,
-		Live:           routers.live,
-		Logger:         logger,
-		EOT:            eotClient,
-		EOTMode:        eotSettings.mode,
-		EOTThreshold:   eotSettings.threshold,
+		Edge:             edge,
+		Instructions:     options.prompt(),
+		CustomerID:       options.customerID,
+		AgentID:          options.agent(),
+		CallID:           options.callID,
+		Tags:             options.tags.Tags,
+		ControllerTarget: options.controllerTarget,
+		SubagentTarget:   options.subagentTarget,
+		Skills:           skills,
+		Telephony:        line,
+		Tools:            tools,
+		Tasks:            options.tasks,
+		Duplex:           options.duplex(),
+		LLM:              routers.llm,
+		LLMTarget:        options.llmTarget,
+		STT:              routers.stt,
+		STTTarget:        options.sttTarget,
+		TTS:              routers.tts,
+		TTSTarget:        options.ttsTarget,
+		Voice:            options.voice,
+		LanguageHints:    options.languages(),
+		Memory:           remembering,
+		AppID:            options.appID,
+		SessionID:        options.callID,
+		Store:            routers.store,
+		Live:             routers.live,
+		Logger:           logger,
+		EOT:              eotClient,
+		EOTMode:          eotSettings.mode,
+		EOTThreshold:     eotSettings.threshold,
 
 		ReplySilence:          &options.replySilence,
 		ReplySilenceMax:       &options.replySilenceMax,
