@@ -46,6 +46,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -257,6 +258,10 @@ type Options struct {
 	// the deliveries (internal/mcpevents). Absent, which it is with connectors off, a validate
 	// subscribes to nothing and the deliveries route answers 410.
 	MCPEvents *mcpevents.Service
+	// Episodes closes the episodes of a call when the call.session_ended hook says it ended,
+	// and summarizes them (internal/omnichannel, T55). Absent, a call's episodes stay in
+	// progress, as before T55.
+	Episodes *omnichannel.Closer
 	// SlackApps creates, updates and deletes the Slack app the router keeps for a customer
 	// (managed, T54). Absent, the provider app paths say connectors are not enabled.
 	SlackApps *slackapps.Client
@@ -327,6 +332,8 @@ type Server struct {
 	channelBridge     ChannelBridge
 	eventForwarder    *eventforward.Forwarder
 	mcpEvents         *mcpevents.Service
+	// episodes ends a call's episodes on call.session_ended.
+	episodes *omnichannel.Closer
 	// slackApps and operatorApps serve the provider app paths.
 	slackApps    *slackapps.Client
 	operatorApps OperatorAppLookup
@@ -449,7 +456,8 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		channelBridge:     options.ChannelBridge,
 		eventForwarder:    options.EventForwarder,
 		mcpEvents:         options.MCPEvents,
-		slackApps:         options.SlackApps,
+		episodes:          options.Episodes,
+		slackApps:        options.SlackApps,
 		operatorApps:      options.OperatorProviderApps,
 		trusted:           options.TrustedProxies,
 		upgrader:          newUpgrader(options.CORSOrigins),

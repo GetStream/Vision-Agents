@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -203,12 +205,105 @@ func (s *EpisodeCardsSuite) called(participants ...string) string {
 
 // agentConfig is an agent of the test's app, with episode cards on or off.
 func (s *EpisodeCardsSuite) agentConfig(cards bool) AgentConfig {
+	return s.agentConfigOn(cards, "llm-flow")
+}
+
+// agentConfigOn is an agent of the test's app on the LLM named, with episode cards on or off.
+func (s *EpisodeCardsSuite) agentConfigOn(cards bool, model string) AgentConfig {
 	var created AgentConfig
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
-		Name: "agent-" + s.utils.uuid(), Llm: pointerTo("llm-flow"), Instructions: pointerTo("be brief"),
+		Name: "agent-" + s.utils.uuid(), Llm: pointerTo(model), Instructions: pointerTo("be brief"),
 		EpisodeCards: pointerTo(cards),
 	}, &created))
 	return created
+}
+
+// The call hook ends the call's episode (T55): ended, then summarized by the agent config's
+// own LLM, recites, which answers with what it was handed, so the summary holds the call's
+// lines. The card is updated in place: the omni-channel still holds one message.
+func (s *EpisodeCardsSuite) TestACallsCardIsSummarizedWhenTheCallEnds() {
+	s.config = s.agentConfigOn(true, "recites/recites-model")
+	call := s.called("sip-" + s.number)
+	omni := s.omniChannel(s.number)
+	s.cards(omni, 1)
+	episode := s.callEpisode(call)
+	s.say(call, "sip-"+s.number, "I need to move my appointment to Tuesday")
+
+	s.Equal(http.StatusOK, s.signedly(phone.CallHookPath, s.sessionEnded(call)))
+
+	s.Require().Eventually(func() bool { return s.episodeStatus(episode) == store.EpisodeSummarized }, settleFor, 10*time.Millisecond,
+		"the episode is %s", s.episodeStatus(episode))
+	stored := s.chat.Stored(omni)
+	s.Require().Len(stored, 1, "the card is updated in place, never sent again")
+	s.Contains(stored[0]["text"], "I need to move my appointment to Tuesday")
+	custom, _ := stored[0]["custom"].(map[string]any)
+	s.Equal(store.EpisodeSummarized, custom["status"])
+}
+
+// Before T55 the call.session_ended hook released the call's trunks and answered 200 with no
+// body. A call under a config that did not turn the cards on has no episode, so the hook
+// answers the same, writes no row and asks nothing of Stream.
+func (s *EpisodeCardsSuite) TestACallUnderAConfigWithoutCardsEndsAsBefore() {
+	s.config = s.agentConfig(false)
+	call := s.called("sip-" + s.number)
+	// What the session's own start asks of Stream, once it has stopped asking.
+	before := -1
+	s.Require().Eventually(func() bool {
+		now := len(s.chat.Requests(suiteStreamKey))
+		settled := now == before
+		before = now
+		return settled
+	}, settleFor, 100*time.Millisecond)
+
+	status, body := s.deliver(phone.CallHookPath, s.sessionEnded(call), sign(s.sessionEnded(call), suiteStreamSecret))
+
+	s.Equal(http.StatusOK, status)
+	s.Empty(body)
+	s.Never(func() bool { return len(s.chat.Requests(suiteStreamKey)) > before }, dropped, 20*time.Millisecond,
+		"the hook asked Stream something")
+	var episodes int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM episodes WHERE customer_id = ?", s.customerID()).Scan(&episodes))
+	s.Zero(episodes)
+}
+
+// sessionEnded is the call.session_ended event Stream sends for an agent call.
+func (s *EpisodeCardsSuite) sessionEnded(call string) string {
+	return fmt.Sprintf(`{"type":"call.session_ended","call_cid":"agent:%s","session_id":"session-1",`+
+		`"call":{"cid":"agent:%s","id":"%s","type":"agent","custom":{}}}`, call, call, call)
+}
+
+// callEpisode is the id of the call's episode, once its card has opened it.
+func (s *EpisodeCardsSuite) callEpisode(call string) string {
+	var id string
+	s.Require().Eventually(func() bool {
+		return s.store.DB().QueryRowContext(context.Background(),
+			"SELECT id FROM episodes WHERE customer_id = ? AND call_id = ?", s.customerID(), call).Scan(&id) == nil
+	}, settleFor, 10*time.Millisecond)
+	return id
+}
+
+// episodeStatus is an episode's status as stored.
+func (s *EpisodeCardsSuite) episodeStatus(id string) string {
+	var status string
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(), "SELECT status FROM episodes WHERE id = ?", id).Scan(&status))
+	return status
+}
+
+// say writes a line said on the call into its call channel, as the transcript writes it: by
+// the participant, with source speech.
+func (s *EpisodeCardsSuite) say(call, participant, text string) {
+	ctx := context.Background()
+	bound, err := s.stream.For(ctx, s.customerID())
+	s.Require().NoError(err)
+	_, err = bound.Client.Chat().GetOrCreateChannel(ctx, "agent", call, &getstream.GetOrCreateChannelRequest{
+		Data: &getstream.ChannelInput{CreatedByID: &participant, Custom: map[string]any{"support_customer_id": s.customerID()}},
+	})
+	s.Require().NoError(err)
+	_, err = bound.Client.Chat().SendMessage(ctx, "agent", call, &getstream.SendMessageRequest{
+		Message: getstream.MessageRequest{Text: &text, UserID: &participant, Custom: map[string]any{"source": "speech"}},
+	})
+	s.Require().NoError(err)
 }
 
 // readCall is whether the router asked Stream for a call, as a card's caller lookup does.
