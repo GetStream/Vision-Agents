@@ -38,6 +38,12 @@ Complete(Ref, Manifest, Supplied), no State: a grant the provider already issued
              one the grant was issued to
   -> StoredCredentials as above, AccountInfo{Scopes} only: nothing is captured
 
+MoveGrant(Ref, Manifest, MovedGrant): a plugin login's grant (move.go), for router plugins migrate
+  endpoints  discover, as Begin; the token endpoint found must be the one the plugin renewed at
+  client     a preregistered client with the grant's id, else, when the plugin may have registered it
+             and client.registration names dcr, that public client (auth none); else ErrGrantElsewhere
+  -> StoredCredentials as above, expiry zero when the plugin stored none; nothing sent, nothing captured
+
 Retrieve(stored, m, opts)
   due        expiry known and within refresh.margin (default 1 min, the prototype's) or at or before
              opts.ValidUntil, or opts.Refused (the provider refused it), whatever the expiry;
