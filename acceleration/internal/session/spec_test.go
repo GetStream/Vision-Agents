@@ -85,6 +85,23 @@ func (s *SpecSuite) TestAConnectorBindingWinsOverAPluginEntryForTheSameProvider(
 	s.Equal([]store.PluginEntry{{Name: "gong"}}, spec.UserPlugins)
 }
 
+// TestWithoutABindingThePluginsAreLeftExactlyAsConfigured: Normalize's same-provider rule
+// is a no-op for a config that binds no connector, down to an empty list staying empty.
+func (s *SpecSuite) TestWithoutABindingThePluginsAreLeftExactlyAsConfigured() {
+	spec := FromConfig(store.AgentConfig{
+		CustomerID:   "acme",
+		AgentPlugins: []store.PluginEntry{{Name: "linear"}, {Name: "slack"}},
+		UserPlugins:  []store.PluginEntry{},
+	})
+	spec.CallID = "call-1"
+
+	s.Require().NoError(spec.Normalize())
+
+	s.Equal([]store.PluginEntry{{Name: "linear"}, {Name: "slack"}}, spec.AgentPlugins)
+	s.NotNil(spec.UserPlugins)
+	s.Empty(spec.UserPlugins)
+}
+
 func (s *SpecSuite) TestAPluginOfAnotherProviderStaysBesideABinding() {
 	spec := FromConfig(store.AgentConfig{
 		CustomerID:   "acme",

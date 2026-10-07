@@ -506,6 +506,10 @@ func (s Spec) boundProvider(id string) bool {
 
 // withoutBoundPlugins is entries less those for a provider a connector binding names.
 func (s Spec) withoutBoundPlugins(entries []store.PluginEntry) []store.PluginEntry {
+	// Without a binding the entries are left exactly as they were, the same slice.
+	if len(s.ConnectorBindings) == 0 {
+		return entries
+	}
 	var kept []store.PluginEntry
 	for _, entry := range entries {
 		if !s.boundProvider(entry.Name) {
