@@ -163,7 +163,8 @@ type Turn struct {
 	// AudioOutMs is how much speech the agent published for this turn.
 	AudioOutMs *float64 `bun:"audio_out_ms"`
 	// AudioDroppedMs is speech that was synthesised for this turn but never published.
-	// Set on a turn that was not interrupted, it means the agent cut itself off.
+	// Set on a turn that was not interrupted, it means the agent cut itself off. On one that was,
+	// it is the speech still held for the caller to have been quiet when they took the floor.
 	AudioDroppedMs *float64 `bun:"audio_dropped_ms"`
 	Interrupted    bool     `bun:"interrupted,notnull"`
 }

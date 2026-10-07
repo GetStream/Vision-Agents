@@ -303,7 +303,7 @@ func heldBy(holds []*heldTurn, event tts.Event) *heldTurn {
 func (a *Agent) giveUpHold(hold *heldTurn, speak func(tts.Event)) {
 	for _, event := range hold.events {
 		if chunk, ok := event.(tts.AudioChunk); ok {
-			a.turns.dropped(hold.turn, chunk.Audio.DurationMs())
+			a.turns.droppedFromHold(hold.turn, chunk.Audio.DurationMs())
 			continue
 		}
 		speak(event)

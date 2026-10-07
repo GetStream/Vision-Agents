@@ -66,6 +66,10 @@ type openTurn struct {
 	// audioDroppedMs is speech that was synthesised and paid for but never published,
 	// because the turn had been abandoned by the time it arrived.
 	audioDroppedMs float64
+	// audioHeldMs is speech that is waiting in a hold for the caller to have been quiet, which
+	// is neither published nor dropped yet. A turn closed while it is there reports it dropped:
+	// it was paid for, and it never reached the caller.
+	audioHeldMs float64
 	// modelDone means the reply is fully generated, so how many syntheses the turn will
 	// produce is known.
 	modelDone bool
@@ -249,6 +253,35 @@ func (t *turnTracker) dropped(turnID string, audioDurationMs float64) {
 	current.audioDroppedMs += audioDurationMs
 }
 
+// buffered records speech that has gone into a hold for the caller to have been quiet.
+func (t *turnTracker) buffered(turnID string, audioDurationMs float64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil {
+		current.audioHeldMs += audioDurationMs
+	}
+}
+
+// unbuffered records that the speech held for the turn has left the hold to be published.
+func (t *turnTracker) unbuffered(turnID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil {
+		current.audioHeldMs = 0
+	}
+}
+
+// droppedFromHold records speech that was held and has been given up with its reply. It moves
+// from held to dropped in one step, so a turn closed in between does not count it twice or lose it.
+func (t *turnTracker) droppedFromHold(turnID string, audioDurationMs float64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil {
+		current.audioHeldMs = max(0, current.audioHeldMs-audioDurationMs)
+		current.audioDroppedMs += audioDurationMs
+	}
+}
+
 // spoke records a completed synthesis. A turn spoken sentence by sentence has several,
 // so the wait is the first one's and the audio is all of them.
 func (t *turnTracker) spoke(turnID string, timeToFirstByteMs, audioDurationMs float64) {
@@ -365,7 +398,7 @@ func measure(turnID string, current *openTurn) Turn {
 		SpeechEndToAudioMs:   speechEndToAudio(current),
 		SpeechEndToAudibleMs: speechEndToAudible(current),
 		AudioOutMs:           current.audioOutMs,
-		AudioDroppedMs:       current.audioDroppedMs,
+		AudioDroppedMs:       current.audioDroppedMs + current.audioHeldMs,
 		Interrupted:          current.interrupted,
 	}
 }

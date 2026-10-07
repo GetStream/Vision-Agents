@@ -660,6 +660,7 @@ func (s *AgentSuite) TestNewWordsWhileTheReplyIsHeldCancelItUnheardAndLeaveNothi
 	s.Equal(first.TurnID, turn.TurnID)
 	s.True(turn.Interrupted)
 	s.Zero(turn.FirstFrameQueuedMs, "no frame of the reply was ever queued")
+	s.Positive(turn.AudioDroppedMs, "the audio that was held and never let out was lost from the turn")
 	s.never(func() bool { return len(s.edge.heard()) > 0 || edge.markedWrites() > 0 },
 		"a frame of the cancelled reply was emitted")
 	s.Zero(countOf[Spoke](s.reported()), "a reply nobody heard was reported as spoken")
@@ -754,6 +755,51 @@ func (s *AgentSuite) TestClosingTheAgentWhileAReplyIsHeldPublishesNothingOfIt() 
 
 	s.Empty(s.edge.heard(), "a reply that was still held was published when the agent closed")
 	s.Zero(countOf[Spoke](s.reported()))
+}
+
+// droppedMs is how much of a turn's speech has been counted as dropped, or the held speech a
+// closed turn would count, which is the same to whoever reads the turn.
+func (s *AgentSuite) droppedMs(turnID string) float64 {
+	s.agent.turns.mu.Lock()
+	defer s.agent.turns.mu.Unlock()
+	if current := s.agent.turns.open[turnID]; current != nil {
+		return current.audioDroppedMs + current.audioHeldMs
+	}
+	return 0
+}
+
+func (s *AgentSuite) TestLaterFramesOfAReplyThatWasGivenUpWhileHeldAreNeverLetOut() {
+	window, longest := time.Minute, time.Minute
+	s.replySilence = &window
+	s.replySilenceMax = &longest
+	s.join(true)
+	s.voice.mu.Lock()
+	s.voice.silent = true
+	s.voice.mu.Unlock()
+	alice := stt.Participant{ID: "alice"}
+	s.speakAloud(alice)
+	s.says(alice, "please find a table")
+	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "the reply never reached the voice")
+	replyID := s.voice.spoken()[0].ID
+	s.synthesises(replyID)
+	s.replyIsHeld()
+
+	// The pipeline stops while the reply is held, which gives it up.
+	s.agent.mu.Lock()
+	stopping := s.agent.pipe
+	s.agent.mu.Unlock()
+	stopping.cancel()
+	s.eventually(func() bool { return s.droppedMs(turnOf(replyID)) >= 10 }, "the held audio was not given up")
+
+	// Nothing says any more that this reply is waiting, as is the case once a newer one has taken
+	// its place, and yet none of what follows it is let out.
+	s.agent.mu.Lock()
+	s.agent.gated = heldReply{turn: "reply-newer", participant: alice}
+	s.agent.mu.Unlock()
+	s.synthesises(replyID)
+
+	s.eventually(func() bool { return s.droppedMs(turnOf(replyID)) >= 20 }, "a later frame was not counted as dropped")
+	s.Empty(s.edge.heard(), "a later frame of a reply that was given up was let out")
 }
 
 func (s *AgentSuite) TestFramesAfterTheFirstAreNotHeld() {

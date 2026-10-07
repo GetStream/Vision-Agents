@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"sync/atomic"
@@ -31,20 +32,22 @@ func (s *AgentSuite) noRetry() {
 	s.agent.cadence.retry = time.Hour
 }
 
-// watchPreview reports whether the only preview there is has been cancelled.
-func (s *AgentSuite) watchPreview() *atomic.Bool {
-	cancelled := new(atomic.Bool)
+// watchedPreview says whether a preview has been cancelled.
+type watchedPreview struct{ ctx context.Context }
+
+// Load reports whether the preview has been cancelled.
+func (w watchedPreview) Load() bool { return w.ctx.Err() != nil }
+
+// watchPreview reports whether the only preview there is has been cancelled. It reads the
+// preview's context rather than replacing what cancels it, which others read as they cancel it.
+func (s *AgentSuite) watchPreview() watchedPreview {
 	s.agent.mu.Lock()
 	defer s.agent.mu.Unlock()
 	s.Require().Len(s.agent.previews, 1, "there is not exactly one preview to watch")
 	for _, p := range s.agent.previews {
-		cancel := p.cancel
-		p.cancel = func() {
-			cancelled.Store(true)
-			cancel()
-		}
+		return watchedPreview{ctx: p.ctx}
 	}
-	return cancelled
+	return watchedPreview{}
 }
 
 // waitsThenAnswers has the flow controller wait on the words once and answer the next time.

@@ -1662,6 +1662,7 @@ type replyPreview struct {
 	turn      harness.Turn
 	ready     chan previewResult
 	events    chan llm.Event
+	ctx       context.Context
 	cancel    context.CancelFunc
 	startedAt time.Time
 	// kept says a Wait is holding the preview for the next check of the same words. It is
@@ -1699,7 +1700,7 @@ func (a *Agent) preview(ready candidate, current *harness.Harness, instructions 
 	turn := harness.Turn{ID: ready.ID, Instructions: instructions, History: history,
 		Note: joinNotes(a.pendingInterruptionNoteLocked(), a.duplex.Note(ready.Confidence))}
 	p := &replyPreview{model: model, turn: turn, ready: make(chan previewResult, 1),
-		events: make(chan llm.Event, replyBuffer), cancel: cancel,
+		events: make(chan llm.Event, replyBuffer), ctx: ctx, cancel: cancel,
 		startedAt: time.Now()}
 	a.previews[ready.ID] = p
 	a.running.Add(1)
@@ -1778,7 +1779,7 @@ type keptPreview struct {
 	// the preview to be taken over: candidate ids change when the same words are put again.
 	revision uint64
 	// expires lets go of it when the patience for those words runs out.
-	expires *time.Timer
+	expires cadenceTimer
 }
 
 // keepPreview holds the reply previewed for a candidate the flow controller asked to wait
@@ -1817,7 +1818,7 @@ func (a *Agent) keepPreview(ready candidate) {
 // lock. The caller holds the lock.
 func (a *Agent) holdPreviewLocked(p *replyPreview, ready candidate, until time.Time) *keptPreview {
 	kept := &keptPreview{key: ready.ID, revision: ready.Revision}
-	kept.expires = time.AfterFunc(time.Until(until), func() { a.expireKeptPreview(ready.Participant.ID, kept) })
+	kept.expires = a.cadence.timer(time.Until(until), func() { a.expireKeptPreview(ready.Participant.ID, kept) })
 	previous := a.kept[ready.Participant.ID]
 	if previous != nil {
 		previous.expires.Stop()
@@ -2874,8 +2875,10 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	// rather than once per frame.
 	dropping := ""
 	// released is the turn whose first frame has been let out, so none of its later frames is
-	// held to the caller's silence again.
+	// held to the caller's silence again. dropped is the turn whose first frame was not, because
+	// the reply was given up, and none of its later frames is let out either.
 	released := ""
+	dropped := ""
 	// holds are the replies waiting on the caller's silence, which is none almost always, and
 	// wake is told when one of them is abandoned, so that it is given up at once.
 	var holds []*heldTurn
@@ -2903,15 +2906,20 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				}
 				return
 			}
-			if turnID := turnOf(typed.SynthesisID); turnID != released {
+			if turnID := turnOf(typed.SynthesisID); turnID == dropped {
+				a.turns.dropped(turnID, typed.Audio.DurationMs())
+				return
+			} else if turnID != released {
 				hold, publish := a.holdFirstFrame(p, publishCtx, turnID, time.Now())
 				if hold != nil {
 					hold.stop = context.AfterFunc(publishCtx, nudge)
 					hold.events = append(hold.events, event)
+					a.turns.buffered(turnID, typed.Audio.DurationMs())
 					holds = append(holds, hold)
 					return
 				}
 				if !publish {
+					dropped = turnID
 					a.turns.dropped(turnID, typed.Audio.DurationMs())
 					return
 				}
@@ -3038,12 +3046,14 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			holds = slices.Delete(holds, i, i+1)
 			hold.stop()
 			if abandoned {
+				dropped = hold.turn
 				a.giveUpHold(hold, speak)
 				continue
 			}
 			a.logHoldEnded(hold, capped, now)
 			released = hold.turn
 			a.turns.held(hold.turn, now.Sub(hold.readyAt))
+			a.turns.unbuffered(hold.turn)
 			for _, event := range hold.events {
 				speak(event)
 			}
@@ -3069,6 +3079,9 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				// What follows the first audio of a reply waits behind it, so it is not
 				// said, or reported as said, before it.
 				hold.events = append(hold.events, event)
+				if chunk, ok := event.(tts.AudioChunk); ok {
+					a.turns.buffered(hold.turn, chunk.Audio.DurationMs())
+				}
 				continue
 			}
 			speak(event)

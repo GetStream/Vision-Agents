@@ -3,7 +3,6 @@ package agent
 import (
 	"errors"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -565,7 +564,7 @@ func (s *AgentSuite) asked(request int) string {
 
 // holdsAnEarlyPreview joins an agent that has started a reply for a caller's words and is not
 // going to ask about them, and returns the caller and what tells the reply was let go of.
-func (s *AgentSuite) holdsAnEarlyPreview() (stt.Participant, *atomic.Bool) {
+func (s *AgentSuite) holdsAnEarlyPreview() (stt.Participant, watchedPreview) {
 	s.join(true)
 	s.slowGap(time.Hour)
 	alice := stt.Participant{ID: "alice"}
@@ -652,41 +651,62 @@ func (s *AgentSuite) replyCalls() []ModelCall {
 	return calls
 }
 
+// controlsTimers has the cadence's timers, and the patience for the words it settles, run on a
+// clock the test moves instead of the one on the wall.
+func (s *AgentSuite) controlsTimers() *previewClock {
+	clock := &previewClock{fireStopped: true}
+	s.agent.cadence.mu.Lock()
+	defer s.agent.cadence.mu.Unlock()
+	s.agent.cadence.after = clock.after
+	return clock
+}
+
+// cadenceHolds waits for the cadence to hold the participant's words as they are given.
+func (s *AgentSuite) cadenceHolds(participant stt.Participant, text string) {
+	s.eventually(func() bool {
+		heard, ok := s.agent.cadence.currentCandidate(participant.ID)
+		return ok && heard.Text == text
+	}, "the words were never heard: "+text)
+}
+
 func (s *AgentSuite) TestWordsThatChangeWithinTheDebounceRestartItAndOneReplyIsStartedForTheLastOnes() {
 	s.debouncesFor(300 * time.Millisecond)
 	s.join(true)
-	s.slowGap(10 * time.Second)
+	clock := s.controlsTimers()
 	alice := stt.Participant{ID: "alice"}
 	s.speak(alice)
 
 	s.mutters(alice, "please find a table")
-	time.Sleep(150 * time.Millisecond)
+	s.cadenceHolds(alice, "please find a table")
+	clock.advance(150 * time.Millisecond)
 	s.mutters(alice, "please find a table for two")
+	s.cadenceHolds(alice, "please find a table for two")
+	clock.advance(250 * time.Millisecond)
 
-	s.Never(func() bool { return len(s.model.requests()) > 0 }, 250*time.Millisecond, 10*time.Millisecond,
-		"a reply was started for words that changed before they held still")
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "no reply was started for the last words")
+	s.Empty(s.model.requests(), "a reply was started for words that changed before they held still")
+	s.ElementsMatch([]time.Duration{100 * time.Millisecond, 50 * time.Millisecond}, clock.armed(),
+		"the debounce for the first words was left running, or the new words had none")
+	clock.advance(50 * time.Millisecond)
+	s.eventually(func() bool { return len(s.model.requests()) == 1 && s.keptPreviews() == 1 },
+		"no reply was started for the last words")
 	s.Equal("please find a table for two", s.asked(0))
-	s.Never(func() bool { return len(s.model.requests()) > 1 || s.previewsHeld() > 1 }, 400*time.Millisecond,
-		10*time.Millisecond, "more than one reply for one participant")
-	s.Equal(1, s.keptPreviews())
+
+	// The candidate for the same words takes the reply over rather than starting another.
+	clock.advance(100 * time.Millisecond)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the words were never answered")
+	s.Len(s.model.requests(), 1, "more than one reply for one participant")
+	s.Zero(s.previewsHeld())
 }
 
 func (s *AgentSuite) TestABurstOfRevisionsThirtyMillisecondsApartStartsOneReplyForTheFinalWords() {
 	s.join(true)
-	clock := &previewClock{fireStopped: true}
-	s.agent.cadence.mu.Lock()
-	s.agent.cadence.after = clock.after
-	s.agent.cadence.mu.Unlock()
+	clock := s.controlsTimers()
 	alice := stt.Participant{ID: "alice"}
 	s.speak(alice)
 
 	for _, text := range burst {
 		s.mutters(alice, text)
-		s.eventually(func() bool {
-			heard, ok := s.agent.cadence.currentCandidate(alice.ID)
-			return ok && heard.Text == text
-		}, "the words were never heard: "+text)
+		s.cadenceHolds(alice, text)
 		clock.advance(30 * time.Millisecond)
 		s.Empty(s.model.requests(), "a reply was started for words that were still changing: "+text)
 		s.Zero(s.previewsHeld())
@@ -891,14 +911,17 @@ func (s *AgentSuite) TestARulingThatIsNotAnAnswerLetsGoOfAnEarlyPreview() {
 func (s *AgentSuite) TestAnEarlyPreviewIsLetGoWhenNothingComesOfTheWordsBeforeThePatienceRunsOut() {
 	s.join(true)
 	s.slowGap(time.Hour)
-	s.agent.converse.mu.Lock()
-	s.agent.converse.patience = 150 * time.Millisecond
-	s.agent.converse.mu.Unlock()
+	clock := s.controlsTimers()
 	alice := stt.Participant{ID: "alice"}
 	s.speak(alice)
 	s.mutters(alice, "please find a table")
+	s.cadenceHolds(alice, "please find a table")
+	clock.advance(defaultPreviewDebounce)
 	s.eventually(func() bool { return s.keptPreviews() == 1 }, "no reply was started for the words")
 	started := s.watchPreview()
+	s.False(started.Load(), "the reply was let go of before the patience for its words ran out")
+
+	clock.advance(s.agent.converse.patienceSpan())
 
 	s.eventually(started.Load, "the reply outlived the patience for its words")
 	s.Zero(s.keptPreviews())
@@ -910,15 +933,21 @@ func (s *AgentSuite) TestAnEarlyPreviewAdoptedByAWaitIsLetGoWhenThePatienceRunsO
 	s.slowGap(200 * time.Millisecond)
 	s.flow.reply = []string{`{"disposition":"wait","floor":"continue"}`}
 	s.noRetry()
-	s.agent.converse.mu.Lock()
-	s.agent.converse.patience = 300 * time.Millisecond
-	s.agent.converse.mu.Unlock()
+	clock := s.controlsTimers()
 	alice := stt.Participant{ID: "alice"}
 	s.speak(alice)
 	s.mutters(alice, "please find a table")
+	s.cadenceHolds(alice, "please find a table")
+	clock.advance(defaultPreviewDebounce)
+	s.eventually(func() bool { return s.keptPreviews() == 1 && len(s.model.requests()) == 1 },
+		"no reply was started for the words")
+	clock.advance(200*time.Millisecond - defaultPreviewDebounce)
 	s.eventually(func() bool { return len(s.flow.requests()) == 1 }, "the words were never asked about")
 	s.eventually(func() bool { return s.keptPreviews() == 1 && s.previewsHeld() == 1 }, "the wait did not keep the reply")
 	started := s.watchPreview()
+	s.False(started.Load(), "the reply was let go of before the patience for its words ran out")
+
+	clock.advance(s.agent.converse.patienceSpan())
 
 	s.eventually(started.Load, "the reply outlived the patience for its words")
 	s.Zero(s.keptPreviews())

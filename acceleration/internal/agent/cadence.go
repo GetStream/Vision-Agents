@@ -475,6 +475,15 @@ func (c *cadence) scheduleLocked(current *cadenceSpeaker, delay time.Duration) {
 	})
 }
 
+// timer runs fn after d on the cadence's own clock, so that what is waited on for a caller's
+// words, the settling of them and the patience for them, is waited on by one clock.
+func (c *cadence) timer(d time.Duration, fn func()) cadenceTimer {
+	c.mu.Lock()
+	after := c.after
+	c.mu.Unlock()
+	return after(d, fn)
+}
+
 func (c *cadence) nextTimerEpochLocked() int64 {
 	c.timerEpoch++
 	return c.timerEpoch

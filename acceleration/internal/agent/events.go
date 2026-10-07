@@ -224,7 +224,8 @@ type Turn struct {
 	// AudioOutMs is how much speech the agent published for the turn.
 	AudioOutMs float64
 	// AudioDroppedMs is speech that was synthesised for the turn but never published,
-	// because it arrived after the turn had been abandoned.
+	// because it arrived after the turn had been abandoned, or was still held for the
+	// caller to have been quiet when it was.
 	AudioDroppedMs float64
 	Interrupted    bool
 }

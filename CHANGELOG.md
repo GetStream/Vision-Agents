@@ -726,10 +726,9 @@ the reply and never drops it, and a caller who really goes on cancels it with th
 way they cancel any other reply, before any of it is heard. Nothing of a reply that was cancelled
 unheard is kept in the conversation as having been said. Quiet is judged on each participant's
 audio, with a level detector that follows their background noise, and not on transcripts. Later
-frames of a reply, a
-greeting, a murmur and a turn the agent takes without having been spoken to are not held, and
-`first_frame_queued_ms` and `first_audible_frame_ms` include the wait. `0` lets a reply start
-the moment it is ready, and the agent option `ReplySilence` is the same setting.
+frames of a reply, a greeting, a murmur and a turn the agent takes without having been spoken to
+are not held, and `first_frame_queued_ms` and `first_audible_frame_ms` include the wait. `0` lets
+a reply start the moment it is ready, and the agent option `ReplySilence` is the same setting.
 
 A line that never goes quiet, because of a conversation in the room or a steady babble, never
 confirms the silence, and a reply could be held for as long as that lasted. A reply is now
@@ -761,12 +760,11 @@ against the turn it became. It is not one model call per turn: a reply started f
 then change is thrown away, and the reply for the words that were answered is a second call.
 Words that change again restart the debounce, so revisions arriving closer together than it
 are started once, for the last of them, and a debounce that fires for words that have since
-changed does nothing. Words that end
-on a comma, a joining word or a hesitation, or in digits that may still be growing, are not
-started at all. There is never more than one for a participant:
-new words let go of the reply for the old ones, and every other cause that lets go of a kept
-reply (the floor changing, the caller leaving, the call ending, the models being moved, a check
-that does not answer, the patience for the words running out) lets go of this one too. It
+changed does nothing. Words that end on a comma, a joining word or a hesitation, or in digits
+that may still be growing, are not started at all. There is never more than one for a
+participant: new words let go of the reply for the old ones, and every other cause that lets go
+of a kept reply (the floor changing, the caller leaving, the call ending, the models being moved,
+a check that does not answer, the patience for the words running out) lets go of this one too. It
 applies wherever `ROUTER_SPECULATIVE_REPLIES` does, and a reply for words that are never
 answered is paid for like any other dropped one. `0` starts the reply with the candidate, as
 before, and the agent option `PreviewDebounce` is the same setting.
