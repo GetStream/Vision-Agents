@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/slackapps"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -64,7 +65,12 @@ func (s *ConnectorProviderAppsSuite) SetupSuite() {
 		PublicEndpoint: func(context.Context, string) error { return nil },
 	})
 	s.Require().NoError(err)
-	s.connectors = core.Registry{Schemes: map[string]core.Scheme{oauth2code.Name: scheme}}
+	// hmac_header verifies the app's events on the provider app route, as the router registers it.
+	verifier := hmacheader.New()
+	s.connectors = core.Registry{
+		Schemes:   map[string]core.Scheme{oauth2code.Name: scheme},
+		Verifiers: map[string]core.Verifier{verifier.Name(): verifier},
+	}
 	s.slackApps, err = slackapps.New(slackapps.Config{HTTP: s.slack.Client(), BaseURL: s.slack.URL + fakeprovider.PathSlackAPI})
 	s.Require().NoError(err)
 	s.operatorApps = ConnectorOperatorApps(getenv)
@@ -187,7 +193,7 @@ func (s *ConnectorProviderAppsSuite) TestTheConfigTokenIsSealedAtRestAndNeverInA
 	}
 	var sealed []byte
 	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
-		"SELECT tokens_sealed FROM connector_config_tokens WHERE customer_id = ? AND connector_id = 'slack'", s.customerID()).Scan(&sealed))
+		"SELECT tokens_sealed FROM connector_config_tokens WHERE customer_id = ? AND connector_id = 'slack_bot'", s.customerID()).Scan(&sealed))
 	s.False(bytes.Contains(sealed, []byte("xoxe")), "the tokens are sealed")
 }
 
