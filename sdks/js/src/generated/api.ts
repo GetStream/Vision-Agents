@@ -766,6 +766,28 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/connections/{id}/invocations": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List a connection's tool calls
+         * @description Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, and an incognito session's calls name no session. Who may read them is who may read the connection.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listConnectionInvocations"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/connections/{id}/tools": {
         readonly parameters: {
             readonly query?: never;
@@ -804,6 +826,28 @@ export type paths = {
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["validateConnection"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connector-audit": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List the connector audit
+         * @description Every grant the app's connections got, renewed or lost, newest first, with the request, session and authorization attempt that caused each. A deleted connection's rows stay, and its deletion is one of them.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listConnectorAudit"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2052,6 +2096,28 @@ export type paths = {
          */
         readonly post: operations["syncAgent"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/users/{user_id}/connections": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete every connection of one user
+         * @description For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. The provider is not asked to revoke what it issued. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account. A user with no connections is not an error.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteUserConnections"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -4272,6 +4338,8 @@ export type components = {
             readonly status: components["schemas"]["ConnectionStatus"];
             /** Format: date-time */
             readonly updated_at: string;
+            /** @description The agent config bindings that name this connection as their fixed connection, which deleting it would break. A binding a session fills with the caller's own connection names none, so it is never listed. */
+            readonly used_by: readonly components["schemas"]["ConnectionUse"][] | null;
         };
         /** @description Credentials for a connection, under the revision the caller last read. An unknown field is refused rather than ignored. */
         readonly ConnectionCredentials: {
@@ -4284,6 +4352,35 @@ export type components = {
             readonly values?: {
                 readonly [key: string]: string;
             };
+        };
+        /** @description One connector tool call a session ran through the connection: the binding, the tool, how long it took and how it failed. What the call was asked and answered is never kept. */
+        readonly ConnectionInvocation: {
+            /** @description The alias the config binds the connector under. */
+            readonly binding: string;
+            /** @description The agent config whose binding the call went through. */
+            readonly config_id: string;
+            readonly connection_id: string;
+            readonly connector_id: string;
+            /** @description How the call failed. Absent for a call that answered. */
+            readonly error_type?: components["schemas"]["InvocationErrorType"];
+            readonly id: string;
+            /**
+             * Format: int64
+             * @description From the call reaching the router to its answer, the router's own checks included.
+             */
+            readonly latency_ms: number;
+            /** @description The session that called it. Absent for an incognito session, whose calls are tied to no conversation. */
+            readonly session_id?: string;
+            /** Format: date-time */
+            readonly started_at: string;
+            /** @description The tool's name at the provider, without the alias. */
+            readonly tool: string;
+        };
+        readonly ConnectionInvocationPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["ConnectionInvocation"][] | null;
+            /** @description Pass as cursor for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
         };
         /** @description Whose a connection is: the app's, which any of its agents may be bound to, or one user's. */
         readonly ConnectionOwner: {
@@ -4345,6 +4442,12 @@ export type components = {
             /** @description The digest of the whole list. Absent until a validate listed it. */
             readonly digest?: string;
             readonly tools: readonly components["schemas"]["ConnectionTool"][] | null;
+        };
+        readonly ConnectionUse: {
+            /** @description The alias the config binds the connection under. */
+            readonly binding: string;
+            readonly config_id: string;
+            readonly config_name: string;
         };
         /** @description Whether a connection's credential works, found by asking the provider for its tools. */
         readonly ConnectionValidation: {
@@ -4413,6 +4516,41 @@ export type components = {
             readonly event: string;
             /** @description What the agent does with the event when it arrives, added to its instructions for that conversation. */
             readonly instructions?: string;
+        };
+        /**
+         * @description grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted.
+         * @enum {string}
+         */
+        readonly ConnectorAuditAction: "grant_created" | "grant_refreshed" | "grant_revoked";
+        /** @description One grant a connection got, renewed or lost, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted. */
+        readonly ConnectorAuditEvent: {
+            readonly action: components["schemas"]["ConnectorAuditAction"];
+            /** @description The authorization attempt a consent finished. */
+            readonly attempt_id?: string;
+            /** @description The connection, which may since have been deleted. */
+            readonly connection_id: string;
+            readonly connector_id: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            readonly id: string;
+            readonly owner_type: components["schemas"]["ConnectionOwnerType"];
+            /** @description Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked. */
+            readonly reason?: string;
+            /** @description The X-Request-Id of the API request that caused it. */
+            readonly request_id?: string;
+            /**
+             * Format: int64
+             * @description The connection's credential revision once the change was made. Absent when the change names none, as a delete.
+             */
+            readonly revision?: number;
+            /** @description The session whose tool call caused it. Absent for an incognito session. */
+            readonly session_id?: string;
+        };
+        readonly ConnectorAuditPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["ConnectorAuditEvent"][] | null;
+            /** @description Pass as cursor for the next page, with the same connection_id. Absent on the last one. */
+            readonly next_cursor?: string;
         };
         /** @description How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint. */
         readonly ConnectorClient: {
@@ -5128,6 +5266,11 @@ export type components = {
         readonly InstructionsRequest: {
             readonly instructions: string;
         };
+        /**
+         * @description customer_auth: the provider refused the connection's credential, or it had none; reconnect it. external_server: the provider answered with a failure or could not be reached. client_timeout: the router stopped waiting before the provider answered, and nothing says it got the call. outcome_unknown: the call was sent and cut off, by the binding's timeout or an interrupted turn, so it may have been done. denied: the router refused it before anything was sent.
+         * @enum {string}
+         */
+        readonly InvocationErrorType: "customer_auth" | "external_server" | "client_timeout" | "outcome_unknown" | "denied";
         readonly KnowledgeDocument: {
             /**
              * @description Where the document came from, as a reader would recognise it. Passage ids are keyed by it, so posting the same source again replaces what it wrote before.
@@ -8991,6 +9134,39 @@ export interface operations {
             readonly 500: components["responses"]["InternalError"];
         };
     };
+    readonly listConnectionInvocations: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The next_cursor of the previous page. Omitted is the first page. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 25. */
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of tool calls */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionInvocationPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
     readonly listConnectionTools: {
         readonly parameters: {
             readonly query?: never;
@@ -9048,6 +9224,37 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listConnectorAudit: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description Keeps one connection's rows, deleted or not. */
+                readonly connection_id?: string;
+                /** @description The next_cursor of the previous page. Omitted is the first page. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 25. */
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of audit rows */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorAuditPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
     };
@@ -11361,6 +11568,31 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["SyncAgentResult"];
                 };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deleteUserConnections: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The user whose connections to delete, as owner.user_id named them. */
+                readonly user_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The user's connections are deleted */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
