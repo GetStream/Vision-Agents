@@ -2293,6 +2293,26 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/connectors/mcp-events/{token}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive a connection's MCP event
+         * @description Where a connection's MCP server delivers the events an agent config's binding subscribed to, signed with Standard Webhooks (MCP Events, a draft). The path is unauthenticated because the server is not a customer: the token names the subscription, and each delivery is checked against that subscription's own secret, never a provider app's. A verification is answered with its challenge, and an event opens a text conversation from the config.
+         */
+        readonly post: operations["receiveConnectionEvent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/data/changes": {
         readonly parameters: {
             readonly query?: never;
@@ -3542,6 +3562,8 @@ export type components = {
             readonly connection: components["schemas"]["AgentConnectorSelection"];
             /** @description A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_. */
             readonly connector_id: string;
+            /** @description MCP events the binding's fixed connection is subscribed to, each opening a text conversation from the config when it arrives. Subscribed when the connection is next validated. Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an event arrives with no session open. */
+            readonly events?: readonly components["schemas"]["ConnectorBindingEvent"][];
             /** @description The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place. */
             readonly name: string;
             /**
@@ -4380,6 +4402,17 @@ export type components = {
             readonly scopes: readonly string[] | null;
             /** @description What a person does at the provider before the first consent, such as registering an OAuth client. Absent when the manifest says nothing. */
             readonly setup?: components["schemas"]["ConnectorSetup"];
+        };
+        /** @description One MCP event a binding subscribes to on its fixed connection. Each one that arrives opens a text conversation from the config, as the app, with the event's data as the first thing said to it. */
+        readonly ConnectorBindingEvent: {
+            /** @description The event's filters, as its inputSchema describes them. */
+            readonly arguments?: {
+                readonly [key: string]: unknown;
+            };
+            /** @description The event's name, as the server's events/list gives it, such as issue.created. */
+            readonly event: string;
+            /** @description What the agent does with the event when it arrives, added to its instructions for that conversation. */
+            readonly instructions?: string;
         };
         /** @description How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint. */
         readonly ConnectorClient: {
@@ -11758,6 +11791,62 @@ export interface operations {
                 content?: never;
             };
             /** @description The event is over 256 KiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly receiveConnectionEvent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly token: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A verification's challenge, echoed, or an event already taken */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The event is taken, and a conversation is opening for it */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The delivery is not JSON, or not an event this subscription is for */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The delivery is not signed with the subscription's secret */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description There is no such subscription, or its connection or declaration is gone; stop delivering to it */
+            readonly 410: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The delivery is over 256 KiB */
             readonly 413: {
                 headers: {
                     readonly [name: string]: unknown;

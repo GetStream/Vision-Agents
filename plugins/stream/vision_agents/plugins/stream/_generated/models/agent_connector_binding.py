@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.agent_connector_selection import AgentConnectorSelection
+    from ..models.connector_binding_event import ConnectorBindingEvent
     from ..models.connector_tool_grant import ConnectorToolGrant
 
 
@@ -31,6 +32,10 @@ class AgentConnectorBinding:
                 __, so a __ inside the alias or a _ at its end would split it in the wrong place.
             tools (list[ConnectorToolGrant]): The exact tools allowed, each named once. There is no wildcard, and an empty
                 list grants none.
+            events (list[ConnectorBindingEvent] | Unset): MCP events the binding's fixed connection is subscribed to, each
+                opening a text conversation from the config when it arrives. Subscribed when the connection is next validated.
+                Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an
+                event arrives with no session open.
             required (bool | Unset): Whether a session needs this connector. A required one that cannot be opened fails the
                 session; an optional one is left out of it. Default: False.
             timeout_ms (int | Unset): How long one tool call may take, in milliseconds. Omitted, the session's default
@@ -41,6 +46,7 @@ class AgentConnectorBinding:
     connector_id: str
     name: str
     tools: list[ConnectorToolGrant]
+    events: list[ConnectorBindingEvent] | Unset = UNSET
     required: bool | Unset = False
     timeout_ms: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -57,6 +63,13 @@ class AgentConnectorBinding:
             tools_item = tools_item_data.to_dict()
             tools.append(tools_item)
 
+        events: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.events, Unset):
+            events = []
+            for events_item_data in self.events:
+                events_item = events_item_data.to_dict()
+                events.append(events_item)
+
         required = self.required
 
         timeout_ms = self.timeout_ms
@@ -71,6 +84,8 @@ class AgentConnectorBinding:
                 "tools": tools,
             }
         )
+        if events is not UNSET:
+            field_dict["events"] = events
         if required is not UNSET:
             field_dict["required"] = required
         if timeout_ms is not UNSET:
@@ -82,6 +97,9 @@ class AgentConnectorBinding:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_connector_selection import (
             AgentConnectorSelection,
+        )
+        from ..models.connector_binding_event import (
+            ConnectorBindingEvent,
         )
         from ..models.connector_tool_grant import ConnectorToolGrant
 
@@ -99,6 +117,15 @@ class AgentConnectorBinding:
 
             tools.append(tools_item)
 
+        _events = d.pop("events", UNSET)
+        events: list[ConnectorBindingEvent] | Unset = UNSET
+        if _events is not UNSET:
+            events = []
+            for events_item_data in _events:
+                events_item = ConnectorBindingEvent.from_dict(events_item_data)
+
+                events.append(events_item)
+
         required = d.pop("required", UNSET)
 
         timeout_ms = d.pop("timeout_ms", UNSET)
@@ -108,6 +135,7 @@ class AgentConnectorBinding:
             connector_id=connector_id,
             name=name,
             tools=tools,
+            events=events,
             required=required,
             timeout_ms=timeout_ms,
         )

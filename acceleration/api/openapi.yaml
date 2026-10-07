@@ -421,6 +421,12 @@ components:
         connector_id:
           description: 'A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_.'
           type: string
+        events:
+          description: 'MCP events the binding''s fixed connection is subscribed to, each opening a text conversation from the config when it arrives. Subscribed when the connection is next validated. Only a fixed binding may declare events: a session binding''s connection is picked when a session opens, and an event arrives with no session open.'
+          items:
+            $ref: '#/components/schemas/ConnectorBindingEvent'
+          maxItems: 32
+          type: array
         name:
           description: 'The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place.'
           pattern: ^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$
@@ -1945,6 +1951,23 @@ components:
         - scopes
         - client
         - created_at
+      type: object
+    ConnectorBindingEvent:
+      description: One MCP event a binding subscribes to on its fixed connection. Each one that arrives opens a text conversation from the config, as the app, with the event's data as the first thing said to it.
+      properties:
+        arguments:
+          additionalProperties: {}
+          description: The event's filters, as its inputSchema describes them.
+          type: object
+        event:
+          description: The event's name, as the server's events/list gives it, such as issue.created.
+          minLength: 1
+          type: string
+        instructions:
+          description: What the agent does with the event when it arrives, added to its instructions for that conversation.
+          type: string
+      required:
+        - event
       type: object
     ConnectorClient:
       additionalProperties: false
@@ -12013,6 +12036,33 @@ paths:
           $ref: '#/components/responses/InternalError'
       security: []
       summary: Receive a provider app's event
+  /v1/connectors/mcp-events/{token}:
+    post:
+      description: 'Where a connection''s MCP server delivers the events an agent config''s binding subscribed to, signed with Standard Webhooks (MCP Events, a draft). The path is unauthenticated because the server is not a customer: the token names the subscription, and each delivery is checked against that subscription''s own secret, never a provider app''s. A verification is answered with its challenge, and an event opens a text conversation from the config.'
+      operationId: receiveConnectionEvent
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: A verification's challenge, echoed, or an event already taken
+        "202":
+          description: The event is taken, and a conversation is opening for it
+        "400":
+          description: The delivery is not JSON, or not an event this subscription is for
+        "401":
+          description: The delivery is not signed with the subscription's secret
+        "410":
+          description: There is no such subscription, or its connection or declaration is gone; stop delivering to it
+        "413":
+          description: The delivery is over 256 KiB
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Receive a connection's MCP event
   /v1/data/changes:
     get:
       description: |-

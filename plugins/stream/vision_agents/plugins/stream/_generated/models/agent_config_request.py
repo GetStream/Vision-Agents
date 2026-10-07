@@ -46,6 +46,9 @@ class AgentConfigRequest:
             connection that is not the app's own or is to another connector, is refused.
         dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
             /v1/dispatch. Omitted settings are disabled.
+        episode_cards (bool | Unset): Whether each phone call under this agent writes an episode card into the caller's
+            omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. Off by
+            default, and then a call runs as it always did. Left out on an update, the stored setting stays.
         greeting (str | Unset):
         guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then
             the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty
@@ -105,6 +108,7 @@ class AgentConfigRequest:
     channels: AgentChannels | Unset = UNSET
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
+    episode_cards: bool | Unset = UNSET
     greeting: str | Unset = UNSET
     guardrail: str | Unset = UNSET
     harness: Harness | Unset = UNSET
@@ -161,6 +165,8 @@ class AgentConfigRequest:
         dispatch: dict[str, Any] | Unset = UNSET
         if not isinstance(self.dispatch, Unset):
             dispatch = self.dispatch.to_dict()
+
+        episode_cards = self.episode_cards
 
         greeting = self.greeting
 
@@ -262,6 +268,8 @@ class AgentConfigRequest:
             field_dict["connectors"] = connectors
         if dispatch is not UNSET:
             field_dict["dispatch"] = dispatch
+        if episode_cards is not UNSET:
+            field_dict["episode_cards"] = episode_cards
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
         if guardrail is not UNSET:
@@ -377,6 +385,8 @@ class AgentConfigRequest:
             dispatch = UNSET
         else:
             dispatch = AgentDispatch.from_dict(_dispatch)
+
+        episode_cards = d.pop("episode_cards", UNSET)
 
         greeting = d.pop("greeting", UNSET)
 
@@ -497,6 +507,7 @@ class AgentConfigRequest:
             channels=channels,
             connectors=connectors,
             dispatch=dispatch,
+            episode_cards=episode_cards,
             greeting=greeting,
             guardrail=guardrail,
             harness=harness,

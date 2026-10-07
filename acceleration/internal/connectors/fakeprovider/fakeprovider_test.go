@@ -689,6 +689,49 @@ func (s *FakeProviderSuite) TestSignedCallbackIsSignedWithTheClientSecret() {
 	s.NotEqual(query.Get("hmac"), fakeprovider.Sign(query, srv.ClientSecret), "a changed parameter breaks the signature")
 }
 
+// MCPEvents offers events, checks the callback with a challenge signed with the secret the
+// client supplied before it subscribes, and signs each delivery with that secret (the draft,
+// experimental-ext-triggers-events at 6682596d, «Webhook Security»; Standard Webhooks).
+func (s *FakeProviderSuite) TestMCPEventsVerifiesTheCallbackThenDeliversSignedWithTheSubscriptionsSecret() {
+	srv := fakeprovider.New(s.T(), fakeprovider.MCPEvents)
+	access := s.connect(srv, nil)["access_token"].(string)
+	secret := fakeprovider.NewWebhookSecret()
+	key, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(secret, "whsec_"))
+	s.Require().NoError(err)
+	var got []map[string]any
+	callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mac := hmac.New(sha256.New, key)
+		mac.Write([]byte(r.Header.Get("webhook-id") + "." + r.Header.Get("webhook-timestamp") + "."))
+		mac.Write(body)
+		if r.Header.Get("webhook-signature") != "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var envelope map[string]any
+		s.NoError(json.Unmarshal(body, &envelope))
+		got = append(got, envelope)
+		_ = json.NewEncoder(w).Encode(map[string]any{"challenge": envelope["challenge"]})
+	}))
+	defer callback.Close()
+	meta := map[string]any{"io.modelcontextprotocol/protocolVersion": "2026-07-28"}
+
+	discover := s.rpc(srv, access, "2026-07-28", "server/discover", map[string]any{"_meta": meta})
+	subscribed := s.rpc(srv, access, "2026-07-28", "events/subscribe", map[string]any{"_meta": meta, "name": "issue.created",
+		"arguments": map[string]any{}, "delivery": map[string]any{"mode": "webhook", "url": callback.URL, "secret": secret}})
+	answered := srv.Emit("issue.created", map[string]any{"title": "broken"})
+
+	s.Contains(discover["result"].(map[string]any)["capabilities"], "events")
+	id := subscribed["result"].(map[string]any)["id"].(string)
+	s.Equal(map[string]int{id: http.StatusOK}, answered)
+	s.Require().Len(got, 2)
+	s.Equal("verification", got[0]["type"])
+	s.Equal("issue.created", got[1]["name"])
+	plain := fakeprovider.New(s.T())
+	without := s.rpc(plain, s.connect(plain, nil)["access_token"].(string), "2026-07-28", "server/discover", map[string]any{"_meta": meta})
+	s.NotContains(without["result"].(map[string]any)["capabilities"], "events", "without the personality there are no events")
+}
+
 func (s *FakeProviderSuite) TestTheMCPEndpointServesTheModernAndTheLegacyEra() {
 	srv := fakeprovider.New(s.T())
 	access := s.connect(srv, nil)["access_token"].(string)

@@ -53,6 +53,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
@@ -233,6 +234,14 @@ type RouterSuite struct {
 	// suites'.
 	forwardHTTP *http.Client
 	forwarder   *eventforward.Forwarder
+	// mcpEventsOn, set by a suite about MCP events before it starts the harness, gives the
+	// router an MCP events service (internal/mcpevents) whose callbacks are the suite's own
+	// router, reached on loopback over http. Off leaves it absent, as a deployment with
+	// connectors off has, and runs no worker beside the other suites'.
+	mcpEventsOn bool
+	mcpEvents   *mcpevents.Service
+	// transports is the connections' outbound clients the router was built with.
+	transports *core.Transports
 	// resolver is the router's connector resolver over the suite's store and sealer, with
 	// connectors' schemes, set by SetupSuite.
 	resolver *resolver.Resolver
@@ -365,6 +374,7 @@ func (s *RouterSuite) SetupSuite() {
 	transports, err := core.NewTransports(core.TransportsConfig{Resolver: s.resolver, Timeout: suiteConnectorTimeout,
 		NewClient: loopbackClients(s.connectorHTTP)})
 	s.Require().NoError(err)
+	s.transports = transports
 	sessions := s.sessionManager(streams, directory, session.Connectors{Registry: s.connectors, Transports: transports,
 		Consents: ConnectorConsents(pgStore, s.connectors, s.sealer, s.publicURL)}, logger)
 	// A nil client reaches public hosts alone, and every auth server here is a local one.
@@ -396,6 +406,19 @@ func (s *RouterSuite) SetupSuite() {
 		s.Require().NoError(err)
 		s.forwarder.Start()
 		s.T().Cleanup(s.forwarder.Close)
+	}
+
+	if s.mcpEventsOn {
+		s.mcpEvents, err = mcpevents.New(mcpevents.Options{
+			Store: pgStore, Sessions: sessions, Registry: s.connectors, Transports: transports, Secrets: s.sealer,
+			PublicURL: "http://" + listener.Listener.Addr().String(), Logger: logger,
+			// A second, not the production minute, so a test's look by this worker comes and
+			// saves within its window, and is longer than an attempt against the fake.
+			Lease: time.Second,
+		})
+		s.Require().NoError(err)
+		s.mcpEvents.Start()
+		s.T().Cleanup(s.mcpEvents.Close)
 	}
 
 	server, err := NewServer(Options{
@@ -443,6 +466,7 @@ func (s *RouterSuite) SetupSuite() {
 		ConnectorEventSecrets: s.eventSecrets,
 		ChannelBridge:         s.bridge,
 		EventForwarder:        s.forwarder,
+		MCPEvents:             s.mcpEvents,
 		SlackApps:             s.slackApps,
 		OperatorProviderApps:  s.operatorApps,
 	})
