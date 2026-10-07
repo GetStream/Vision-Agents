@@ -13,8 +13,9 @@
 #   [as]  GET https://accounts.google.com/.well-known/oauth-authorization-server at
 #         2026-10-07T14:28:24Z, as google_calendar.yaml quotes it.
 id: google_docs
-# A new revision for any change to what this file says; see AGENTS.md.
-revision: 1
+# A new revision for any change to what this file says; see AGENTS.md. 2 stores rotating:
+# false, which revision 1 was stored without (refresh.rotating became a pointer).
+revision: 2
 # [plugin]
 name: Google Docs
 category: Documents

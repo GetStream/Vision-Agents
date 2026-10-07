@@ -16,8 +16,9 @@
 #         [client_secret_post, client_secret_basic], code_challenge_methods_supported [plain,
 #         S256], authorization_response_iss_parameter_supported true, no registration_endpoint.
 id: google_calendar
-# A new revision for any change to what this file says; see AGENTS.md.
-revision: 1
+# A new revision for any change to what this file says; see AGENTS.md. 2 stores rotating:
+# false, which revision 1 was stored without (refresh.rotating became a pointer).
+revision: 2
 # [plugin]
 name: Google Calendar
 category: Scheduling
