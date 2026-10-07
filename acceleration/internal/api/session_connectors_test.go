@@ -164,6 +164,38 @@ func (s *SessionConnectorsSuite) TestAForkForAnotherUserDoesNotUseTheParentsConn
 	s.Equal("connection_unavailable", left["reason"])
 }
 
+// TestAForkWhoseConfigCannotBeReadFails: the fork does not go ahead without the bindings it
+// could not read. The config's row is broken so that reading it fails.
+func (s *SessionConnectorsSuite) TestAForkWhoseConfigCannotBeReadFails() {
+	config := s.config()
+	opened := s.client.createSession(s.session(config, nil))
+	s.storedSelections(opened.Id)
+	s.client.stopSession(opened.Id)
+	_, err := s.store.DB().ExecContext(context.Background(),
+		`UPDATE agent_configs SET connectors = '{"not": "a list"}'::jsonb WHERE id = ?`, config)
+	s.Require().NoError(err)
+
+	status := s.client.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/fork", ForkSessionRequest{Messages: pointerTo(false)}, nil)
+
+	s.Equal(http.StatusInternalServerError, status)
+}
+
+// TestAForkOfASessionWhoseConfigWasDeletedGoesAheadAsBefore: a config that is gone binds
+// nothing, and its fork is made as one was before connectors existed.
+func (s *SessionConnectorsSuite) TestAForkOfASessionWhoseConfigWasDeletedGoesAheadAsBefore() {
+	config := s.config()
+	opened := s.client.createSession(s.session(config, nil))
+	s.storedSelections(opened.Id)
+	s.client.stopSession(opened.Id)
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+config, nil, nil))
+
+	var forked Session
+	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/fork",
+		ForkSessionRequest{Messages: pointerTo(false)}, &forked))
+
+	s.Equal(opened.Id, value(forked.ForkedFrom))
+}
+
 // TestASlackThreadSessionUsesTheAppsConnectionsOnly: everyone in the Slack thread writes in
 // its thread channel, so a session held there uses the app's connection and never one
 // person's, even one the request chose. The model's call goes through the app's binding. The

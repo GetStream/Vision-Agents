@@ -93,12 +93,18 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	}
 	// The connector bindings are the config's as it is now, not as the parent was opened
 	// with. The session re-resolves the parent's selections against them and against the
-	// caller asking for the fork, and drops the ones the config no longer declares.
+	// caller asking for the fork, and drops the ones the config no longer declares. A config
+	// deleted since binds nothing, and its fork goes ahead as a fork did before bindings
+	// existed; a config that cannot be read fails the fork rather than dropping its bindings.
 	if config == nil {
 		spec.ConnectorBindings = nil
 		if s.store != nil && spec.ConfigID != "" {
-			if current, err := s.store.AgentConfig(ctx, customerID, spec.ConfigID); err == nil {
+			current, err := s.store.AgentConfig(ctx, customerID, spec.ConfigID)
+			switch {
+			case err == nil:
 				spec.ConnectorBindings = current.Connectors
+			case !errors.Is(err, store.ErrNoAgentConfig):
+				return nil, err
 			}
 		}
 	}
