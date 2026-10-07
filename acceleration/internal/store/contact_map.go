@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -66,4 +67,47 @@ func (s *Store) MapContact(ctx context.Context, entry *ContactMapEntry) (created
 		return false, stack.Wrap(fmt.Errorf("store: map contact: %w", err))
 	}
 	return entry.ConversationID == proposed, nil
+}
+
+// ErrNoContact says the contact map holds no row for a person: the agent has had no episode
+// with them, so they have no omni-channel and no cards.
+var ErrNoContact = errors.New("store: no contact map row for this person")
+
+// Contact is the contact map row of an address, for one agent of a customer. Unlike
+// MapContact it never makes one: reading a person's cards writes nothing.
+func (s *Store) Contact(ctx context.Context, customerID, agentConfigID, kind, address string) (ContactMapEntry, error) {
+	var entry ContactMapEntry
+	err := s.db.NewSelect().Model(&entry).
+		Where("customer_id = ?", customerID).Where("agent_config_id = ?", agentConfigID).
+		Where("kind = ?", kind).Where("address = ?", address).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ContactMapEntry{}, stack.Wrap(ErrNoContact)
+	}
+	if err != nil {
+		return ContactMapEntry{}, stack.Wrap(fmt.Errorf("store: contact: %w", err))
+	}
+	return entry, nil
+}
+
+// ThreadContact is the contact map row of the person a thread channel's episodes are with,
+// for one agent of a customer: the one who started the thread, since OpenEpisode keeps the
+// first message's episode for the later ones. The newest episode of the thread decides. A
+// thread with no episode, or only one of another customer or agent, has none.
+func (s *Store) ThreadContact(ctx context.Context, customerID, agentConfigID, threadChannel string) (ContactMapEntry, error) {
+	var entry ContactMapEntry
+	err := s.db.NewSelect().Model(&entry).
+		Join("JOIN episodes AS ep ON ep.contact_id = cm.id").
+		Where("ep.customer_id = ?", customerID).Where("ep.thread_channel = ?", threadChannel).
+		Where("ep.session_id IS NULL").
+		Where("cm.customer_id = ?", customerID).Where("cm.agent_config_id = ?", agentConfigID).
+		OrderExpr("ep.started_at DESC").Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ContactMapEntry{}, stack.Wrap(ErrNoContact)
+	}
+	if err != nil {
+		return ContactMapEntry{}, stack.Wrap(fmt.Errorf("store: thread contact: %w", err))
+	}
+	return entry, nil
 }

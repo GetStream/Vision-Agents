@@ -23,6 +23,10 @@ const (
 // adds the statuses that close it.
 const episodeInProgress = "in_progress"
 
+// EpisodeSummarized is an episode whose card holds its summary (20261007042100_episodes.sql;
+// T55 sets it). A card in any other status is read by the last lines of its thread channel.
+const EpisodeSummarized = "summarized"
+
 // Episode is one call, or one run of messages on one external thread, and its card in the
 // person's omni-channel (20261007042100_episodes.sql).
 type Episode struct {
@@ -94,4 +98,61 @@ func (s *Store) OpenEpisode(ctx context.Context, episode *Episode) (opened bool,
 		return false, stack.Wrap(fmt.Errorf("store: open episode: %w", err))
 	}
 	return false, nil
+}
+
+// EpisodeCard is an episode as a session reads its card: the episode, and until when its
+// thread channel's lines are its own.
+type EpisodeCard struct {
+	Episode `bun:",extend"`
+	// Until is the earliest of when the episode ended, when its call's session closed and
+	// when the next episode in its thread channel started. A call channel can hold several
+	// callers' calls (episodes_call_session), so a call's lines end there. Nil while none
+	// of them is known.
+	Until *time.Time `bun:"until,scanonly"`
+}
+
+// CardsQuery is whose episode cards a session reads, and which of them it leaves out
+// because it reads them word for word already.
+type CardsQuery struct {
+	CustomerID    string
+	AgentConfigID string
+	// ConversationID is the person's omni-channel: every contact map row of the customer
+	// and agent that points at it is the person, whatever they came in on.
+	ConversationID string
+	// ExceptThread and ExceptSession leave out the session's own thread channel and its
+	// own call's episode. Empty leaves out nothing.
+	ExceptThread  string
+	ExceptSession string
+	Limit         int
+}
+
+// EpisodeCards are the newest episodes of one person, for one agent of a customer: those of
+// the contact map rows of that customer and agent that point at the person's omni-channel,
+// never another customer's or another agent's.
+func (s *Store) EpisodeCards(ctx context.Context, query CardsQuery) ([]EpisodeCard, error) {
+	if query.CustomerID == "" || query.AgentConfigID == "" || query.ConversationID == "" || query.Limit <= 0 {
+		return nil, stack.Wrap(errors.New("store: a customer, an agent config, an omni-channel and a limit are required"))
+	}
+	var cards []EpisodeCard
+	err := s.db.NewSelect().Model(&cards).
+		ColumnExpr("ep.*").
+		// LEAST ignores NULLs, so Until is nil only when all three are.
+		ColumnExpr(`LEAST(ep.ended_at, asn.closed_at, (SELECT min(nx.started_at) FROM episodes AS nx
+			WHERE nx.customer_id = ep.customer_id AND nx.thread_channel = ep.thread_channel
+			AND nx.started_at > ep.started_at)) AS until`).
+		Join("JOIN contact_map AS cm ON cm.id = ep.contact_id").
+		Join("LEFT JOIN agent_sessions AS asn ON asn.id = ep.session_id AND asn.customer_id = ep.customer_id").
+		Where("ep.customer_id = ?", query.CustomerID).
+		Where("cm.customer_id = ?", query.CustomerID).
+		Where("cm.agent_config_id = ?", query.AgentConfigID).
+		Where("cm.conversation_id = ?", query.ConversationID).
+		Where("ep.thread_channel <> ?", query.ExceptThread).
+		Where("ep.session_id IS DISTINCT FROM ?", query.ExceptSession).
+		OrderExpr("ep.started_at DESC").
+		Limit(query.Limit).
+		Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: episode cards: %w", err))
+	}
+	return cards, nil
 }
