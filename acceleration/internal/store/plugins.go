@@ -267,6 +267,62 @@ func (s *Store) DeletePluginClient(ctx context.Context, customerID, configID, pl
 	return nil
 }
 
+// EveryPluginConnection reads every live plugin login of the customer, or of every customer
+// when customerID is empty, oldest first, for router plugins migrate (T61 in
+// acceleration/docs/connectors/subtasks.md on connectors/planning). It only reads.
+func (s *Store) EveryPluginConnection(ctx context.Context, customerID string) ([]PluginConnection, error) {
+	var conns []PluginConnection
+	query := s.db.NewSelect().Model(&conns)
+	if customerID != "" {
+		query = query.Where("customer_id = ?", customerID)
+	}
+	err := query.
+		Where("deleted_at IS NULL").
+		Order("customer_id", "config_id", "created_at", "id").
+		Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: every plugin connection: %w", err))
+	}
+	return conns, nil
+}
+
+// EveryPluginClient reads every OAuth client set on a config for a plugin, of the customer or,
+// when customerID is empty, of every customer, for router plugins migrate. It only reads.
+func (s *Store) EveryPluginClient(ctx context.Context, customerID string) ([]PluginClient, error) {
+	var clients []PluginClient
+	query := s.db.NewSelect().Model(&clients)
+	if customerID != "" {
+		query = query.Where("customer_id = ?", customerID)
+	}
+	err := query.
+		Order("customer_id", "plugin_id", "config_id").
+		Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: every plugin client: %w", err))
+	}
+	return clients, nil
+}
+
+// AgentConfigsNamingPlugins reads every live agent config of the customer, or of every
+// customer when customerID is empty, that names a plugin in agent_plugins or user_plugins or
+// subscribes to a plugin event, for router plugins migrate. It only reads.
+func (s *Store) AgentConfigsNamingPlugins(ctx context.Context, customerID string) ([]AgentConfig, error) {
+	var configs []AgentConfig
+	query := s.db.NewSelect().Model(&configs)
+	if customerID != "" {
+		query = query.Where("customer_id = ?", customerID)
+	}
+	err := query.
+		Where("deleted_at IS NULL").
+		Where("(jsonb_array_length(agent_plugins) > 0 OR jsonb_array_length(user_plugins) > 0 OR jsonb_array_length(plugin_events) > 0)").
+		Order("customer_id", "id").
+		Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: agent configs naming plugins: %w", err))
+	}
+	return configs, nil
+}
+
 func (s *Store) pluginConnection(ctx context.Context, customerID, configID, userID, pluginID string) (PluginConnection, error) {
 	var conn PluginConnection
 	err := s.db.NewSelect().Model(&conn).

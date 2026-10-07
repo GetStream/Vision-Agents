@@ -197,6 +197,44 @@ func ConnectionLimit(asked int) int {
 // must be one the customer can see. The registry is passed in rather than held by the store, so which
 // schemes exist is decided by whoever built it, and a test can register its own.
 func (s *Store) CreateConnectorConnection(ctx context.Context, registry core.Registry, connection *ConnectorConnection) error {
+	return s.createConnection(ctx, registry, connection, newID())
+}
+
+// ErrConnectorConnectionExists says a row, live or deleted, already has the id a
+// CreateConnectorConnectionWithID was given.
+var ErrConnectorConnectionExists = errors.New("store: a connector connection already has this id")
+
+// CreateConnectorConnectionWithID is CreateConnectorConnection under an id the caller chose,
+// for router plugins migrate, which derives it from the plugin login it moves so that a
+// second run finds what the first made (T61 in acceleration/docs/connectors/subtasks.md on
+// connectors/planning). An id any row already has, deleted or not, is
+// ErrConnectorConnectionExists and writes nothing.
+func (s *Store) CreateConnectorConnectionWithID(ctx context.Context, registry core.Registry, connection *ConnectorConnection, id string) error {
+	if id == "" {
+		return stack.Wrap(errors.New("store: a connection id is required"))
+	}
+	return s.createConnection(ctx, registry, connection, id)
+}
+
+// ConnectorConnectionEvenDeleted returns the customer's connection with id, deleted or not,
+// so router plugins migrate can tell a connection it made and someone deleted since from one
+// it never made.
+func (s *Store) ConnectorConnectionEvenDeleted(ctx context.Context, customerID, id string) (ConnectorConnection, error) {
+	var connection ConnectorConnection
+	err := s.db.NewSelect().Model(&connection).
+		Where("customer_id = ?", customerID).
+		Where("id = ?", id).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ConnectorConnection{}, stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorConnection, id))
+	}
+	if err != nil {
+		return ConnectorConnection{}, stack.Wrap(fmt.Errorf("store: connector connection: %w", err))
+	}
+	return connection, nil
+}
+
+func (s *Store) createConnection(ctx context.Context, registry core.Registry, connection *ConnectorConnection, id string) error {
 	if connection.CustomerID == "" || connection.ConnectorID == "" {
 		return stack.Wrap(errors.New("store: a customer and a connector id are required"))
 	}
@@ -234,7 +272,7 @@ func (s *Store) CreateConnectorConnection(ctx context.Context, registry core.Reg
 
 	// Truncated to what Postgres keeps, so the row handed back is the row a read returns.
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	connection.ID = newID()
+	connection.ID = id
 	connection.Status = ConnectionPending
 	connection.Revision = 1
 	connection.CredentialsSealed = []byte{}
@@ -254,7 +292,13 @@ func (s *Store) CreateConnectorConnection(ctx context.Context, registry core.Reg
 	if connection.CachedTools == nil {
 		connection.CachedTools = []ConnectorTool{}
 	}
-	if _, err := s.db.NewInsert().Model(connection).Exec(ctx); err != nil {
+	_, err = s.db.NewInsert().Model(connection).Exec(ctx)
+	// The primary key, named by Postgres's default for a table's (CREATE TABLE in
+	// 20261002193000_connector_connections.sql names none).
+	if constraint(err) == "connector_connections_pkey" {
+		return stack.Wrap(fmt.Errorf("%w: %s", ErrConnectorConnectionExists, id))
+	}
+	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: create connector connection: %w", err))
 	}
 	return nil
