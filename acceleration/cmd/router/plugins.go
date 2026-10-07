@@ -16,9 +16,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginmigrate"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-const pluginsUsage = `usage: router plugins migrate [--apply] [--customer id]
+const pluginsUsage = `usage: router plugins migrate [--apply] [--customer id] [--include-rotating]
 
   migrate   move the plugin rows onto connectors: each app's plugin OAuth client
             (agent_plugin_clients) onto connector_oauth_clients, each plugin login
@@ -31,6 +32,12 @@ const pluginsUsage = `usage: router plugins migrate [--apply] [--customer id]
              a binding on a deployment with connectors off would leave the agent
              without the plugin's tools.
     --customer  move only this app's rows (its customer id). Empty moves every app's.
+    --include-rotating  also move a grant whose connector rotates refresh tokens. The
+             plugin row keeps its copy, and whichever side renews first retires the
+             other's, so they are skipped unless asked for.
+
+  It never migrates the database or seeds the built-in connectors: a database behind
+  this binary is refused, and a connector not seeded yet is a skipped row.
 `
 
 // runPlugins looks after the plugin rows. Only a person runs it: nothing in serve calls it.
@@ -44,24 +51,39 @@ func runPlugins(args []string, settings config.Config, logger *slog.Logger) erro
 	flags := flag.NewFlagSet("plugins migrate", flag.ContinueOnError)
 	apply := flags.Bool("apply", false, "write; without it the plan is printed and nothing is written")
 	customer := flags.String("customer", "", "move only this app's rows; empty moves every app's")
+	includeRotating := flags.Bool("include-rotating", false, "also move grants of connectors that rotate refresh tokens")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
-	return migratePlugins(context.Background(), settings, logger, *apply, *customer, os.Stdout)
+	return migratePlugins(context.Background(), settings, logger, pluginmigrate.Options{Customer: *customer, IncludeRotating: *includeRotating}, *apply, os.Stdout)
 }
 
 // migratePlugins builds what the router builds for connectors, over settings' database and
 // keyring, and runs the move once.
-func migratePlugins(ctx context.Context, settings config.Config, logger *slog.Logger, apply bool, customer string, out io.Writer) error {
+func migratePlugins(ctx context.Context, settings config.Config, logger *slog.Logger, scope pluginmigrate.Options, apply bool, out io.Writer) error {
 	if apply && !settings.Connectors.Enabled {
 		return errors.New("router plugins migrate --apply needs connectors.enabled: a binding wins over " +
 			"its plugin entry, so with connectors off a session would have neither")
 	}
-	pgStore, err := openStore(ctx, settings)
+	// Opened, not openStore: that migrates and seeds the built-ins, and this command writes
+	// nothing a dry run does not show, so a binary newer than the database must not move its
+	// schema. serve does that, when this build is deployed.
+	if settings.Postgres.DSN == "" {
+		return errors.New("this needs a database: set postgres.dsn")
+	}
+	pgStore, err := store.Open(settings.Postgres.DSN)
 	if err != nil {
 		return err
 	}
 	defer pgStore.Close()
+	pending, err := pgStore.PendingMigrations(ctx)
+	if err != nil {
+		return err
+	}
+	if len(pending) > 0 {
+		return fmt.Errorf("the database is behind this binary: %d migrations not applied (the newest %d); "+
+			"deploy this build first, which migrates it, then run this again", len(pending), pending[len(pending)-1])
+	}
 	secrets, err := loadKeyring(settings, "router plugins migrate needs")
 	if err != nil {
 		return err
@@ -95,17 +117,18 @@ func migratePlugins(ctx context.Context, settings config.Config, logger *slog.Lo
 		return err
 	}
 	report, err := pluginmigrate.Run(ctx, pluginmigrate.Options{
-		Customer:       customer,
-		Store:          pgStore,
-		Configs:        configs,
-		Registry:       registry,
-		Credentials:    credentials,
-		Transports:     transports,
-		HTTP:           egress.NewClient(connectorHTTPTimeout, nil),
-		PublicEndpoint: egress.ValidatePublicHTTPSURL,
-		Clients:        clients,
-		PluginClients:  session.PluginClients(pgStore, secrets),
-		Getenv:         os.Getenv,
+		Customer:        scope.Customer,
+		IncludeRotating: scope.IncludeRotating,
+		Store:           pgStore,
+		Configs:         configs,
+		Registry:        registry,
+		Credentials:     credentials,
+		Transports:      transports,
+		HTTP:            egress.NewClient(connectorHTTPTimeout, nil),
+		PublicEndpoint:  egress.ValidatePublicHTTPSURL,
+		Clients:         clients,
+		PluginClients:   session.PluginClients(pgStore, secrets),
+		Getenv:          os.Getenv,
 		SealClientSecret: func(customerID, connectorID, secret string) ([]byte, int, error) {
 			return api.SealConnectorOAuthClientSecret(secrets, customerID, connectorID, secret)
 		},

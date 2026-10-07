@@ -5,13 +5,13 @@ package api
 import (
 	"bytes"
 	"context"
-
+	"errors"
 	"net/http"
 	"strconv"
+	"sync"
 	"testing"
-	"time"
-
 	"testing/fstest"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
@@ -55,7 +55,7 @@ func (s *PluginMigrateSuite) SetupSuite() {
 	s.connectorHTTP = s.provider.Client()
 	s.RouterSuite.SetupSuite()
 	s.token = issuedToken(&s.RouterSuite, s.provider)
-	s.seedConnector()
+	s.seedConnectors()
 }
 
 func (s *PluginMigrateSuite) SetupTest() {
@@ -249,6 +249,77 @@ func (s *PluginMigrateSuite) TestTheNewestClientOfAnAppWinsAndTheOtherIsReported
 	s.Equal(pluginmigrate.Written, s.row(report, pluginmigrate.KindConnection, current).Action)
 }
 
+// TestARotatingConnectorsGrantIsSkippedUnlessAskedFor: the plugin row keeps its copy of the
+// refresh token, so a grant to a connector whose refresh tokens rotate is skipped with why,
+// in a dry run and a real one, until --include-rotating asks for it.
+func (s *PluginMigrateSuite) TestARotatingConnectorsGrantIsSkippedUnlessAskedFor() {
+	config := s.config([]store.PluginEntry{{Name: rotatingPlugin}}, nil)
+	login := s.loginTo(config, "", rotatingPlugin, s.provider.ClientID, s.provider.URL+fakeprovider.PathToken, store.PluginConnected)
+
+	dry, real := s.run(false), s.run(true)
+
+	for _, report := range []pluginmigrate.Report{dry, real} {
+		row := s.row(report, pluginmigrate.KindConnection, login)
+		s.Equal(pluginmigrate.Skipped, row.Action)
+		s.Contains(row.Note, "connector "+rotatingPlugin+" rotates refresh tokens")
+		s.Contains(row.Note, "--include-rotating")
+	}
+	s.Zero(s.count("SELECT count(*) FROM connector_connections WHERE customer_id = ?", s.customerID()))
+
+	asked := s.runWith(true, true)
+
+	s.Equal(pluginmigrate.Written, s.row(asked, pluginmigrate.KindConnection, login).Action)
+	s.Equal(pluginmigrate.Written, s.row(asked, pluginmigrate.KindBinding, config+" agent_plugins").Action)
+}
+
+// TestASkippedLoginNamesTheEnvTheConnectorReads: the plugin read its operator client from
+// SHAREDCRM_MCP_*, the connector reads SHARED_MCP_*, and nothing set the second, so the row
+// says which to set, as for the four Google connectors.
+func (s *PluginMigrateSuite) TestASkippedLoginNamesTheEnvTheConnectorReads() {
+	config := s.config([]store.PluginEntry{{Name: sharedEnvPlugin}}, nil)
+	login := s.loginTo(config, "", sharedEnvPlugin, "plugin-operator-client", s.provider.URL+fakeprovider.PathToken, store.PluginConnected)
+
+	report := s.run(false)
+
+	row := s.row(report, pluginmigrate.KindConnection, login)
+	s.Equal(pluginmigrate.Skipped, row.Action)
+	s.Contains(row.Note, "issued to client plugin-operator-client")
+	s.Contains(row.Note, "the plugin read SHAREDCRM_MCP_CLIENT_ID and the connector reads SHARED_MCP_CLIENT_ID")
+}
+
+// TestTwoRunsAtOnceMoveALoginOnce: two --apply runs started together make one connection and
+// one binding, and only one of them reports writing each.
+func (s *PluginMigrateSuite) TestTwoRunsAtOnceMoveALoginOnce() {
+	config := s.config([]store.PluginEntry{{Name: movedPlugin}}, nil)
+	s.pluginClient(config, s.provider.ClientID, s.provider.ClientSecret)
+	login := s.login(config, "", s.provider.ClientID)
+	options := s.options(false)
+
+	reports := make([]pluginmigrate.Report, 2)
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	for i := range reports {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			reports[i], errs[i] = pluginmigrate.Run(context.Background(), options, true)
+		}()
+	}
+	wg.Wait()
+
+	s.Require().NoError(errors.Join(errs...))
+	written := 0
+	for _, report := range reports {
+		written += report.Count(pluginmigrate.KindConnection, pluginmigrate.Written)
+	}
+	s.Equal(1, written, "%v", reports)
+	s.Equal(1, s.count("SELECT count(*) FROM connector_connections WHERE customer_id = ?", s.customerID()))
+	s.Len(s.storedConfig(config).Connectors, 1)
+	moved, err := s.store.ConnectorConnection(context.Background(), s.customerID(), pluginmigrate.MovedConnectionID(login))
+	s.Require().NoError(err)
+	s.Equal(store.ConnectionConnected, moved.Status)
+}
+
 // TestNothingConfiguredMovesNothing: an app with no plugin rows is a run with no row and no
 // write, real or dry.
 func (s *PluginMigrateSuite) TestNothingConfiguredMovesNothing() {
@@ -262,35 +333,47 @@ func (s *PluginMigrateSuite) TestNothingConfiguredMovesNothing() {
 	s.Equal(before, s.connectorRows())
 }
 
-// seedConnector stores the built-in connector crm at the fake, as the next revision so a
-// rerun of the suite against the same database stores its own fake's address.
-func (s *PluginMigrateSuite) seedConnector() {
+// The other two plugins of the suite's catalog, each a connector at the fake as crm is: one
+// whose refresh tokens rotate, and one whose operator client is read from a shared env.
+const (
+	rotatingPlugin  = "rotatingcrm"
+	sharedEnvPlugin = "sharedcrm"
+)
+
+// seedConnectors stores the suite's built-in connectors at the fake.
+func (s *PluginMigrateSuite) seedConnectors() {
+	s.seedConnector(movedPlugin, "client:\n  registration: [customer, dcr]\n")
+	s.seedConnector(rotatingPlugin, "client:\n  registration: [customer, dcr]\nrefresh:\n  rotating: true\n")
+	s.seedConnector(sharedEnvPlugin, "client:\n  registration: [operator]\n  env: SHARED\n")
+}
+
+// seedConnector stores the built-in connector id at the fake, as the next revision so a rerun
+// of the suite against the same database stores its own fake's address.
+func (s *PluginMigrateSuite) seedConnector(id, client string) {
 	ctx := context.Background()
 	revision := 1
-	latest, err := s.store.LatestBuiltinConnectorDefinition(ctx, movedPlugin)
+	latest, err := s.store.LatestBuiltinConnectorDefinition(ctx, id)
 	if err == nil {
 		revision = latest.Revision + 1
 	}
 	manifest := `
-id: ` + movedPlugin + `
+id: ` + id + `
 revision: ` + strconv.Itoa(revision) + `
 name: CRM
 endpoints:
   mcp: ` + s.provider.URL + fakeprovider.PathMCP + `
 schemes: [oauth2_code]
-client:
-  registration: [customer, dcr]
-sources:
+` + client + `sources:
   - kind: mcp
     endpoint: mcp
 `
-	s.Require().NoError(s.store.SeedConnectorDefinitions(ctx, fstest.MapFS{movedPlugin + ".yaml": {Data: []byte(manifest)}}))
+	s.Require().NoError(s.store.SeedConnectorDefinitions(ctx, fstest.MapFS{id + ".yaml": {Data: []byte(manifest)}}))
 }
 
-// catalog is the plugin catalog with crm in it, a hosted MCP server at the fake.
+// catalog is the plugin catalog with the suite's three in it, hosted MCP servers at the fake.
 func (s *PluginMigrateSuite) catalog(id string) (plugins.Plugin, bool) {
-	if id == movedPlugin {
-		return plugins.Plugin{ID: movedPlugin, Name: "CRM", URL: s.provider.URL + fakeprovider.PathMCP, Auth: "oauth"}, true
+	if id == movedPlugin || id == rotatingPlugin || id == sharedEnvPlugin {
+		return plugins.Plugin{ID: id, Name: "CRM", URL: s.provider.URL + fakeprovider.PathMCP, Auth: "oauth"}, true
 	}
 	return plugins.Lookup(id)
 }
@@ -303,13 +386,25 @@ func (s *PluginMigrateSuite) clients(ctx context.Context, ref core.ConnectionRef
 
 // run is router plugins migrate over the test's app, as cmd/router builds it.
 func (s *PluginMigrateSuite) run(apply bool) pluginmigrate.Report {
+	return s.runWith(apply, false)
+}
+
+// runWith is run, moving grants of rotating connectors when includeRotating.
+func (s *PluginMigrateSuite) runWith(apply, includeRotating bool) pluginmigrate.Report {
+	report, err := pluginmigrate.Run(context.Background(), s.options(includeRotating), apply)
+	s.Require().NoError(err)
+	return report
+}
+
+// options are the command's, over the suite's router and the test's app.
+func (s *PluginMigrateSuite) options(includeRotating bool) pluginmigrate.Options {
 	credentials, err := pgsealed.New(s.store, s.sealer)
 	s.Require().NoError(err)
 	transports, err := core.NewTransports(core.TransportsConfig{Resolver: s.resolver, Timeout: suiteConnectorTimeout,
 		NewClient: loopbackClients(s.provider.Client())})
 	s.Require().NoError(err)
-	report, err := pluginmigrate.Run(context.Background(), pluginmigrate.Options{
-		Customer: s.customerID(), Store: s.store, Configs: s.configs, Registry: s.connectors,
+	return pluginmigrate.Options{
+		Customer: s.customerID(), IncludeRotating: includeRotating, Store: s.store, Configs: s.configs, Registry: s.connectors,
 		Credentials: credentials, Transports: transports,
 		HTTP: s.provider.Client(), PublicEndpoint: loopbackOrPublic, Clients: s.clients,
 		PluginClients: session.PluginClients(s.store, s.sealer),
@@ -317,9 +412,7 @@ func (s *PluginMigrateSuite) run(apply bool) pluginmigrate.Report {
 			return SealConnectorOAuthClientSecret(s.sealer, customerID, connectorID, secret)
 		},
 		Catalog: s.catalog,
-	}, apply)
-	s.Require().NoError(err)
-	return report
+	}
 }
 
 // config is an agent config of the test's app on the connecting model, naming plugins as the

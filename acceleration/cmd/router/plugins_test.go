@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginmigrate"
 )
 
 // PluginsCommandSuite is router plugins as a command line, without a database: what it
@@ -39,7 +40,7 @@ func (s *PluginsCommandSuite) TestAnUnknownSubcommandIsRefused() {
 func (s *PluginsCommandSuite) TestApplyIsRefusedWithConnectorsOff() {
 	var out bytes.Buffer
 
-	err := migratePlugins(context.Background(), config.Config{}, slog.Default(), true, "", &out)
+	err := migratePlugins(context.Background(), config.Config{}, slog.Default(), pluginmigrate.Options{}, true, &out)
 
 	s.ErrorContains(err, "needs connectors.enabled")
 	s.Empty(out.String())
@@ -50,7 +51,7 @@ func (s *PluginsCommandSuite) TestApplyIsRefusedWithConnectorsOff() {
 func (s *PluginsCommandSuite) TestADryRunNeedsADatabase() {
 	var out bytes.Buffer
 
-	err := migratePlugins(context.Background(), config.Config{}, slog.Default(), false, "", &out)
+	err := migratePlugins(context.Background(), config.Config{}, slog.Default(), pluginmigrate.Options{}, false, &out)
 
 	s.ErrorContains(err, "set postgres.dsn")
 }

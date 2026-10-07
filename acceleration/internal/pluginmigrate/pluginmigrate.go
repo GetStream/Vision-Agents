@@ -50,11 +50,10 @@ const (
 	KindEvent      = "event"
 )
 
-// Configs reads and writes agent configs: appconfig.Store, which forgets a cached config it
-// writes, or store.Store.
+// Configs adds a binding to an agent config, writing its connectors column alone:
+// appconfig.Store, which forgets the cached config it writes.
 type Configs interface {
-	AgentConfig(ctx context.Context, customerID, id string) (store.AgentConfig, error)
-	UpdateAgentConfig(ctx context.Context, config *store.AgentConfig) error
+	AddConnectorBinding(ctx context.Context, customerID, configID string, binding store.ConnectorBinding) (added bool, err error)
 }
 
 // Options are what a run reads and writes through. Every field but Customer and Catalog is
@@ -62,8 +61,11 @@ type Configs interface {
 type Options struct {
 	// Customer limits the run to one app's rows. Empty moves every app's.
 	Customer string
-	Store    *store.Store
-	Configs  Configs
+	// IncludeRotating moves a grant with a refresh token to a connector whose manifest says
+	// refresh tokens rotate (github, linear, slack, calendly). Off, each is a Skipped row.
+	IncludeRotating bool
+	Store           *store.Store
+	Configs         Configs
 	// Registry holds the oauth2_code scheme and the mcp tool source, as the router's does.
 	Registry core.Registry
 	// Credentials seals and saves a moved connection's credentials (pgsealed).
@@ -418,6 +420,12 @@ func (m *migration) moveConnection(ctx context.Context, login store.PluginConnec
 	if strings.TrimSuffix(reached, "/") != strings.TrimSuffix(resolved.Endpoints["mcp"], "/") {
 		return skip(fmt.Sprintf("the plugin reaches %s and the connector %s, and a grant is for one server", reached, resolved.Endpoints["mcp"]))
 	}
+	// The plugin row keeps its copy of the refresh token, and the plugin still renews it (MCP
+	// Events, T60). With a rotating provider, whichever side renews first retires the other's
+	// copy, so such a grant moves only when asked for.
+	if resolved.Refresh.Rotating && login.RefreshToken != "" && !m.opts.IncludeRotating {
+		return skip(fmt.Sprintf("connector %s rotates refresh tokens, and the plugin row keeps its copy: whichever side renews first retires the other's; pass --include-rotating to move it", login.PluginID))
+	}
 	var expires time.Time
 	if login.ExpiresAt != nil {
 		expires = *login.ExpiresAt
@@ -434,7 +442,15 @@ func (m *migration) moveConnection(ctx context.Context, login store.PluginConnec
 	})
 	if err != nil {
 		// oauth2code's errors name endpoints and client ids, never a token.
-		return skip(err.Error())
+		note := err.Error()
+		// The plugin read its operator client from <PLUGIN_ID>_MCP_*, the connector reads
+		// <client.env>_MCP_*; for the Google four the names differ (GOOGLE).
+		if pluginEnv := strings.ToUpper(login.PluginID); errors.Is(err, oauth2code.ErrGrantElsewhere) &&
+			resolved.Client.Env != "" && resolved.Client.Env != pluginEnv {
+			note += fmt.Sprintf("; the plugin read %s_MCP_CLIENT_ID and the connector reads %s_MCP_CLIENT_ID, so set that one to the plugin's client",
+				pluginEnv, resolved.Client.Env)
+		}
+		return skip(note)
 	}
 	if !m.apply {
 		// A dry run plans the bindings over the connections it would have made.
@@ -455,10 +471,12 @@ func (m *migration) moveConnection(ctx context.Context, login store.PluginConnec
 			return err
 		}
 	}
+	finished := false
 	err = m.opts.Credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
 		// Only a connection no credentials were ever saved onto: one a person connected or a
 		// run finished since is theirs.
 		if state.Status != store.ConnectionPending || state.Revision != 1 {
+			finished = true
 			return false, nil
 		}
 		state.Credentials = credentials
@@ -474,6 +492,10 @@ func (m *migration) moveConnection(ctx context.Context, login store.PluginConnec
 		return err
 	}
 	m.moved[login.ID] = id
+	if finished {
+		m.add(Row{Kind: KindConnection, Action: Exists, Source: source, Target: target, Note: "already moved"})
+		return nil
+	}
 	m.add(Row{Kind: KindConnection, Action: Written, Source: source, Target: target})
 	return nil
 }
@@ -595,18 +617,15 @@ func (m *migration) moveBinding(ctx context.Context, config store.AgentConfig, e
 	}
 	binding := store.ConnectorBinding{Name: entry.Name, ConnectorID: entry.Name,
 		Connection: store.ConnectionBinding{Type: selection, ConnectionID: connectionID}, Tools: grants}
-	// Read again just before the write, so the write keeps what changed since the run began.
-	current, err := m.opts.Configs.AgentConfig(ctx, config.CustomerID, config.ID)
+	// Only the connectors column is written, under the config's row lock, so an edit of any
+	// other column made meanwhile is kept, and one binding of that name is ever added.
+	added, err := m.opts.Configs.AddConnectorBinding(ctx, config.CustomerID, config.ID, binding)
 	if err != nil {
 		return err
 	}
-	if slices.ContainsFunc(current.Connectors, func(b store.ConnectorBinding) bool { return b.Name == entry.Name }) {
+	if !added {
 		m.add(Row{Kind: KindBinding, Action: Exists, Source: source, Target: target})
 		return nil
-	}
-	current.Connectors = append(current.Connectors, binding)
-	if err := m.opts.Configs.UpdateAgentConfig(ctx, &current); err != nil {
-		return err
 	}
 	m.add(Row{Kind: KindBinding, Action: Written, Source: source, Target: target, Note: fmt.Sprintf("%d tools granted", len(grants))})
 	return nil
