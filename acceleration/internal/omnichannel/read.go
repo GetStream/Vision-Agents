@@ -346,10 +346,16 @@ const (
 // render is the cards, newest first, as the note and one envelope, oldest first: as many of
 // the newest as fit maxCardRunes, the note included. A card of lines too long to fit whole
 // keeps its last lines that do; the cards older than one that cannot fit at all are left out.
+// A card with nothing to say, neither a summary nor a line, is skipped and costs nothing: a
+// call in a channel its session named, or one whose window held another caller, leaves the
+// older cards to be read.
 func render(cards []told) []llm.Message {
 	budget := maxCardRunes - utf8.RuneCountInString(cardsAttribution) - utf8.RuneCountInString(`{"episodes":[]}`)
 	var kept []told
 	for _, card := range cards {
+		if card.Summary == "" && len(card.Lines) == 0 {
+			continue
+		}
 		fitted, size, ok := fit(card, budget)
 		if !ok {
 			break
@@ -373,7 +379,7 @@ func render(cards []told) []llm.Message {
 }
 
 // fit is card cut to budget runes, a comma included, by dropping its oldest lines, and its
-// size. A card with neither a summary nor a line that fits does not fit.
+// size. A card none of whose lines fit, or whose summary does not, does not fit.
 func fit(card told, budget int) (told, int, bool) {
 	for {
 		if card.Summary == "" && len(card.Lines) == 0 {

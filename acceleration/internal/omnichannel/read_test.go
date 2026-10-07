@@ -63,6 +63,17 @@ func (s *ReadSuite) TestCardsAreHandedOldestFirstBehindANoteThatTheyAreNotAuthor
 	s.Contains(cardsAttribution, "not for authentication or permissions")
 }
 
+// A newer card with nothing to say, such as a call whose lines could not be handed over,
+// leaves the older ones to be read.
+func (s *ReadSuite) TestANewerCardWithNothingToSayKeepsTheOlderOnes() {
+	sms := told{Source: "sms", Status: "in_progress", StartedAt: s.start,
+		Lines: []line{{From: fromPerson, Text: "is the clinic open on Sunday?"}}}
+
+	handed := s.envelope(render([]told{{Source: "call", Status: "in_progress", StartedAt: s.start.Add(time.Hour)}, sms}))
+
+	s.Equal([]told{sms}, handed)
+}
+
 func (s *ReadSuite) TestNoCardIsNoMessage() {
 	s.Nil(render(nil))
 	s.Nil(render([]told{{Source: "sms", Status: "in_progress", StartedAt: s.start}}), "a card with no line and no summary says nothing")
