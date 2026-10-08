@@ -3793,7 +3793,7 @@ export type components = {
             /** @description Provider-specific voice id. */
             readonly voice?: string;
         };
-        /** @description A connector whose tools an agent config may call, under an alias. The binding is the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against. */
+        /** @description A connector whose tools an agent config may call, under an alias. The binding is the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against, or for a tool a session binding grants by name alone, to the schema its connection first offered it with. */
         readonly AgentConnectorBinding: {
             readonly connection: components["schemas"]["AgentConnectorSelection"];
             /** @description A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_. */
@@ -3814,7 +3814,7 @@ export type components = {
              * @description How long one tool call may take, in milliseconds. Omitted, the session's default applies.
              */
             readonly timeout_ms?: number;
-            /** @description The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. */
+            /** @description The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. A session binding may grant a tool by name alone, which pins its schema per connection on first use. */
             readonly tools: readonly components["schemas"]["ConnectorToolGrant"][];
         };
         /** @description Which connection a binding's tools are called through. */
@@ -4992,8 +4992,8 @@ export type components = {
         readonly ConnectorToolGrant: {
             /** @description The tool as the connector names it. */
             readonly name: string;
-            /** @description The SHA-256 of the tool's name, description and input schema, as 64 lowercase hex characters. A tool whose schema has changed since no longer matches and is not offered. */
-            readonly schema_digest: string;
+            /** @description The SHA-256 of the tool's name, description and input schema, as 64 lowercase hex characters. A tool whose schema has changed since no longer matches and is not offered. Required on a fixed binding. A session binding may leave it out: the first session that opens a person's connection pins the digest the provider lists then, later sessions offer the tool only while it still matches, and a reconnect pins again. */
+            readonly schema_digest?: string;
         };
         readonly Contact: {
             readonly attempts: number;
