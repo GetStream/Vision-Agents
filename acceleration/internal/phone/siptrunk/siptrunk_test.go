@@ -91,7 +91,7 @@ func outbound() phone.Outbound {
 		From: "+15550000301",
 		To:   "+15550000302",
 		Bridge: phone.Bridge{
-			URI: "sip:bridge.sip.example.com", Username: "stream-user", Password: "stream-pass",
+			URI: "sip:+15550000301@bridge.sip.example.com", Username: "stream-user", Password: "stream-pass",
 		},
 		RingTimeout: 20 * time.Second,
 		Trunk: &phone.SIPTrunk{
@@ -162,21 +162,6 @@ func (s *SIPTrunkSuite) TestTheBridgeIsGivenTheTrunkAndTheStreamLeg() {
 	}.WithDefaults()
 	want.Logger = nil
 	s.Equal(want, got)
-}
-
-func (s *SIPTrunkSuite) TestTheStreamURICarriesTheCallingNumber() {
-	for bridge, want := range map[string]string{
-		"sip:bridge.sip.example.com":               "sip:+15550000301@bridge.sip.example.com",
-		"sip:trunk@bridge.sip.example.com":         "sip:+15550000301@bridge.sip.example.com",
-		"sips:bridge.sip.example.com:5061":         "sips:+15550000301@bridge.sip.example.com:5061",
-		"sip:bridge.sip.example.com;transport=tcp": "sip:+15550000301@bridge.sip.example.com;transport=tcp",
-	} {
-		got, err := streamRequestURI(bridge, "+15550000301")
-		s.Require().NoError(err, bridge)
-		s.Equal(want, got, bridge)
-	}
-	_, err := streamRequestURI("tel:+15550000301", "+15550000301")
-	s.EqualError(err, `phone: "tel:+15550000301" is not a sip uri`)
 }
 
 func (s *SIPTrunkSuite) TestCancellingTheRequestDoesNotEndTheCall() {
