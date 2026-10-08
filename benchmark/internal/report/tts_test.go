@@ -32,11 +32,13 @@ func TestSummarizeTTSGradesTheShareOfHealthyClips(t *testing.T) {
 		clips = append(clips, TTSClip{Returned: true, Grade: HealthGood, TTFBMs: 100 + i, SynthesisMs: 400, RTF: 0.2})
 	}
 	clips = append(clips, TTSClip{Grade: HealthFail, Error: "provider refused"})
+	// Audio that started but never finished has a TTFB and no synthesis time.
+	clips = append(clips, TTSClip{Returned: true, Grade: HealthGood, TTFBMs: 500, Error: "timed out"})
 	sum := SummarizeTTS("x/y", clips)
-	if sum.Good != 40 || sum.Fail != 1 || sum.Failed != 1 || sum.Grade != HealthWarn {
-		t.Fatalf("40 of 41 healthy is under 99%%, so warn: %+v", sum)
+	if sum.Good != 41 || sum.Fail != 1 || sum.Failed != 2 || sum.Grade != HealthWarn {
+		t.Fatalf("41 of 42 healthy is under 99%%, so warn: %+v", sum)
 	}
-	if sum.TimedClips != 40 || sum.TTFBP50Ms != 119 || sum.RTFP50 != 0.2 {
+	if sum.TimedClips != 41 || sum.TTFBP50Ms != 120 || sum.RTFP50 != 0.2 || sum.SynthesisP50Ms != 400 {
 		t.Fatalf("latency is over the clips that returned audio: %+v", sum)
 	}
 }

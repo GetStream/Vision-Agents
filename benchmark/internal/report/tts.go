@@ -149,8 +149,11 @@ func SummarizeTTS(target string, clips []TTSClip) TTSSummary {
 		}
 		returned++
 		ttfb = append(ttfb, clip.TTFBMs)
-		synthesis = append(synthesis, clip.SynthesisMs)
-		rtf = append(rtf, int(clip.RTF*1000))
+		// An utterance that never finished has no synthesis time, rather than one of zero.
+		if clip.SynthesisMs > 0 {
+			synthesis = append(synthesis, clip.SynthesisMs)
+			rtf = append(rtf, int(clip.RTF*1000))
+		}
 		if clip.Raw.Reference == 0 {
 			continue
 		}
@@ -178,11 +181,13 @@ func SummarizeTTS(target string, clips []TTSClip) TTSSummary {
 	out.TimedClips = len(ttfb)
 	if len(ttfb) > 0 {
 		sort.Ints(ttfb)
-		sort.Ints(synthesis)
-		sort.Ints(rtf)
 		out.TTFBP50Ms = score.Percentile(ttfb, 50)
 		out.TTFBP95Ms = score.Percentile(ttfb, 95)
 		out.TTFBP99Ms = score.Percentile(ttfb, 99)
+	}
+	if len(synthesis) > 0 {
+		sort.Ints(synthesis)
+		sort.Ints(rtf)
 		out.SynthesisP50Ms = score.Percentile(synthesis, 50)
 		out.RTFP50 = float64(score.Percentile(rtf, 50)) / 1000
 		out.RTFP95 = float64(score.Percentile(rtf, 95)) / 1000
