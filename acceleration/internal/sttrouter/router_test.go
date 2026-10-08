@@ -88,6 +88,7 @@ func (s *STTRouterSuite) TestTheModelsLeftOutOfTheEnglishShortcutAreStillReachab
 		"cartesia/ink-2",
 		"inworld/inworld-stt-1",
 		"elevenlabs/scribe_v2_realtime",
+		"assemblyai/universal-3-6-pro",
 	} {
 		candidates, err := router.Resolve(s.ctx, name, nil)
 		s.Require().NoErrorf(err, "target %s", name)
@@ -252,6 +253,35 @@ func (s *STTRouterSuite) TestNemotronsTurnGraceIsTheRoutersOwnWait() {
 		"this provider has no server-side endpointer, so it cannot be asked for one")
 }
 
+// TestMAIsTurnGraceIsTheRoutersOwnWait is the same overwrite for the same reason:
+// MAI-Transcribe-2-Streaming only takes null for turn detection.
+func (s *STTRouterSuite) TestMAIsTurnGraceIsTheRoutersOwnWait() {
+	var settings microsoftSettings
+	s.Require().NoError(routing.Spec{
+		Overwrites: json.RawMessage(`{"turn_grace_ms":400}`),
+	}.Settings(&settings))
+	s.Equal(400, settings.TurnGraceMs)
+
+	registry := DefaultRegistry()
+	s.T().Setenv("AZURE_MAI_API_KEY", "test-key")
+	s.T().Setenv("AZURE_MAI_ENDPOINT", "https://example.services.ai.azure.com")
+
+	_, err := registry.Build("microsoft", routing.Spec{
+		Model:      "MAI-Transcribe-2-Streaming",
+		Overwrites: json.RawMessage(`{"silence_ms":400}`),
+	})
+	s.ErrorContains(err, "silence_ms",
+		"this provider has no server-side endpointer, so it cannot be asked for one")
+}
+
+// TestMAIIsPinnedToALanguageOnlyWhenOneIsNamed is because the session takes one code or
+// none: the first of several hints would turn detection off for the rest.
+func (s *STTRouterSuite) TestMAIIsPinnedToALanguageOnlyWhenOneIsNamed() {
+	s.Equal("fr", onlyLanguage([]string{"fr"}))
+	s.Empty(onlyLanguage([]string{"fr", "de"}))
+	s.Empty(onlyLanguage(nil))
+}
+
 func (s *STTRouterSuite) TestRegistryReadsInk2sTurnThresholdsFromOverwrites() {
 	var settings cartesiaSettings
 	spec := routing.Spec{
@@ -296,6 +326,36 @@ func (s *STTRouterSuite) TestRegistryReadsScribesDetectorFromOverwrites() {
 	s.Zero(settings.MinSpeechDurationMs, "what was not named keeps Scribe's own default")
 }
 
+// TestAssemblyAITakesItsPresetFromOverwritesAndRefusesOneItHasNot is the latency preset,
+// which the server would otherwise answer by opening a session on a preset nobody asked
+// for.
+func (s *STTRouterSuite) TestAssemblyAITakesItsPresetFromOverwritesAndRefusesOneItHasNot() {
+	var settings assemblyaiSettings
+	s.Require().NoError(routing.Spec{
+		Overwrites: json.RawMessage(`{"mode":"min_latency","min_turn_silence":160,"max_turn_silence":1200}`),
+	}.Settings(&settings))
+	s.Equal("min_latency", settings.Mode)
+	s.Equal(160, settings.MinTurnSilenceMs)
+	s.Equal(1200, settings.MaxTurnSilenceMs)
+
+	registry := DefaultRegistry()
+	s.T().Setenv("ASSEMBLYAI_API_KEY", "test-key")
+
+	built, err := registry.Build("assemblyai", routing.Spec{
+		Model:      "universal-3-6-pro",
+		Overwrites: json.RawMessage(`{"mode":"min_latency"}`),
+	})
+	s.Require().NoError(err)
+	s.Equal("assemblyai", built.Provider())
+	s.Equal("universal-3-6-pro", built.Model())
+
+	_, err = registry.Build("assemblyai", routing.Spec{
+		Model:      "universal-3-6-pro",
+		Overwrites: json.RawMessage(`{"mode":"fastest"}`),
+	})
+	s.ErrorContains(err, "fastest", "a preset this model does not have has to be reported rather than sent")
+}
+
 func (s *STTRouterSuite) TestRegistryReadsTheFluxTurnThresholdsFromOverwrites() {
 	var settings deepgramSettings
 	spec := routing.Spec{
@@ -308,6 +368,59 @@ func (s *STTRouterSuite) TestRegistryReadsTheFluxTurnThresholdsFromOverwrites() 
 	s.InDelta(0.6, settings.EotThreshold, 0.001)
 	s.Equal(800, settings.EotTimeoutMs)
 	s.Zero(settings.EagerEotThreshold, "what was not named keeps Flux's own default")
+}
+
+func (s *STTRouterSuite) TestTheLowLatencyShortcutsEndTurnsEagerlyByDefault() {
+	for _, target := range []string{"en-low-latency", "multilingual-low-latency"} {
+		eager := routeDefaults(target, options.STT{}).EagerEndOfTurn
+		s.Require().NotNilf(eager, "target %s", target)
+		s.Truef(*eager, "target %s", target)
+	}
+}
+
+func (s *STTRouterSuite) TestACallerCanTurnEagerEndOfTurnOffOnALowLatencyShortcut() {
+	no := false
+	eager := routeDefaults("en-low-latency", options.STT{EagerEndOfTurn: &no}).EagerEndOfTurn
+
+	s.Require().NotNil(eager)
+	s.False(*eager)
+}
+
+func (s *STTRouterSuite) TestOtherTargetsLeaveEagerEndOfTurnUnsaid() {
+	s.Nil(routeDefaults("en-high-accuracy", options.STT{}).EagerEndOfTurn)
+	s.Nil(routeDefaults("deepgram/flux-general-en", options.STT{}).EagerEndOfTurn)
+}
+
+func (s *STTRouterSuite) TestFluxLeavesEagerEndOfTurnOffUnlessAsked() {
+	s.Zero(fluxEagerEotThreshold(routing.Spec{}, deepgramSettings{}))
+
+	no := false
+	s.Zero(fluxEagerEotThreshold(routing.Spec{STT: options.STT{EagerEndOfTurn: &no}}, deepgramSettings{}))
+}
+
+func (s *STTRouterSuite) TestAskingForAnEagerEndOfTurnTurnsItOnInFlux() {
+	yes := true
+	spec := routing.Spec{STT: options.STT{EagerEndOfTurn: &yes}}
+
+	s.InDelta(0.6, fluxEagerEotThreshold(spec, deepgramSettings{}), 0.001)
+}
+
+func (s *STTRouterSuite) TestFluxsEagerThresholdNeverExceedsItsEndOfTurnThreshold() {
+	yes := true
+	spec := routing.Spec{STT: options.STT{EagerEndOfTurn: &yes}}
+
+	s.InDelta(0.55, fluxEagerEotThreshold(spec, deepgramSettings{EotThreshold: 0.55}), 0.001,
+		"Flux refuses an eager threshold above eot_threshold")
+	s.InDelta(0.6, fluxEagerEotThreshold(spec, deepgramSettings{EotThreshold: 0.8}), 0.001)
+}
+
+func (s *STTRouterSuite) TestAFluxEagerThresholdOverwriteWinsOverTheSharedOption() {
+	yes := true
+	spec := routing.Spec{STT: options.STT{EagerEndOfTurn: &yes}}
+
+	s.InDelta(0.4, fluxEagerEotThreshold(spec, deepgramSettings{EagerEotThreshold: 0.4}), 0.001)
+	s.InDelta(0.4, fluxEagerEotThreshold(routing.Spec{}, deepgramSettings{EagerEotThreshold: 0.4}), 0.001,
+		"an overwrite alone still turns it on, as it did before the shared option")
 }
 
 func (s *STTRouterSuite) TestRegistryRefusesAnOverwriteTheProviderHasNoFieldFor() {

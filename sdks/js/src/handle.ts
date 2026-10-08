@@ -1,5 +1,7 @@
 import type { Client, Schemas } from "./client.js";
+import { ConfigurationError } from "./errors.js";
 import { Sessions } from "./sessions.js";
+import { Tools } from "./tools.js";
 
 /**
  * An agent, addressed by the name it is configured under.
@@ -22,6 +24,11 @@ export class AgentHandle {
   readonly name: string;
   /** This agent's conversations: opening one, and reading the old ones back. */
   readonly sessions: Sessions;
+  /**
+   * Functions run for every session of this agent, whoever opened it, once a dispatch worker
+   * hosts them with `dispatch.host(agent)`.
+   */
+  readonly tools = new Tools();
 
   private readonly client: Client;
 
@@ -42,5 +49,22 @@ export class AgentHandle {
       query: { name: this.name },
     });
     return stored[0];
+  }
+
+  /**
+   * Changes some of how the agent is configured, and returns the config as it now is.
+   *
+   * A field left out of the patch keeps what is stored, so setting a guardrail leaves the
+   * instructions, skills and models alone, which a sync would not. Server side only.
+   */
+  async updateConfig(patch: Schemas["AgentConfigPatch"]): Promise<Schemas["AgentConfig"]> {
+    const stored = await this.config();
+    if (!stored) {
+      throw new ConfigurationError(`there is no agent called ${this.name} to update`);
+    }
+    return this.client.patch("/v1/agents/configs/{id}", {
+      path: { id: stored.id },
+      body: patch,
+    });
   }
 }

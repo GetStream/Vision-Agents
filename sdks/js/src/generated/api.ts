@@ -10,6 +10,26 @@
  */
 
 export type paths = {
+    readonly "/.well-known/oauth-client-metadata": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The router's OAuth client metadata
+         * @description The OAuth Client ID Metadata Document a provider that supports it fetches, at the URL that is the router's client_id. Served only when ROUTER_PUBLIC_URL is https. Unauthenticated because the provider fetches it.
+         */
+        readonly get: operations["getConnectorClientMetadata"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/health": {
         readonly parameters: {
             readonly query?: never;
@@ -36,6 +56,26 @@ export type paths = {
         };
         /** List the providers configured for a modality and their live health */
         readonly get: operations["listProviders"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/{modality}/routes": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List the capability shortcuts offered as a choice, each with the models it resolves to
+         * @description The shortcuts a person picking a model is shown, in the order the deployment offers them, so the first is the one a conversation gets by default. Shortcuts that exist only for the router's own use are left out, though they can still be named as a target.
+         */
+        readonly get: operations["listRoutes"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -219,6 +259,26 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/calls/{id}/tokens": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What a call's models read and wrote, and what their prompts were made of
+         * @description Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+         */
+        readonly get: operations["getCallTokens"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/calls/{id}/transcript": {
         readonly parameters: {
             readonly query?: never;
@@ -342,6 +402,104 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/channels": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List channel lines
+         * @description The lines this app has connected, oldest first. Credentials are never read back.
+         *
+         *     Server-side only.
+         */
+        readonly get: operations["listChannelAccounts"];
+        readonly put?: never;
+        /**
+         * Connect a channel line
+         * @description Stores an app's credentials for a WhatsApp, text or iMessage line and answers with the URL its provider should deliver to. An agent is then reachable there by naming the number under `channels` in its `agent.yaml`.
+         *
+         *     Sending a line that is already connected replaces its credentials and keeps its webhook URL, so rotating a token does not mean setting the webhook up again.
+         *
+         *     Server-side only: it carries provider credentials.
+         */
+        readonly post: operations["connectChannel"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/channels/{id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Disconnect a channel line
+         * @description Drops the line's credentials, so nothing is delivered or sent on it again.
+         *
+         *     Server-side only.
+         */
+        readonly delete: operations["disconnectChannel"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/channels/hooks/{token}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Answer a channel provider's webhook check
+         * @description What WhatsApp asks for before it will deliver: the verify token the line was connected with, answered with the challenge it sent, as text. Unauthenticated because Meta is not a customer; the token in the path names the line.
+         */
+        readonly get: operations["verifyChannelHook"];
+        readonly put?: never;
+        /**
+         * Receive a message on a channel
+         * @description Where WhatsApp, Telnyx and Linq deliver what somebody wrote to one of the app's lines. Unauthenticated because the provider is not a customer: the token in the path names the line, and each delivery is checked against the signing secret that line was connected with. A message that has not been seen before earns a turn from whichever agent names the number under `channels`, and what the agent says goes back over the channel rather than in this response.
+         */
+        readonly post: operations["receiveChannelMessage"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/channels/links": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Mint a code to claim a number
+         * @description Answers with a code to show somebody already signed in. The number that texts it to the agent belongs to that end user from then on, which is what an agent reading a person's own calendar or orders needs before it says a word. Only an agent whose `channels.identity` is `link` has anything to link.
+         *
+         *     Server-side only.
+         */
+        readonly post: operations["linkChannelNumber"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/chat-token": {
         readonly parameters: {
             readonly query?: never;
@@ -413,6 +571,36 @@ export type paths = {
         readonly delete: operations["deleteAgentConfig"];
         readonly options?: never;
         readonly head?: never;
+        /**
+         * Change some of an agent config
+         * @description Writes only the fields sent, so a guardrail can be set without restating the instructions, skills and models beside it. Sessions already running keep the configuration they started with.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly patch: operations["patchAgentConfig"];
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/configs/{id}/changes": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What was changed about an agent since its directory was last synced
+         * @description The edits a sync of the agent's directory would write over: everything changed about the agent, its skills and its knowledge since the last sync, newest first. An agent nobody has touched since answers with an empty list.
+         *
+         *     This is what a sync refused with `unsynced_changes` is asking about. Show the changes, let the person decide, and sync again with `base_change` set to `last_change` to say they have been seen -- having either written them into the directory first, or chosen to write over them.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["getAgentChanges"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
         readonly patch?: never;
         readonly trace?: never;
     };
@@ -423,7 +611,10 @@ export type paths = {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** The plugin logins this agent holds */
+        /**
+         * The plugin logins this agent holds
+         * @description The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+         */
         readonly get: operations["listConfigPlugins"];
         readonly put?: never;
         readonly post?: never;
@@ -464,10 +655,535 @@ export type paths = {
         readonly put?: never;
         /**
          * Start a plugin login
-         * @description Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and Salesforce need an instance url, because they have no single global host.
+         * @description Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["authorizePlugin"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/configs/{id}/plugins/{plugin_id}/client": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set the OAuth client an agent logs a plugin in with
+         * @description The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly put: operations["setPluginClient"];
+        readonly post?: never;
+        /**
+         * Drop the OAuth client an agent logs a plugin in with
+         * @description Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deletePluginClient"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connections": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List connections
+         * @description One owner's connections, newest first: the app's own, or those of the user the backend acts for.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listConnections"];
+        readonly put?: never;
+        /**
+         * Create a connection
+         * @description A pending connection to one account at a connector, made from the connector's newest revision. An app-owned connection is the app's, for any of its agents. A user-owned one is the user's the backend acts for: owner.user_id must be the user X-Stream-User-Id names. Credentials are added afterwards. A deployment with connectors off refuses every create.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["createConnection"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connections/{id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read a connection
+         * @description An app-owned connection, or a user-owned one of the user the backend acts for. Another user's is not found, the same as one that does not exist.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["getConnection"];
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete a connection
+         * @description Disconnects the account and drops its credentials at once, so nothing can use it from here on. The provider is not asked to revoke what it issued. A connection an agent config binds as its fixed connection is refused with a 409 unless force is set. Who may delete it is who may read it.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteConnection"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connections/{id}/authorizations": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Start a consent
+         * @description Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["createAuthorization"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connections/{id}/credentials": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set a connection's credentials
+         * @description Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly put: operations["putConnectionCredentials"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connections/{id}/invocations": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List a connection's tool calls
+         * @description Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, and an incognito session's calls name no session. Who may read them is who may read the connection.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listConnectionInvocations"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connections/{id}/proxy/{path}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Call a connection's provider directly (GET)
+         * @description Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["proxyConnectionGet"];
+        /**
+         * Call a connection's provider directly (PUT)
+         * @description Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly put: operations["proxyConnectionPut"];
+        /**
+         * Call a connection's provider directly (POST)
+         * @description Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["proxyConnectionPost"];
+        /**
+         * Call a connection's provider directly (DELETE)
+         * @description Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["proxyConnectionDelete"];
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Call a connection's provider directly (PATCH)
+         * @description Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly patch: operations["proxyConnectionPatch"];
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connections/{id}/token": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Export a connection's access token
+         * @description The connection's current access credential, for the app's backend to call the provider with directly: an OAuth access token, renewed first when it is about to expire, or an API key. A refresh token is never exported. Only the customer's own provider app exports: an oauth2_code connection exports when its grant was issued to the client the app registered itself, and that client is still the connector's; a grant issued to Stream's app, or to one the router created, is refused with a 403. An api_key connection always exports, since the key is the app's own. Other schemes are refused. Each export is recorded in the connector audit as token_export. Who may export it is who may read it.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["exportConnectionToken"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connections/{id}/tools": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List a connection's tools
+         * @description The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listConnectionTools"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connections/{id}/validate": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Validate a connection
+         * @description Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["validateConnection"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connector-audit": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List the connector audit
+         * @description Every grant the app's connections got, renewed or lost, newest first, with the request, session and authorization attempt that caused each. A deleted connection's rows stay, and its deletion is one of them.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listConnectorAudit"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connectors": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List or search connectors
+         * @description The built-ins first, then the app's own, each by id and at its newest revision. `q` keeps the ones whose id, name, category or description holds it.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listConnectors"];
+        readonly put?: never;
+        /**
+         * Add a custom MCP connector
+         * @description Stores a custom MCP server as one of the app's connectors. Sending an id the app already has stores its next revision, which connections pick up when they reconnect; sending the same definition again changes nothing. A built-in cannot be changed this way.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["createConnector"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connectors/{id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read a connector
+         * @description A built-in or one of the app's own, at its newest revision. Another app's custom connector is not found.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["getConnector"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connectors/{id}/event-destinations": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List a connector's event destinations
+         * @description The connector's event destinations, newest first, without their secrets.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listConnectorEventDestinations"];
+        readonly put?: never;
+        /**
+         * Forward a connector's provider events to a URL
+         * @description Adds a URL the connector's raw provider events are forwarded to, for the deliveries of the app's own provider app, such as its Slack app. A connector takes 3 destinations at most. The response carries the destination's signing secret, once.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["createConnectorEventDestination"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connectors/{id}/event-destinations/{destination_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Stop forwarding to an event destination
+         * @description Removes the destination, and every forward to it not yet sent.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteConnectorEventDestination"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connectors/{id}/event-destinations/{destination_id}/rotate-secret": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Rotate an event destination's signing secret
+         * @description Makes a new signing secret for the destination and returns it, once. For the next 24 hours every forward is signed with both the new and the old secret, space-separated in webhook-signature, so the receiver can move to the new one without a forward failing its check. A rotation during another drops the oldest secret.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["rotateConnectorEventDestinationSecret"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connectors/{id}/oauth-client": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set the app's own OAuth client for a connector
+         * @description Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly put: operations["setConnectorOAuthClient"];
+        readonly post?: never;
+        /**
+         * Remove the app's own OAuth client for a connector
+         * @description Drops the client and its secret. Connections consented with it stop refreshing and need a reconnect with another client.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteConnectorOAuthClient"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connectors/{id}/provider-app": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Create or update the app the router keeps at the connector's provider
+         * @description Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
+         *
+         *     When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly put: operations["setConnectorProviderApp"];
+        readonly post?: never;
+        /**
+         * Delete the app the router keeps at the connector's provider
+         * @description Deletes the customer's Slack app with Slack's apps.manifest.delete, then its record and the configuration token the router kept. An app already deleted in Slack is removed here too. Connections consented with it need a reconnect.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteConnectorProviderApp"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connectors/events/{connector_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive a connector's provider event
+         * @description Where a provider delivers the events of a built-in connector: Slack's tokens_revoked and app_uninstalled to the operator's Slack app's Request URL, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector's manifest names (channel.verifier) against the operator's secret, and an unsigned or stale one changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves every connection of that account to needs_reauthorization; a message goes to the channel bridge. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.
+         */
+        readonly post: operations["receiveConnectorEvent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connectors/oauth/callback": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Finish a consent
+         * @description The redirect URI a provider sends the browser back to. The state must name an open consent, the browser must hold the cookie the handoff set, and the consent is used once. The router then exchanges the code and sends the browser to the dashboard with connection_id and status: connected, denied, failed, or account_mismatch when a reconnect came back with another provider account and the old grant was kept. Unauthenticated because the browser arrives from the provider.
+         */
+        readonly get: operations["finishConnectorConsent"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connectors/oauth/launch/{id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The page a consent starts on
+         * @description The launch_url of an authorization, opened in a popup by the dashboard. The page waits for the dashboard's origin to post the handoff token, trades it for the provider's authorize URL and goes there. Unauthenticated because a browser opens it; the page names no attempt and is the same for every one.
+         */
+        readonly get: operations["getConnectorLaunchPage"];
+        readonly put?: never;
+        /**
+         * Bind a consent to this browser
+         * @description What the launch page posts: `{"handoff_token": ...}`, from the router's own origin only. It sets an HttpOnly cookie the callback requires, so the consent can finish only in this browser, and answers `{"authorization_url": ...}`, the provider's authorize URL. A handoff token is traded once: a second handoff for the same consent is a 400. Unauthenticated because a browser sends it; the handoff token is the secret.
+         */
+        readonly post: operations["handOffConnectorLaunch"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -577,6 +1293,72 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/knowledge/documents": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The documents a knowledge base was filled with
+         * @description What was posted to /v1/agents/knowledge or synced from an agent directory's knowledge folder, one entry per source. Pages are listed at /v1/agents/knowledge/urls.
+         */
+        readonly get: operations["listKnowledgeDocuments"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/knowledge/documents/{id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * One document, with the text it was posted as
+         * @description What to start from when editing it: post it again under the same source to replace it. A document written before its text was kept comes back without one.
+         */
+        readonly get: operations["getKnowledgeDocument"];
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Take a document out of a knowledge base
+         * @description The passages it was cut into are removed too, so the agent stops answering out of it.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteKnowledgeDocument"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/knowledge/documents/{id}/passages": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What a document was cut into, in order
+         * @description The passages as the agent finds them, which is what shows what a lookup can answer out of this document.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listKnowledgeDocumentPassages"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/knowledge/urls": {
         readonly parameters: {
             readonly query?: never;
@@ -589,8 +1371,8 @@ export type paths = {
         readonly put?: never;
         /**
          * Keep a knowledge base filled from a page
-         * @description Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
-         *     The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+         * @description Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
+         *     The fetch is queued rather than done before this answers, since a live crawl takes seconds: the page comes back pending, and indexed or failed once it has been read. A read that fails is tried again a few times first. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
          *     Adding a page a knowledge base already has is a re-read of it rather than a second copy: the subscription is the url, so a declaration of what an agent reads can be applied again without being diffed first.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -634,10 +1416,31 @@ export type paths = {
         readonly put?: never;
         /**
          * Read a page again
-         * @description Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages past the end of the new version are removed, so a page that got shorter does not leave its old tail behind.
+         * @description Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. The read is queued, the same as adding the page; last_indexed_at moves once it has happened. Passages past the end of the new version are removed, so a page that got shorter does not leave its old tail behind.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["indexKnowledgeUrl"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/knowledge/urls/{id}/passages": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What a page was last read into, in order
+         * @description Empty until the page has been read.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listKnowledgeUrlPassages"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -718,6 +1521,26 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/plugins/{plugin_id}/logo": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A plugin's logo
+         * @description The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+         */
+        readonly get: operations["getPluginLogo"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/plugins/callback": {
         readonly parameters: {
             readonly query?: never;
@@ -738,6 +1561,26 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/plugins/events/{token}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive a plugin's MCP event
+         * @description Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
+         */
+        readonly post: operations["receivePluginEvent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/sessions": {
         readonly parameters: {
             readonly query?: never;
@@ -745,12 +1588,7 @@ export type paths = {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /**
-         * The sessions the calling customer is running
-         * @description Without filters this is what is happening now, which is what it has always been. With any of them it is a query over what has happened as well: the sessions this process is still holding and the rows recorded for the ones that ended, as one list deduplicated by id, because a caller asking for their conversations does not care which of them this instance happens to be holding.
-         *     A backend gets its customer's sessions; an end user gets their own, whatever they ask for. That is not a filter they can widen, and it is why listing is safe to expose to a page: one person's conversations are not a way to find another's. An anonymous caller who named nobody gets nothing at all, since they reach their own session by holding its id.
-         */
-        readonly get: operations["listSessions"];
+        readonly get?: never;
         readonly put?: never;
         /**
          * Join a call as a voice agent
@@ -773,16 +1611,31 @@ export type paths = {
         };
         /**
          * One session
-         * @description Reading a session is open to the device holding it, for the same reason listing and closing are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+         * @description Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
          */
         readonly get: operations["getSession"];
         readonly put?: never;
         readonly post?: never;
-        /** Leave the call and end the session */
-        readonly delete: operations["closeSession"];
+        /**
+         * Delete a session
+         * @description Deletes the session, running or stopped: it is stopped first if it is running, then its turns and their items are deleted, and so is everything it taught the memory store. Memories other sessions learned about the same user are kept. The transcript a conversation in writing kept in Stream Chat is not deleted.
+         *
+         *     To end a call and keep the conversation, stop the session instead.
+         */
+        readonly delete: operations["deleteSession"];
         readonly options?: never;
         readonly head?: never;
-        readonly patch?: never;
+        /**
+         * Change a session
+         * @description Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+         *
+         *     An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+         *
+         *     A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+         *
+         *     Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
+         */
+        readonly patch: operations["updateSession"];
         readonly trace?: never;
     };
     readonly "/v1/agents/sessions/{id}/commands/{command_id}": {
@@ -837,14 +1690,17 @@ export type paths = {
         /**
          * Watch the conversation and answer the model's tool calls
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a `type` and the fields of that event.
-         *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `error` and `left`.
-         *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
+         *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
+         *     `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
+         *     `connector_scope_required` says a connector tool call was refused because the caller's own connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes (what the provider asked for, empty for a claims challenge), authorization_id, launch_url, handoff_token and expires_at. A client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. The old grant keeps working until the step-up succeeds, and the same call works afterwards in the same session. While that step-up is open, calls refused for the same access send no second event.
+         *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id.
          *     A respond command carrying command_id emits command_accepted with a nested command receipt (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text returns the existing IDs without invoking the model again; reuse with different text emits an error. Commands with IDs currently accept text only. After restart an interrupted command is reported, not rerun.
          *     An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `command_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
          *     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent. Together they are why the call went the way it did, and they are also written down, so a finished call replays them from `/v1/agents/calls/{id}/events`.
          *     Two frames are only sent when asked for, because they are far more frequent than the rest and most consumers want neither. `interim=true` adds `hearing`, which is a transcript revision as it arrives rather than a settled turn. `decisions=false` drops `decision`.
          *     `replay_pending_tools=true` opts a durable tool host into replay of external tool calls still awaiting results in a live voice session. Completed, cancelled and timed-out requests are excluded at snapshot time. Replays retain their tool and turn IDs and may duplicate live delivery; the host must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers should leave this disabled. Persistent text command recovery is unchanged.
-         *     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt` (optionally naming a `command_id`), `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be answered: everything else is a report. Tool calls made by durable personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by another command or turn.
+         *     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt` (optionally naming a `command_id`), `instructions` or `close` to act on the session. `instructions` is server-side only: from an end user's device it changes nothing and is answered with an `error` frame, `context` `command`, as `updateSession` refuses it. A `tool_call` is the only frame that must be answered: everything else is a report. Tool calls made by durable personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by another command or turn.
+         *     A call to a tool declared with an `approval` waits for a person. The client reports their answer with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary` shown when they declined), before it answers the call with `tool_result`.
          *     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`, `low` or `high`. One socket message is at most 5 MB.
          *     `respond` may carry `images: [{url, detail}]`. These schedule the vision skill; the conversation receives the question and later the findings, without raw images. Video capture uses task-correlated `get_video_frames` tool requests and `tool_result` replies. Frames are never attached automatically to conversational turns.
          */
@@ -888,7 +1744,7 @@ export type paths = {
         readonly get?: never;
         /**
          * Change what the agent is told to be
-         * @description Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
+         * @description Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
          */
         readonly put: operations["setSessionInstructions"];
         readonly post?: never;
@@ -918,6 +1774,28 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/sessions/{id}/memories": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete what one session remembered
+         * @description Deletes every memory learned in the session, running or ended, and leaves the rest of the user's memories alone. Ending a session keeps its memories, so the next conversation knows what this one established; this is how to take them back.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteSessionMemories"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/sessions/{id}/respond": {
         readonly parameters: {
             readonly query?: never;
@@ -927,7 +1805,10 @@ export type paths = {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Answer a piece of text through the model, as though it had been said */
+        /**
+         * Answer a piece of text through the model, as though it had been said
+         * @description A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+         */
         readonly post: operations["respondSession"];
         readonly delete?: never;
         readonly options?: never;
@@ -982,6 +1863,27 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/sessions/{id}/rewind": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Go back to a response and carry on from there
+         * @description The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
+         *     The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+         */
+        readonly post: operations["rewindSession"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/sessions/{id}/say": {
         readonly parameters: {
             readonly query?: never;
@@ -1002,7 +1904,50 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/v1/agents/sessions/search": {
+    readonly "/v1/agents/sessions/{id}/settings": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Change the models and voice of one running session
+         * @description Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
+         *     Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native.
+         */
+        readonly patch: operations["setSessionSettings"];
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/sessions/{id}/stop": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Stop a running session
+         * @description The agent leaves the call and the session stops running. Everything it recorded is kept: it can still be read back, renamed and forked, and what it remembered carries into the next conversation. Deleting a session is what takes those away.
+         *
+         *     A conversation in writing has nothing to hang up, so it is usually left running rather than stopped. Stopping is for a call, where the agent is holding a line open.
+         */
+        readonly post: operations["stopSession"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/sessions/{id}/tools": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -1010,14 +1955,40 @@ export type paths = {
             readonly cookie?: never;
         };
         /**
-         * Find a conversation by what it was called
-         * @description Full text over the title, description, project and agent name, best match first, with titles weighted above the rest so the conversation called "billing" beats every conversation in the billing project.
-         *     What was said is not searched. Doing so would mean either reading every conversation out of Stream Chat on each query, which is too slow to offer, or keeping a second copy of every message here, which is a transcript that can drift from the real one. Titles and descriptions are what a person names a conversation with, and naming them is the habit worth encouraging.
-         *     The same owner scoping as listing applies, and the same filters narrow it, so a search cannot reach a conversation a list could not. An empty q is the same as no q and falls through to the list, because a search box nobody has typed in yet should show a person their conversations rather than nothing.
+         * List the tools a session's model is offered
+         * @description The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
          */
-        readonly get: operations["searchSessions"];
+        readonly get: operations["listSessionTools"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/sessions/query": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * List or search the caller's sessions
+         * @description Three queries are supported, each over the sessions still running and the ones that ended:
+         *
+         *     - every session, sorted by `updated_at`
+         *     - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
+         *     - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+         *
+         *     `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+         *
+         *     The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+         */
+        readonly post: operations["querySessions"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1199,6 +2170,30 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/socket": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Hold a voice conversation over the socket itself, with no call
+         * @description A WebSocket, which OpenAPI cannot describe past the upgrade. Text frames are JSON objects carrying a `type`.
+         *     The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes one up for the records. A `text` session is refused, because the socket carries audio. A field that `createSession` refuses from an end user's device is refused here too: `history` and `instructions` are server-side only.
+         *     The server answers `session`, with the `Session` and the `sample_rate` in use. Then binary frames are PCM16 mono at that rate in both directions: the caller's audio in, and the agent's speech out at the pace it would be heard on a call. A `cleared` frame says speech already sent was thrown away because the caller cut in. Tool calls and every other event go over the session's events socket, as they do for a call.
+         *     A refused start is an `error` frame with `error`, the message, and the socket closes. An `error` frame for a field refused from a device also carries `code` and `error_type`, the `code` and `type` that `createSession` answers the same field with.
+         *     The session lasts as long as the socket. Closing the socket, or sending `stop`, ends the conversation. A conversation that ends closes the socket.
+         */
+        readonly get: operations["openSocketSession"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/sync": {
         readonly parameters: {
             readonly query?: never;
@@ -1209,13 +2204,65 @@ export type paths = {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Store an agent directory's instructions, skills, knowledge and settings
-         * @description Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+         * Store an agent directory's instructions, skills, knowledge, simulations and settings
+         * @description Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/, knowledge/ and simulations/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+         *
          *     agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
+         *
+         *     knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+         *
+         *     A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
+         *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["syncAgent"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/users/{user_id}/connections": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete every connection of one user
+         * @description For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. The provider is not asked to revoke what it issued. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
+         *
+         *     It deletes connections, not sessions: the tool calls and audit rows of the app's own connections keep the ids of the user's sessions that caused them. Delete those sessions too, and each id names a session that no longer exists.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteUserConnections"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/users/{user_id}/memories": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete everything remembered about one user
+         * @description Deletes every memory about the user, whichever session and agent learned it and whatever memory filter it was written under. Only the calling app's memories are deleted, and a user nothing is known about is not an error.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["truncateMemories"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -1291,6 +2338,27 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/voices/{id}/preview": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Hear a voice through one provider
+         * @description Says a short line in the voice with the provider's own copy of it, so what a caller will hear can be checked before an agent speaks in it. The provider must have the voice ready.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["previewVoice"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/voices/{id}/samples": {
         readonly parameters: {
             readonly query?: never;
@@ -1312,6 +2380,222 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/voices/library": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The voices the speech providers offer
+         * @description The catalogue each provider publishes, so a voice can be picked by name rather than by pasting an id. Only providers this deployment holds a key for and that publish a library appear; for the others a voice is still whatever the vendor's own terms call one, and has to be typed. A provider that cannot be reached is reported in `unavailable` rather than emptying the list.
+         */
+        readonly get: operations["listLibraryVoices"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/voices/library/{provider}/{voice}/preview": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Hear a voice from a provider's library
+         * @description The sample the vendor already published, fetched through the router because two of them want the deployment's key to hand it over. Nothing is synthesised, so browsing a library spends no credits.
+         */
+        readonly get: operations["previewLibraryVoice"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/voices/providers": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The providers a voice can be prepared with
+         * @description Only the providers this deployment holds a key for and knows how to clone with. A voice with no binding for one of them has not been prepared there yet.
+         */
+        readonly get: operations["listVoiceProviders"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/audit/query": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * List the changes made to the app's configuration
+         * @description Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+         *
+         *     What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["queryAudit"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/classify": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Ask a classifier typed questions about a piece of text
+         * @description The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+         *     Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
+         *     A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
+         */
+        readonly post: operations["classify"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/connectors/events/{connector_id}/{provider_app_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Answer a provider app's handshake
+         * @description Where a provider checks a provider app's events URL before it delivers to it: Meta's Verify Token check of a customer's WhatsApp webhook, for one. Unauthenticated because the provider is not a customer. Only a connector whose manifest declares channel.handshake answers it; the verify token is the provider app's id, the one in the URL, so nothing is stored for it, and every delivery is still verified with the app's own secret. With hub.mode subscribe, hub.verify_token the provider app's id and hub.challenge digits only, the challenge is echoed as text/plain. Any other connector, an unknown provider app, or a deployment without connectors answers 405 as for any method a route does not serve. No SDK wraps it: only a provider calls it.
+         */
+        readonly get: operations["answerProviderAppHandshake"];
+        readonly put?: never;
+        /**
+         * Receive a provider app's event
+         * @description Where a provider delivers the events of one customer's provider app: the Request URL of a customer's Slack app, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector's manifest names (channel.verifier) against that app's own signing secret, so an event signed for another app is refused and changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves the app's customer's connections of that account to needs_reauthorization, unless they connected after the event. A message goes to the channel bridge, which writes it into the thread channel of its external thread in Stream Chat; a retried delivery is dropped. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.
+         */
+        readonly post: operations["receiveProviderAppEvent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/connectors/mcp-events/{token}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive a connection's MCP event
+         * @description Where a connection's MCP server delivers the events an agent config's binding subscribed to, signed with Standard Webhooks (MCP Events, a draft). The path is unauthenticated because the server is not a customer: the token names the subscription, and each delivery is checked against that subscription's own secret, never a provider app's. A verification is answered with its challenge, and an event opens a text conversation from the config.
+         */
+        readonly post: operations["receiveConnectionEvent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/data/changes": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What has happened to this app's rows since a cursor
+         * @description Oldest first, for replaying onto the deployment that took the export. A change is only returned once every transaction older than it has committed, so following the cursor never steps over a row, and a change carries the row as it now reads rather than the columns that changed, so applying one twice is the same as applying it once.
+         *     Changes are only recorded for an app that has exported, and only for as long as the deployment's retention window. A cursor older than what is still kept is answered 410, which means export again.
+         *     Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
+         */
+        readonly get: operations["listDataChanges"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/data/export": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Everything this app has, as newline-delimited JSON
+         * @description One line per row, `{"table": ..., "row": {...}}`, and a last line `{"cursor": ..., "customer": ..., "at": ...}`. The cursor comes last because it is also what says the export finished: a stream that broke halfway has no cursor line, so half a copy cannot be mistaken for a whole one. The rows are read at one moment rather than stitched together, and exporting starts recording changes so that `listDataChanges` carries on from exactly where this left off.
+         *     Only the calling app's rows are here, and credentials are not: an API key secret, an OAuth access token and an OAuth refresh token stay with the deployment that holds them, so an imported plugin connection has to be authorized again. The audio behind a voice sample and a call recording lives in an object bucket rather than in this database; the rows naming those objects are here, and copying the bucket is yours to do.
+         *     Server-side only, and refused entirely when the router runs with ROUTER_AUTH_MODE=noauth, where naming a customer is all it takes to be one.
+         */
+        readonly get: operations["exportData"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/data/import": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Write an export, or a batch of changes, into this deployment
+         * @description Takes what `exportData` produced, and the same lines with a `change` in place of a `row` for what `listDataChanges` returned. Every row is written under the calling app whatever the file says, so an export from one app cannot be imported into another's rows, and rows belonging to a customer through a parent are only written where that parent is the caller's.
+         *     Importing is idempotent: the same export applied twice leaves what applying it once would.
+         *     Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
+         */
+        readonly post: operations["importData"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/dispatch": {
         readonly parameters: {
             readonly query?: never;
@@ -1322,7 +2606,9 @@ export type paths = {
         /**
          * Wait for inbound calls to answer, as a worker
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. The worker connects here and waits, rather than being called, because the agent runs in the customer's own process and this service cannot reach into it.
-         *     The socket opens with a `ready` frame naming the worker, and a `call` frame arrives for each call handed to it. The worker sends `load` so the pool can rank it, `accepted` or `rejected` per call, and `ping` to time the round trip itself.
+         *     The socket opens with a `ready` frame naming the worker, and a `call` or `message` frame arrives for each piece of work handed to it, each carrying the `work_id` that names it. The worker answers `done` with that `work_id`, and an `error` when it could not be done, which is what frees its room for the next piece. It also sends `load` so an operator can see what each worker is under, and `ping` to time the round trip itself.
+         *     Work goes to whichever of a customer's workers is holding the least of what it said it can hold, so a worker that never reports `done` is one the router cannot tell is busy.
+         *     A `message` written to a running session whose agent sets `dispatch.text` carries that `session_id`, and a `command_id` when it was sent as a durable command. The model has not answered it: the worker does, by creating a response on that session with a server-side credential and the same `command_id` and text.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. This is the clearest case of why: a worker is offered other people's callers, so anything that can open this socket can answer for the whole app. The auth type has no query parameter, so a browser cannot open one at all.
          */
         readonly get: operations["dispatchCalls"];
@@ -1334,7 +2620,7 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/v1/images/generate": {
+    readonly "/v1/image/generations": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -1344,10 +2630,136 @@ export type paths = {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Generate one image with the configured server-side image provider
-         * @description Backend-only, bounded text-to-image generation. The deployment chooses the model; no provider credentials or URLs are accepted from callers.
+         * Draw pictures from a prompt, and return them
+         * @description Routed like search: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting its pictures. The pictures come back in the response as bytes, never as a link, and nothing is stored, so the id cannot be fetched again.
+         *     The request is answered when the pictures are drawn, within 240 seconds; a caller that hangs up cancels the job at the provider. A generation that got as far as a provider answers 200 whether it drew or not: a failed one carries status failed, an error_code and the error, and costs nothing. A request that could not be routed at all, or that asks for something no model could draw, is a 400.
+         *     A failed generation is asked of the next candidate only when the provider never accepted the job, and never after a safety filter refused it, since asking the next vendor is shopping for a laxer filter.
          */
         readonly post: operations["generateImage"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/ops/customers/{customer_id}/connectors/{id}/provider-app": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Make Stream's own app a customer's provider app
+         * @description Records this deployment's own app for a built-in connector, as its environment holds it (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the customer's provider app, so its events reach that customer. One customer per app: another customer's record of it is a conflict.
+         *
+         *     When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
+         *
+         *     Stream staff only: it needs the ops key.
+         */
+        readonly put: operations["setOperatorProviderApp"];
+        readonly post?: never;
+        /**
+         * Stop Stream's own app being a customer's provider app
+         * @description Removes the record setOperatorProviderApp made. The app itself is Stream's and stays.
+         *
+         *     Stream staff only: it needs the ops key.
+         */
+        readonly delete: operations["deleteOperatorProviderApp"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/ops/use-cases": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List use cases waiting on Stream
+         * @description Every app's use cases in one status, longest waiting first, with the profile each was submitted on.
+         *
+         *     Stream staff only: it needs the ops key.
+         */
+        readonly get: operations["listUseCasesForReview"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/ops/use-cases/{id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get a use case to review
+         * @description A use case with its app, profile and history.
+         *
+         *     Stream staff only: it needs the ops key.
+         */
+        readonly get: operations["getUseCaseForReview"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/ops/use-cases/{id}/review": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Review a submitted use case
+         * @description Approves, rejects or hands back a submitted use case. Approving registers the brand and the campaign with the vendor, which approves it in turn.
+         *
+         *     Stream staff only: it needs the ops key.
+         */
+        readonly post: operations["reviewUseCase"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/business-profile": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get the business profile
+         * @description Who the app said it is, and the brand a vendor registered it as.
+         *
+         *     Server-side only.
+         */
+        readonly get: operations["getBusinessProfile"];
+        /**
+         * Save the business profile
+         * @description Replaces who the app says it is. Every use case is registered under it, so submitting one checks it is complete.
+         *
+         *     Server-side only.
+         */
+        readonly put: operations["saveBusinessProfile"];
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1408,6 +2820,26 @@ export type paths = {
          * @description Stream's SIP is inbound only, so a transfer is a second leg rather than a handover: the vendor dials the human and the answered leg is routed into the same Stream call, after which the agent can leave. The caller is never moved, so nothing is lost if nobody answers.
          */
         readonly post: operations["transferPhoneCall"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/hooks/10dlc": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive a 10DLC registration report
+         * @description Where Telnyx reports on the brands and campaigns this router registered. Unauthenticated because the vendor is not a customer: each report is checked against the vendor's Ed25519 signature, and then only names the campaign to ask the vendor about, so a report cannot say a campaign was approved that was not.
+         */
+        readonly post: operations["receiveDLCReport"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1489,6 +2921,270 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/phone/opt-outs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List opt-outs
+         * @description The people who asked not to be reached, newest first.
+         *
+         *     Server-side only.
+         */
+        readonly get: operations["listOptOuts"];
+        readonly put?: never;
+        /**
+         * Record an opt-out
+         * @description Stops every text and call to a recipient on a channel, or on all of them. Somebody texting STOP is recorded without this.
+         *
+         *     Server-side only.
+         */
+        readonly post: operations["createOptOut"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/opt-outs/{id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Revoke an opt-out
+         * @description Lifts an opt-out. The record of it is kept.
+         *
+         *     Server-side only.
+         */
+        readonly delete: operations["revokeOptOut"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/sandbox": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get the sandbox
+         * @description What the app may text and call before a use case is approved, and how much of today's allowance it used.
+         *
+         *     Server-side only.
+         */
+        readonly get: operations["getPhoneSandbox"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/sandbox/recipients": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set the sandbox recipients
+         * @description Replaces the numbers a sandboxed app may text and call.
+         *
+         *     Server-side only.
+         */
+        readonly put: operations["setSandboxRecipients"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/trunks": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The calling customer's own SIP trunks
+         * @description Trunks outbound calls from the customer's own numbers are dialled through. Passwords are never returned. Answers not_configured on a deployment with no key to seal them with.
+         */
+        readonly get: operations["listSipTrunks"];
+        readonly put?: never;
+        /** Add one of the customer's own SIP trunks */
+        readonly post: operations["createSipTrunk"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/trunks/{id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** One of the customer's own SIP trunks */
+        readonly get: operations["getSipTrunk"];
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Remove a SIP trunk with no numbers on it
+         * @description Answers 409 while numbers are on the trunk. Release them first.
+         */
+        readonly delete: operations["deleteSipTrunk"];
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Change a SIP trunk
+         * @description Fields left out keep what the trunk has. Leaving out the password keeps the stored one.
+         */
+        readonly patch: operations["updateSipTrunk"];
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/trunks/{id}/numbers": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Add a number that is on this SIP trunk
+         * @description Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it are dialled through this trunk. Whether the number is really the customer's is for the trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.
+         */
+        readonly post: operations["addTrunkNumber"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/use-cases": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List 10DLC use cases
+         * @description The app's use cases, newest first.
+         *
+         *     Server-side only.
+         */
+        readonly get: operations["listUseCases"];
+        readonly put?: never;
+        /**
+         * Create a 10DLC use case
+         * @description Saves a draft use case. Nothing is checked beyond its shape until it is submitted.
+         *
+         *     Server-side only.
+         */
+        readonly post: operations["createUseCase"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/use-cases/{id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get a 10DLC use case
+         * @description Server-side only.
+         */
+        readonly get: operations["getUseCase"];
+        /**
+         * Update a 10DLC use case
+         * @description Replaces what the app wrote. Only a draft, or one handed back by Stream or the vendor, can be edited.
+         *
+         *     Server-side only.
+         */
+        readonly put: operations["updateUseCase"];
+        readonly post?: never;
+        /**
+         * Delete a 10DLC use case
+         * @description Refused once the vendor holds it.
+         *
+         *     Server-side only.
+         */
+        readonly delete: operations["deleteUseCase"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/use-cases/{id}/reviews": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List a use case's review history
+         * @description Every move the use case made and who made it, oldest first.
+         *
+         *     Server-side only.
+         */
+        readonly get: operations["listUseCaseReviews"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/use-cases/{id}/submit": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Submit a 10DLC use case for review
+         * @description Sends a use case to Stream's review, once it and the business profile have everything the registry asks for; a 400 says what is missing. Stream approving it registers it with the vendor.
+         *
+         *     Server-side only.
+         */
+        readonly post: operations["submitUseCase"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/phone/vendors": {
         readonly parameters: {
             readonly query?: never;
@@ -1502,6 +3198,56 @@ export type paths = {
          */
         readonly get: operations["listPhoneVendors"];
         readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/policies/app": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The calling app's policy
+         * @description What the app itself decided. Its organization's policy applies as well, as a floor the app can tighten and cannot loosen: both budgets are enforced, the stricter data policy wins, prompt injection is screened if either turns it on, only a model both allow may be routed to, and the organization's tags win over the app's.
+         */
+        readonly get: operations["getAppPolicy"];
+        /**
+         * Replace the calling app's policy
+         * @description A field left out is no opinion, so the organization's setting shows through.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly put: operations["updateAppPolicy"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/policies/organization": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The calling app's organization's policy
+         * @description Applies to every app the router has seen the organization name. A request that names no organization is a 400.
+         */
+        readonly get: operations["getOrganizationPolicy"];
+        /**
+         * Replace the calling app's organization's policy
+         * @description Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly put: operations["updateOrganizationPolicy"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -1581,6 +3327,93 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/settings/app": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What the router does for the calling app
+         * @description Which Stream app the router writes the calling app's conversations and calls into, and whether that app holds the agent channel and call types. Stream is asked at most once a minute.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["getAppSettings"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/settings/app/stream/check": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Check the calling app's own Stream app
+         * @description Asks Stream again about the registered app: whether it stands, whether it holds the agent channel and call types, and which numbers still have their lines in another app. Needs stream.tenancy=app.
+         *
+         *     Server-side only.
+         */
+        readonly post: operations["checkAppStreamCredentials"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/settings/app/stream/credentials": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Register the calling app's own Stream app
+         * @description The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
+         */
+        readonly put: operations["updateAppStreamCredentials"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/stats/activity": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who used the calling customer's agents, and how much
+         * @description Sessions opened, responses produced and calls held, counted per bucket, alongside how many distinct people were behind them.
+         *     Distinct users are counted rather than summed, which is why the granularity here is days or months rather than the hours the spend paths take: a month's active users are the people who came back, not the sum of its days, so a month has to be asked for as a month.
+         */
+        readonly get: operations["getActivity"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/stats/rollup": {
         readonly parameters: {
             readonly query?: never;
@@ -1595,6 +3428,49 @@ export type paths = {
          * @description Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
          */
         readonly post: operations["runRollup"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/stats/spend": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What the calling customer spent, grouped
+         * @description Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, or a cost label for what it was spent on.
+         *     Only the biggest values keep a series of their own, because a label such as customer_id has as many values as the customer has customers. The rest are summed into "other", and spend carrying no such label at all into the empty value, so the rows still add up to the total.
+         *     Reads the request rows rather than the rollups, so today's spend is there without a rollup having run.
+         */
+        readonly get: operations["getSpend"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/stats/tags/keys": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Which cost labels the calling customer's spend carries
+         * @description Cost labels are the customer's own, so nothing here knows in advance whether spend is broken down by product, by environment or by the end customer it was incurred for. This reports the keys in use and what each covers, so a reader can be shown the breakdown that means something rather than a list to guess from.
+         *     A key every request carries with a single value -- environment: production and nothing else -- is context rather than a breakdown, and value_count says so.
+         */
+        readonly get: operations["getTagKeys"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1700,45 +3576,176 @@ export type paths = {
 export type webhooks = Record<string, never>;
 export type components = {
     schemas: {
+        readonly ActivityBucket: {
+            /**
+             * Format: int64
+             * @description Distinct end users who opened a session or asked something of an agent in the bucket. A guest who later turned out to be a known user counts as that user.
+             *     A caller that named nobody is not counted, and neither is an anonymous one: an anonymous name is a claim nothing verified, so counting it would make guessing a name enough to inflate this.
+             */
+            readonly active_users: number;
+            /** Format: date-time */
+            readonly bucket: string;
+            /** Format: int64 */
+            readonly calls: number;
+            /**
+             * Format: int64
+             * @description Responses the agents produced, which is one per thing asked of them.
+             */
+            readonly messages: number;
+            /**
+             * Format: double
+             * @description The part of voice_minutes that arrived over a phone number.
+             */
+            readonly phone_minutes: number;
+            /** Format: int64 */
+            readonly sessions: number;
+            /**
+             * Format: double
+             * @description How long those calls lasted. One still running counts up to now.
+             */
+            readonly voice_minutes: number;
+        };
+        /**
+         * @description Separate from Granularity, and coarser, because distinct users cannot be summed: a month of them is who came back rather than the sum of its days.
+         * @default daily
+         * @enum {string}
+         */
+        readonly ActivityGranularity: "daily" | "monthly";
+        readonly AddTrunkNumberRequest: {
+            /** @description Required. ISO 3166-1 alpha-2 country code. */
+            readonly country?: string;
+            /** @description Required. The number in +15551234567 form. */
+            readonly e164?: string;
+            /** @description The customer's own cost labels. */
+            readonly tags?: {
+                readonly [key: string]: string;
+            };
+        };
+        /** @description What was changed about an agent since its directory was last synced: the edits a sync of that directory would write over. */
+        readonly AgentChanges: {
+            /** @description The changes made since the last sync, newest first, at most 200. Empty when the agent has not been touched since. */
+            readonly items: readonly components["schemas"]["AuditEntry"][];
+            /** @description The newest change's id. Send it as base_change on a sync to say these have been seen, and that sync will not be refused for them. */
+            readonly last_change?: string;
+            /**
+             * Format: date-time
+             * @description When the directory was last synced onto this agent. Absent for an agent no directory has ever been synced onto.
+             */
+            readonly synced_at?: string;
+        };
+        /** @description The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is. */
+        readonly AgentChannels: {
+            readonly identity?: components["schemas"]["ChannelIdentity"];
+            readonly imessage?: components["schemas"]["ChannelLineRequest"];
+            readonly sms?: components["schemas"]["ChannelLineRequest"];
+            readonly whatsapp?: components["schemas"]["ChannelLineRequest"];
+        };
         readonly AgentConfig: {
+            readonly agent_plugins?: readonly components["schemas"]["PluginEntry"][];
+            readonly channels?: components["schemas"]["AgentChannels"];
+            /** @description The bindings exactly as they were written. Absent when there are none. */
+            readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             /** Format: date-time */
             readonly created_at: string;
+            readonly dispatch?: components["schemas"]["AgentDispatch"];
+            /** @description Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards. */
+            readonly episode_cards?: boolean;
             readonly greeting?: string;
             readonly guardrail?: string;
+            readonly harness?: components["schemas"]["Harness"];
             readonly id: string;
             readonly instructions?: string;
             readonly keyterms?: readonly string[];
             readonly knowledge_namespace?: string;
             readonly llm?: string;
+            readonly mcp_servers?: readonly components["schemas"]["McpServer"][];
             readonly mode: components["schemas"]["AgentMode"];
             readonly name: string;
-            readonly plugins?: readonly string[];
+            readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            /** @description Whether tools from plugins, MCP servers and connectors are offered by a summary, the first call to each returning its full description instead of running it. */
+            readonly progressive_tools?: boolean;
             readonly sandbox?: components["schemas"]["Sandbox"];
+            readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             readonly search?: string;
             readonly skills?: readonly string[];
+            /** Format: double */
+            readonly speed?: number;
             /** @description A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade. */
             readonly sts?: string;
             readonly stt?: string;
-            readonly subagent?: string;
-            /** @description Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default. */
-            readonly subagents?: {
-                readonly [key: string]: string;
-            };
             /** @description Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory. */
             readonly sync_hash?: string;
             readonly tags?: {
                 readonly [key: string]: string;
             };
+            readonly thinking_llm?: string;
             readonly tts?: string;
             /** Format: date-time */
             readonly updated_at: string;
+            readonly user_plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly video?: components["schemas"]["SessionVideo"];
+            readonly visible_tools?: readonly string[];
+            readonly voice?: string;
+        };
+        /** @description What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored. */
+        readonly AgentConfigPatch: {
+            readonly agent_plugins?: readonly components["schemas"]["PluginEntry"][];
+            readonly channels?: components["schemas"]["AgentChannels"];
+            /** @description The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out. */
+            readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
+            readonly dispatch?: components["schemas"]["AgentDispatch"];
+            readonly episode_cards?: boolean;
+            readonly greeting?: string;
+            /** @description A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail. */
+            readonly guardrail?: string;
+            readonly harness?: components["schemas"]["Harness"];
+            readonly instructions?: string;
+            readonly keyterms?: readonly string[];
+            readonly knowledge_namespace?: string;
+            readonly llm?: string;
+            readonly mcp_servers?: readonly components["schemas"]["McpServer"][];
+            readonly mode?: components["schemas"]["AgentMode"];
+            /** @description What the config is called, which is unique among the customer's own. */
+            readonly name?: string;
+            readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            readonly progressive_tools?: boolean;
+            readonly sandbox?: components["schemas"]["Sandbox"];
+            readonly sandbox_options?: components["schemas"]["SandboxOptions"];
+            readonly search?: string;
+            readonly skills?: readonly string[];
+            /**
+             * Format: double
+             * @description The voice's rate of delivery, 1 being its own. Zero leaves it there.
+             */
+            readonly speed?: number;
+            readonly sts?: string;
+            readonly stt?: string;
+            readonly tags?: {
+                readonly [key: string]: string;
+            };
+            /** @description Only a voice agent names one. Switching an agent to text drops it. */
+            readonly thinking_llm?: string;
+            readonly tts?: string;
+            readonly user_plugins?: readonly components["schemas"]["PluginEntry"][];
+            readonly video?: components["schemas"]["SessionVideo"];
+            /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search. */
+            readonly visible_tools?: readonly string[];
             readonly voice?: string;
         };
         readonly AgentConfigRequest: {
+            /** @description Hosted MCP servers this agent may reach with the app's own login, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. */
+            readonly agent_plugins?: readonly components["schemas"]["PluginEntry"][];
+            /** @description Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels. */
+            readonly channels?: components["schemas"]["AgentChannels"];
+            /** @description The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused. */
+            readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
+            readonly dispatch?: components["schemas"]["AgentDispatch"];
+            /** @description Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays. */
+            readonly episode_cards?: boolean;
             readonly greeting?: string;
-            /** @description A guardrail.md: frontmatter saying how a turn is screened - llm_classifier, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
+            /** @description A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
             readonly guardrail?: string;
+            readonly harness?: components["schemas"]["Harness"];
             readonly instructions?: string;
             /** @description Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them. */
             readonly keyterms?: readonly string[];
@@ -1746,34 +3753,87 @@ export type components = {
             readonly knowledge_namespace?: string;
             /** @description The model holding the conversation. */
             readonly llm?: string;
+            /** @description MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>. */
+            readonly mcp_servers?: readonly components["schemas"]["McpServer"][];
             readonly mode?: components["schemas"]["AgentMode"];
             /** @description What the config is called, which is unique among the customer's own. */
             readonly name: string;
-            /** @description Hosted MCP servers this agent may reach, named from the built-in catalog. */
-            readonly plugins?: readonly string[];
+            /** @description MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through. */
+            readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            /** @description Whether the agent is offered its plugin, MCP server and connector tools by the first line of each one's description, with its arguments' descriptions left out, and the first call to a tool returns its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays. */
+            readonly progressive_tools?: boolean;
             readonly sandbox?: components["schemas"]["Sandbox"];
+            readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             /** @description What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way. */
             readonly search?: string;
             /** @description Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set. */
             readonly skills?: readonly string[];
+            /**
+             * Format: double
+             * @description Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused.
+             * @example 0.9
+             */
+            readonly speed?: number;
             /** @description A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade. */
             readonly sts?: string;
             /** @description A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it. */
             readonly stt?: string;
-            /** @description The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing. */
-            readonly subagent?: string;
-            /** @description Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default. */
-            readonly subagents?: {
-                readonly [key: string]: string;
-            };
             /** @description Cost labels, carried onto every request a session using it makes. */
             readonly tags?: {
                 readonly [key: string]: string;
             };
+            /** @description The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default thinking model. */
+            readonly thinking_llm?: string;
             readonly tts?: string;
+            /** @description Hosted MCP servers each end user connects with their own account, named from the built-in catalog like agent_plugins. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one. */
+            readonly user_plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly video?: components["schemas"]["SessionVideo"];
+            /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search. */
+            readonly visible_tools?: readonly string[];
             /** @description Provider-specific voice id. */
             readonly voice?: string;
+        };
+        /** @description A connector whose tools an agent config may call, under an alias. The binding is the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against. */
+        readonly AgentConnectorBinding: {
+            readonly connection: components["schemas"]["AgentConnectorSelection"];
+            /** @description A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_. */
+            readonly connector_id: string;
+            /** @description MCP events the binding's fixed connection is subscribed to, each opening a text conversation from the config when it arrives. Subscribed when the connection is next validated. Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an event arrives with no session open. */
+            readonly events?: readonly components["schemas"]["ConnectorBindingEvent"][];
+            /** @description The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place. */
+            readonly name: string;
+            /** @description How the binding's tool calls behave around speech and interruptions. Omitted, a call is cancelled at the provider when the turn is interrupted, and the agent picks its own words while it runs. */
+            readonly policy?: components["schemas"]["ConnectorBindingPolicy"];
+            /**
+             * @description Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
+             * @default false
+             */
+            readonly required?: boolean;
+            /**
+             * Format: int64
+             * @description How long one tool call may take, in milliseconds. Omitted, the session's default applies.
+             */
+            readonly timeout_ms?: number;
+            /** @description The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. */
+            readonly tools: readonly components["schemas"]["ConnectorToolGrant"][];
+        };
+        /** @description Which connection a binding's tools are called through. */
+        readonly AgentConnectorSelection: {
+            /** @description Required for fixed, and refused for session. */
+            readonly connection_id?: string;
+            readonly type: components["schemas"]["AgentConnectorSelectionType"];
+        };
+        /**
+         * @description fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own.
+         * @enum {string}
+         */
+        readonly AgentConnectorSelectionType: "fixed" | "session";
+        /** @description What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled. */
+        readonly AgentDispatch: {
+            /** @description A call to one of the customer's numbers is handed to a dispatch worker. Every inbound call already is, since a number is not tied to an agent config. */
+            readonly incoming_call?: components["schemas"]["DispatchSetting"];
+            /** @description An end user's message is handed to a dispatch worker, with the session it was written to, instead of being answered by the model. The worker answers by creating a response on that session with a server-side credential, passing the message's command_id when it has one; that is the only text the model answers. */
+            readonly text?: components["schemas"]["DispatchSetting"];
         };
         readonly AgentLog: {
             readonly agent_id: string;
@@ -1791,7 +3851,7 @@ export type components = {
             readonly occurred_at: string;
             readonly session_id: string;
             /** @enum {string} */
-            readonly severity: "info" | "error";
+            readonly severity: "info" | "warn" | "error";
             /** @enum {string} */
             readonly source: "user" | "agent" | "tool" | "system";
             readonly user_id?: string;
@@ -1843,6 +3903,22 @@ export type components = {
             readonly text?: string;
             readonly tool_name?: string;
         };
+        readonly AgentResponseItemPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["AgentResponseItem"][];
+            /** @description Pass as `cursor` for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        readonly AgentResponsePage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["AgentResponse"][];
+            /** @description Pass as `cursor` for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        /** @description What the router does for the calling app. It never carries a secret. */
+        readonly AppSettings: {
+            readonly stream: components["schemas"]["StreamSettings"];
+        };
         readonly AttachedNumber: {
             readonly route_id: string;
             /** @description Where the vendor sends calls, e.g. sip:trunk@sip.stream-io-api.com. */
@@ -1857,8 +3933,101 @@ export type components = {
             /** @description The Stream call type. Omit for "agent". */
             readonly call_type?: string;
         };
+        /**
+         * @description created, updated or deleted for a change somebody made one at a time. synced is a whole agent directory written at once by POST /v1/agents/sync, and is what a later sync measures the edits made since against.
+         * @enum {string}
+         */
+        readonly AuditAction: "created" | "updated" | "deleted" | "synced";
+        /** @description One field that moved, with what it held before and holds now, each in the shape the resource itself is read in. */
+        readonly AuditChange: {
+            /** @description What it holds now. Absent when it now holds nothing, which is what a deleted resource's fields all do. */
+            readonly after?: unknown;
+            /** @description What it held, in the shape the resource is read in. Absent when it held nothing, which is what a created resource's fields all did. */
+            readonly before?: unknown;
+            /** @description The field as the resource's own schema names it. */
+            readonly field: string;
+        };
+        /** @description One change somebody made to the app's configuration: what changed, who changed it, which client they used, and the before and after of every field that moved. Only configuration is recorded -- agents, skills, knowledge, routers, plugins and policies -- never what an agent did while it ran. */
+        readonly AuditEntry: {
+            readonly action: components["schemas"]["AuditAction"];
+            /** @description Who made it, as their client named them. Absent for a change nobody signed, such as a process syncing on startup. */
+            readonly actor_id?: string;
+            /** @description Their name, as their client named them. Never an email address: the router keeps none. */
+            readonly actor_name?: string;
+            /** @description The agent the change was to or under. Absent for a resource that belongs to no agent, such as a router. */
+            readonly agent_id?: string;
+            /** @description Every field that moved. A write that moved nothing is not recorded at all, so this is empty only on a synced entry, which marks the moment a directory and an agent agreed whether or not anything moved. */
+            readonly changes: readonly components["schemas"]["AuditChange"][];
+            /** Format: date-time */
+            readonly created_at: string;
+            readonly id: string;
+            /** @description The X-Request-Id of the request that made it. */
+            readonly request_id?: string;
+            /** @description The resource, which may since have been deleted. */
+            readonly resource_id: string;
+            /** @description What it was called when it changed, for a resource that has a name. */
+            readonly resource_name?: string;
+            readonly resource_type: components["schemas"]["AuditResourceType"];
+            readonly source: components["schemas"]["AuditSource"];
+        };
+        /** @description Which changes to list. A field not listed here is refused rather than ignored. */
+        readonly AuditFilter: {
+            readonly action?: components["schemas"]["AuditAction"];
+            /** @description One agent's history: changes to the agent itself and to the skills and knowledge under it. */
+            readonly agent_id?: string;
+            /** @description One resource's own history. */
+            readonly resource_id?: string;
+            readonly resource_type?: components["schemas"]["AuditResourceType"];
+            readonly source?: components["schemas"]["AuditSource"];
+        };
+        readonly AuditPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["AuditEntry"][];
+            /** @description Pass as cursor for the next page, with the same filter. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        readonly AuditQuery: {
+            /** @description The next_cursor of the previous page, sent with the same filter. Omitted is the first page. */
+            readonly cursor?: string;
+            readonly filter?: components["schemas"]["AuditFilter"];
+            /**
+             * Format: int64
+             * @description Up to 200. Omitted is 25.
+             */
+            readonly limit?: number;
+        };
+        /**
+         * @description What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead.
+         * @enum {string}
+         */
+        readonly AuditResourceType: "agent_config" | "skill" | "knowledge" | "knowledge_url" | "router_config" | "plugin" | "policy";
+        /**
+         * @description Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it.
+         * @enum {string}
+         */
+        readonly AuditSource: "dashboard" | "cli" | "sdk" | "api";
+        /** @description A consent in flight for one connection: the page that starts it in a browser and the token that binds it to that browser. */
+        readonly Authorization: {
+            /**
+             * Format: date-time
+             * @description When the attempt ends, 10 minutes after it began. A callback after that is refused.
+             */
+            readonly expires_at: string;
+            /** @description Handed to the launch page by postMessage, never put in a URL. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused. */
+            readonly handoff_token: string;
+            /** @description The attempt. */
+            readonly id: string;
+            readonly kind: components["schemas"]["AuthorizationKind"];
+            /** @description The router's page to open in a popup from the dashboard. It asks the opener for handoff_token and then sends the browser to the provider. */
+            readonly launch_url: string;
+        };
+        /**
+         * @description consent for a connection no account was connected to yet, reconnect for one that has been connected before, which must come back with the same provider account.
+         * @enum {string}
+         */
+        readonly AuthorizationKind: "consent" | "reconnect";
         readonly AuthorizePluginRequest: {
-            /** @description The shop hostname or Salesforce my-domain. Required for plugins that have no single global URL. */
+            /** @description The shop hostname. Required for plugins that have no single global URL. */
             readonly instance_url?: string;
         };
         readonly AvailableNumber: {
@@ -1879,6 +4048,109 @@ export type components = {
              * @example telnyx
              */
             readonly vendor: string;
+        };
+        /** @description A cap on spend across every modality, reset on a UTC boundary each interval. Once it is spent every new session and every LLM response is refused until the next interval. Checks are cached for a few seconds, so a busy app can overshoot by what it spends in that time. */
+        readonly Budget: {
+            readonly interval: components["schemas"]["BudgetInterval"];
+            /**
+             * Format: int64
+             * @description The cap, in millionths of a dollar.
+             * @example 100000000
+             */
+            readonly limit_micros: number;
+            /**
+             * Format: date-time
+             * @description When the current interval ends.
+             */
+            readonly resets_at?: string;
+            /**
+             * Format: int64
+             * @description What has been spent in the current interval.
+             */
+            readonly spent_micros?: number;
+        };
+        /**
+         * @description How often a budget resets. A week starts on Monday.
+         * @enum {string}
+         */
+        readonly BudgetInterval: "hourly" | "daily" | "weekly" | "monthly";
+        /** @description Who the app is, and the brand a vendor registered it as. */
+        readonly BusinessProfile: {
+            readonly authorized_contact_email?: string;
+            readonly authorized_contact_first_name?: string;
+            readonly authorized_contact_last_name?: string;
+            /** @description E.164. */
+            readonly authorized_contact_phone?: string;
+            readonly authorized_contact_title?: string;
+            /** @description The brand the vendor registered the app as, once a use case was sent. */
+            readonly brand_id?: string;
+            /** @description What people know it as, shown to recipients. Omitted is the legal name. */
+            readonly brand_name?: string;
+            /** @description The vendor's word for where the brand stands, such as VERIFIED. */
+            readonly brand_status?: string;
+            /** @description ISO 3166-1 alpha-2. */
+            readonly business_registration_country?: string;
+            /** @description URLs of documents a reviewer may ask for, such as articles of incorporation. */
+            readonly business_verification_documents?: readonly string[] | null;
+            /** Format: date-time */
+            readonly created_at: string;
+            /** @description The registry's vertical, such as technology, healthcare or retail. */
+            readonly industry?: string;
+            /** @description The name the business is registered under. */
+            readonly legal_business_name?: string;
+            /** @enum {string} */
+            readonly legal_entity_type?: "corporation" | "llc" | "partnership" | "sole_proprietor" | "other";
+            /** @enum {string} */
+            readonly organization_type?: "private" | "public" | "nonprofit" | "government";
+            readonly privacy_policy_url?: string;
+            readonly registered_address?: components["schemas"]["PostalAddress"];
+            /** @description Where it is listed, such as NASDAQ or NYSE. */
+            readonly stock_exchange?: string;
+            /** @description A public company's ticker. */
+            readonly stock_symbol?: string;
+            /** @description The EIN in the US, or the country's business number. A sole proprietor has none. */
+            readonly tax_id?: string;
+            /** @description ISO 3166-1 alpha-2. Omitted is the registration country. */
+            readonly tax_id_issuing_country?: string;
+            readonly terms_and_conditions_url?: string;
+            /** Format: date-time */
+            readonly updated_at: string;
+            readonly website_url?: string;
+        };
+        /** @description Who the app is: written once and reused by every channel it registers for. Nothing is required to save it; submitting a use case says what is missing. */
+        readonly BusinessProfileRequest: {
+            readonly authorized_contact_email?: string;
+            readonly authorized_contact_first_name?: string;
+            readonly authorized_contact_last_name?: string;
+            /** @description E.164. */
+            readonly authorized_contact_phone?: string;
+            readonly authorized_contact_title?: string;
+            /** @description What people know it as, shown to recipients. Omitted is the legal name. */
+            readonly brand_name?: string;
+            /** @description ISO 3166-1 alpha-2. */
+            readonly business_registration_country?: string;
+            /** @description URLs of documents a reviewer may ask for, such as articles of incorporation. */
+            readonly business_verification_documents?: readonly string[] | null;
+            /** @description The registry's vertical, such as technology, healthcare or retail. */
+            readonly industry?: string;
+            /** @description The name the business is registered under. */
+            readonly legal_business_name?: string;
+            /** @enum {string} */
+            readonly legal_entity_type?: "corporation" | "llc" | "partnership" | "sole_proprietor" | "other";
+            /** @enum {string} */
+            readonly organization_type?: "private" | "public" | "nonprofit" | "government";
+            readonly privacy_policy_url?: string;
+            readonly registered_address?: components["schemas"]["PostalAddress"];
+            /** @description Where it is listed, such as NASDAQ or NYSE. */
+            readonly stock_exchange?: string;
+            /** @description A public company's ticker. */
+            readonly stock_symbol?: string;
+            /** @description The EIN in the US, or the country's business number. A sole proprietor has none. */
+            readonly tax_id?: string;
+            /** @description ISO 3166-1 alpha-2. Omitted is the registration country. */
+            readonly tax_id_issuing_country?: string;
+            readonly terms_and_conditions_url?: string;
+            readonly website_url?: string;
         };
         readonly BuyNumberRequest: {
             /**
@@ -1918,6 +4190,7 @@ export type components = {
             readonly llm?: string;
             /** @description The provider/model that held the conversation. */
             readonly llm_used?: string;
+            readonly mode?: components["schemas"]["SessionMode"];
             readonly review_notes?: string;
             /** @description How well the agent handled it, from 1 to 5. */
             readonly review_score?: number;
@@ -1933,20 +4206,27 @@ export type components = {
             readonly stt?: string;
             /** @description The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the last one that served if routing failed over. */
             readonly stt_used?: string;
-            /** @description The slower target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. */
-            readonly subagent?: string;
-            /** @description The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached. */
-            readonly subagent_used?: string;
             /** @description What a model made of the call, written once it was over. */
             readonly summary?: string;
             readonly tags?: {
                 readonly [key: string]: string;
             };
+            /** @description The target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. A text call names its llm, which runs its skills too. */
+            readonly thinking_llm?: string;
+            /** @description The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached. */
+            readonly thinking_llm_used?: string;
             readonly to_number?: string;
             /** @description The voice target, on the same terms as stt. */
             readonly tts?: string;
             /** @description The provider/model that spoke, on the same terms as stt_used. */
             readonly tts_used?: string;
+            readonly usage?: components["schemas"]["CallUsage"];
+            /** @description Who the agent spoke to, as the client's own token named them. Empty for a call the customer's backend opened, and for telephony, where the number is the name. */
+            readonly user_id?: string;
+            /** @description The voice the call asked for, in the provider's own terms. Empty means the provider's default. */
+            readonly voice?: string;
+            /** @description The voice that spoke, which is the provider's default when none was asked for. Known only while the call is running. */
+            readonly voice_used?: string;
         };
         readonly CallEvent: {
             /** Format: date-time */
@@ -1983,6 +4263,67 @@ export type components = {
             readonly user_id?: string;
             /** @description The name the other participants see. Defaults to the user id. */
             readonly user_name?: string;
+        };
+        /** @description What a call's models read and wrote, summed over every request, with what their prompts were made of. */
+        readonly CallTokens: {
+            /**
+             * Format: int64
+             * @description The part of the prompts a provider served from its own cache.
+             */
+            readonly cached_input_tokens: number;
+            /**
+             * Format: int64
+             * @description Millionths of a dollar, priced from the providers' configured rates.
+             */
+            readonly cost_micros: number;
+            /** @description Where the cost came from, the costliest first. Sources that cost nothing are left out. */
+            readonly cost_sources: readonly components["schemas"]["CostSource"][];
+            readonly input_parts: components["schemas"]["InputParts"];
+            /**
+             * Format: int64
+             * @description Every prompt the models read, the cached part included.
+             */
+            readonly input_tokens: number;
+            /** @description Each model the call used, the busiest first. One billed by audio or characters reads zero tokens. */
+            readonly models: readonly components["schemas"]["ModelTokens"][];
+            /**
+             * Format: int64
+             * @description Everything the models generated, reasoning included.
+             */
+            readonly output_tokens: number;
+            /**
+             * Format: int64
+             * @description How many calls to those models it took.
+             */
+            readonly requests: number;
+        };
+        /** @description What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it. */
+        readonly CallUsage: {
+            /**
+             * Format: int64
+             * @description The part of those prompts a provider served from its own cache.
+             */
+            readonly cached_input_tokens: number;
+            /**
+             * Format: int64
+             * @description Millionths of a dollar, priced from the providers' configured rates.
+             */
+            readonly cost_micros: number;
+            /**
+             * Format: int64
+             * @description Every prompt the models read, the cached part included.
+             */
+            readonly input_tokens: number;
+            /**
+             * Format: int64
+             * @description Everything the models generated, reasoning included.
+             */
+            readonly output_tokens: number;
+            /**
+             * Format: int64
+             * @description How many calls to a model it took, transcription and speech included.
+             */
+            readonly requests: number;
         };
         readonly Campaign: {
             readonly concurrency: number;
@@ -2022,6 +4363,47 @@ export type components = {
             readonly model: string;
             readonly provider: string;
         };
+        /** @description One line the app answers on: the number people write to and where its provider delivers. The credentials are write-only, so they are never shown here. */
+        readonly ChannelAccount: {
+            /** @description The provider's own id for the line, such as WhatsApp's phone number id. */
+            readonly account_id?: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            /** @description True when the provider was pointed at the webhook URL for you, so there is nothing left to paste. */
+            readonly delivering: boolean;
+            readonly id: string;
+            readonly kind: components["schemas"]["ChannelKind"];
+            /** @description The number people write to, in E.164. */
+            readonly number: string;
+            /** Format: date-time */
+            readonly updated_at: string;
+            /** @description Where the provider should deliver. Paste it into Meta's or Linq's webhook setup; a Telnyx number is pointed at it for you. */
+            readonly webhook_url: string;
+        };
+        /**
+         * @description How a sender becomes an end user. phone makes each number an end user of its own, phone:+15551234567, so anybody who writes is answered. link answers only a number somebody tied to an end user with a code from POST /v1/agents/channels/links, which is what an agent reading a person's own calendar or orders needs. Omitted is phone.
+         * @enum {string}
+         */
+        readonly ChannelIdentity: "phone" | "link";
+        /**
+         * @description A channel a conversation can be carried over.
+         * @enum {string}
+         */
+        readonly ChannelKind: "whatsapp" | "sms" | "imessage";
+        readonly ChannelLineRequest: {
+            /** @description The number people write to, in E.164. It must be a line this app connected. */
+            readonly number: string;
+        };
+        /** @description A code that ties the number texting it to one end user, for one agent. */
+        readonly ChannelLink: {
+            /** @description The code to show the end user. They text it to the agent from the number they want answered. */
+            readonly code: string;
+            /**
+             * Format: date-time
+             * @description When the code stops working.
+             */
+            readonly expires_at: string;
+        };
         readonly ChatToken: {
             /** @description The Stream app the channel is in, which the browser SDK connects to. */
             readonly api_key: string;
@@ -2054,6 +4436,90 @@ export type components = {
             readonly sessions_moved: number;
             readonly user_id: string;
         };
+        /** @description Which fields carry the answer depends on the type. A noul fills yes alone. A choice fills chosen, probabilities and confidence. A score fills level, legend, probabilities and confidence. */
+        readonly ClassifyAnswer: {
+            /** @description The likeliest option of a choice. */
+            readonly chosen?: string;
+            /**
+             * Format: double
+             * @description How peaked the distribution is, not whether acting on it is safe.
+             */
+            readonly confidence?: number;
+            /** @description A score's levels by index, as decimal strings. */
+            readonly legend?: {
+                readonly [key: string]: string;
+            };
+            /**
+             * Format: double
+             * @description Where a score landed, which may be between two of its levels.
+             */
+            readonly level?: number;
+            /** @description The distribution the answer came from: options for a choice, level indices for a score. They sum to one. */
+            readonly probabilities?: {
+                readonly [key: string]: number;
+            };
+            readonly type: components["schemas"]["ClassifyQuestionType"];
+            /**
+             * Format: double
+             * @description The probability a noul is true, from 0 to 1.
+             */
+            readonly yes?: number;
+        };
+        readonly ClassifyQuestion: {
+            /** @example Is the customer asking for a refund? */
+            readonly instructions: string;
+            /** @description A score's levels, in order, each describing a concrete situation. */
+            readonly levels?: readonly string[];
+            /** @description What no means for a noul, where the instructions do not say it. */
+            readonly no?: string;
+            /** @description A choice's options, each with a description of what it covers or an empty string where the name says it. Include one for "none of these" whenever the options may not cover an input. */
+            readonly options?: {
+                readonly [key: string]: string;
+            };
+            readonly type: components["schemas"]["ClassifyQuestionType"];
+            /** @description What yes means for a noul, where the instructions do not say it. */
+            readonly yes?: string;
+        };
+        /**
+         * @description noul is yes or no, answered as the probability of yes. choice picks one of named options. score places the state along ordered levels.
+         * @enum {string}
+         */
+        readonly ClassifyQuestionType: "noul" | "choice" | "score";
+        readonly ClassifyRequest: {
+            /** @description Keyed by ids of the caller's own choosing, which is how the answers come back. An id is not part of what is asked, so a question carries its whole meaning in its instructions. */
+            readonly questions: {
+                readonly [key: string]: components["schemas"]["ClassifyQuestion"];
+            };
+            /**
+             * @description What the questions are about: a string for plain text, or a JSON object whose parts a question can name, such as `message`.
+             * @example I was charged twice this month and nobody has answered my email.
+             */
+            readonly state: unknown;
+            readonly tags?: {
+                readonly [key: string]: string;
+            };
+            /**
+             * @description A provider/model or a capability shortcut. Empty takes classify-fast.
+             * @example classify-fast
+             */
+            readonly target?: string;
+        };
+        readonly ClassifyResult: {
+            readonly answers: {
+                readonly [key: string]: components["schemas"]["ClassifyAnswer"];
+            };
+            /** @description The version that answered, which is worth recording when the target was an alias. */
+            readonly model: string;
+            readonly provider: string;
+            readonly usage: components["schemas"]["ClassifyUsage"];
+        };
+        /** @description What the request read and wrote. The state's tokens are counted once however many questions shared them. */
+        readonly ClassifyUsage: {
+            /** Format: int64 */
+            readonly input_tokens: number;
+            /** Format: int64 */
+            readonly output_tokens: number;
+        };
         readonly CommandReceipt: {
             readonly assistant_message_id: string;
             readonly command_id: string;
@@ -2062,6 +4528,472 @@ export type components = {
             /** @description Latest locally recorded response state; an interrupted command is never automatically rerun. */
             readonly state: string;
             readonly user_message_id: string;
+        };
+        /** @description Credentials for one line, connected once for the app and named by any number of agents under channels in agent.yaml. Sending a line already connected replaces its credentials and keeps its webhook URL. */
+        readonly ConnectChannelRequest: {
+            /** @description The provider's own id for the line. WhatsApp's phone number id; not needed by the others. */
+            readonly account_id?: string;
+            /** @description The verify token Meta's webhook setup echoes back. WhatsApp only. */
+            readonly challenge?: string;
+            /** @description whatsapp, sms or imessage. */
+            readonly kind: string;
+            /** @description The number people write to, in E.164. For sms it must be a number this app bought with POST /v1/phone/numbers. */
+            readonly number: string;
+            /** @description What the provider signs deliveries with: Meta's app secret, Telnyx's public key, Linq's whsec_ secret. */
+            readonly signing?: string;
+            /** @description What authenticates a send: a Meta access token, a Telnyx API key, a Linq API key. */
+            readonly token?: string;
+        };
+        /** @description One account at one connector, owned by the app or by one of its users. Credentials are never shown. */
+        readonly Connection: {
+            /** @description The provider account, known once it is connected. */
+            readonly account_id?: string;
+            /** @description How the connection authenticates, one of its connector's schemes. */
+            readonly auth_scheme: string;
+            readonly connector_id: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            /**
+             * Format: int64
+             * @description The connector's revision when the connection was made, which it keeps reading until it is reconnected.
+             */
+            readonly definition_revision: number;
+            /**
+             * Format: date-time
+             * @description When the current credential expires. Absent when there is none or it does not.
+             */
+            readonly expires_at?: string;
+            readonly granted_scopes: readonly string[] | null;
+            readonly id: string;
+            /** @description What the connection was created with, the connector's defaults filled in. */
+            readonly inputs: {
+                readonly [key: string]: string;
+            };
+            readonly label?: string;
+            /** @description What the provider said about the account when it was connected, such as a workspace id. Empty until then. */
+            readonly metadata: {
+                readonly [key: string]: string;
+            };
+            readonly owner: components["schemas"]["ConnectionOwner"];
+            /**
+             * Format: int64
+             * @description Advances with every new credential, starting at 1.
+             */
+            readonly revision: number;
+            readonly status: components["schemas"]["ConnectionStatus"];
+            /** Format: date-time */
+            readonly updated_at: string;
+            /** @description The agent config bindings that name this connection as their fixed connection, which deleting it would break. A binding a session fills with the caller's own connection names none, so it is never listed. */
+            readonly used_by: readonly components["schemas"]["ConnectionUse"][] | null;
+        };
+        /** @description Credentials for a connection, under the revision the caller last read. An unknown field is refused rather than ignored. */
+        readonly ConnectionCredentials: {
+            /**
+             * Format: int64
+             * @description The connection's revision as last read. A connection that has moved past it is refused with a 409, so two writers never replace each other's credentials unseen.
+             */
+            readonly expected_revision: number;
+            /** @description What the connection's auth_scheme takes, write-only. api_key: api_key and header. bearer: token. none: nothing, which activates the connection. oauth2_client_credentials: client_id and client_secret, which are tried at the token endpoint at once. oauth2_code: a grant the provider already issued, as access_token, refresh_token (optional), expires_at (RFC 3339) and scope (the granted scopes joined as the connector's scopes are); its endpoints and client are the connector's, never the caller's. */
+            readonly values?: {
+                readonly [key: string]: string;
+            };
+        };
+        /** @description One connector tool call a session ran through the connection: the binding, the tool, how long it took and how it failed. What the call was asked and answered is never kept. */
+        readonly ConnectionInvocation: {
+            /** @description The alias the config binds the connector under. */
+            readonly binding: string;
+            /** @description The agent config whose binding the call went through. */
+            readonly config_id: string;
+            readonly connection_id: string;
+            readonly connector_id: string;
+            /** @description How the call failed. Absent for a call that answered. */
+            readonly error_type?: components["schemas"]["InvocationErrorType"];
+            readonly id: string;
+            /**
+             * Format: int64
+             * @description From the call reaching the router to its answer, the router's own checks included.
+             */
+            readonly latency_ms: number;
+            /** @description The session that called it. Absent for an incognito session, whose calls are tied to no conversation. */
+            readonly session_id?: string;
+            /** Format: date-time */
+            readonly started_at: string;
+            /** @description The tool's name at the provider, without the alias. */
+            readonly tool: string;
+        };
+        readonly ConnectionInvocationPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["ConnectionInvocation"][] | null;
+            /** @description Pass as cursor for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        /** @description Whose a connection is: the app's, which any of its agents may be bound to, or one user's. */
+        readonly ConnectionOwner: {
+            readonly type: components["schemas"]["ConnectionOwnerType"];
+            /** @description The user, for a user-owned connection only. It must be the user the backend acts for, named by X-Stream-User-Id. */
+            readonly user_id?: string;
+        };
+        /**
+         * @description app is the app's own account, user one user's.
+         * @enum {string}
+         */
+        readonly ConnectionOwnerType: "app" | "user";
+        readonly ConnectionPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["Connection"][] | null;
+            /** @description Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        /** @description A connection to create, pending until an account is connected. An unknown field is refused rather than ignored. */
+        readonly ConnectionRequest: {
+            /** @description One of the connector's schemes. Omitted is its only one; a connector with several needs it named. */
+            readonly auth_scheme?: string;
+            /** @description A built-in, such as slack, or one of the app's own. */
+            readonly connector_id: string;
+            /** @description Values for the connector's inputs, such as a region. One without a default is required, and each must match the connector's enum or pattern. */
+            readonly inputs?: {
+                readonly [key: string]: string;
+            };
+            /** @description A name to tell connections apart by. */
+            readonly label?: string;
+            readonly owner: components["schemas"]["ConnectionOwner"];
+        };
+        /**
+         * @description pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
+         * @enum {string}
+         */
+        readonly ConnectionStatus: "pending" | "connected" | "needs_reauthorization" | "disconnected";
+        /** @description A connection's access credential, for the app's backend to call the provider with directly. It holds no refresh token. */
+        readonly ConnectionToken: {
+            readonly connection_id: string;
+            /**
+             * Format: date-time
+             * @description When it stops working. Absent when the provider gave no expiry. Export again for a fresh one.
+             */
+            readonly expires_at?: string;
+            /** @description The HTTP field to send it in: Authorization for an OAuth access token, the connection's own header for an API key. */
+            readonly header: string;
+            /** @description The whole field value: Bearer and the access token for an OAuth access token (RFC 6750 section 2.1), the key for an API key. */
+            readonly value: string;
+        };
+        readonly ConnectionTool: {
+            readonly description: string;
+            /** @description The JSON Schema of its arguments. */
+            readonly input_schema: {
+                readonly [key: string]: unknown;
+            };
+            /** @description The tool's name at the provider. An agent config grants it by this name. */
+            readonly name: string;
+            /** @description The scopes a call of the tool needs, as the connector says. Absent when it says none. */
+            readonly needs_scopes?: readonly string[] | null;
+            /** @description The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again. */
+            readonly schema_digest: string;
+        };
+        /** @description The tools a connection offered when it was last validated, in one piece: the provider's own list, not a page of one. */
+        readonly ConnectionTools: {
+            /**
+             * Format: date-time
+             * @description When the list was read. Absent until a validate listed it.
+             */
+            readonly checked_at?: string;
+            readonly connection_id: string;
+            /** @description The digest of the whole list. Absent until a validate listed it. */
+            readonly digest?: string;
+            readonly tools: readonly components["schemas"]["ConnectionTool"][] | null;
+        };
+        readonly ConnectionUse: {
+            /** @description The alias the config binds the connection under. */
+            readonly binding: string;
+            readonly config_id: string;
+            readonly config_name: string;
+        };
+        /** @description Whether a connection's credential works, found by asking the provider for its tools. */
+        readonly ConnectionValidation: {
+            /**
+             * Format: date-time
+             * @description When the tools were listed. Absent until a validate listed them.
+             */
+            readonly checked_at?: string;
+            /** @description What a program branches on when the status is not connected: connector_scope_required with needs_scopes. More may be added. */
+            readonly code?: string;
+            readonly connection_id: string;
+            /** @description Why the status is not connected, for a person to read. */
+            readonly error?: string;
+            /** @description With needs_scopes: the scopes the checked tools need that the grant lacks, sorted. */
+            readonly missing_scopes?: readonly string[] | null;
+            readonly status: components["schemas"]["ConnectionValidationStatus"];
+            /** @description The digest of the tools the connection offers, as GET .../tools shows them. Absent until a validate listed them. */
+            readonly tools_digest?: string;
+        };
+        /** @description What a validate checks the grant's scopes against. An unknown field is refused rather than ignored. */
+        readonly ConnectionValidationRequest: {
+            /** @description The tools to check the granted scopes against, by name: those an agent config will grant. Left out, every tool the connection offers. */
+            readonly tools?: readonly string[] | null;
+        };
+        /**
+         * @description connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
+         * @enum {string}
+         */
+        readonly ConnectionValidationStatus: "connected" | "pending" | "needs_reauthorization" | "needs_scopes" | "failed";
+        /** @description A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router. */
+        readonly Connector: {
+            readonly category?: string;
+            readonly client: components["schemas"]["ConnectorClient"];
+            /**
+             * Format: date-time
+             * @description When this revision was stored.
+             */
+            readonly created_at: string;
+            /** @description The app's own definition rather than a built-in. */
+            readonly custom: boolean;
+            readonly description?: string;
+            /** @description Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does. */
+            readonly id: string;
+            /** @description What a connection is created with, such as a region or a shop. */
+            readonly inputs: readonly components["schemas"]["ConnectorInput"][] | null;
+            readonly name: string;
+            /**
+             * Format: int64
+             * @description The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected.
+             */
+            readonly revision: number;
+            /** @description How a connection may authenticate, such as oauth2_code. */
+            readonly schemes: readonly string[] | null;
+            /** @description The scopes a consent asks for. */
+            readonly scopes: readonly string[] | null;
+            /** @description What a person does at the provider before the first consent, such as registering an OAuth client. Absent when the manifest says nothing. */
+            readonly setup?: components["schemas"]["ConnectorSetup"];
+        };
+        /**
+         * @description grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection.
+         * @enum {string}
+         */
+        readonly ConnectorAuditAction: "grant_created" | "grant_refreshed" | "grant_revoked" | "token_export" | "proxy_call";
+        /** @description One grant a connection got, renewed or lost, one export of its access credential, or one direct call sent through it, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted. */
+        readonly ConnectorAuditEvent: {
+            readonly action: components["schemas"]["ConnectorAuditAction"];
+            /** @description The authorization attempt a consent finished. Absent once the connection's user was deleted. */
+            readonly attempt_id?: string;
+            /** @description The connection, which may since have been deleted. */
+            readonly connection_id: string;
+            readonly connector_id: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            readonly id: string;
+            /**
+             * Format: int64
+             * @description How long a proxy_call took until the provider's answer, in milliseconds. Absent for a grant.
+             */
+            readonly latency_ms?: number;
+            readonly owner_type: components["schemas"]["ConnectionOwnerType"];
+            /** @description Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked. */
+            readonly reason?: string;
+            /** @description The X-Request-Id of the API request that caused it. For a change a session's tool call caused, that is the request that created the session, not the one that asked for the turn. Absent for an incognito session's, and once the connection's user was deleted. */
+            readonly request_id?: string;
+            /**
+             * Format: int64
+             * @description The connection's credential revision once the change was made. Absent when the change names none, as a delete.
+             */
+            readonly revision?: number;
+            /** @description The session whose tool call caused it. Absent for an incognito session, and once the connection's user was deleted. */
+            readonly session_id?: string;
+            /**
+             * Format: int64
+             * @description A proxy_call's status from the provider. Absent when no answer came, and for a grant.
+             */
+            readonly status_code?: number;
+            /** @description The host a proxy_call reached. Absent for a grant. */
+            readonly target?: string;
+        };
+        readonly ConnectorAuditPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["ConnectorAuditEvent"][] | null;
+            /** @description Pass as cursor for the next page, with the same connection_id. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        /** @description One MCP event a binding subscribes to on its fixed connection. Each one that arrives opens a text conversation from the config, as the app, with the event's data as the first thing said to it. */
+        readonly ConnectorBindingEvent: {
+            /** @description The event's filters, as its inputSchema describes them. */
+            readonly arguments?: {
+                readonly [key: string]: unknown;
+            };
+            /** @description The event's name, as the server's events/list gives it, such as issue.created. */
+            readonly event: string;
+            /** @description What the agent does with the event when it arrives, added to its instructions for that conversation. */
+            readonly instructions?: string;
+        };
+        /** @description How a binding's tool calls behave around speech and interruptions. Every field is optional, and a field left out keeps today's behaviour. */
+        readonly ConnectorBindingPolicy: {
+            /** @description Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running after an interruption, for a tool that is not safe to stop halfway, such as a payment; the binding's timeout still ends it and tells the provider to stop it. It only matters with on_interrupt cancel: a wait call is never stopped by an interruption. */
+            readonly cancellable?: boolean;
+            /** @description What an interruption of the turn does to a call in flight. Omitted is cancel. */
+            readonly on_interrupt?: components["schemas"]["ConnectorOnInterrupt"];
+            /** @description What the agent says while one of the binding's tools runs, such as "Let me pull up your calendar.", in place of the phrase it picks itself when the model reached for the tool without a word. A voice session with a separate voice says it; every session reports it on tool_started. */
+            readonly pre_speech?: string;
+        };
+        /** @description How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint. */
+        readonly ConnectorClient: {
+            /**
+             * @description How a private_key_jwt assertion is signed, and set only for it.
+             * @enum {string}
+             */
+            readonly alg?: "RS256" | "PS256";
+            readonly auth_method?: components["schemas"]["ConnectorClientAuthMethod"];
+            /** @description The client registration mechanisms the connector allows, tried as the scheme orders them. Empty when the connector needs no OAuth client. */
+            readonly registration?: readonly components["schemas"]["ConnectorClientRegistrationMethod"][] | null;
+        };
+        /**
+         * @description How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
+         * @enum {string}
+         */
+        readonly ConnectorClientAuthMethod: "none" | "client_secret_post" | "client_secret_basic" | "private_key_jwt" | "tls_client_auth";
+        /**
+         * @description operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+         * @enum {string}
+         */
+        readonly ConnectorClientRegistrationMethod: "operator" | "customer" | "managed" | "dcr" | "cimd";
+        /** @description A URL of the app's own that a connector's raw provider events are forwarded to, such as Slack's block_actions or reaction_added. Each forward is a POST of the provider's body as it came, with the provider's own Content-Type, signature and timestamp headers, signed on top in the Standard Webhooks shape (webhook-id, webhook-timestamp, webhook-signature) with the destination's own secret. A 2xx answer is taken; a 5xx, a 429 or no answer is sent again after 5 s, 5 min, 30 min and 2 h; any other answer is not sent again. The provider's signature headers come only while the provider's own check would pass them: for Slack, until X-Slack-Request-Timestamp is 5 minutes old, the age Slack Bolt refuses after. A forward sent later, such as the retries after 5 min, 30 min and 2 h, carries Content-Type alone of them: verify it with webhook-signature. webhook-id is the same for every delivery of one provider event (Slack's event_id, or trigger_id for an interaction), and a digest of the body for one that names no id. */
+        readonly ConnectorEventDestination: {
+            readonly connector_id: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            readonly forward: components["schemas"]["ConnectorEventForward"];
+            readonly id: string;
+            /**
+             * Format: date-time
+             * @description Until when the secret the last rotation replaced still signs beside the current one. Absent when only one secret signs.
+             */
+            readonly previous_secret_until?: string;
+            /**
+             * Format: date-time
+             * @description When the secret was last rotated, or the destination made.
+             */
+            readonly updated_at: string;
+            readonly url: string;
+        };
+        readonly ConnectorEventDestinationPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["ConnectorEventDestination"][] | null;
+            /** @description Pass as cursor for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        /** @description An event destination to create. An unknown field is refused rather than ignored. */
+        readonly ConnectorEventDestinationRequest: {
+            readonly forward: components["schemas"]["ConnectorEventForward"];
+            /** @description A public https URL. One that is or resolves to a private, loopback or link-local address is refused. */
+            readonly url: string;
+        };
+        /** @description An event destination and the secret its forwards are signed with, which no other response carries. */
+        readonly ConnectorEventDestinationSecret: {
+            readonly destination: components["schemas"]["ConnectorEventDestination"];
+            /** @description The Standard Webhooks signing secret, whsec_ and 32 random bytes in base64. Shown this once: keep it, no later response carries it. */
+            readonly secret: string;
+        };
+        /**
+         * @description Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there.
+         * @enum {string}
+         */
+        readonly ConnectorEventForward: "unhandled" | "all";
+        readonly ConnectorInput: {
+            /** @description Used when the connection gives no value. An input without one is required. */
+            readonly default?: string;
+            /** @description The values it may take. Absent when a pattern decides. */
+            readonly enum?: readonly string[] | null;
+            readonly name: string;
+            /** @description A regular expression the whole value must match. */
+            readonly pattern?: string;
+        };
+        /** @description The OAuth client the app registered with a connector's provider itself. The client secret and the signing secret are write-only: no response carries them. */
+        readonly ConnectorOAuthClient: {
+            readonly auth_method?: components["schemas"]["ConnectorOAuthClientAuthMethod"];
+            /** @description Empty for a provider app put without an OAuth client, such as a Linq account. */
+            readonly client_id: string;
+            readonly connector_id: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            /** @description The provider's id for the app the client belongs to, as put. Absent when none was put. */
+            readonly provider_app_id?: string;
+            /** @description customer: the app's own client, which every consent and refresh of the connector's connections then uses. */
+            readonly registration: components["schemas"]["ConnectorClientRegistrationMethod"];
+            /**
+             * Format: date-time
+             * @description When the client, its secrets or its method last changed.
+             */
+            readonly updated_at: string;
+        };
+        /**
+         * @description How the app's own OAuth client authenticates at the token endpoint (RFC 7591 section 2): none for a public client, which has no secret, client_secret_basic or client_secret_post.
+         * @enum {string}
+         */
+        readonly ConnectorOAuthClientAuthMethod: "none" | "client_secret_basic" | "client_secret_post";
+        /** @description The OAuth client the app registered with the connector's provider. An unknown field is refused rather than ignored. */
+        readonly ConnectorOAuthClientRequest: {
+            /** @description Overrides the connector's own client.auth_method. Left out, the connector's applies, and failing that the consent picks: none without a secret, else client_secret_basic where the provider accepts it. */
+            readonly auth_method?: components["schemas"]["ConnectorOAuthClientAuthMethod"];
+            /** @description Required, unless the record is only a provider app: provider_app_id and signing_secret without client_secret or auth_method, for a connector whose connections are not consented through oauth2_code, such as linq. */
+            readonly client_id?: string;
+            /** @description Sealed at rest and never returned. Left out for a public client (auth_method none). */
+            readonly client_secret?: string;
+            /** @description The provider's id for the app the client belongs to, such as a Slack app id (A012ABCD0A0). The app's events then reach POST /v1/connectors/events/{id}/{provider_app_id}. An app serves one customer: another customer's record naming it is a 409. */
+            readonly provider_app_id?: string;
+            /** @description The secret the provider signs the app's events with, such as a Slack app's signing secret. Needs provider_app_id, and a connector whose events are verified with the app's own secret (channel.verifier.secret provider_app). Sealed at rest and never returned. Putting the client again without it removes it, as it does client_secret. */
+            readonly signing_secret?: string;
+        };
+        /**
+         * @description cancel stops waiting for the call when the turn is interrupted, and tells the provider to stop it unless cancellable is false. wait lets the call finish, up to the binding's timeout, and its result goes into the conversation for the next turn.
+         * @enum {string}
+         */
+        readonly ConnectorOnInterrupt: "cancel" | "wait";
+        readonly ConnectorPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["Connector"][] | null;
+            /** @description Pass as cursor for the next page, with the same q. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        /** @description The customer's app at a connector's provider, such as a Slack app. Its client secret and signing secret are kept sealed and never returned. */
+        readonly ConnectorProviderApp: {
+            /** @description The app's OAuth client, which every consent of the connector's connections uses. */
+            readonly client_id: string;
+            readonly connector_id: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            /** @description The provider's id for the app, such as a Slack app id. */
+            readonly provider_app_id: string;
+            /** @description managed: the router created the app in the customer's workspace. operator: Stream's own app, which serves Stream's own agents. */
+            readonly registration: components["schemas"]["ConnectorClientRegistrationMethod"];
+            /** Format: date-time */
+            readonly updated_at: string;
+        };
+        /** @description The app the router creates and keeps in the customer's workspace. An unknown field is refused rather than ignored. */
+        readonly ConnectorProviderAppRequest: {
+            /** @description IP addresses or CIDR ranges the app's tokens work from, at most 10. Left out, they work from anywhere. */
+            readonly allowed_ip_address_ranges?: readonly string[] | null;
+            /** @description The refresh token of an app configuration token a workspace admin generated in Slack's app settings. Required the first time; the router rotates it and keeps the result sealed. Sent again, it replaces the one kept. Never returned. */
+            readonly config_refresh_token?: string;
+            /** @description The app's name in the customer's workspace. */
+            readonly name: string;
+        };
+        /** @description What a person does at the provider before the first consent. */
+        readonly ConnectorSetup: {
+            /** @description In order. */
+            readonly steps: readonly components["schemas"]["ConnectorSetupStep"][];
+            /**
+             * Format: uri
+             * @description Where the steps start, a page of the provider's.
+             */
+            readonly url?: string;
+        };
+        /** @description One step of a provider's setup. */
+        readonly ConnectorSetupStep: {
+            readonly description: string;
+            readonly title: string;
+        };
+        /** @description One tool a binding allows. */
+        readonly ConnectorToolGrant: {
+            /** @description The tool as the connector names it. */
+            readonly name: string;
+            /** @description The SHA-256 of the tool's name, description and input schema, as 64 lowercase hex characters. A tool whose schema has changed since no longer matches and is not offered. */
+            readonly schema_digest: string;
         };
         readonly Contact: {
             readonly attempts: number;
@@ -2084,10 +5016,34 @@ export type components = {
             }[];
         };
         readonly ContentPart: components["schemas"]["TextContentPart"] | components["schemas"]["ImageContentPart"];
+        /** @description One place a call's cost came from. */
+        readonly CostSource: {
+            /**
+             * Format: int64
+             * @description Millionths of a dollar. A part of the prompt is given its share of what the prompt cost, by tokens.
+             */
+            readonly cost_micros: number;
+            /** @description For a model billed by tokens, the part of its prompt (instructions, messages, tool_definitions, tool_use, images or video), output for what it wrote, or input for prompt tokens recorded without a breakdown. For any other model, its modality: stt, tts, search and the rest. */
+            readonly source: string;
+        };
+        readonly CreateOptOutRequest: {
+            readonly channel: components["schemas"]["OptOutChannel"];
+            /** @description The number, in E.164. */
+            readonly recipient: string;
+            /**
+             * @description Omitted is api.
+             * @enum {string}
+             */
+            readonly source?: "api" | "dashboard";
+        };
         readonly CreateResponseRequest: {
+            /** @description Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id. */
+            readonly command_id?: string;
             readonly images?: readonly components["schemas"]["ImageSource"][];
             /** @description What to answer, as though it had been said. */
             readonly text: string;
+            /** @description Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole. */
+            readonly videos?: readonly components["schemas"]["VideoSource"][];
         };
         readonly CreateSessionRequest: {
             /** @description The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: "docs" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree. */
@@ -2105,6 +5061,8 @@ export type components = {
             readonly call_type?: string;
             /** @description An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call. */
             readonly config_id?: string;
+            /** @description The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A required binding left without one fails the session; an optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections again, against the config as it is then and the caller asking for the fork. */
+            readonly connector_bindings?: readonly components["schemas"]["SessionConnectorBinding"][];
             /** @description Older history was omitted from the model context. */
             readonly context_truncated?: boolean;
             /** @description Stream Chat CID to resume; returned for persistent text sessions. */
@@ -2117,11 +5075,16 @@ export type components = {
             readonly description?: string;
             /** @description Said on joining without going through the model. Empty means the agent waits to be spoken to. */
             readonly greeting?: string;
+            /** @description The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth. */
+            readonly history?: readonly components["schemas"]["HistoryMessage"][];
+            /** @description The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7. */
+            readonly id?: string;
             /**
-             * @description Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel whatever persist_conversation says. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
+             * @description Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
              * @default false
              */
             readonly incognito?: boolean;
+            /** @description The system prompt, over what the config says. Server-side only: a device sending it is refused with a 403, as it is on updateSession, because what the agent is told to be is the backend's to decide. */
             readonly instructions?: string;
             /** @description Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them. */
             readonly keyterms?: readonly string[];
@@ -2142,40 +5105,25 @@ export type components = {
              * @default false
              */
             readonly navigating?: boolean;
-            /** @description Persist a text conversation in Stream Chat, creating a channel when no CID is supplied. */
-            readonly persist_conversation?: boolean;
             readonly phone?: components["schemas"]["SessionPhone"];
             /** @description What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins. */
-            readonly project?: string;
-            readonly sandbox?: components["schemas"]["Sandbox"];
+            readonly project_id?: string;
             /** @description Omit it and the config decides, or search-fast when there is no config. */
             readonly search?: string;
-            /** @description Skills to look up rather than spell out: the customer's own, or one of the built-in think, recall and explain. Ignored when skills are given in full, and a name nothing defines is refused rather than dropped. */
-            readonly skill_names?: readonly string[];
-            /** @description Omit for the built-in set of think, recall and explain. */
-            readonly skills?: readonly components["schemas"]["SessionSkill"][];
             /** @description A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides. */
             readonly sts?: string;
             /** @description Omit it and the config decides, or en-low-latency when there is no config. */
             readonly stt?: string;
-            /** @description The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing. */
-            readonly subagent?: string;
-            /** @description Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default. */
-            readonly subagents?: {
-                readonly [key: string]: string;
-            };
             /** @description Cost labels, carried onto every request the session makes. */
             readonly tags?: {
                 readonly [key: string]: string;
             };
-            /** @description How much delegated work may run at once. */
-            readonly tasks?: number;
             /**
              * @description Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
              * @default false
              */
             readonly text?: boolean;
-            /** @description What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is called is a label on it rather than part of it. */
+            /** @description What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it. */
             readonly title?: string;
             /** @description How long the model waits for a tool result. Zero is the default. */
             readonly tool_timeout_ms?: number;
@@ -2193,6 +5141,93 @@ export type components = {
             /** @description Provider-specific voice id. */
             readonly voice?: string;
         };
+        readonly CreateSipTrunkRequest: {
+            /** @description PCMU, PCMA or G722, in order of preference. Omit for PCMU then PCMA. */
+            readonly codecs?: readonly string[];
+            /** @description Required. The trunk's hostname, without sip: or a port, e.g. example.pstn.twilio.com. */
+            readonly host?: string;
+            /** @description The trunk accepts an INVITE without SDP. Omit for false. */
+            readonly late_offer?: boolean;
+            /** @description Required. */
+            readonly name?: string;
+            /** @description Required. Stored sealed and never returned. */
+            readonly password?: string;
+            /**
+             * Format: int64
+             * @description Omit for 5060.
+             */
+            readonly port?: number;
+            /** @description udp, tcp or tls. Omit for tcp. */
+            readonly transport?: string;
+            /** @description Required. */
+            readonly username?: string;
+        };
+        /** @description A custom MCP server for the app's agents to connect to. An unknown field is refused rather than ignored. */
+        readonly CustomConnectorRequest: {
+            readonly category?: string;
+            readonly client?: components["schemas"]["ConnectorClient"];
+            readonly description?: string;
+            /** @description The MCP server, over Streamable HTTP: a public https URL without userinfo, query or fragment. An address on a private network, loopback or link-local is refused. */
+            readonly endpoint: string;
+            /** @description Starts with custom_, which no built-in does, so a custom definition never stands in for one. Creating an id that exists stores the next revision, unless the newest already says the same. */
+            readonly id: string;
+            readonly name: string;
+            /** @description How a connection may authenticate. Each must be a scheme this deployment has. */
+            readonly schemes: readonly string[] | null;
+            /** @description The scopes a consent asks for, each an RFC 6749 scope token. */
+            readonly scopes?: readonly string[] | null;
+        };
+        /** @description One thing that happened to one row of the calling app's data. */
+        readonly DataChange: {
+            /** Format: date-time */
+            readonly at: string;
+            /** @description What identifies the row, which is all a delete has. */
+            readonly key: {
+                readonly [key: string]: unknown;
+            };
+            /** @enum {string} */
+            readonly op: "insert" | "update" | "delete";
+            /** @description The row as it now reads, absent for a delete and never carrying a credential. */
+            readonly row?: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Format: int64
+             * @description Where this sits in the order changes happened, and the cursor to resume from.
+             */
+            readonly seq: number;
+            /**
+             * @description Which table the row is in.
+             * @example agent_configs
+             */
+            readonly table: string;
+        };
+        readonly DataChangePage: {
+            /** @description Nothing else has happened yet, which is when a switchover is safe: point your SDKs at the new deployment, wait for this to be true once more, and stop. */
+            readonly caught_up?: boolean;
+            readonly changes: readonly components["schemas"]["DataChange"][];
+            /**
+             * Format: int64
+             * @description What to pass as `after` next time.
+             */
+            readonly cursor: number;
+        };
+        readonly DataImport: {
+            /**
+             * Format: int64
+             * @description The cursor the export named, to ask the other deployment for changes from.
+             */
+            readonly cursor?: number;
+            /**
+             * Format: int64
+             * @description How many rows were written.
+             */
+            readonly rows: number;
+            /** @description How many of them went into each table. */
+            readonly tables?: {
+                readonly [key: string]: number;
+            };
+        };
         /** @description What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not. */
         readonly DataPolicy: {
             /** @description False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no. */
@@ -2209,13 +5244,40 @@ export type components = {
          */
         readonly DecisionKind: "ask" | "wait" | "ignore" | "answer" | "queue" | "interrupt" | "shorten" | "backchannel" | "supersede" | "compact" | "delegate" | "settle" | "fail";
         /**
+         * @description Whether this kind of work is left to the customer's own dispatch worker.
+         * @enum {string}
+         */
+        readonly DispatchSetting: "enabled" | "disabled";
+        /**
          * @description What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
          * @enum {string}
          */
         readonly Endpointing: "silence" | "semantic";
-        readonly Error: {
-            readonly error: string;
+        /** @description Matches one value exactly: "value" is short for {"$eq": "value"}. */
+        readonly Equals: string | {
+            readonly $eq: string;
         };
+        readonly ErrorDetail: {
+            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know. */
+            readonly code: string;
+            /**
+             * Format: uri
+             * @description Where the code is explained.
+             */
+            readonly doc_url: string;
+            /** @description What went wrong, for a person to read. Its wording may change; branch on code. */
+            readonly message: string;
+            readonly type: components["schemas"]["ErrorType"];
+        };
+        /** @description The body of every failure. A failure that is not the caller's own is a 500 of type internal saying only "something went wrong": quote the response's X-Request-Id to find out more. */
+        readonly ErrorResponse: {
+            readonly error: components["schemas"]["ErrorDetail"];
+        };
+        /**
+         * @description The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503.
+         * @enum {string}
+         */
+        readonly ErrorType: "invalid_request" | "authentication" | "permission" | "not_found" | "method_not_allowed" | "not_acceptable" | "conflict" | "gone" | "payload_too_large" | "unsupported_media_type" | "rate_limited" | "internal" | "unavailable";
         /** @description Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model. */
         readonly ForkSessionRequest: {
             readonly agent?: string;
@@ -2228,6 +5290,7 @@ export type components = {
             readonly description?: string;
             /** @description Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept. */
             readonly incognito?: boolean;
+            /** @description Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession. */
             readonly instructions?: string;
             /**
              * @description Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants.
@@ -2235,8 +5298,29 @@ export type components = {
              */
             readonly messages?: boolean;
             readonly model_overwrites?: components["schemas"]["ModelOverwrites"];
-            readonly project?: string;
+            readonly project_id?: string;
+            /** @description Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false. */
+            readonly response_id?: string;
             readonly title?: string;
+        };
+        readonly GeneratedImage: {
+            /**
+             * Format: byte
+             * @description The picture, base64. Decoded and checked before it was returned, and never more than 10 MiB.
+             */
+            readonly data: string;
+            readonly height: number;
+            /**
+             * @description What the picture is, read off the picture itself rather than the provider's label.
+             * @enum {string}
+             */
+            readonly media_type: "image/png" | "image/jpeg";
+            /**
+             * Format: int64
+             * @description The seed the provider reports, which draws the same picture again. Absent when it reports none.
+             */
+            readonly seed?: number;
+            readonly width: number;
         };
         /**
          * @default hourly
@@ -2266,6 +5350,11 @@ export type components = {
             /** @description What to call them, for a transcript a person reads later. */
             readonly name?: string;
         };
+        /**
+         * @description Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+         * @enum {string}
+         */
+        readonly Harness: "default";
         readonly HealthStatus: {
             /**
              * @description Dependency name to "ok" or a failure description.
@@ -2280,16 +5369,143 @@ export type components = {
             /** @enum {string} */
             readonly status: "ok" | "degraded";
         };
+        readonly HistoryMessage: {
+            /**
+             * Format: date-time
+             * @description When it was said. The model is shown it beside a person's message, so it can tell an hour ago from just now.
+             */
+            readonly created_at?: string;
+            /** @description Who said it, when several people share the thread. The model is shown it as a label, never as who is asking now. */
+            readonly name?: string;
+            readonly role: components["schemas"]["HistoryRole"];
+            readonly text: string;
+        };
+        /**
+         * @description user is what a person said, assistant what the agent answered. These are the only turns a resumed conversation hands the model; instructions say anything a system message would.
+         * @enum {string}
+         */
+        readonly HistoryRole: "user" | "assistant";
         readonly ImageContentPart: {
             readonly image_url: components["schemas"]["ImageSource"];
             /** @enum {string} */
             readonly type: "image_url";
+        };
+        /**
+         * @description Why a generation drew nothing, absent when it completed. content_filtered is a safety filter refusing the prompt or the picture; unsupported_option a size, shape or setting no candidate could honour; provider_failed anything else a provider did wrong; timeout the 240 seconds running out; cancelled the caller hanging up.
+         * @enum {string}
+         */
+        readonly ImageErrorCode: "content_filtered" | "unsupported_option" | "provider_failed" | "timeout" | "cancelled";
+        readonly ImageGeneration: {
+            /**
+             * Format: int64
+             * @description Millionths of a dollar, priced per picture or per megapixel from what came back. Zero when it failed.
+             */
+            readonly cost_micros: number;
+            /** @description What went wrong, in words. Absent when the generation completed. */
+            readonly error?: string;
+            readonly error_code?: components["schemas"]["ImageErrorCode"];
+            /**
+             * @description This response's own id, for logs. Nothing is stored under it.
+             * @example img_1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed
+             */
+            readonly id: string;
+            /** @description The pictures, as many as were asked for. Empty when the generation failed. */
+            readonly images: readonly components["schemas"]["GeneratedImage"][];
+            /** @example alibaba/qwen-image-3/text-to-image */
+            readonly model?: string;
+            /**
+             * @description Who drew it, or who refused to. Absent when nothing got as far as a provider.
+             * @example fal
+             */
+            readonly provider?: string;
+            readonly status: components["schemas"]["ImageGenerationStatus"];
+        };
+        readonly ImageGenerationRequest: {
+            readonly options?: components["schemas"]["ImageOptions"];
+            /**
+             * @description What to draw, in the caller's own words.
+             * @example A yellow watering can beside a seedling, flat illustration, no text
+             */
+            readonly prompt: string;
+            readonly tags?: {
+                readonly [key: string]: string;
+            };
+        };
+        /**
+         * @description Whether the pictures were drawn. A failed generation says why in error_code and error.
+         * @enum {string}
+         */
+        readonly ImageGenerationStatus: "completed" | "failed";
+        /** @description Where to draw and what the picture should be. A size, shape, seed, negative prompt or format narrows the candidates to the models that declared it, so it is either honoured or the request is refused. */
+        readonly ImageOptions: {
+            /**
+             * @description The shape, for the models that are asked for one rather than a size.
+             * @example 1:1
+             */
+            readonly aspect_ratio?: string;
+            /**
+             * @description How many pictures to draw.
+             * @default 1
+             */
+            readonly n?: number;
+            /** @description What to keep out of the picture. */
+            readonly negative_prompt?: string;
+            /**
+             * @description The encoding, on a model that can be asked for one.
+             * @enum {string}
+             */
+            readonly output_format?: "png" | "jpeg";
+            /** @description A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. */
+            readonly providers?: readonly string[];
+            /**
+             * Format: int64
+             * @description Draws the same picture again from the same prompt, on a model that reads one.
+             */
+            readonly seed?: number;
+            /**
+             * @description Width by height in pixels, for the models that take a size.
+             * @example 1024x1024
+             */
+            readonly size?: string;
+            /**
+             * @description A provider/model or a capability shortcut. Defaults to image-fast.
+             * @example image-fast
+             */
+            readonly target?: string;
         };
         readonly ImageSource: {
             /** @enum {string} */
             readonly detail?: "auto" | "low" | "high";
             /** @description Absolute HTTP(S) URL or base64 image data URI. */
             readonly url: string;
+        };
+        readonly IMessageProfile: {
+            readonly consent_method?: string;
+            /** @description Square, at least 200 by 200. */
+            readonly contact_card_image_url?: string;
+            readonly contact_card_name?: string;
+            /** @description imessage, rcs or sms, in the order to try them. */
+            readonly fallback_channels?: readonly string[] | null;
+        };
+        readonly IndexedKnowledgeDocument: {
+            /** Format: date-time */
+            readonly created_at: string;
+            readonly id: string;
+            readonly namespace: string;
+            /** @description How many passages it was last cut into. */
+            readonly passages: number;
+            /**
+             * @description What the document was posted as, and what its passages are keyed by.
+             * @example pricing.md
+             */
+            readonly source: string;
+            /** @description The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none. */
+            readonly text?: string;
+            /**
+             * Format: date-time
+             * @description When it was last written.
+             */
+            readonly updated_at: string;
         };
         readonly IngestedKnowledge: {
             /** @description How many documents were read. */
@@ -2308,9 +5524,47 @@ export type components = {
              */
             readonly namespace: string;
         };
+        /** @description What prompts were made of, in tokens. Estimated from each request and scaled to what the provider counted, so the parts sum to the input tokens and only the split between them is a guess. Requests recorded before the split was kept read zero throughout. */
+        readonly InputParts: {
+            /**
+             * Format: int64
+             * @description Pictures, attached or returned by a tool.
+             */
+            readonly images: number;
+            /**
+             * Format: int64
+             * @description The system prompt: the agent's instructions, skills and plugin guidance.
+             */
+            readonly instructions: number;
+            /**
+             * Format: int64
+             * @description The conversation's words, from either side.
+             */
+            readonly messages: number;
+            /**
+             * Format: int64
+             * @description The tools the model was offered: their names, descriptions and schemas.
+             */
+            readonly tool_definitions: number;
+            /**
+             * Format: int64
+             * @description The tools the model called, and what they returned.
+             */
+            readonly tool_use: number;
+            /**
+             * Format: int64
+             * @description Frames of a video, from the call's camera or an attached clip.
+             */
+            readonly video: number;
+        };
         readonly InstructionsRequest: {
             readonly instructions: string;
         };
+        /**
+         * @description customer_auth: the provider refused the connection's credential, or it had none; reconnect it. external_server: the provider answered with a failure or could not be reached. client_timeout: the router stopped waiting before the provider answered, and nothing says it got the call. outcome_unknown: the call was sent and cut off, by the binding's timeout or an interrupted turn, so it may have been done. denied: the router refused it before anything was sent.
+         * @enum {string}
+         */
+        readonly InvocationErrorType: "customer_auth" | "external_server" | "client_timeout" | "outcome_unknown" | "denied";
         readonly KnowledgeDocument: {
             /**
              * @description Where the document came from, as a reader would recognise it. Passage ids are keyed by it, so posting the same source again replaces what it wrote before.
@@ -2318,6 +5572,12 @@ export type components = {
              */
             readonly source: string;
             /** @description The document, whole. It is cut into passages here. */
+            readonly text: string;
+        };
+        readonly KnowledgePassage: {
+            readonly id: string;
+            /** @description The heading or file the passage sits under. */
+            readonly source: string;
             readonly text: string;
         };
         readonly KnowledgeUrl: {
@@ -2336,11 +5596,27 @@ export type components = {
             readonly namespace: string;
             /** @description How many passages the page was last cut into. */
             readonly passages: number;
+            /** @description How often the page is read again on its own, in hours. Absent means never. */
+            readonly refresh_hours?: number;
             readonly state: components["schemas"]["KnowledgeUrlState"];
             /** @description What the page is called: the title it was subscribed with, or what it called itself when it was last read. */
             readonly title?: string;
             /** Format: date-time */
             readonly updated_at: string;
+            readonly url: string;
+        };
+        /** @description A page an agent directory declares, in the knowledge base named after it. */
+        readonly KnowledgeUrlDeclaration: {
+            readonly description?: string;
+            /**
+             * Format: int64
+             * @description How often the page is read again on its own, in hours. Omit it and the page is read on every sync that changes the directory, never on a schedule.
+             * @example 24
+             */
+            readonly refresh_hours?: number;
+            /** @example Pricing */
+            readonly title?: string;
+            /** @example https://example.com/pricing */
             readonly url: string;
         };
         readonly KnowledgeUrlRequest: {
@@ -2355,6 +5631,11 @@ export type components = {
              */
             readonly namespace: string;
             /**
+             * @description How often the page is read again on its own, in hours. Omit it, or send zero, and the page is read when it is added and when it is re-indexed, never on a schedule. Adding the page again replaces it.
+             * @example 24
+             */
+            readonly refresh_hours?: number;
+            /**
              * @description What to call the page, for a reader of the subscription. Optional: a page that is not named here is named by what it called itself when it was last read.
              * @example Pricing
              */
@@ -2366,19 +5647,46 @@ export type components = {
             readonly url: string;
         };
         /**
-         * @description Where the page has got to. Pending means it has been added but not yet read, which is also what a read that died halfway through leaves behind.
+         * @description Where the page has got to. Pending means it has been added and its first read is queued or being retried; failed means every attempt failed.
          * @enum {string}
          */
         readonly KnowledgeUrlState: "pending" | "indexed" | "failed";
-        /** @description How this config answers. The names are the response parameters the router already speaks rather than a second vocabulary for the same things. */
+        /** @description One voice a provider offers. Everything past the name is what that vendor chose to say about it, in its own words, so a field being absent means the vendor did not label it rather than that the voice lacks it. */
+        readonly LibraryVoice: {
+            readonly accent?: string;
+            readonly description?: string;
+            readonly gender?: string;
+            /** @description What to put in the voice field, in the provider's own terms. */
+            readonly id: string;
+            readonly language?: string;
+            readonly name: string;
+            /** @description A voice this account made, rather than one from the public library. */
+            readonly own?: boolean;
+            /** @description Whether the voice can be heard. */
+            readonly preview?: boolean;
+            readonly provider: string;
+            readonly tags?: readonly string[];
+        };
+        readonly LibraryVoices: {
+            /** @description The providers that publish a library, sorted by name. */
+            readonly providers: readonly string[];
+            /** @description Providers whose library could not be read just now. */
+            readonly unavailable?: readonly string[];
+            readonly voices: readonly components["schemas"]["LibraryVoice"][];
+        };
+        readonly LinkChannelRequest: {
+            /** @description The agent whose channels the number is being claimed on. */
+            readonly config_id: string;
+            /** @description The end user the number will belong to. */
+            readonly user_id: string;
+        };
+        /** @description How this config answers. The names are the response parameters the router already speaks rather than a second vocabulary for the same things. The system prompt is not among them: what the model answers under belongs to the agent asking, not to the config that decides where the asking goes. */
         readonly LlmOptions: {
             /**
              * @description Whether the answer is prose or a JSON object.
              * @enum {string}
              */
             readonly format?: "text" | "json_object";
-            /** @description What the model answers under, when a request does not say. */
-            readonly instructions?: string;
             readonly max_output_tokens?: number;
             /** @description Passed to the provider untouched, for the providers that store it. */
             readonly metadata?: {
@@ -2386,6 +5694,8 @@ export type components = {
             };
             /** @description What a cached prompt prefix is keyed by. Requests sharing a key and a prefix are read from the cache rather than charged in full. */
             readonly prompt_cache_key?: string;
+            /** @description A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A response that fails is answered by the next entry that will have it. */
+            readonly providers?: readonly string[];
             /**
              * @description How long the model may think before answering, on the models that think.
              * @enum {string}
@@ -2405,13 +5715,64 @@ export type components = {
             /** @enum {string} */
             readonly verbosity?: "low" | "medium" | "high";
         };
+        /** @description An MCP server the plugin catalog does not have. Every session opens it at the start and offers its tools to the model; the instructions the server gives are added to the agent's own. It is opened with no login unless it sets scopes or user, when it logs in with OAuth as its protected-resource metadata says, registering a client of its own, and saving it is refused when the server advertises no such login. */
+        readonly McpServer: {
+            /** @description How the server described itself when the config was saved. Absent when it did not answer. */
+            readonly branding?: components["schemas"]["McpServerBranding"];
+            /** @description What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id. */
+            readonly name: string;
+            /** @description Whether the server requires an OAuth login, as it said when the config was saved: protected-resource metadata, or a 401 to a request without a token. Without user, the app logs in once, from the dashboard. Absent when it could not be asked, which a session starting asks again. */
+            readonly needs_login?: boolean;
+            /** @description The OAuth scopes its login asks for at consent. Left out, the login asks for the scopes_supported the server advertises. Only a server that needs a login may set it. A login made before a change keeps what it was granted. */
+            readonly scopes?: readonly string[];
+            /** @description Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool. */
+            readonly tools?: readonly string[];
+            /** @description Its Streamable HTTP endpoint, over https. */
+            readonly url: string;
+            /** @description Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for user_plugins, rather than the app once, from the dashboard. Only a server that needs a login may set it. */
+            readonly user?: boolean;
+        };
+        /** @description The serverInfo an MCP server answers initialize with. Every field is optional, and a server that sends only its name and version is titled by its name. */
+        readonly McpServerBranding: {
+            readonly description?: string;
+            /** @description Its first icon served over https, as the server links it. */
+            readonly icon_url?: string;
+            /** @description Its display title, or its name when it gives none. */
+            readonly title?: string;
+            readonly version?: string;
+            readonly website_url?: string;
+        };
         readonly MessageContent: string | readonly components["schemas"]["ContentPart"][];
         /**
-         * @description What kind of work was done. The first six are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. llm_classifier answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
-         * @example tts
+         * @description What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. lcm is a large classifier model: it answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
          * @enum {string}
          */
-        readonly Modality: "stt" | "tts" | "llm" | "sts" | "search" | "llm_classifier" | "memory" | "knowledge" | "phone";
+        readonly Modality: "stt" | "tts" | "llm" | "sts" | "search" | "lcm" | "image" | "memory" | "knowledge" | "phone";
+        readonly ModelCallTiming: {
+            /**
+             * Format: double
+             * @description Request to completed response or failed create.
+             */
+            readonly duration_ms?: number;
+            /** Format: int64 */
+            readonly input_tokens?: number;
+            readonly model: string;
+            /** @description Response ID for this operation; retries can share an ID. */
+            readonly operation_id?: string;
+            /** Format: int64 */
+            readonly output_tokens?: number;
+            readonly provider: string;
+            /** @description reply, flow or subagent. */
+            readonly purpose?: string;
+            /** Format: date-time */
+            readonly started_at: string;
+            readonly success: boolean;
+            /**
+             * Format: double
+             * @description Request to first token.
+             */
+            readonly ttft_ms?: number;
+        };
         /**
          * @description What to change about the models for one session, over whatever its agent config decided.
          *     It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
@@ -2425,8 +5786,6 @@ export type components = {
             /** @description A speech-to-speech target. Naming one here makes the session native even if the config did not, which means no transcriber, model or voice is opened. */
             readonly sts?: string;
             readonly stt?: string;
-            /** @description The model delegated work runs on. Naming one replaces a config's default worker, so the config cannot keep answering for the target just overwritten. */
-            readonly subagent?: string;
             /**
              * Format: double
              * @description How random the answer is. Omitted leaves the provider's own default, which is not the same as zero: zero is a real request for a deterministic model.
@@ -2444,11 +5803,77 @@ export type components = {
              */
             readonly verbosity?: "low" | "medium" | "high";
         };
+        /** @description What one model read and wrote over a call. */
+        readonly ModelTokens: {
+            /** Format: int64 */
+            readonly cached_input_tokens: number;
+            /** Format: int64 */
+            readonly cost_micros: number;
+            readonly input_parts: components["schemas"]["InputParts"];
+            /** Format: int64 */
+            readonly input_tokens: number;
+            /** @description What the model does: llm for a language model, sts for speech-to-speech, and so on. */
+            readonly modality: string;
+            readonly model: string;
+            /** Format: int64 */
+            readonly output_tokens: number;
+            readonly provider: string;
+            /** Format: int64 */
+            readonly requests: number;
+        };
         readonly NumberSearchResult: {
             /** @description What the vendors are offering, cheapest first. */
             readonly numbers: readonly components["schemas"]["AvailableNumber"][];
             /** @description Vendors that were not part of the answer. A search that reached two of eight vendors found what two vendors had, and deciding whether to buy needs to know which. */
             readonly skipped: readonly components["schemas"]["SkippedVendor"][];
+        };
+        /** @description One tool as the model sees it. */
+        readonly OfferedTool: {
+            /** @description What the model is told the tool does. */
+            readonly description: string;
+            /** @description How the model asks for it. */
+            readonly name: string;
+            /** @description The JSON Schema of its arguments. */
+            readonly parameters?: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Format: int64
+             * @description Roughly what offering it costs on every request, in tokens: its name, description and schema at four characters a token.
+             */
+            readonly tokens: number;
+        };
+        /** @description The tools a session's conversation model is offered, as they are sent to it. */
+        readonly OfferedTools: {
+            /**
+             * Format: int64
+             * @description Roughly what offering them all costs on every request, in tokens.
+             */
+            readonly tokens: number;
+            /** @description Every tool, in the order the model is offered them. */
+            readonly tools: readonly components["schemas"]["OfferedTool"][] | null;
+        };
+        /** @description Somebody who asked not to be reached. Nothing is texted or dialled to them on the channel, or on any for all, until the opt-out is revoked or they text START. */
+        readonly OptOut: {
+            readonly channel: components["schemas"]["OptOutChannel"];
+            /** Format: date-time */
+            readonly created_at: string;
+            readonly id: string;
+            /** @description The number, in E.164. */
+            readonly recipient: string;
+            /** @description keyword when they texted STOP, otherwise api or dashboard. */
+            readonly source: string;
+        };
+        /**
+         * @description The channel a recipient opted out of, or all of them.
+         * @enum {string}
+         */
+        readonly OptOutChannel: "sms" | "voice" | "whatsapp" | "imessage" | "all";
+        readonly OptOutPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["OptOut"][];
+            /** @description Pass as `cursor` for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
         };
         /**
          * @description What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.
@@ -2465,6 +5890,8 @@ export type components = {
             readonly purchased_at: string;
             /** Format: date-time */
             readonly released_at?: string | null;
+            /** @description The customer's own SIP trunk calls from this number are dialled through. Present only for vendor sip_trunk. */
+            readonly sip_trunk_id?: string;
             /** @description The SIP trunk calls to this number arrive on. Absent until attached. */
             readonly stream_trunk_id?: string;
             /** @description The customer's own cost labels. */
@@ -2480,6 +5907,31 @@ export type components = {
         readonly PhoneNumberType: "local" | "toll_free" | "mobile";
         /** @enum {string} */
         readonly PhoneOperation: "search" | "buy" | "release" | "attach" | "dial" | "send_digits";
+        /** @description What an app may text and call before a 10DLC use case of its is approved. */
+        readonly PhoneSandbox: {
+            /** Format: int64 */
+            readonly audio_minutes_per_day: number;
+            /**
+             * Format: int64
+             * @description Seconds of outbound calls since midnight UTC.
+             */
+            readonly audio_seconds_today: number;
+            /** @description Whether this deployment sandboxes apps with no approved use case. Off on a self-hosted router. */
+            readonly enabled: boolean;
+            /** Format: int64 */
+            readonly max_recipients: number;
+            /** Format: int64 */
+            readonly messages_per_day: number;
+            /**
+             * Format: int64
+             * @description Messages sent since midnight UTC.
+             */
+            readonly messages_today: number;
+            /** @description The only numbers a sandboxed app may text and call. */
+            readonly recipients: readonly string[];
+            /** @description Whether this app is held to the limits below: true until one of its use cases is approved. */
+            readonly sandboxed: boolean;
+        };
         readonly PhoneVendor: {
             readonly capabilities: readonly components["schemas"]["PhoneCapability"][];
             /** @description Whether this service can actually work with the vendor. */
@@ -2530,27 +5982,133 @@ export type components = {
         /** @description One hosted MCP server from the built-in catalog. */
         readonly Plugin: {
             readonly category: string;
+            /** @description True when the provider registers no client on the fly, so a config needs one of the app's own, set with setPluginClient, before anybody can connect the plugin. */
+            readonly client_required?: boolean;
             readonly description: string;
             readonly id: string;
             readonly instance_hint?: string;
             readonly instance_required?: boolean;
+            /** @description Where this deployment serves the plugin's logo, as an SVG needing no credential. */
+            readonly logo_url: string;
             readonly name: string;
+            /** @description True when the plugin has a read-only endpoint an agent may pick on its entry. */
+            readonly readonly?: boolean;
+            /** @description The redirect URI that client has to list, which is this deployment's. Only with client_required. */
+            readonly redirect_uri?: string;
+            /** @description The OAuth scopes an agent may ask for on its entry, as the server advertises them. Absent when the server says nothing, and any scope is then passed through. */
+            readonly scopes_supported?: readonly string[];
+            /** @description What to do there, in order, before pasting the client into setPluginClient. Absent when the catalog has no instructions for the plugin. */
+            readonly setup_steps?: readonly components["schemas"]["PluginSetupStep"][];
+            /**
+             * Format: uri
+             * @description Where the app creates that client with the provider. Only with client_required.
+             */
+            readonly setup_url?: string;
+            /** @description The groups of tools an agent may limit the plugin to on its entry. Absent when it cannot be limited. */
+            readonly toolsets?: readonly string[];
         };
         readonly PluginAuthorization: {
             /** @description The URL the browser should open to finish the login. */
             readonly authorize_url: string;
         };
-        /** @description A catalog plugin as this agent has it, including whether it is logged in. */
+        /** @description The OAuth client a config logs a plugin in with. Its secret is sealed and never returned. */
+        readonly PluginClient: {
+            /** @description The client id the provider issued. */
+            readonly client_id: string;
+            /** @description Whether a client secret is stored. It is never returned. */
+            readonly has_secret: boolean;
+        };
+        /** @description A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish, unless it has user, when each end user connects it in the conversation. */
         readonly PluginConnection: {
             readonly category?: string;
+            /** @description The OAuth client the config set for the plugin. Absent when it set none. */
+            readonly client?: components["schemas"]["PluginClient"];
+            /** @description True when nobody can connect the plugin until the config has a client of the app's own, set with setPluginClient. */
+            readonly client_required?: boolean;
             readonly description?: string;
             readonly instance_hint?: string;
             readonly instance_required?: boolean;
             readonly instance_url?: string;
+            /** @description Where this deployment serves the plugin's logo, as an SVG needing no credential. Empty for an MCP server named by URL. */
+            readonly logo_url: string;
             readonly name: string;
             readonly plugin_id: string;
-            /** @enum {string} */
-            readonly status: "pending" | "connected" | "failed";
+            /**
+             * @description The app's login. Always not_connected for a plugin with user, which the app does not log into.
+             * @enum {string}
+             */
+            readonly status: "pending" | "connected" | "failed" | "not_connected";
+            /** @description True when the config names the plugin under user_plugins only: each end user connects their own account in the conversation. */
+            readonly user?: boolean;
+        };
+        /** @description One catalog plugin an agent names: its id, such as sentry, or an object naming it with how it is reached. */
+        readonly PluginEntry: string | components["schemas"]["PluginWithOptions"];
+        /** @description One MCP event an agent subscribes to on a plugin it names. Each event that arrives opens a text conversation from the config, as whoever's login it came through, with the event's data as the first thing said to it. */
+        readonly PluginEvent: {
+            /** @description The event's filters, as its inputSchema describes them. */
+            readonly arguments?: {
+                readonly [key: string]: unknown;
+            };
+            /** @description The event's name, as the server's events/list gives it, such as comment.created. */
+            readonly event: string;
+            /** @description What the agent does with the event when it arrives, added to its instructions for that conversation. */
+            readonly instructions?: string;
+            /** @description A catalog plugin the config names under agent_plugins or user_plugins. */
+            readonly plugin: string;
+        };
+        /** @description One thing to do with a plugin's provider before its OAuth client can be set. */
+        readonly PluginSetupStep: {
+            /** @description How to do it with the provider. */
+            readonly description: string;
+            /** @description What the step does, in a few words. */
+            readonly title: string;
+        };
+        /** @description One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take. */
+        readonly PluginWithOptions: {
+            /** @description A catalog plugin id, such as linear. */
+            readonly name: string;
+            /** @description Reach the plugin's read-only MCP endpoint, which offers no tool that writes and asks for read access at consent. Only a plugin whose vendor runs one may set it, such as linear. */
+            readonly readonly?: boolean;
+            /** @description The OAuth scopes asked for at consent, in place of the catalog's. Left out asks for the catalog's, or the read-only endpoint's when readonly is set. */
+            readonly scopes?: readonly string[];
+            /** @description Offer the model only the server's tools matching these names or path.Match patterns, such as search_files or read_*. A tool left out is neither listed nor callable. Left out offers every tool. */
+            readonly tools?: readonly string[];
+            /** @description Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login. */
+            readonly toolsets?: readonly string[];
+        };
+        /** @description What an organization or an app decided about spend, data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off. */
+        readonly Policy: {
+            /**
+             * @description The only models requests may be routed to, as provider/model names, in every modality. Left out allows every model, and an empty list allows none. A request that could only go to models not on the list is refused, and a failover never reaches one.
+             * @example [
+             *       "deepseek/DeepSeek-V4-Flash-0731"
+             *     ]
+             */
+            readonly allowed_models?: readonly string[];
+            readonly budget?: components["schemas"]["Budget"];
+            readonly data_policy?: components["schemas"]["DataPolicy"];
+            /** @description Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on. */
+            readonly prompt_injection?: boolean;
+            /** @description Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused. */
+            readonly require_own_stream_app?: boolean;
+            /**
+             * @description Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags.
+             * @example {
+             *       "application": "support"
+             *     }
+             */
+            readonly tags?: {
+                readonly [key: string]: string;
+            };
+        };
+        readonly PostalAddress: {
+            readonly city?: string;
+            /** @description ISO 3166-1 alpha-2. */
+            readonly country?: string;
+            readonly postal_code?: string;
+            /** @description State or region. */
+            readonly state?: string;
+            readonly street?: string;
         };
         readonly PrepareVoiceRequest: {
             /** @description Which providers to teach the voice to. Empty means every provider this deployment can clone with. */
@@ -2563,14 +6121,70 @@ export type components = {
             readonly vendor: string;
         };
         readonly Provider: {
+            readonly benchmark?: components["schemas"]["ProviderBenchmark"];
+            /** @description What the model is good at, and what that costs in speed or money. Empty if the deployment wrote none. */
+            readonly description?: string;
             readonly health: components["schemas"]["ProviderHealth"];
             readonly languages: readonly string[];
             /** @example eleven_flash_v2_5 */
             readonly model: string;
+            readonly price?: components["schemas"]["ProviderPrice"];
             /** @example elevenlabs */
             readonly provider: string;
             readonly realtime: boolean;
             readonly tier: components["schemas"]["Tier"];
+            /**
+             * Format: double
+             * @description This model's share of the modality's requests over the last seven days, across every customer, from 0 to 1. It is how popular the model is, and is 0 when nothing was served or the deployment keeps no statistics.
+             */
+            readonly usage_share?: number;
+        };
+        /** @description What Artificial Analysis measured for this model, refreshed by hand rather than live. A field is absent when the model was not measured on it. */
+        readonly ProviderBenchmark: {
+            /**
+             * Format: double
+             * @description Characters a text-to-speech model synthesises per second on the vendor's API.
+             * @example 115
+             */
+            readonly characters_per_second?: number;
+            /**
+             * Format: double
+             * @description US dollars one task of the search benchmark cost, searches and the answering model's tokens together.
+             * @example 0.127
+             */
+            readonly cost_per_task?: number;
+            /**
+             * @description Speech arena Elo rating of a text-to-speech model.
+             * @example 1273
+             */
+            readonly elo?: number;
+            /**
+             * @description Artificial Analysis Intelligence Index of a text model at the reasoning effort the router asks for.
+             * @example 33
+             */
+            readonly intelligence_index?: number;
+            /**
+             * @description Milliseconds a speech-to-text model takes to its final transcript after speech ends.
+             * @example 490
+             */
+            readonly latency_ms?: number;
+            /**
+             * Format: double
+             * @description Tokens a text model writes per second on the host the router calls.
+             * @example 330
+             */
+            readonly output_tokens_per_second?: number;
+            /**
+             * @description Artificial Analysis Search Index of a search provider, from 0 to 100.
+             * @example 74
+             */
+            readonly search_index?: number;
+            /**
+             * Format: double
+             * @description Streaming AA-WER of a speech-to-text model, from 0 to 1.
+             * @example 0.027
+             */
+            readonly word_error_rate?: number;
         };
         readonly ProviderHealth: {
             /** @description False once the error rate crosses the configured threshold. */
@@ -2586,6 +6200,45 @@ export type components = {
              * @description Requests seen in the current health window.
              */
             readonly requests: number;
+        };
+        /** @description What this deployment is billed for the model, in US dollars. A rate is absent when the model is not billed by that unit. */
+        readonly ProviderPrice: {
+            /**
+             * Format: double
+             * @example 0.75
+             */
+            readonly per_million_input_tokens?: number;
+            /**
+             * Format: double
+             * @example 3.75
+             */
+            readonly per_million_output_tokens?: number;
+        };
+        readonly RCSProfile: {
+            readonly agent_overview?: string;
+            /** @description Hex, such as #1A73E8, with at least 4.5:1 contrast against white. */
+            readonly brand_color?: string;
+            readonly call_to_action_text?: string;
+            readonly call_to_action_url?: string;
+            readonly company_overview?: string;
+            readonly description?: string;
+            readonly display_name?: string;
+            readonly double_opt_in?: boolean;
+            /** @description 1440 by 448 PNG or JPEG, at most 200 KB, on public HTTPS. */
+            readonly hero_url?: string;
+            readonly interaction_types?: string;
+            /** @description 224 by 224 PNG or JPEG, at most 50 KB, on public HTTPS. */
+            readonly logo_url?: string;
+            readonly message_examples?: readonly string[] | null;
+            readonly opt_in_confirmation_message?: string;
+            readonly opt_in_methods?: string;
+            readonly support_email?: string;
+            readonly support_label?: string;
+            readonly support_phone?: string;
+            /** @description Shows consent, example interactions, HELP and STOP. */
+            readonly test_video_url?: string;
+            /** @description otp, transactional, promotional or multi_use. */
+            readonly use_case?: string;
         };
         /** @description Where the audio to work on comes from. A URL is what every vendor's batch API takes and what anything longer than a clip should use; inline bytes save a caller with a short local file from having to host it somewhere first. */
         readonly RecordingSource: {
@@ -2609,6 +6262,39 @@ export type components = {
             readonly command_id?: string;
             readonly text: string;
         };
+        /**
+         * @description Who moved a use case: the app, Stream staff or the vendor.
+         * @enum {string}
+         */
+        readonly ReviewActor: "app" | "staff" | "vendor";
+        /**
+         * @description approve sends the use case to the vendor; request_changes hands it back to the app to edit; reject ends it.
+         * @enum {string}
+         */
+        readonly ReviewDecision: "approve" | "request_changes" | "reject";
+        readonly ReviewPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["UseCaseReview"][];
+            /** @description Pass as `cursor` for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        readonly ReviewQueue: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["UseCaseForReview"][];
+            /** @description Pass as `cursor` for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        readonly ReviewUseCaseRequest: {
+            readonly decision: components["schemas"]["ReviewDecision"];
+            /** @description What the app should change, or why it was rejected. Required unless approving. */
+            readonly notes?: string;
+            /** @description Who decided, as the app's timeline shows it. */
+            readonly reviewer?: string;
+        };
+        readonly RewindSessionRequest: {
+            /** @description The response to carry on from. It is kept; everything after it is not. */
+            readonly response_id: string;
+        };
         readonly RollupRequest: {
             /** Format: date-time */
             readonly from: string;
@@ -2621,6 +6307,18 @@ export type components = {
             readonly buckets_written: number;
             readonly granularity: components["schemas"]["Granularity"];
         };
+        readonly Route: {
+            /** @description The models the shortcut resolves to right now, best first. */
+            readonly candidates: readonly components["schemas"]["Candidate"][];
+            readonly description: string;
+            /**
+             * @description The shortcut, which is what a config or request names as its target.
+             * @example llm-fast
+             */
+            readonly id: string;
+            /** @example Fast conversational */
+            readonly title: string;
+        };
         readonly RouterConfig: {
             /** Format: date-time */
             readonly created_at: string;
@@ -2630,9 +6328,6 @@ export type components = {
             readonly search?: components["schemas"]["SearchOptions"];
             readonly sts?: components["schemas"]["StsOptions"];
             readonly stt?: components["schemas"]["SttOptions"];
-            readonly tags?: {
-                readonly [key: string]: string;
-            };
             readonly tts?: components["schemas"]["TtsOptions"];
             /** Format: date-time */
             readonly updated_at: string;
@@ -2644,10 +6339,6 @@ export type components = {
             readonly search?: components["schemas"]["SearchOptions"];
             readonly sts?: components["schemas"]["StsOptions"];
             readonly stt?: components["schemas"]["SttOptions"];
-            /** @description Cost labels, carried onto every request made under this config. At most 16, keys matching ^[a-zA-Z0-9_.-]{1,64}$ and values under 256 characters, which is what the rollups can carry. */
-            readonly tags?: {
-                readonly [key: string]: string;
-            };
             readonly tts?: components["schemas"]["TtsOptions"];
         };
         /**
@@ -2655,6 +6346,33 @@ export type components = {
          * @enum {string}
          */
         readonly Sandbox: "daytona";
+        /** @description How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run. */
+        readonly SandboxOptions: {
+            /**
+             * Format: int64
+             * @description CPUs for the sandbox. Zero is the provider's default.
+             */
+            readonly cpu?: number;
+            /**
+             * Format: int64
+             * @description Disk for the sandbox, in GiB. Zero is the provider's default.
+             */
+            readonly disk_gb?: number;
+            /** @description The container image to build on, which must have Python, such as python:3.13-slim-bookworm. Empty with anything else set is a slim Python 3.13 image. */
+            readonly image?: string;
+            /**
+             * Format: int64
+             * @description Memory for the sandbox, in GiB. Zero is the provider's default.
+             */
+            readonly memory_gb?: number;
+            /** @description Shell commands run once on top of the image when it is built, such as installing packages. The provider keeps the built image, so only the first sandbox from a given setup waits for it. */
+            readonly setup?: readonly string[];
+            /**
+             * Format: int64
+             * @description How long one run of code may take, at most 30 minutes. Zero is 30 seconds. A run is still bounded by the deadline of the skill it was written for.
+             */
+            readonly timeout_ms?: number;
+        };
         readonly SayRequest: {
             readonly text: string;
         };
@@ -2689,6 +6407,8 @@ export type components = {
             readonly output_schema?: {
                 readonly [key: string]: unknown;
             };
+            /** @description A priority list of where to try, in the order given, which wins over target and depth when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A search that fails is asked of the next entry that will have it. */
+            readonly providers?: readonly string[];
             /** @description How many hits to return. */
             readonly results?: number;
             /**
@@ -2758,28 +6478,57 @@ export type components = {
             readonly last_response_at?: string;
             /** @description The provider and model answering, once routing has picked one. */
             readonly llm?: string;
+            readonly modality: components["schemas"]["SessionModality"];
+            readonly mode?: components["schemas"]["SessionMode"];
             readonly model_overwrites?: components["schemas"]["ModelOverwrites"];
-            /** @description Persist a text conversation in Stream Chat, creating a channel when no CID is supplied. */
-            readonly persist_conversation?: boolean;
-            readonly project?: string;
+            readonly project_id?: string;
             readonly state: components["schemas"]["SessionState"];
             /** @description The provider and model holding a native conversation, once routing has picked one. */
             readonly sts?: string;
             /** @description The provider and model transcribing, once somebody has been heard. */
             readonly stt?: string;
-            /** @description The provider and model delegated work runs on. */
-            readonly subagent?: string;
-            /** @description Configured worker targets, prepared asynchronously. */
-            readonly subagents?: {
-                readonly [key: string]: string;
-            };
             /** @description The conversation is held in writing rather than on a call. */
             readonly text?: boolean;
+            /** @description The provider and model delegated work runs on. */
+            readonly thinking_llm?: string;
             readonly title?: string;
             /** @description The provider and model speaking. */
             readonly tts?: string;
             readonly user_id: string;
             readonly video?: components["schemas"]["SessionVideo"];
+            /** @description The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none. */
+            readonly voice?: string;
+        };
+        /** @description The connection a session uses for one of its agent config's connector bindings chosen per session. Only a reference: the credential stays sealed on the connection. */
+        readonly SessionConnectorBinding: {
+            /** @description The caller's own connection to the binding's connector. */
+            readonly connection_id: string;
+            /** @description The binding's alias in the agent config. */
+            readonly name: string;
+        };
+        /** @description Which sessions to list. A field not listed here is refused rather than ignored. */
+        readonly SessionFilter: {
+            /** @description The agent name the session was opened against. */
+            readonly agent?: components["schemas"]["Equals"];
+            /** @description The agent id the session was created with, which names its transcript channel. */
+            readonly agent_id?: components["schemas"]["Equals"];
+            /** @description The agent config the session ran under. Empty for a session that spelled itself out. */
+            readonly config_id?: components["schemas"]["Equals"];
+            /** @description When the session started. */
+            readonly created_at?: components["schemas"]["TimeRange"];
+            /** @description The session's custom object holds every one of these pairs, which is how a caller finds again what it labelled. */
+            readonly custom?: {
+                readonly [key: string]: string;
+            };
+            /** @description text, voice or video: how the user took part. */
+            readonly modality?: components["schemas"]["Equals"];
+            readonly project_id?: components["schemas"]["Equals"];
+            /** @description live or ended, as each session reports its state. */
+            readonly state?: components["schemas"]["Equals"];
+            /** @description Full text over the title, description, project and agent name. Sorted by relevance, and not combined with project_id. */
+            readonly text?: components["schemas"]["TextMatch"];
+            /** @description Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for. */
+            readonly user_id?: components["schemas"]["Equals"];
         };
         /** @description Who the session's memories are about. Without a user id nothing is recalled or stored, which is the case for a call with nobody identified on it. */
         readonly SessionMemory: {
@@ -2792,6 +6541,22 @@ export type components = {
             /** @description Who the memories belong to. Empty means the customer. */
             readonly user_id?: string;
         };
+        /**
+         * @description How the user took part: text for a conversation held in writing, voice for a call, and video once the agent has seen the user's video. It only moves up, from text or voice to video.
+         * @enum {string}
+         */
+        readonly SessionModality: "text" | "voice" | "video";
+        /**
+         * @description How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.
+         * @enum {string}
+         */
+        readonly SessionMode: "cascade" | "native" | "text";
+        readonly SessionPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["Session"][];
+            /** @description Pass as `cursor` for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
         /** @description The number the session acts from, which is what turns transferring on. */
         readonly SessionPhone: {
             /** @description One of the customer's own numbers, written as +15551234567. */
@@ -2801,6 +6566,18 @@ export type components = {
             /** @description The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at. */
             readonly vendor_call_id?: string;
         };
+        readonly SessionQuery: {
+            /** @description The next_cursor of the previous page, sent with the same filter and sort. Omitted is the first page. */
+            readonly cursor?: string;
+            readonly filter?: components["schemas"]["SessionFilter"];
+            /**
+             * Format: int64
+             * @description Up to 200. Omitted is 25.
+             */
+            readonly limit?: number;
+            /** @description Omitted is updated_at, or relevance for a text search. */
+            readonly sort?: readonly components["schemas"]["SessionSort"][] | null;
+        };
         readonly SessionRespondCommand: {
             /** @description Required for personal persistent text conversations; reuse on retries. Text only when present. */
             readonly command_id?: string;
@@ -2809,28 +6586,39 @@ export type components = {
             /** @enum {string} */
             readonly type: "respond";
         };
-        /** @description A kind of work worth handing to the slower model. There is nothing behind a skill but a better model: what it declares is the instructions that model answers under. */
-        readonly SessionSkill: {
-            /** @description Capture task-scoped visual evidence before reasoning. */
-            readonly capture_video?: boolean;
-            /**
-             * Format: int64
-             * @description How long the work may run before it is abandoned. Zero is the default.
-             */
-            readonly deadline_ms?: number;
-            /** @description The one line the fast model sees. */
-            readonly description: string;
-            /** @description The full prompt, which only the subagent sees. */
-            readonly instructions: string;
-            readonly name: string;
-            /**
-             * Format: int64
-             * @description Immutable skill revision selected by the application's authorized registry.
-             */
-            readonly revision?: number;
-            /** @description Named worker binding; omitted uses default. */
-            readonly subagent?: string;
+        /** @description What to change about one running session's models. A field left out is left as it is. The same safe knobs as ModelOverwrites, plus the voice. */
+        readonly SessionSettingsRequest: {
+            /** @description The conversation model, a provider/model or a capability shortcut. */
+            readonly llm?: string;
+            readonly max_output_tokens?: number;
+            /** @description A speech-to-speech target, which makes the session native. Empty makes it a cascade again. */
+            readonly sts?: string;
+            readonly stt?: string;
+            /** Format: double */
+            readonly temperature?: number;
+            /** @enum {string} */
+            readonly thinking?: "none" | "minimal" | "low" | "medium" | "high";
+            readonly tts?: string;
+            /** @enum {string} */
+            readonly verbosity?: "low" | "medium" | "high";
+            /** @description The voice to speak in, in the provider's own terms. Empty returns to the provider's default. */
+            readonly voice?: string;
         };
+        readonly SessionSort: {
+            /**
+             * Format: int64
+             * @description -1, descending. Ascending is not offered.
+             * @default -1
+             * @enum {integer}
+             */
+            readonly direction?: -1;
+            readonly field: components["schemas"]["SessionSortField"];
+        };
+        /**
+         * @description updated_at is the most recently active first. relevance is the best match first, and only sorts a text search.
+         * @enum {string}
+         */
+        readonly SessionSortField: "updated_at" | "relevance";
         /**
          * @description Whether the agent is still in the call.
          * @enum {string}
@@ -2838,6 +6626,7 @@ export type components = {
         readonly SessionState: "live" | "ended";
         /** @description One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket. */
         readonly SessionTool: {
+            readonly approval?: components["schemas"]["SessionToolApproval"];
             /** @description What the model is told the tool does, which is the whole of how it decides when to reach for one. */
             readonly description: string;
             /** @description What a call is doing, in words for the people in the conversation, such as "Checking your location". Shown on the reply's ai_tool_call attachment. */
@@ -2853,11 +6642,37 @@ export type components = {
                 readonly [key: string]: unknown;
             };
         };
+        /** @description Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question. */
+        readonly SessionToolApproval: {
+            /** @description The label of the button that allows the call. */
+            readonly allow_title?: string;
+            /** @description The label of the button that declines it. */
+            readonly decline_title?: string;
+            /** @description What allowing it shares or does, such as "Only your city is shared." */
+            readonly message?: string;
+            /** @description The argument, a string, in which the model says why it wants this call. Its text (at most 160 characters) is shown as the approval's reason, so it is visible to every channel member even for a server tool. */
+            readonly reason_argument?: string;
+            /** @description The question, such as "Share your location?". */
+            readonly title: string;
+        };
         readonly SessionVideo: {
             /** @description Number of recent frames captured for a visual task. Default one. */
             readonly max_frames?: number;
             /** @description Track or processor source. Omitted requires one unambiguous available source. */
             readonly source?: string;
+        };
+        /** @description The OAuth client an app registered with a plugin's provider, with the redirect URI <public url>/v1/agents/plugins/callback. */
+        readonly SetPluginClientRequest: {
+            /** @description The client id the provider issued. */
+            readonly client_id: string;
+            /** @description The client secret the provider issued. Left out for a public client. */
+            readonly client_secret?: string;
+            /** @description Also name the plugin under the config's user_plugins, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it under agent_plugins. */
+            readonly user?: boolean;
+        };
+        readonly SetSandboxRecipientsRequest: {
+            /** @description Numbers in E.164, at most max_recipients of them. */
+            readonly recipients: readonly string[];
         };
         readonly Simulation: {
             readonly assertion: string;
@@ -2912,6 +6727,38 @@ export type components = {
             /** @description What in the conversation decided it. */
             readonly verdict?: string;
         };
+        /** @description A simulation an agent directory declares in simulations/*.yaml. It runs against the agent being synced. */
+        readonly SimulationDeclaration: {
+            /** @description What has to be true at the end for a run to have passed. */
+            readonly assertion: string;
+            readonly caller_stt?: string;
+            readonly caller_target?: string;
+            readonly caller_tts?: string;
+            readonly caller_voice?: string;
+            readonly judge_target?: string;
+            /**
+             * Format: int64
+             * @description How many times the caller may speak. Twelve when left out.
+             */
+            readonly max_turns?: number;
+            /**
+             * @description Text when left out.
+             * @enum {string}
+             */
+            readonly mode?: "text" | "audio";
+            /** @description Unique among the agent's simulations, and what a sync finds it again by. */
+            readonly name: string;
+            /** @description What the caller wants, in your own words and over as many turns as it takes. */
+            readonly scenario: string;
+            readonly tags?: {
+                readonly [key: string]: string;
+            };
+            /**
+             * Format: int64
+             * @description How many ways of asking the same thing one run tries.
+             */
+            readonly variations?: number;
+        };
         readonly SimulationLine: {
             /** Format: date-time */
             readonly at?: string;
@@ -2926,7 +6773,7 @@ export type components = {
             readonly assertion: string;
             /** @description How the caller hears the agent. Audio simulations only. */
             readonly caller_stt?: string;
-            /** @description The model that plays the caller. Empty takes a fast tier. */
+            /** @description The model that plays the caller. Empty takes llm-scenario-runner, the deployment's fast-tier default. */
             readonly caller_target?: string;
             /** @description How the caller speaks. Audio simulations only. */
             readonly caller_tts?: string;
@@ -2934,9 +6781,9 @@ export type components = {
             readonly caller_voice?: string;
             /** @description The agent being tested. */
             readonly config_id: string;
-            /** @description The model that rules on the conversations, named the way any other routing target is. Empty takes a quality tier, since nobody is waiting for it. */
+            /** @description The model that rules on the conversations, named the way any other routing target is. Empty takes llm-judge, the deployment's quality-tier default, since nobody is waiting for it. */
             readonly judge_target?: string;
-            /** @description How many times the caller may speak, up to thirty. It is what stops a caller that never decides it is finished. Twelve when left out. */
+            /** @description How many times the caller may speak, up to two hundred. It is what stops a caller that never decides it is finished. Twelve when left out. */
             readonly max_turns?: number;
             /**
              * @description Text hands the agent the words, which tests everything between hearing and answering. Audio generates speech and runs the whole pipeline, so what is judged is what a caller would actually have heard. Text when left out.
@@ -2979,6 +6826,27 @@ export type components = {
              */
             readonly state: "running" | "passed" | "failed" | "cancelled" | "errored";
         };
+        readonly SipTrunk: {
+            /** @description Audio codecs offered to the trunk, in order of preference. */
+            readonly codecs: readonly string[];
+            /** Format: date-time */
+            readonly created_at: string;
+            /** @description Whether a password is stored. The password itself is never returned. False for a trunk that arrived from another deployment, which needs one set before it can be called through. */
+            readonly has_password: boolean;
+            /** @description The trunk's hostname, without sip: or a port. */
+            readonly host: string;
+            readonly id: string;
+            /** @description The trunk accepts an INVITE without SDP. */
+            readonly late_offer: boolean;
+            readonly name: string;
+            /** Format: int64 */
+            readonly port: number;
+            /** @enum {string} */
+            readonly transport: "udp" | "tcp" | "tls";
+            /** Format: date-time */
+            readonly updated_at: string;
+            readonly username: string;
+        };
         readonly Skill: {
             /** @description Capture task-scoped visual evidence before reasoning. */
             readonly capture_video?: boolean;
@@ -2991,8 +6859,6 @@ export type components = {
             readonly id: string;
             readonly instructions: string;
             readonly name: string;
-            /** @description Named worker binding; omitted uses default. */
-            readonly subagent?: string;
             /** Format: date-time */
             readonly updated_at: string;
         };
@@ -3012,8 +6878,6 @@ export type components = {
             readonly instructions: string;
             /** @description How the config names it, which is unique among that config's own skills. */
             readonly name: string;
-            /** @description Named worker binding; omitted uses default. */
-            readonly subagent?: string;
         };
         readonly SkippedVendor: {
             /** @example cannot search by administrative_area */
@@ -3070,6 +6934,22 @@ export type components = {
             /** @description What to say. Whole paragraphs rather than the sentence at a time a socket takes. */
             readonly text: string;
         };
+        readonly SpendBucket: {
+            /** Format: date-time */
+            readonly bucket: string;
+            /**
+             * Format: int64
+             * @description Millionths of a dollar, priced from the configured rates.
+             */
+            readonly cost_micros_total: number;
+            /** Format: int64 */
+            readonly request_count: number;
+            /**
+             * @description The modality or label value this row is for. "other" is everything outside the biggest few, and the empty string is spend carrying no such label at all, so a customer that labels only part of its traffic can see which part.
+             * @example support
+             */
+            readonly value: string;
+        };
         readonly StatsBucket: {
             /**
              * Format: int64
@@ -3097,6 +6977,11 @@ export type components = {
             readonly error_count: number;
             /**
              * Format: int64
+             * @description Pictures drawn. Zero outside image.
+             */
+            readonly images_total: number;
+            /**
+             * Format: int64
              * @description Prompt tokens read, cached ones included. Zero outside llm.
              */
             readonly input_tokens_total: number;
@@ -3119,6 +7004,117 @@ export type components = {
              */
             readonly uptime?: number | null;
         };
+        /**
+         * @description Whether the router acts in a registered app. disconnected is one the app took back, and blocked one Stream suspended or that stopped checking tokens. Neither is ever written into the router's own app instead.
+         * @enum {string}
+         */
+        readonly StreamAppState: "connected" | "disconnected" | "blocked";
+        readonly StreamCheck: {
+            readonly reattach: readonly string[] | null;
+            readonly settings: components["schemas"]["AppSettings"];
+        };
+        /** @description The keys the router acts in the calling app's own Stream app with. Secrets are written and never read back: no answer carries one. */
+        readonly StreamCredentials: {
+            /** @description Whether guests may be made in the app. Left out keeps what was set, which starts off false. */
+            readonly allow_guests?: boolean;
+            /**
+             * Format: int64
+             * @description The revision last read, 0 for an app never registered. A write made against an older one is a 409.
+             */
+            readonly expected_revision: number;
+            /** @description Every key the router may act in the app with, which replaces those it held. Each is checked with Stream. Empty disconnects the app, which needs a proof. */
+            readonly keys: readonly components["schemas"]["StreamKeyInput"][] | null;
+            /** @description The key tokens are minted with. Left out is the first. */
+            readonly primary_key?: string;
+            /** @description A key and secret of the app, which disconnecting needs. It is checked with Stream and kept nowhere. */
+            readonly proof?: components["schemas"]["StreamKeyInput"];
+        };
+        readonly StreamKeyInput: {
+            readonly api_key: string;
+            /** @description The key's secret. It is sealed and never read back. */
+            readonly api_secret: string;
+            /**
+             * Format: date-time
+             * @description When Stream made the key, which says which key is the oldest and so signs the app's webhooks.
+             */
+            readonly created_at?: string;
+        };
+        readonly StreamKeyState: {
+            readonly api_key: string;
+            /**
+             * Format: date-time
+             * @description When Stream made the key.
+             */
+            readonly created_at?: string;
+            /**
+             * Format: date-time
+             * @description When Stream last signed a hook with this key.
+             */
+            readonly last_webhook_at?: string;
+            /** @description The end of the secret, enough to tell two apart. */
+            readonly secret_last4?: string;
+            /**
+             * @description Whether Stream signs the app's hooks with this key, which is its oldest. yes is one a hook arrived signed with.
+             * @enum {string}
+             */
+            readonly signs_webhooks: "yes" | "no" | "unknown";
+            /**
+             * @description rejected is a key Stream stopped accepting, which the router no longer uses.
+             * @enum {string}
+             */
+            readonly status: "active" | "rejected";
+            /** Format: date-time */
+            readonly verified_at?: string;
+        };
+        /** @description Which Stream app the router writes the calling app's conversations, transcripts, calls and phone lines into, and whether that app holds the types they need. */
+        readonly StreamSettings: {
+            /** @description Whether guests may be made in the registered app. */
+            readonly allow_guests?: boolean;
+            /** @description Whether the Stream app holds the agent call type calls are made with. Stream reports no grants for it here, so it is present or missing. */
+            readonly call_type: components["schemas"]["StreamTypeState"];
+            /** @description Whether the Stream app holds the agent channel type conversations are kept in. unsafe is one whose grants let somebody other than the app's backend make, change or join a conversation's channel, or read one they are not in. */
+            readonly channel_type: components["schemas"]["StreamTypeState"];
+            /**
+             * Format: date-time
+             * @description When Stream was asked. Absent when it could not be, and the types are then unknown. Answers are reused for a minute.
+             */
+            readonly checked_at?: string;
+            /** @description The registered app's keys, oldest first. No secret is ever read back. */
+            readonly keys?: readonly components["schemas"]["StreamKeyState"][] | null;
+            /** @description The key tokens are minted with. */
+            readonly primary_key?: string;
+            /**
+             * Format: int64
+             * @description The registration's revision, 0 for an app that registered none. A write names the one it read.
+             */
+            readonly revision?: number;
+            /** @description Whether the router acts in the registered app. Absent for an app that registered none. */
+            readonly state?: components["schemas"]["StreamAppState"];
+            /** @description Why the router stopped acting in the app, for one that is blocked. */
+            readonly state_reason?: string;
+            /**
+             * Format: int64
+             * @description The registered app's own id.
+             */
+            readonly stream_app_id?: number;
+            readonly tenancy: components["schemas"]["StreamTenancy"];
+            readonly writes_into: components["schemas"]["StreamWritesInto"];
+        };
+        /**
+         * @description Whose Stream app the router acts in. deployment is one app, the router's own, for every app it serves; app is each app's own.
+         * @enum {string}
+         */
+        readonly StreamTenancy: "deployment" | "app";
+        /**
+         * @description Whether a Stream app holds a type the router needs. unknown is a type Stream could not be asked about.
+         * @enum {string}
+         */
+        readonly StreamTypeState: "present" | "missing" | "unsafe" | "unknown";
+        /**
+         * @description Which Stream app the calling app's work is written into: this_app is its own, deployment_app is the router's own app, shared with every app it serves that has none, and nowhere is no app at all, so conversations are not kept and calls cannot be made.
+         * @enum {string}
+         */
+        readonly StreamWritesInto: "this_app" | "deployment_app" | "nowhere";
         /** @description How this config holds a conversation with one native audio model, in place of a transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a term, and a request naming a term is routed to a model that declared it or refused, never served by one that ignores it. */
         readonly StsOptions: {
             readonly data_policy?: components["schemas"]["DataPolicy"];
@@ -3126,7 +7122,7 @@ export type components = {
             readonly images?: boolean;
             /** @description Ask the model to write down what it heard. */
             readonly input_transcript?: boolean;
-            /** @description The system prompt the model converses under. */
+            /** @description The system prompt the model converses under, sent when the session opens. A stored router config naming one is refused: what is said belongs to the agent holding the conversation, not to the config that decides where it goes. */
             readonly instructions?: string;
             /** @description Whether the model cuts its own reply off when it hears the caller. Omitting it leaves the vendor's default; false is for a speaker close enough to the microphone that the model would otherwise interrupt itself. */
             readonly interrupt_response?: boolean;
@@ -3146,13 +7142,7 @@ export type components = {
             };
             /** @description How much audio before the detected speech is kept, for a silence timer. */
             readonly prefix_padding_ms?: number;
-            /**
-             * @description A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands.
-             * @example [
-             *       "openai",
-             *       "sts-fast"
-             *     ]
-             */
+            /** @description A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. */
             readonly providers?: readonly string[];
             /** @description How long a pause ends the turn, for a silence timer. */
             readonly silence_ms?: number;
@@ -3185,6 +7175,8 @@ export type components = {
             readonly detect_language?: boolean;
             /** @description Label each stretch of speech with who said it. */
             readonly diarize?: boolean;
+            /** @description Send a transcript as soon as the model guesses the turn may be over, before it is sure, so a reply can start early. Live only. A model without an eager end of turn transcribes as normal rather than being refused. On by default for en-low-latency and multilingual-low-latency. */
+            readonly eager_end_of_turn?: boolean;
             readonly endpointing?: components["schemas"]["Endpointing"];
             /** @description Extract named entities from the recording. Recording only. */
             readonly entities?: boolean;
@@ -3196,12 +7188,7 @@ export type components = {
             readonly interim?: boolean;
             /** @description Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary refuse them. */
             readonly keyterms?: readonly string[];
-            /**
-             * @description ISO codes candidates must cover. Empty with detect_language lets the provider decide.
-             * @example [
-             *       "en"
-             *     ]
-             */
+            /** @description ISO codes candidates must cover. Empty with detect_language lets the provider decide. */
             readonly languages?: readonly string[];
             /** @description A hard cap on the speakers diarization may find, not a hint. Providers differ in what they allow, so one asked for more than it supports refuses. */
             readonly max_speakers?: number;
@@ -3220,13 +7207,7 @@ export type components = {
             };
             /** @description Mask offensive words rather than writing them down. Only some providers can be told to, so a request for it is routed to one of them or refused. */
             readonly profanity_filter?: boolean;
-            /**
-             * @description A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, and each is expanded where it stands, so the order given is the order tried. Health only moves a provider that is down to the back; unlike a shortcut, this does not reorder on latency, because a caller who wrote an order meant it.
-             * @example [
-             *       "deepgram",
-             *       "en-low-latency"
-             *     ]
-             */
+            /** @description A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, and each is expanded where it stands, so the order given is the order tried. Health only moves a provider that is down to the back; unlike a shortcut, this does not reorder on latency, because a caller who wrote an order meant it. */
             readonly providers?: readonly string[];
             /** @description Remove personally identifying information from the transcript. */
             readonly redact?: boolean;
@@ -3252,36 +7233,62 @@ export type components = {
             /** @description Word-level timestamps. Recording only. */
             readonly words?: boolean;
         };
-        /** @description An agent directory as it is on disk. Everything after the knowledge is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it. */
+        /** @description An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it. */
         readonly SyncAgentRequest: {
+            /** @description Plugins the agent reaches with the app's own login: a catalog id, or an object naming it with how it is reached. */
+            readonly agent_plugins?: readonly components["schemas"]["PluginEntry"][];
+            /** @description The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again. */
+            readonly base_change?: string;
+            /** @description Lines this agent answers on besides Stream Chat, each a number the app connected. */
+            readonly channels?: components["schemas"]["AgentChannels"];
+            /** @description Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants. */
+            readonly check_changes?: boolean;
+            /** @description The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone. */
+            readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
+            readonly dispatch?: components["schemas"]["AgentDispatch"];
             readonly greeting?: string;
             /** @description The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered. */
             readonly guardrail?: string;
+            readonly harness?: components["schemas"]["Harness"];
             /** @description A fingerprint of the directory. A second sync with the same hash does nothing. */
             readonly hash: string;
             readonly instructions?: string;
             readonly keyterms?: readonly string[];
             readonly knowledge?: readonly components["schemas"]["KnowledgeDocument"][];
+            /** @description The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base as the files, so one lookup covers both. */
+            readonly knowledge_urls?: readonly components["schemas"]["KnowledgeUrlDeclaration"][];
             readonly llm?: string;
+            /** @description MCP servers outside the plugin catalog, opened by their URL with no login. */
+            readonly mcp_servers?: readonly components["schemas"]["McpServer"][];
             readonly mode?: components["schemas"]["AgentMode"];
             /** @description What the config is called, which is also the directory's name. */
             readonly name: string;
-            readonly plugins?: readonly string[];
+            /** @description MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives. */
+            readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            /** @description Whether plugin, MCP server and connector tools are offered by a summary, the first call to each returning its full description and input schema instead of running it. */
+            readonly progressive_tools?: boolean;
             readonly sandbox?: components["schemas"]["Sandbox"];
+            readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             readonly search?: string;
+            /** @description The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone. */
+            readonly simulations?: readonly components["schemas"]["SimulationDeclaration"][];
             readonly skills?: readonly components["schemas"]["SkillRequest"][];
+            /**
+             * Format: double
+             * @description The voice's rate of delivery, 1 being its own. Zero leaves it there.
+             */
+            readonly speed?: number;
             /** @description A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade. */
             readonly sts?: string;
             readonly stt?: string;
-            readonly subagent?: string;
-            /** @description Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default. */
-            readonly subagents?: {
-                readonly [key: string]: string;
-            };
             readonly tags?: {
                 readonly [key: string]: string;
             };
+            /** @description Only a voice agent names one: a text agent runs everything on its llm. */
+            readonly thinking_llm?: string;
             readonly tts?: string;
+            /** @description Plugins each end user connects with their own account, from the conversation, the first time the agent needs one. Each is named like agent_plugins. */
+            readonly user_plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly video?: components["schemas"]["SessionVideo"];
             readonly voice?: string;
         };
@@ -3289,6 +7296,28 @@ export type components = {
             readonly config: components["schemas"]["AgentConfig"];
             /** @description True when the hash matched and nothing was written. */
             readonly unchanged: boolean;
+            /** @description What was stored but will not work yet, such as a channel line the app has not connected. */
+            readonly warnings?: readonly string[] | null;
+        };
+        readonly TagKeySummary: {
+            /** Format: int64 */
+            readonly cost_micros_total: number;
+            /**
+             * Format: double
+             * @description The share of the window's requests that carry this key, from 0 to 1. A key on half the traffic breaks down half the bill, which is worth knowing before it is read as the whole of it.
+             */
+            readonly coverage: number;
+            /** @example product */
+            readonly key: string;
+            /** Format: int64 */
+            readonly request_count: number;
+            /** @description The ten largest values, biggest spend first. */
+            readonly top_values: readonly components["schemas"]["TagValueSummary"][];
+            /**
+             * Format: int64
+             * @description How many distinct values the key was used with. One means it is context rather than a breakdown; hundreds mean it identifies something, such as an end customer, and only its largest values are worth a chart.
+             */
+            readonly value_count: number;
         };
         readonly TagStatsBucket: {
             /** Format: int64 */
@@ -3307,6 +7336,8 @@ export type components = {
             /** Format: int64 */
             readonly error_count: number;
             /** Format: int64 */
+            readonly images_total: number;
+            /** Format: int64 */
             readonly input_tokens_total: number;
             /** Format: double */
             readonly latency_p50_ms?: number | null;
@@ -3323,10 +7354,27 @@ export type components = {
             /** Format: double */
             readonly uptime?: number | null;
         };
+        readonly TagValueSummary: {
+            /** Format: int64 */
+            readonly cost_micros_total: number;
+            /** Format: int64 */
+            readonly request_count: number;
+            /**
+             * Format: double
+             * @description This value's share of what the key covers, from 0 to 1.
+             */
+            readonly share: number;
+            /** @example support */
+            readonly value: string;
+        };
         readonly TextContentPart: {
             readonly text: string;
             /** @enum {string} */
             readonly type: "text";
+        };
+        readonly TextMatch: {
+            /** @description Quoted phrases and bare words both work, and punctuation is taken rather than refused. */
+            readonly $q: string;
         };
         /**
          * @description What the model optimises for.
@@ -3339,20 +7387,105 @@ export type components = {
              * @description How much the agent spoke.
              */
             readonly audio_out_ms?: number;
+            /**
+             * Format: double
+             * @description Last transcript revision to a stable turn ready for the flow controller.
+             */
+            readonly cadence_ms?: number;
+            /**
+             * Format: double
+             * @description Stable turn to the main model request, including flow and queueing.
+             */
+            readonly decision_ms?: number;
+            /**
+             * Format: double
+             * @description Last transcript revision to the outgoing track taking the first frame of the reply that was not silence, which is when it could first be heard. Unlike roundtrip_ms it does not include the wait for a long first chunk to be queued. Absent where the edge does not report it.
+             */
+            readonly first_audible_frame_ms?: number | null;
+            /**
+             * Format: double
+             * @description Last transcript revision to the first frame of the reply being queued for the outgoing track. Absent where the edge does not report it.
+             */
+            readonly first_frame_queued_ms?: number | null;
             /** @description What the caller said, when it can be matched to this exchange. */
             readonly heard?: string;
             /** @description Whether the caller talked over the answer. */
             readonly interrupted?: boolean;
             /**
              * Format: double
-             * @description How long the caller waited between finishing and being answered.
+             * @description The wait between asking the model and its first token.
+             */
+            readonly llm_ttft_ms?: number | null;
+            /** @description Individual model requests for this turn, including flow and delegated work. */
+            readonly model_calls?: readonly components["schemas"]["ModelCallTiming"][];
+            /**
+             * Format: double
+             * @description Main model request to the first text delta admitted to the voice pipeline.
+             */
+            readonly model_to_first_text_ms?: number;
+            /**
+             * Format: double
+             * @description Last transcript revision to first audio published; includes cadence settling.
              */
             readonly roundtrip_ms?: number;
             /** @description What the agent answered. */
             readonly said?: string;
+            /**
+             * Format: double
+             * @description Last input audio to the outgoing track taking the first frame of the reply that was not silence, estimated like speech_end_to_audio_ms. It excludes network transport and playback.
+             */
+            readonly speech_end_to_audible_ms?: number | null;
+            /**
+             * Format: double
+             * @description Last input audio to first output audio, estimated using provider STT processing time plus roundtrip. It excludes network transport and playback.
+             */
+            readonly speech_end_to_audio_ms?: number | null;
             /** Format: date-time */
             readonly started_at: string;
+            /**
+             * Format: double
+             * @description The provider's decode time for the transcript that settled the turn.
+             */
+            readonly stt_latency_ms?: number | null;
+            /**
+             * Format: double
+             * @description First text delta to the first TTS request.
+             */
+            readonly text_to_tts_ms?: number;
+            /**
+             * Format: double
+             * @description First TTS request to the first audio chunk published to the edge.
+             */
+            readonly tts_to_audio_ms?: number;
+            /**
+             * Format: double
+             * @description The wait between sending the first sentence and the first audio.
+             */
+            readonly tts_ttfb_ms?: number | null;
             readonly turn_id: string;
+        };
+        readonly TimeRange: {
+            /**
+             * Format: date-time
+             * @description At or after this RFC3339 time.
+             */
+            readonly $gte?: string;
+            /**
+             * Format: date-time
+             * @description Strictly before this RFC3339 time.
+             */
+            readonly $lt?: string;
+        };
+        /** @description A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. */
+        readonly ToolApprovalCommand: {
+            readonly allowed: boolean;
+            readonly command_id: string;
+            /** @description Shown on the declined call, such as "Location not shared". */
+            readonly summary?: string;
+            readonly tool_call_id: string;
+            readonly turn_id: string;
+            /** @enum {string} */
+            readonly type: "tool_approval";
         };
         readonly ToolResultCommand: {
             readonly command_id?: string;
@@ -3432,8 +7565,12 @@ export type components = {
             };
         };
         readonly TranscriptMessage: {
+            /** @description Whether the agent said it rather than somebody it was talking to. It is what the line was stored as, so it holds however the agent was named. */
+            readonly agent?: boolean;
             /** Format: date-time */
             readonly created_at: string;
+            /** @description That speaker's display name, when they have one. */
+            readonly name?: string;
             /** @description Who said it, the agent under its own user id. */
             readonly speaker: string;
             readonly text: string;
@@ -3490,13 +7627,7 @@ export type components = {
             readonly pronunciations?: {
                 readonly [key: string]: string;
             };
-            /**
-             * @description A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, and each is expanded where it stands, so the order given is the order tried. Health only moves a provider that is down to the back.
-             * @example [
-             *       "elevenlabs",
-             *       "en-low-latency"
-             *     ]
-             */
+            /** @description A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, and each is expanded where it stands, so the order given is the order tried. Health only moves a provider that is down to the back. */
             readonly providers?: readonly string[];
             /**
              * Format: float
@@ -3570,6 +7701,208 @@ export type components = {
             /** Format: int64 */
             readonly turn_count: number;
         };
+        /** @description What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller. */
+        readonly UpdateSessionRequest: {
+            /** @description Replaces the caller's labels whole. An empty object clears them. */
+            readonly custom?: {
+                readonly [key: string]: unknown;
+            };
+            readonly description?: string;
+            /** @description What the agent is told to be, from the next turn. */
+            readonly instructions?: string;
+            /** @description The conversation model, a provider/model or a capability shortcut. */
+            readonly llm?: string;
+            readonly max_output_tokens?: number;
+            /** @description A speech-to-speech target, which makes the session native. Empty makes it a cascade again. */
+            readonly sts?: string;
+            readonly stt?: string;
+            /** Format: double */
+            readonly temperature?: number;
+            /** @enum {string} */
+            readonly thinking?: "none" | "minimal" | "low" | "medium" | "high";
+            readonly title?: string;
+            readonly tts?: string;
+            /** @enum {string} */
+            readonly verbosity?: "low" | "medium" | "high";
+            /** @description The voice to speak in, in the provider's own terms. Empty returns to the provider's default. */
+            readonly voice?: string;
+        };
+        readonly UpdateSipTrunkRequest: {
+            readonly codecs?: readonly string[];
+            readonly host?: string;
+            readonly late_offer?: boolean;
+            readonly name?: string;
+            /** @description Omit to keep the stored password. */
+            readonly password?: string;
+            /** Format: int64 */
+            readonly port?: number;
+            /** @description udp, tcp or tls. */
+            readonly transport?: string;
+            readonly username?: string;
+        };
+        /** @description A 10DLC use case: what an app sends, reviewed by Stream and then registered as a campaign with the vendor its numbers come from. */
+        readonly UseCase: {
+            readonly age_gated?: boolean;
+            /** Format: date-time */
+            readonly approved_at?: string;
+            /** @description What RCS, WhatsApp, iMessage and voice ask for. Reviewed with the rest; not sent to a vendor yet. */
+            readonly channels?: components["schemas"]["UseCaseChannels"];
+            /** Format: date-time */
+            readonly created_at: string;
+            /** @description What the messages are for, in at least 40 characters. */
+            readonly description?: string;
+            readonly direct_lending?: boolean;
+            readonly embedded_links?: boolean;
+            readonly embedded_phone?: boolean;
+            /** @description The answer to HELP: who you are and how to reach support. */
+            readonly help_message?: string;
+            readonly id: string;
+            /** @description Send as this use case from every number assigned to no other one. An app's first use case is its default. */
+            readonly is_default?: boolean;
+            /** @description How a recipient opts in, and where a reviewer can see it, in at least 40 characters. */
+            readonly message_flow?: string;
+            /** @description Two to five messages as they will be sent. */
+            readonly message_samples?: readonly string[] | null;
+            readonly name: string;
+            /** @description The app's numbers that send as this use case, in E.164. Omitted on an update leaves them as they are; empty unassigns them all. */
+            readonly numbers?: readonly string[] | null;
+            /** @description The answer to START, and the first message after opting in. */
+            readonly opt_in_message?: string;
+            /** @description The answer to STOP. */
+            readonly opt_out_message?: string;
+            readonly status: components["schemas"]["UseCaseStatus"];
+            /** Format: date-time */
+            readonly submitted_at?: string;
+            /** Format: date-time */
+            readonly updated_at: string;
+            /** @description The campaign registry's use case, such as CUSTOMER_CARE, ACCOUNT_NOTIFICATION, 2FA, MARKETING or MIXED. */
+            readonly use_case_type?: string;
+            /** @description Who registers the campaign, once Stream approved it. */
+            readonly vendor?: string;
+            readonly vendor_campaign_id?: string;
+            /** @description The vendor's word for where the campaign stands, such as TCR_ACCEPTED. */
+            readonly vendor_status?: string;
+        };
+        readonly UseCaseChannels: {
+            readonly imessage?: components["schemas"]["IMessageProfile"];
+            readonly rcs?: components["schemas"]["RCSProfile"];
+            readonly voice?: components["schemas"]["VoiceProfile"];
+            readonly whatsapp?: components["schemas"]["WhatsAppProfile"];
+        };
+        /** @description A use case with the app it is for and the profile it was submitted on. */
+        readonly UseCaseForReview: {
+            readonly age_gated?: boolean;
+            /** Format: date-time */
+            readonly approved_at?: string;
+            readonly business_profile?: components["schemas"]["BusinessProfile"];
+            /** @description What RCS, WhatsApp, iMessage and voice ask for. Reviewed with the rest; not sent to a vendor yet. */
+            readonly channels?: components["schemas"]["UseCaseChannels"];
+            /** Format: date-time */
+            readonly created_at: string;
+            /** @description The app the use case is for. */
+            readonly customer_id: string;
+            /** @description What the messages are for, in at least 40 characters. */
+            readonly description?: string;
+            readonly direct_lending?: boolean;
+            readonly embedded_links?: boolean;
+            readonly embedded_phone?: boolean;
+            /** @description The answer to HELP: who you are and how to reach support. */
+            readonly help_message?: string;
+            readonly id: string;
+            /** @description Send as this use case from every number assigned to no other one. An app's first use case is its default. */
+            readonly is_default?: boolean;
+            /** @description How a recipient opts in, and where a reviewer can see it, in at least 40 characters. */
+            readonly message_flow?: string;
+            /** @description Two to five messages as they will be sent. */
+            readonly message_samples?: readonly string[] | null;
+            readonly name: string;
+            /** @description The app's numbers that send as this use case, in E.164. Omitted on an update leaves them as they are; empty unassigns them all. */
+            readonly numbers?: readonly string[] | null;
+            /** @description The answer to START, and the first message after opting in. */
+            readonly opt_in_message?: string;
+            /** @description The answer to STOP. */
+            readonly opt_out_message?: string;
+            /** @description What happened to it so far, oldest first. Only on a single use case. */
+            readonly reviews?: readonly components["schemas"]["UseCaseReview"][] | null;
+            readonly status: components["schemas"]["UseCaseStatus"];
+            /** Format: date-time */
+            readonly submitted_at?: string;
+            /** Format: date-time */
+            readonly updated_at: string;
+            /** @description The campaign registry's use case, such as CUSTOMER_CARE, ACCOUNT_NOTIFICATION, 2FA, MARKETING or MIXED. */
+            readonly use_case_type?: string;
+            /** @description Who registers the campaign, once Stream approved it. */
+            readonly vendor?: string;
+            readonly vendor_campaign_id?: string;
+            /** @description The vendor's word for where the campaign stands, such as TCR_ACCEPTED. */
+            readonly vendor_status?: string;
+        };
+        readonly UseCasePage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["UseCase"][];
+            /** @description Pass as `cursor` for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        /** @description What an app sends texts and makes calls for. Saved as a draft and submitted for review once it and the business profile are complete. */
+        readonly UseCaseRequest: {
+            readonly age_gated?: boolean;
+            /** @description What RCS, WhatsApp, iMessage and voice ask for. Reviewed with the rest; not sent to a vendor yet. */
+            readonly channels?: components["schemas"]["UseCaseChannels"];
+            /** @description What the messages are for, in at least 40 characters. */
+            readonly description?: string;
+            readonly direct_lending?: boolean;
+            readonly embedded_links?: boolean;
+            readonly embedded_phone?: boolean;
+            /** @description The answer to HELP: who you are and how to reach support. */
+            readonly help_message?: string;
+            /** @description Send as this use case from every number assigned to no other one. An app's first use case is its default. */
+            readonly is_default?: boolean;
+            /** @description How a recipient opts in, and where a reviewer can see it, in at least 40 characters. */
+            readonly message_flow?: string;
+            /** @description Two to five messages as they will be sent. */
+            readonly message_samples?: readonly string[] | null;
+            readonly name: string;
+            /** @description The app's numbers that send as this use case, in E.164. Omitted on an update leaves them as they are; empty unassigns them all. */
+            readonly numbers?: readonly string[] | null;
+            /** @description The answer to START, and the first message after opting in. */
+            readonly opt_in_message?: string;
+            /** @description The answer to STOP. */
+            readonly opt_out_message?: string;
+            /** @description The campaign registry's use case, such as CUSTOMER_CARE, ACCOUNT_NOTIFICATION, 2FA, MARKETING or MIXED. */
+            readonly use_case_type?: string;
+        };
+        /** @description One move a use case made, and who made it. Nothing here is ever changed. */
+        readonly UseCaseReview: {
+            readonly actor: components["schemas"]["ReviewActor"];
+            /** @description Who exactly: the reviewer, or the vendor. */
+            readonly actor_name?: string;
+            /** Format: date-time */
+            readonly approved_at?: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            readonly from_status: components["schemas"]["UseCaseStatus"];
+            readonly id: string;
+            /** @description What the reviewer or vendor said. */
+            readonly notes?: string;
+            /** Format: date-time */
+            readonly submitted_at?: string;
+            readonly to_status: components["schemas"]["UseCaseStatus"];
+            /** @description What the vendor answered, as it came. */
+            readonly vendor_payload?: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /**
+         * @description Where a use case stands. draft, changes_requested and vendor_rejected can be edited and submitted; submitted waits on Stream's review; vendor_pending on the vendor's; approved numbers may send. rejected is final.
+         * @enum {string}
+         */
+        readonly UseCaseStatus: "draft" | "submitted" | "changes_requested" | "rejected" | "vendor_pending" | "approved" | "vendor_rejected";
+        readonly VideoSource: {
+            /** @description How many frames to sample, evenly spaced across the clip. Default 8. */
+            readonly max_frames?: number;
+            /** @description Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address. */
+            readonly url: string;
+        };
         readonly Voice: {
             readonly bindings?: readonly components["schemas"]["VoiceBinding"][];
             /** Format: date-time */
@@ -3596,6 +7929,40 @@ export type components = {
             readonly synced_at?: string;
             /** Format: date-time */
             readonly updated_at?: string;
+        };
+        readonly VoicePreview: {
+            /**
+             * Format: byte
+             * @description The spoken line, base64 encoded.
+             */
+            readonly audio: string;
+            /** @example audio/mpeg */
+            readonly content_type: string;
+            readonly provider: string;
+        };
+        readonly VoicePreviewRequest: {
+            /** @description Which provider's copy of the voice to hear. */
+            readonly provider: string;
+            /** @description What to say. Omitted says a short greeting. */
+            readonly text?: string;
+        };
+        readonly VoiceProfile: {
+            readonly call_recording_enabled?: boolean;
+            /** @description A number bought here, or a verified external one. */
+            readonly caller_id_number?: string;
+            /** @description Support, reminders, sales and so on. */
+            readonly calling_purpose?: string;
+            readonly consent_collection_method?: string;
+            readonly consent_disclosure_text?: string;
+            readonly consent_evidence_location?: string;
+            readonly destination_countries?: readonly string[] | null;
+            readonly expected_call_volume?: string;
+            readonly opt_out_handling?: string;
+            /** @description How a recorded call is disclosed and consented to. */
+            readonly recording_disclosure?: string;
+        };
+        readonly VoiceProviders: {
+            readonly providers: readonly string[];
         };
         readonly VoiceRequest: {
             /** @description A note for whoever reads the voice back, and for the provider's dashboard. */
@@ -3625,6 +7992,16 @@ export type components = {
             /** @description What is said in the recording. Optional, and the providers that use one clone more faithfully with it. */
             readonly transcript?: string;
         };
+        readonly WhatsAppProfile: {
+            /** @description The WhatsApp Business account, existing or to create. */
+            readonly business_account?: string;
+            /** @description The Meta business portfolio, existing or to create. */
+            readonly business_portfolio?: string;
+            readonly display_name?: string;
+            readonly phone_number?: string;
+            /** @description sms or voice. */
+            readonly verification_method?: string;
+        };
     };
     responses: {
         /** @description The request was malformed */
@@ -3633,7 +8010,7 @@ export type components = {
                 readonly [name: string]: unknown;
             };
             content: {
-                readonly "application/json": components["schemas"]["Error"];
+                readonly "application/json": components["schemas"]["ErrorResponse"];
             };
         };
         /** @description The caller is known and this operation is server-side only. It needs Stream-Auth-Type: server and a token carrying server: true, which means it cannot be reached from an end user's device. */
@@ -3642,7 +8019,16 @@ export type components = {
                 readonly [name: string]: unknown;
             };
             content: {
-                readonly "application/json": components["schemas"]["Error"];
+                readonly "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /** @description Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more. */
+        readonly InternalError: {
+            headers: {
+                readonly [name: string]: unknown;
+            };
+            content: {
+                readonly "application/json": components["schemas"]["ErrorResponse"];
             };
         };
         /** @description No such modality, provider or shortcut */
@@ -3651,7 +8037,7 @@ export type components = {
                 readonly [name: string]: unknown;
             };
             content: {
-                readonly "application/json": components["schemas"]["Error"];
+                readonly "application/json": components["schemas"]["ErrorResponse"];
             };
         };
         /** @description The customer header is missing */
@@ -3660,54 +8046,39 @@ export type components = {
                 readonly [name: string]: unknown;
             };
             content: {
-                readonly "application/json": components["schemas"]["Error"];
+                readonly "application/json": components["schemas"]["ErrorResponse"];
             };
         };
     };
-    parameters: {
-        /** @description The client's own command id, as sent when the command was submitted. */
-        readonly CommandID: string;
-        /** @description Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one. */
-        readonly ConfigName: string;
-        /** @description Up to 1000. Omitted is 200. */
-        readonly ItemLimit: number;
-        /** @description Which kind of model to route. */
-        readonly Modality: components["schemas"]["Modality"];
-        /** @description A built-in catalog id such as slack or calendly. */
-        readonly PluginID: string;
-        /** @description The resource, as returned when it was created. */
-        readonly ResourceID: string;
-        /** @description Narrow to one turn's items. Omitted is every turn in the session. */
-        readonly ResponseIDFilter: string;
-        /** @description The agent name the session was opened against. */
-        readonly SessionAgent: string;
-        readonly SessionConfigID: string;
-        readonly SessionCreatedAfter: string;
-        readonly SessionCreatedBefore: string;
-        /**
-         * @description Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
-         * @example {"tenant":"acme"}
-         */
-        readonly SessionCustom: string;
-        /** @description The session, as returned when it was created. */
-        readonly SessionID: string;
-        /** @description Up to 200. Omitted is 25. */
-        readonly SessionLimit: number;
-        readonly SessionOffset: number;
-        readonly SessionProject: string;
-        /** @description What to search for. Quoted phrases and bare words both work, and punctuation is taken rather than refused: this comes from a search box, so an apostrophe must not become a syntax error. */
-        readonly SessionSearchText: string;
-        /** @description Omitted is both. */
-        readonly SessionStateFilter: "running" | "closed";
-        /** @description Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary. */
-        readonly SessionUserID: string;
-    };
+    parameters: never;
     requestBodies: never;
     headers: never;
     pathItems: never;
 };
 export type $defs = Record<string, never>;
 export interface operations {
+    readonly getConnectorClientMetadata: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The document */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": Record<string, never>;
+                };
+            };
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
     readonly getHealth: {
         readonly parameters: {
             readonly query?: never;
@@ -3726,6 +8097,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["HealthStatus"];
                 };
             };
+            readonly 500: components["responses"]["InternalError"];
             /** @description A dependency is unavailable */
             readonly 503: {
                 headers: {
@@ -3743,7 +8115,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description Which kind of model to route. */
-                readonly modality: components["parameters"]["Modality"];
+                readonly modality: components["schemas"]["Modality"];
             };
             readonly cookie?: never;
         };
@@ -3758,30 +8130,52 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["Provider"][];
                 };
             };
+            readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listRoutes: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description Which kind of model to route. */
+                readonly modality: components["schemas"]["Modality"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The offered shortcuts, default first */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["Route"][];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly resolveTarget: {
         readonly parameters: {
             readonly query?: {
-                /**
-                 * @description Language hints that candidates must cover. Repeat for several.
-                 * @example [
-                 *       "en"
-                 *     ]
-                 */
+                /** @description Language hints that candidates must cover. Repeat for several. */
                 readonly language?: readonly string[];
             };
             readonly header?: never;
             readonly path: {
                 /** @description Which kind of model to route. */
-                readonly modality: components["parameters"]["Modality"];
-                /**
-                 * @description A "provider/model" name or a capability shortcut such as en-low-latency.
-                 * @example en-low-latency
-                 */
+                readonly modality: components["schemas"]["Modality"];
+                /** @description A "provider/model" name or a capability shortcut such as en-low-latency. */
                 readonly target: string;
             };
             readonly cookie?: never;
@@ -3797,9 +8191,11 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["Candidate"][];
                 };
             };
+            readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getStats: {
@@ -3808,13 +8204,7 @@ export interface operations {
                 /** @description Start of the window, inclusive. */
                 readonly from: string;
                 readonly granularity?: components["schemas"]["Granularity"];
-                /**
-                 * @description Only count requests carrying every one of these cost labels, each written "key:value". Repeat for several. Filtering reads the request rows rather than the rollups, since a rollup bucket no longer knows which labels its requests carried.
-                 * @example [
-                 *       "project:moderation",
-                 *       "environment:dev"
-                 *     ]
-                 */
+                /** @description Only count requests carrying every one of these cost labels, each written "key:value". Repeat for several. Filtering reads the request rows rather than the rollups, since a rollup bucket no longer knows which labels its requests carried. */
                 readonly tag?: readonly string[];
                 /** @description End of the window, exclusive. */
                 readonly to: string;
@@ -3822,7 +8212,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description Which kind of model to route. */
-                readonly modality: components["parameters"]["Modality"];
+                readonly modality: components["schemas"]["Modality"];
             };
             readonly cookie?: never;
         };
@@ -3841,6 +8231,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getTagStats: {
@@ -3849,10 +8240,7 @@ export interface operations {
                 /** @description Start of the window, inclusive. */
                 readonly from: string;
                 readonly granularity?: components["schemas"]["Granularity"];
-                /**
-                 * @description The cost label to group by.
-                 * @example project
-                 */
+                /** @description The cost label to group by. */
                 readonly key: string;
                 /** @description End of the window, exclusive. */
                 readonly to: string;
@@ -3860,7 +8248,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description Which kind of model to route. */
-                readonly modality: components["parameters"]["Modality"];
+                readonly modality: components["schemas"]["Modality"];
             };
             readonly cookie?: never;
         };
@@ -3879,6 +8267,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly streamModality: {
@@ -3887,7 +8276,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description Which kind of model to route. */
-                readonly modality: components["parameters"]["Modality"];
+                readonly modality: components["schemas"]["Modality"];
             };
             readonly cookie?: never;
         };
@@ -3903,6 +8292,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listCalls: {
@@ -3938,6 +8328,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getCall: {
@@ -3946,7 +8337,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -3965,6 +8356,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getCallEvents: {
@@ -3976,7 +8368,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -3995,6 +8387,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getCallTimeline: {
@@ -4003,7 +8396,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -4022,6 +8415,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createCallToken: {
@@ -4030,7 +8424,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -4053,6 +8447,35 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getCallTokens: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The call's tokens */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CallTokens"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getCallTranscript: {
@@ -4061,7 +8484,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -4080,6 +8503,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listCampaigns: {
@@ -4103,6 +8527,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createCampaign: {
@@ -4130,6 +8555,8 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getCampaign: {
@@ -4138,7 +8565,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -4157,6 +8584,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listCampaignContacts: {
@@ -4165,7 +8593,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -4184,6 +8612,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly addCampaignContacts: {
@@ -4192,7 +8621,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -4215,6 +8644,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly pauseCampaign: {
@@ -4223,7 +8653,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -4242,6 +8672,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly startCampaign: {
@@ -4250,7 +8681,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -4269,6 +8700,204 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listChannelAccounts: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The lines */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ChannelAccount"][] | null;
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly connectChannel: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectChannelRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The line, with where to deliver */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ChannelAccount"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly disconnectChannel: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The account, as the connect answered with. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Disconnected */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly verifyChannelHook: {
+        readonly parameters: {
+            readonly query?: {
+                readonly "hub.challenge"?: string;
+                readonly "hub.mode"?: string;
+                readonly "hub.verify_token"?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly token: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The challenge, echoed */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "text/plain": string;
+                };
+            };
+            /** @description That is not this line's verify token */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No line is connected at this address */
+            readonly 410: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly receiveChannelMessage: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly token: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The delivery is taken, and the agent is answering it */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The delivery is not one this provider sends */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The delivery is not signed with this line's secret */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No line is connected at this address; stop delivering to it */
+            readonly 410: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The delivery is over 256 KiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly linkChannelNumber: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LinkChannelRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The code and when it stops working */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ChannelLink"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createChatToken: {
@@ -4296,13 +8925,14 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listAgentConfigs: {
         readonly parameters: {
             readonly query?: {
                 /** @description Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one. */
-                readonly name?: components["parameters"]["ConfigName"];
+                readonly name?: string;
             };
             readonly header?: never;
             readonly path?: never;
@@ -4322,6 +8952,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createAgentConfig: {
@@ -4349,6 +8980,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getAgentConfig: {
@@ -4357,7 +8989,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -4376,6 +9008,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly updateAgentConfig: {
@@ -4384,7 +9017,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -4407,6 +9040,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly deleteAgentConfig: {
@@ -4415,7 +9049,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -4432,6 +9066,67 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly patchAgentConfig: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The config, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentConfigPatch"];
+            };
+        };
+        readonly responses: {
+            /** @description The config as it now is */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentConfig"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getAgentChanges: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The agent config, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The changes since the last sync */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentChanges"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listConfigPlugins: {
@@ -4440,7 +9135,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -4459,6 +9154,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly disconnectPlugin: {
@@ -4467,9 +9163,9 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
-                /** @description A built-in catalog id such as slack or calendly. */
-                readonly plugin_id: components["parameters"]["PluginID"];
+                readonly id: string;
+                /** @description A built-in catalog id such as slack or calendly, or the name of an MCP server the config names by URL that the app logs into. */
+                readonly plugin_id: string;
             };
             readonly cookie?: never;
         };
@@ -4486,6 +9182,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly authorizePlugin: {
@@ -4494,9 +9191,9 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
-                /** @description A built-in catalog id such as slack or calendly. */
-                readonly plugin_id: components["parameters"]["PluginID"];
+                readonly id: string;
+                /** @description A built-in catalog id such as slack or calendly, or the name of an MCP server the config names by URL that the app logs into. */
+                readonly plugin_id: string;
             };
             readonly cookie?: never;
         };
@@ -4519,6 +9216,1317 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly setPluginClient: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+                /** @description A built-in catalog id such as google_calendar. */
+                readonly plugin_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SetPluginClientRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The client as stored, without its secret */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PluginClient"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deletePluginClient: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+                /** @description A built-in catalog id such as google_calendar. */
+                readonly plugin_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The client is gone */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listConnections: {
+        readonly parameters: {
+            readonly query: {
+                /** @description Keeps one connector's. */
+                readonly connector_id?: string;
+                /** @description The next_cursor of the previous page. Omitted is the first page. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 25. */
+                readonly limit?: number;
+                /** @description app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id. */
+                readonly owner_type: components["schemas"]["ConnectionOwnerType"];
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of connections */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly createConnection: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectionRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The pending connection */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Connection"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getConnection: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The connection */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Connection"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deleteConnection: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description Delete it even while an agent config binds it as its fixed connection. The binding is left in place, naming a connection that no longer exists. */
+                readonly force?: boolean;
+            };
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The connection is deleted */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly createAuthorization: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The consent is waiting for its browser */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Authorization"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly putConnectionCredentials: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectionCredentials"];
+            };
+        };
+        readonly responses: {
+            /** @description The connection, connected */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Connection"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listConnectionInvocations: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The next_cursor of the previous page. Omitted is the first page. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 25. */
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of tool calls */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionInvocationPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly proxyConnectionGet: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection. */
+                readonly id: string;
+                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL. */
+                readonly path: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description The connection is not connected */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The body is over 1 MiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The provider asked to wait: retry after the Retry-After header's seconds. A 429 the provider answered itself comes back as it came. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description The call did not reach the provider, or its answer did not come back */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly proxyConnectionPut: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection. */
+                readonly id: string;
+                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL. */
+                readonly path: string;
+            };
+            readonly cookie?: never;
+        };
+        /** @description The body for the provider, of any media type, at most 1 MiB. */
+        readonly requestBody?: {
+            readonly content: {
+                readonly "*/*": string;
+            };
+        };
+        readonly responses: {
+            /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description The connection is not connected */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The body is over 1 MiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The provider asked to wait: retry after the Retry-After header's seconds. A 429 the provider answered itself comes back as it came. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description The call did not reach the provider, or its answer did not come back */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly proxyConnectionPost: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection. */
+                readonly id: string;
+                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL. */
+                readonly path: string;
+            };
+            readonly cookie?: never;
+        };
+        /** @description The body for the provider, of any media type, at most 1 MiB. */
+        readonly requestBody?: {
+            readonly content: {
+                readonly "*/*": string;
+            };
+        };
+        readonly responses: {
+            /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description The connection is not connected */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The body is over 1 MiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The provider asked to wait: retry after the Retry-After header's seconds. A 429 the provider answered itself comes back as it came. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description The call did not reach the provider, or its answer did not come back */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly proxyConnectionDelete: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection. */
+                readonly id: string;
+                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL. */
+                readonly path: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description The connection is not connected */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The body is over 1 MiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The provider asked to wait: retry after the Retry-After header's seconds. A 429 the provider answered itself comes back as it came. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description The call did not reach the provider, or its answer did not come back */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly proxyConnectionPatch: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection. */
+                readonly id: string;
+                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL. */
+                readonly path: string;
+            };
+            readonly cookie?: never;
+        };
+        /** @description The body for the provider, of any media type, at most 1 MiB. */
+        readonly requestBody?: {
+            readonly content: {
+                readonly "*/*": string;
+            };
+        };
+        readonly responses: {
+            /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description The connection is not connected */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The body is over 1 MiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The provider asked to wait: retry after the Retry-After header's seconds. A 429 the provider answered itself comes back as it came. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description The call did not reach the provider, or its answer did not come back */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly exportConnectionToken: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The access credential */
+            readonly 200: {
+                headers: {
+                    readonly "Cache-Control"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionToken"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description Service Unavailable */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly listConnectionTools: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The connection's tools */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionTools"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly validateConnection: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectionValidationRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description What the validate found */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionValidation"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listConnectorAudit: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description Keeps one connection's rows, deleted or not. */
+                readonly connection_id?: string;
+                /** @description The next_cursor of the previous page. Omitted is the first page. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 25. */
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of audit rows */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorAuditPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listConnectors: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The next_cursor of the previous page. Omitted is the first page. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 25. */
+                readonly limit?: number;
+                /** @description Keeps the connectors whose id, name, category or description holds this, ignoring case. */
+                readonly q?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of connectors */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly createConnector: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CustomConnectorRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The connector as stored */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Connector"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getConnector: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector, such as slack or custom_crm. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The connector */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Connector"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listConnectorEventDestinations: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The next_cursor of the previous page. Omitted is the first page. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 25. */
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector, such as slack_bot. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of destinations */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorEventDestinationPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly createConnectorEventDestination: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector, such as slack_bot. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectorEventDestinationRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The destination and its secret */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorEventDestinationSecret"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deleteConnectorEventDestination: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The destination, as returned when it was created. */
+                readonly destination_id: string;
+                /** @description The connector, such as slack_bot. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The destination is removed */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly rotateConnectorEventDestinationSecret: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The destination, as returned when it was created. */
+                readonly destination_id: string;
+                /** @description The connector, such as slack_bot. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The destination and its new secret */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorEventDestinationSecret"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly setConnectorOAuthClient: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector, such as github or custom_crm. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectorOAuthClientRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The client was replaced */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorOAuthClient"];
+                };
+            };
+            /** @description The client was stored */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorOAuthClient"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deleteConnectorOAuthClient: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector, such as github or custom_crm. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The client is removed */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly setConnectorProviderApp: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector, such as slack. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectorProviderAppRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The app exists; its manifest was applied again */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorProviderApp"];
+                };
+            };
+            /** @description The app was created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorProviderApp"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description Service Unavailable */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly deleteConnectorProviderApp: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector, such as slack. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The app is deleted */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description Service Unavailable */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly receiveConnectorEvent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description A built-in connector id such as slack. */
+                readonly connector_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The event is taken, or a URL verification's challenge, echoed */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "text/plain": string;
+                };
+            };
+            /** @description The request is not signed by the provider, or its signed timestamp is more than the manifest's max_age from now */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description This connector takes no events here */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The event is over 256 KiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly finishConnectorConsent: {
+        readonly parameters: {
+            readonly query?: {
+                readonly code?: string;
+                readonly error?: string;
+                readonly iss?: string;
+                readonly state?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The browser is sent back to the dashboard */
+            readonly 302: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            /** @description The consent was started in another browser */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getConnectorLaunchPage: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The authorization. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The launch page */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "text/html": string;
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly handOffConnectorLaunch: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The authorization. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The cookie is set and the authorize URL returned */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            /** @description Not from the launch page's origin, or not this consent's handoff token */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getConversationCommand: {
@@ -4530,7 +10538,7 @@ export interface operations {
             readonly path: {
                 readonly cid: string;
                 /** @description The client's own command id, as sent when the command was submitted. */
-                readonly command_id: components["parameters"]["CommandID"];
+                readonly command_id: string;
             };
             readonly cookie?: never;
         };
@@ -4545,8 +10553,10 @@ export interface operations {
                     readonly "application/json": components["schemas"]["CommandReceipt"];
                 };
             };
+            readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getConversationMessages: {
@@ -4577,6 +10587,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createGuestUser: {
@@ -4608,8 +10619,11 @@ export interface operations {
                 headers: {
                     readonly [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly claimGuestUser: {
@@ -4644,9 +10658,10 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly ingestKnowledge: {
@@ -4674,6 +10689,116 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listKnowledgeDocuments: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description One knowledge base. Omit to list every document the customer has. */
+                readonly namespace?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The customer's documents, most recently written first */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["IndexedKnowledgeDocument"][];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getKnowledgeDocument: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The document */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["IndexedKnowledgeDocument"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deleteKnowledgeDocument: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The document and its passages are gone */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listKnowledgeDocumentPassages: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The passages */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["KnowledgePassage"][];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listKnowledgeUrls: {
@@ -4700,6 +10825,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly addKnowledgeUrl: {
@@ -4715,7 +10841,7 @@ export interface operations {
             };
         };
         readonly responses: {
-            /** @description The page was stored, read or not */
+            /** @description The page was stored and its read queued */
             readonly 201: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -4727,6 +10853,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getKnowledgeUrl: {
@@ -4735,7 +10862,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -4754,6 +10881,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly deleteKnowledgeUrl: {
@@ -4762,7 +10890,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -4779,6 +10907,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly indexKnowledgeUrl: {
@@ -4787,13 +10916,13 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description The page as it now is */
+            /** @description The page as it is while the read is queued */
             readonly 200: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -4806,6 +10935,35 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listKnowledgeUrlPassages: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The passages */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["KnowledgePassage"][];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listAgentLogs: {
@@ -4817,7 +10975,8 @@ export interface operations {
                 readonly limit?: number;
                 readonly q?: string;
                 readonly session_id?: string;
-                readonly severity?: "info" | "error";
+                /** @description The least serious level to show, not the only one: warn is warnings and errors. */
+                readonly severity?: "info" | "warn" | "error";
                 /** @description Comma-separated user/agent/tool/system sources. */
                 readonly source?: string;
                 readonly to?: string;
@@ -4841,13 +11000,14 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
             /** @description Log storage is unavailable. */
             readonly 503: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4875,13 +11035,14 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
             /** @description Log storage is unavailable. */
             readonly 503: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4894,7 +11055,8 @@ export interface operations {
                 readonly from?: string;
                 readonly q?: string;
                 readonly session_id?: string;
-                readonly severity?: "info" | "error";
+                /** @description The least serious level to show, not the only one: warn is warnings and errors. */
+                readonly severity?: "info" | "warn" | "error";
                 /** @description Comma-separated user/agent/tool/system sources. */
                 readonly source?: string;
                 readonly to?: string;
@@ -4920,13 +11082,14 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
             /** @description Log storage is unavailable. */
             readonly 503: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4952,8 +11115,35 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["Plugin"][];
                 };
             };
+            readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getPluginLogo: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description A built-in catalog id such as slack or linear. */
+                readonly plugin_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The logo */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "image/svg+xml": string;
+                };
+            };
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly pluginOAuthCallback: {
@@ -4976,47 +11166,56 @@ export interface operations {
                 };
                 content?: never;
             };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
-    readonly listSessions: {
+    readonly receivePluginEvent: {
         readonly parameters: {
-            readonly query?: {
-                /** @description The agent name the session was opened against. */
-                readonly agent?: components["parameters"]["SessionAgent"];
-                readonly config_id?: components["parameters"]["SessionConfigID"];
-                readonly created_after?: components["parameters"]["SessionCreatedAfter"];
-                readonly created_before?: components["parameters"]["SessionCreatedBefore"];
-                /**
-                 * @description Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
-                 * @example {"tenant":"acme"}
-                 */
-                readonly custom?: components["parameters"]["SessionCustom"];
-                /** @description Up to 200. Omitted is 25. */
-                readonly limit?: components["parameters"]["SessionLimit"];
-                readonly offset?: components["parameters"]["SessionOffset"];
-                readonly project?: components["parameters"]["SessionProject"];
-                /** @description Omitted is both. */
-                readonly state?: components["parameters"]["SessionStateFilter"];
-                /** @description Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary. */
-                readonly user_id?: components["parameters"]["SessionUserID"];
-            };
+            readonly query?: never;
             readonly header?: never;
-            readonly path?: never;
+            readonly path: {
+                readonly token: string;
+            };
             readonly cookie?: never;
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description The customer's sessions, newest first. A page shorter than the limit asked for is the last one, which is all a caller walking the list needs: counting every conversation a busy customer ever had costs more than the page itself. */
+            /** @description A verification's challenge, echoed, or an event already taken */
             readonly 200: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["Session"][];
-                };
+                content?: never;
             };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
+            /** @description The event is taken, and a conversation is opening for it */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The delivery is not signed with the subscription's secret */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description There is no such subscription any more; stop delivering to it */
+            readonly 410: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The delivery is over 256 KiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createSession: {
@@ -5043,7 +11242,18 @@ export interface operations {
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description A session with that id already exists */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getSession: {
@@ -5052,7 +11262,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The session, as returned when it was created. */
-                readonly id: components["parameters"]["SessionID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5067,32 +11277,68 @@ export interface operations {
                     readonly "application/json": components["schemas"]["Session"];
                 };
             };
+            readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
-    readonly closeSession: {
+    readonly deleteSession: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
                 /** @description The session, as returned when it was created. */
-                readonly id: components["parameters"]["SessionID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description The agent has left */
+            /** @description The session is deleted */
             readonly 204: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
+            readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly updateSession: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["UpdateSessionRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The session as it now is */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Session"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getSessionCommand: {
@@ -5101,9 +11347,9 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The client's own command id, as sent when the command was submitted. */
-                readonly command_id: components["parameters"]["CommandID"];
+                readonly command_id: string;
                 /** @description The session, as returned when it was created. */
-                readonly id: components["parameters"]["SessionID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5118,8 +11364,10 @@ export interface operations {
                     readonly "application/json": components["schemas"]["CommandReceipt"];
                 };
             };
+            readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly interruptSessionCommand: {
@@ -5128,9 +11376,9 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The client's own command id, as sent when the command was submitted. */
-                readonly command_id: components["parameters"]["CommandID"];
+                readonly command_id: string;
                 /** @description The session, as returned when it was created. */
-                readonly id: components["parameters"]["SessionID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5145,15 +11393,17 @@ export interface operations {
                     readonly "application/json": components["schemas"]["CommandReceipt"];
                 };
             };
+            readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
             /** @description The stop was accepted but its durable outcome is unknown. The command is not reported stopped; retry the same command id. */
             readonly 503: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5171,7 +11421,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The session, as returned when it was created. */
-                readonly id: components["parameters"]["SessionID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5186,6 +11436,7 @@ export interface operations {
             };
             readonly 401: components["responses"]["Unauthorized"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly forkSession: {
@@ -5194,7 +11445,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The session, as returned when it was created. */
-                readonly id: components["parameters"]["SessionID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5217,6 +11468,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly setSessionInstructions: {
@@ -5225,7 +11477,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The session, as returned when it was created. */
-                readonly id: components["parameters"]["SessionID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5246,6 +11498,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly interruptSession: {
@@ -5254,7 +11507,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The session, as returned when it was created. */
-                readonly id: components["parameters"]["SessionID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5267,9 +11520,37 @@ export interface operations {
                 };
                 content?: never;
             };
+            readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deleteSessionMemories: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The session whose memories to delete. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The memories are deleted */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly respondSession: {
@@ -5278,7 +11559,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The session, as returned when it was created. */
-                readonly id: components["parameters"]["SessionID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5314,22 +11595,24 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["Error"];
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listResponses: {
         readonly parameters: {
             readonly query?: {
+                /** @description The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page. */
+                readonly cursor?: string;
                 /** @description Up to 200. Omitted is 25. */
-                readonly limit?: components["parameters"]["SessionLimit"];
-                readonly offset?: components["parameters"]["SessionOffset"];
+                readonly limit?: number;
             };
             readonly header?: never;
             readonly path: {
                 /** @description The session, as returned when it was created. */
-                readonly id: components["parameters"]["SessionID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5341,12 +11624,14 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["AgentResponse"][];
+                    readonly "application/json": components["schemas"]["AgentResponsePage"];
                 };
             };
+            readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createResponse: {
@@ -5355,7 +11640,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The session, as returned when it was created. */
-                readonly id: components["parameters"]["SessionID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5378,21 +11663,32 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description The command ID was already accepted with different content */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listResponseItems: {
         readonly parameters: {
             readonly query?: {
+                /** @description The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page. */
+                readonly cursor?: string;
                 /** @description Up to 1000. Omitted is 200. */
-                readonly limit?: components["parameters"]["ItemLimit"];
-                readonly offset?: components["parameters"]["SessionOffset"];
+                readonly limit?: number;
                 /** @description Narrow to one turn's items. Omitted is every turn in the session. */
-                readonly response_id?: components["parameters"]["ResponseIDFilter"];
+                readonly response_id?: string;
             };
             readonly header?: never;
             readonly path: {
                 /** @description The session, as returned when it was created. */
-                readonly id: components["parameters"]["SessionID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5404,12 +11700,44 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["AgentResponseItem"][];
+                    readonly "application/json": components["schemas"]["AgentResponseItemPage"];
                 };
             };
+            readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly rewindSession: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RewindSessionRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The conversation carries on from the end of that response */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly saySession: {
@@ -5418,7 +11746,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The session, as returned when it was created. */
-                readonly id: components["parameters"]["SessionID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5439,49 +11767,118 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
-    readonly searchSessions: {
+    readonly setSessionSettings: {
         readonly parameters: {
-            readonly query?: {
-                /** @description The agent name the session was opened against. */
-                readonly agent?: components["parameters"]["SessionAgent"];
-                readonly config_id?: components["parameters"]["SessionConfigID"];
-                readonly created_after?: components["parameters"]["SessionCreatedAfter"];
-                readonly created_before?: components["parameters"]["SessionCreatedBefore"];
-                /**
-                 * @description Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
-                 * @example {"tenant":"acme"}
-                 */
-                readonly custom?: components["parameters"]["SessionCustom"];
-                /** @description Up to 200. Omitted is 25. */
-                readonly limit?: components["parameters"]["SessionLimit"];
-                readonly offset?: components["parameters"]["SessionOffset"];
-                readonly project?: components["parameters"]["SessionProject"];
-                /** @description What to search for. Quoted phrases and bare words both work, and punctuation is taken rather than refused: this comes from a search box, so an apostrophe must not become a syntax error. */
-                readonly q?: components["parameters"]["SessionSearchText"];
-                /** @description Omitted is both. */
-                readonly state?: components["parameters"]["SessionStateFilter"];
-                /** @description Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary. */
-                readonly user_id?: components["parameters"]["SessionUserID"];
-            };
+            readonly query?: never;
             readonly header?: never;
-            readonly path?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: string;
+            };
             readonly cookie?: never;
         };
-        readonly requestBody?: never;
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SessionSettingsRequest"];
+            };
+        };
         readonly responses: {
-            /** @description The matching sessions, best match first */
+            /** @description The session, on its new models */
             readonly 200: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["Session"][];
+                    readonly "application/json": components["schemas"]["Session"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly stopSession: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The agent has left */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listSessionTools: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The tools */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["OfferedTools"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly querySessions: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SessionQuery"];
+            };
+        };
+        readonly responses: {
+            /** @description A page of sessions */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listSimulationRuns: {
@@ -5509,6 +11906,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getSimulationRun: {
@@ -5517,7 +11915,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5536,6 +11934,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly cancelSimulationRun: {
@@ -5544,7 +11943,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5563,6 +11962,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listSimulations: {
@@ -5586,6 +11986,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createSimulation: {
@@ -5613,6 +12014,8 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getSimulation: {
@@ -5621,7 +12024,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5640,6 +12043,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly updateSimulation: {
@@ -5648,7 +12052,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5671,6 +12075,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly deleteSimulation: {
@@ -5679,7 +12084,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5696,6 +12101,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly runSimulation: {
@@ -5704,7 +12110,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5723,6 +12129,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listSkills: {
@@ -5749,6 +12156,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createSkill: {
@@ -5776,6 +12184,8 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getSkill: {
@@ -5784,7 +12194,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5803,6 +12213,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly updateSkill: {
@@ -5811,7 +12222,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5834,6 +12245,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly deleteSkill: {
@@ -5842,7 +12254,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5859,6 +12271,29 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly openSocketSession: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The socket is open */
+            readonly 101: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly syncAgent: {
@@ -5886,6 +12321,66 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deleteUserConnections: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The user whose connections to delete, as owner.user_id named them. */
+                readonly user_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The user's connections are deleted */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly truncateMemories: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The memory user id sessions were opened with, memory.user_id on a session. */
+                readonly user_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The memories are deleted */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listVoices: {
@@ -5909,6 +12404,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createVoice: {
@@ -5936,6 +12432,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getVoice: {
@@ -5944,7 +12441,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5963,6 +12460,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly updateVoice: {
@@ -5971,7 +12469,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -5994,6 +12492,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly deleteVoice: {
@@ -6002,7 +12501,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -6019,6 +12518,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly prepareVoice: {
@@ -6027,7 +12527,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -6050,6 +12550,39 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly previewVoice: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["VoicePreviewRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The line, spoken */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VoicePreview"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly addVoiceSample: {
@@ -6058,7 +12591,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -6081,13 +12614,438 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listLibraryVoices: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description Only this provider's voices. */
+                readonly provider?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The voices, by provider and then name */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LibraryVoices"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly previewLibraryVoice: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly provider: string;
+                /** @description The voice id, as the provider names it. */
+                readonly voice: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The sample */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VoicePreview"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listVoiceProviders: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The providers, sorted by name */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VoiceProviders"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly queryAudit: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AuditQuery"];
+            };
+        };
+        readonly responses: {
+            /** @description A page of changes */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AuditPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly classify: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ClassifyRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The answers, under the ids they were asked under */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ClassifyResult"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description The classifier is rate limiting. Ask again after a wait. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description The classifier is overloaded or could not be reached. Ask again after a wait. */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly answerProviderAppHandshake: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description Digits to echo. */
+                readonly "hub.challenge"?: string;
+                /** @description subscribe. */
+                readonly "hub.mode"?: string;
+                /** @description The provider app's id. */
+                readonly "hub.verify_token"?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector the provider app is of, such as whatsapp. */
+                readonly connector_id: string;
+                /** @description The provider's id for the app, such as a Meta app id. */
+                readonly provider_app_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The challenge, echoed */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "text/plain": string;
+                };
+            };
+            /** @description The query is not this URL's handshake: another mode or token, or a challenge that is not digits */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description This connector, or this deployment, answers no handshake here */
+            readonly 405: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly receiveProviderAppEvent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector the provider app is of, such as slack_bot. */
+                readonly connector_id: string;
+                /** @description The provider's id for the app, such as a Slack app id. */
+                readonly provider_app_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The event is taken, or a URL verification's challenge, echoed */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "text/plain": string;
+                };
+            };
+            /** @description The request is not signed with the app's signing secret, or its signed timestamp is more than the manifest's max_age from now */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such provider app, or its connector takes no events here */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The event is over 256 KiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly receiveConnectionEvent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly token: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A verification's challenge, echoed, or an event already taken */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The event is taken, and a conversation is opening for it */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The delivery is not JSON, or not an event this subscription is for */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The delivery is not signed with the subscription's secret */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description There is no such subscription, or its connection or declaration is gone; stop delivering to it */
+            readonly 410: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The delivery is over 256 KiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listDataChanges: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The cursor the last page ended at. */
+                readonly after?: number;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The changes since the cursor */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DataChangePage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            /** @description The changes since that cursor are no longer kept, so export again. */
+            readonly 410: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description This deployment has no database to read changes from. */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly exportData: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The export, streamed */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "text/plain": string;
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+            /** @description This deployment has no database to export from. */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly importData: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/octet-stream": string;
+            };
+        };
+        readonly responses: {
+            /** @description What was written */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DataImport"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+            /** @description This deployment has no database to import into. */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly dispatchCalls: {
         readonly parameters: {
             readonly query?: {
-                /** @description How many calls this worker takes at once. */
+                /** @description How much work this worker is still running from before it reconnected, which the router counts against its capacity until each piece is reported `done`. Sending this at all, even as 0, is what says the worker reports `done`; one that leaves it out is held only to the depth of its queue. */
+                readonly active?: number;
+                /** @description How much work this worker takes at once, calls and messages together. */
                 readonly capacity?: number;
+                /** @description The kinds of work this worker accepts, comma separated. Absent is both. A worker that only answers in writing says `message`, so a caller is never left listening to a phone it would have dropped. */
+                readonly handles?: string;
             };
             readonly header?: never;
             readonly path?: never;
@@ -6106,6 +13064,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly generateImage: {
@@ -6117,40 +13076,283 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": {
-                    readonly prompt: string;
-                };
+                readonly "application/json": components["schemas"]["ImageGenerationRequest"];
             };
         };
         readonly responses: {
-            /** @description One generated image */
+            /** @description What was drawn, or why nothing was */
             readonly 200: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": {
-                        /** @description Base64-encoded PNG or JPEG, at most 10 MiB decoded. */
-                        readonly data: string;
-                        readonly media_type: string;
-                        readonly model: string;
-                    };
+                    readonly "application/json": components["schemas"]["ImageGeneration"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly setOperatorProviderApp: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The customer Stream's app serves. */
+                readonly customer_id: string;
+                /** @description The built-in connector, such as slack. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The record was replaced */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorProviderApp"];
+                };
+            };
+            /** @description The record was stored */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorProviderApp"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description Image generation failed or returned no valid image */
-            readonly 502: {
+            /** @description Conflict */
+            readonly 409: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": {
-                        readonly error: string;
-                    };
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description Service Unavailable */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly deleteOperatorProviderApp: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The customer Stream's app serves. */
+                readonly customer_id: string;
+                /** @description The built-in connector, such as slack. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The record is removed */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listUseCasesForReview: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The next_cursor of the previous page, sent with the same status. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 50. */
+                readonly limit?: number;
+                /** @description Omitted is submitted: what waits on Stream. */
+                readonly status?: components["schemas"]["UseCaseStatus"];
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of use cases */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ReviewQueue"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getUseCaseForReview: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The use case */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UseCaseForReview"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly reviewUseCase: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ReviewUseCaseRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The use case as reviewed */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UseCaseForReview"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getBusinessProfile: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The profile */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BusinessProfile"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly saveBusinessProfile: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["BusinessProfileRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The profile as saved */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BusinessProfile"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly placePhoneCall: {
@@ -6179,6 +13381,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly pressPhoneDigits: {
@@ -6207,6 +13410,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly transferPhoneCall: {
@@ -6235,6 +13439,47 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly receiveDLCReport: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The report is taken */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The report is not signed by the vendor */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description This deployment registers nothing */
+            readonly 410: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The report is over 64 KiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listPhoneNumbers: {
@@ -6261,6 +13506,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly buyPhoneNumber: {
@@ -6289,6 +13535,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly releasePhoneNumber: {
@@ -6296,10 +13543,7 @@ export interface operations {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
-                /**
-                 * @description The number in +15551234567 form.
-                 * @example +15125551234
-                 */
+                /** @description The number in +15551234567 form. */
                 readonly e164: string;
             };
             readonly cookie?: never;
@@ -6317,6 +13561,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly attachPhoneNumber: {
@@ -6324,7 +13569,6 @@ export interface operations {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
-                /** @example +15125551234 */
                 readonly e164: string;
             };
             readonly cookie?: never;
@@ -6348,42 +13592,28 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly searchPhoneNumbers: {
         readonly parameters: {
             readonly query: {
-                /**
-                 * @description A US state or Canadian province.
-                 * @example CO
-                 */
+                /** @description A US state or Canadian province. */
                 readonly administrative_area?: string;
                 readonly area_code?: string;
                 /** @description Digits the number must contain, anywhere in it. */
                 readonly contains?: string;
-                /**
-                 * @description ISO 3166-1 alpha-2 country code.
-                 * @example US
-                 */
+                /** @description ISO 3166-1 alpha-2 country code. */
                 readonly country: string;
                 /** @description Capabilities every number must have. Repeat the parameter to require several. A vendor that cannot filter on one still reports what its numbers carry, so these are checked on the results either way. */
                 readonly features?: readonly components["schemas"]["PhoneCapability"][];
                 readonly limit?: number;
-                /**
-                 * @description A city, region or rate centre.
-                 * @example Denver
-                 */
+                /** @description A city, region or rate centre. */
                 readonly locality?: string;
                 readonly number_type?: components["schemas"]["PhoneNumberType"];
-                /**
-                 * @description Digits the number must start with, matched after the country dial code. This differs from `contains` in where the digits have to fall.
-                 * @example 719
-                 */
+                /** @description Digits the number must start with, matched after the country dial code. This differs from `contains` in where the digits have to fall. */
                 readonly prefix?: string;
-                /**
-                 * @description One vendor to search. Absent searches every usable vendor.
-                 * @example telnyx
-                 */
+                /** @description One vendor to search. Absent searches every usable vendor. */
                 readonly vendor?: string;
             };
             readonly header?: never;
@@ -6405,6 +13635,589 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listOptOuts: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The next_cursor of the previous page. Omitted is the first page. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 50. */
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of opt-outs */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["OptOutPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly createOptOut: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CreateOptOutRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The opt-out, or the one already recorded */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["OptOut"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly revokeOptOut: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Revoked */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getPhoneSandbox: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The sandbox */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PhoneSandbox"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly setSandboxRecipients: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SetSandboxRecipientsRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The sandbox */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PhoneSandbox"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listSipTrunks: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The customer's trunks, newest first */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["SipTrunk"][];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly createSipTrunk: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CreateSipTrunkRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The trunk is stored, its password sealed */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SipTrunk"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getSipTrunk: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The trunk */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SipTrunk"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deleteSipTrunk: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The trunk was removed */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly updateSipTrunk: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["UpdateSipTrunkRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The trunk as it now is */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SipTrunk"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly addTrunkNumber: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AddTrunkNumberRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The number is on the trunk */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PhoneNumber"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listUseCases: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The next_cursor of the previous page. Omitted is the first page. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 50. */
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of use cases */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UseCasePage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly createUseCase: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["UseCaseRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The draft */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UseCase"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getUseCase: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The use case */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UseCase"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly updateUseCase: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["UseCaseRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The use case */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UseCase"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deleteUseCase: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Deleted */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listUseCaseReviews: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The next_cursor of the previous page. Omitted is the first page. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 50. */
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of moves */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ReviewPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly submitUseCase: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The submitted use case */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UseCase"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listPhoneVendors: {
@@ -6427,6 +14240,111 @@ export interface operations {
             };
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getAppPolicy: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The app's policy, with what its budget has spent so far */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Policy"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly updateAppPolicy: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["Policy"];
+            };
+        };
+        readonly responses: {
+            /** @description The policy was stored */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Policy"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getOrganizationPolicy: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The organization's policy, with what its budget has spent so far */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Policy"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly updateOrganizationPolicy: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["Policy"];
+            };
+        };
+        readonly responses: {
+            /** @description The policy was stored */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Policy"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listRouterConfigs: {
@@ -6450,6 +14368,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly createRouterConfig: {
@@ -6477,6 +14396,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getRouterConfig: {
@@ -6485,7 +14405,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -6504,6 +14424,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly updateRouterConfig: {
@@ -6512,7 +14433,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -6535,6 +14456,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly deleteRouterConfig: {
@@ -6543,7 +14465,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -6560,6 +14482,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly search: {
@@ -6587,6 +14510,157 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getAppSettings: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The app's settings */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AppSettings"];
+                };
+            };
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+            /** @description Service Unavailable */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly checkAppStreamCredentials: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description What the check found */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["StreamCheck"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description Service Unavailable */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly updateAppStreamCredentials: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["StreamCredentials"];
+            };
+        };
+        readonly responses: {
+            /** @description The app's settings as they now are */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AppSettings"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description Service Unavailable */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly getActivity: {
+        readonly parameters: {
+            readonly query: {
+                /** @description Start of the window, inclusive. */
+                readonly from: string;
+                readonly granularity?: components["schemas"]["ActivityGranularity"];
+                /** @description End of the window, exclusive. */
+                readonly to: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description One row per bucket, oldest first */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ActivityBucket"][];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly runRollup: {
@@ -6614,6 +14688,74 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getSpend: {
+        readonly parameters: {
+            readonly query: {
+                /** @description Start of the window, inclusive. */
+                readonly from: string;
+                readonly granularity?: components["schemas"]["Granularity"];
+                /** @description "modality", or the cost label to group by. */
+                readonly group_by?: string;
+                /** @description How many values keep a series of their own. */
+                readonly limit?: number;
+                /** @description Only count requests carrying every one of these cost labels, each written "key:value". Repeat for several. */
+                readonly tag?: readonly string[];
+                /** @description End of the window, exclusive. */
+                readonly to: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description One row per bucket and group, oldest bucket first */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["SpendBucket"][];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getTagKeys: {
+        readonly parameters: {
+            readonly query: {
+                /** @description Start of the window, inclusive. */
+                readonly from: string;
+                /** @description Only consider requests carrying every one of these cost labels, each written "key:value". Repeat for several. */
+                readonly tag?: readonly string[];
+                /** @description End of the window, exclusive. */
+                readonly to: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description One row per label key, largest spend first */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["TagKeySummary"][];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly transcribeRecording: {
@@ -6642,6 +14784,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getTranscription: {
@@ -6650,7 +14793,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -6669,6 +14812,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly recordSpeech: {
@@ -6697,6 +14841,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getSpeech: {
@@ -6705,7 +14850,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 /** @description The resource, as returned when it was created. */
-                readonly id: components["parameters"]["ResourceID"];
+                readonly id: string;
             };
             readonly cookie?: never;
         };
@@ -6724,6 +14869,7 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly getTurnStats: {
@@ -6755,6 +14901,7 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
         };
     };
 }

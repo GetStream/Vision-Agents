@@ -49,6 +49,8 @@ type stubLLM struct {
 	// abandoned. order remembers which came first.
 	scripts map[string]*llmtest.Script
 	order   []string
+	// capabilities is what the model says it accepts, which is nothing unless a test says.
+	capabilities llm.Capabilities
 }
 
 func newStubLLM() *stubLLM {
@@ -131,7 +133,7 @@ func (s *stubLLM) Close() error {
 
 func (s *stubLLM) Provider() string               { return "stub" }
 func (s *stubLLM) Model() string                  { return "stub-model" }
-func (s *stubLLM) Capabilities() llm.Capabilities { return llm.Capabilities{} }
+func (s *stubLLM) Capabilities() llm.Capabilities { return s.capabilities }
 
 func (s *stubLLM) requests() []llm.ResponseParams {
 	s.mu.Lock()
@@ -161,6 +163,8 @@ func stubConfig() routing.ModalityConfig {
 			Model:     "stub-model",
 			Languages: []string{"en"},
 			Realtime:  true,
+			// ContextWindow is far past what any test sends unless it means to fill it.
+			ContextWindow: 100_000,
 		}},
 		Aliases: map[string]routing.Alias{
 			"en-low-latency": {Languages: []string{"en"}, RequireRealtime: true},
@@ -187,6 +191,10 @@ type HarnessSuite struct {
 	tools Tools
 	// box is where the next harness's subagent may run code. Nil is the usual case.
 	box *stubSandbox
+	// shelf, when set, is where files the subagent's code hands back are published.
+	shelf *shelf
+	// skills are what the next harness offers.
+	skills Skills
 
 	harness *Harness
 	events  *collector
@@ -200,6 +208,8 @@ func (s *HarnessSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.tools = Tools{}
 	s.box = nil
+	s.shelf = nil
+	s.skills = testSkills()
 }
 
 // collector drains a harness's events for the life of one test, because the emitter
@@ -257,7 +267,7 @@ func (s *HarnessSuite) build(delegating bool) {
 	s.fast = newStubLLM()
 	options := Options{
 		Model:  s.session(s.fast),
-		Skills: testSkills(),
+		Skills: s.skills,
 		Tools:  s.tools,
 		Logger: slog.New(slog.DiscardHandler),
 	}
@@ -267,6 +277,9 @@ func (s *HarnessSuite) build(delegating bool) {
 	}
 	if s.box != nil {
 		options.Sandbox = s.box
+	}
+	if s.shelf != nil {
+		options.Publish = s.shelf.publish
 	}
 
 	harness, err := New(options)
@@ -422,6 +435,23 @@ func (s *HarnessSuite) TestTheModelIsToldWhatItMayHandOver() {
 	s.Contains(instructions, "<ask skill=", "and how to ask for it")
 }
 
+func (s *HarnessSuite) TestAReplyToAToolResultThinksAndACallerTurnDoesNot() {
+	s.build(false)
+	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"none", "low", "medium"}}
+
+	s.respond("turn-1", "a table for four at 7:30")
+	s.answer(Turn{
+		ID:        "tool-1",
+		History:   []llm.Message{{Role: llm.User, Content: "a table for four at 7:30"}},
+		AfterTool: true,
+	})
+
+	s.Require().Len(s.fast.requests(), 2)
+	s.Empty(s.fast.requests()[0].Reasoning.Effort, "the caller is waiting on every word")
+	s.Equal("low", s.fast.requests()[1].Reasoning.Effort,
+		"at none the model asks to book a free table instead of booking it")
+}
+
 func (s *HarnessSuite) TestToolsAreOfferedToTheFastModel() {
 	s.tools = testTools()
 	s.build(false)
@@ -445,6 +475,48 @@ func (s *HarnessSuite) TestWithoutToolsTheRequestOffersNone() {
 
 	s.Require().Len(s.fast.requests(), 1)
 	s.Nil(s.fast.requests()[0].Tools)
+}
+
+func (s *HarnessSuite) TestTheModelIsToldHowToUseTheToolsItIsOffered() {
+	s.tools = testTools()
+	s.build(false)
+
+	s.respond("turn-1", "put me through to someone")
+
+	s.Require().Len(s.fast.requests(), 1)
+	instructions := s.fast.requests()[0].Instructions
+	s.Contains(instructions, "be brief", "the agent's own instructions come first")
+	s.Contains(instructions, s.tools.Prompt())
+	s.Contains(instructions, "same turn", "a tool is called once what it requires is known")
+}
+
+func (s *HarnessSuite) TestTheReplyToAToolResultIsToldHowToUseToolsToo() {
+	// What keeps a hold phrase from being said again once the result is back is the same
+	// instruction, so the reply that follows a result must carry it as the first reply did.
+	s.tools = testTools()
+	s.build(false)
+
+	s.respond("turn-1", "a table for four at 7:30")
+	s.answer(Turn{
+		ID:           "tool-1",
+		Instructions: "be brief",
+		History:      []llm.Message{{Role: llm.User, Content: "a table for four at 7:30"}},
+		AfterTool:    true,
+	})
+
+	s.Require().Len(s.fast.requests(), 2)
+	s.Contains(s.fast.requests()[1].Instructions, "After a result, answer from it")
+	s.Equal(s.fast.requests()[0].Instructions, s.fast.requests()[1].Instructions)
+}
+
+func (s *HarnessSuite) TestWithoutToolsTheModelIsToldNothingAboutThem() {
+	s.build(true)
+
+	s.respond("turn-1", "hello")
+
+	s.Require().Len(s.fast.requests(), 1)
+	s.NotContains(s.fast.requests()[0].Instructions, usePolicy)
+	s.Equal("be brief\n\n"+s.skills.Prompt(), s.fast.requests()[0].Instructions)
 }
 
 func (s *HarnessSuite) TestAToolCallIsReportedForSomebodyElseToRun() {
@@ -534,6 +606,116 @@ func (s *HarnessSuite) TestARequestForHelpIsDelegatedAndNotSpoken() {
 	s.Equal("15% of 84.20", asked.Input[1].Content)
 
 	s.Equal("think", s.awaitDelegated(1)[0].Skill)
+}
+
+func (s *HarnessSuite) TestASkillOfferedByNameIsReadAsItIsWhenItIsUsed() {
+	// The fast model only ever sees the index, so a skill's instructions are read when the
+	// subagent runs it, and an edit made mid-conversation is what the next use answers under.
+	var mu sync.Mutex
+	stored := "refund within 30 days"
+	s.skills = Skills{
+		Skills: []Skill{{Name: "refund", Description: "what a caller is owed", Deadline: time.Minute}},
+		Load: func(_ context.Context, name string) (string, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			return name + ": " + stored, nil
+		},
+	}
+	s.build(true)
+	s.respond("turn-1", "can I get my money back")
+
+	s.Require().NotContains(s.fast.requests()[0].Instructions, "30 days",
+		"the fast model sees what a skill is for, never its instructions")
+	s.reply("turn-1", `One moment. <ask skill="refund">bought 20 days ago</ask>`)
+	s.eventually(func() bool { return len(s.slow.requests()) == 1 }, "the subagent was never asked")
+	s.Equal("refund: refund within 30 days", s.slow.requests()[0].Instructions)
+
+	mu.Lock()
+	stored = "refund within 14 days"
+	mu.Unlock()
+	_, err := s.harness.Delegate("refund", "bought 20 days ago", "turn-2", nil, nil)
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.slow.requests()) == 2 }, "the subagent was never asked again")
+	s.Equal("refund: refund within 14 days", s.slow.requests()[1].Instructions)
+}
+
+func (s *HarnessSuite) TestASkillThatCannotBeReadFailsRatherThanRunningWithoutInstructions() {
+	s.skills = Skills{
+		Skills: []Skill{{Name: "refund", Description: "what a caller is owed", Deadline: time.Minute}},
+		Load: func(context.Context, string) (string, error) {
+			return "", errors.New("the skill was deleted")
+		},
+	}
+	s.build(true)
+	s.respond("turn-1", "can I get my money back")
+
+	_, err := s.harness.Delegate("refund", "bought 20 days ago", "turn-1", nil, nil)
+	s.Require().NoError(err)
+
+	settled := s.awaitSettled(1)[0]
+	s.Equal(Failed, settled.State)
+	s.Empty(s.slow.requests(), "nothing was asked without the skill's instructions")
+}
+
+func (s *HarnessSuite) TestTheModelAskingAgainDoesNotReplaceTheCallersImages() {
+	s.build(true)
+	s.respond("turn-1", "what is in this picture")
+	picture := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xFF, 0xD8, 0xFF}}
+	_, err := s.harness.Delegate("think", "what is in this picture", "turn-1",
+		[]llm.ContentPart{{Image: &picture}}, nil)
+	s.Require().NoError(err)
+
+	s.reply("turn-1", `Let me look. <ask skill="think">describe the picture</ask>`)
+
+	s.eventually(func() bool { return len(s.slow.requests()) == 1 }, "the subagent was never asked")
+	s.True(s.slow.requests()[0].HasImage(), "the task that ran is the one with the picture")
+	for _, settled := range settledIn(s.events.seen()) {
+		s.NotEqual(ReasonSuperseded, settled.Result.Reason, "the picture's task was replaced")
+	}
+	s.Len(delegatedIn(s.events.seen()), 1)
+}
+
+func (s *HarnessSuite) TestATurnsImagesAreHandedToTheModelBesideTheWordsTheyCameWith() {
+	s.build(true)
+	picture := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xFF, 0xD8, 0xFF}, Caption: "the error dialog"}
+
+	s.answer(Turn{
+		ID:           "turn-1",
+		Instructions: "be brief",
+		History:      []llm.Message{{Role: llm.User, Content: "what does this say"}},
+		Images:       []llm.ImagePart{picture},
+	})
+
+	asked := s.fast.requests()
+	s.Require().Len(asked, 1)
+	s.Equal([]llm.Message{{Role: llm.User, Parts: []llm.ContentPart{
+		{Text: "what does this say"}, {Text: "the error dialog"}, {Image: &picture},
+	}}}, asked[0].Input)
+}
+
+func (s *HarnessSuite) TestAColleagueIsHandedTheConversationWithoutAReplysImages() {
+	s.build(true)
+	s.answer(Turn{
+		ID:           "turn-1",
+		Instructions: "be brief",
+		History:      []llm.Message{{Role: llm.User, Content: "what does this say"}},
+		Images:       []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xFF, 0xD8, 0xFF}}},
+	})
+
+	_, err := s.harness.Delegate("think", "work out what the caller should do", "turn-1", nil, nil)
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.slow.requests()) == 1 }, "the subagent was never asked")
+	s.False(s.slow.requests()[0].HasImage(), "a subagent that may not see was handed the picture")
+}
+
+func (s *HarnessSuite) TestASkillIsOfferedOnlyWithASubagentToRunIt() {
+	s.build(false)
+	s.False(s.harness.Offers("think"), "nothing would run it")
+
+	s.build(true)
+	s.True(s.harness.Offers("think"))
+	s.False(s.harness.Offers("vision"), "the harness was given no such skill")
 }
 
 func (s *HarnessSuite) TestCompleteIdentifiersAreNotHandedToAColleague() {
@@ -705,6 +887,8 @@ func (s *HarnessSuite) TestTheReplyCarryingAColleaguesQuestionIsOfferedNoTools()
 	s.Require().Len(s.fast.requests(), 2)
 	s.NotEmpty(s.fast.requests()[0].Tools)
 	s.Empty(s.fast.requests()[1].Tools, "there is nobody to ask but the caller")
+	s.Contains(s.fast.requests()[0].Instructions, usePolicy)
+	s.NotContains(s.fast.requests()[1].Instructions, usePolicy, "nor how to use what it does not have")
 }
 
 func (s *HarnessSuite) TestTheReplyCarryingAColleaguesAnswerKeepsItsTools() {
@@ -721,6 +905,7 @@ func (s *HarnessSuite) TestTheReplyCarryingAColleaguesAnswerKeepsItsTools() {
 
 	s.Require().Len(s.fast.requests(), 2)
 	s.NotEmpty(s.fast.requests()[1].Tools)
+	s.Contains(s.fast.requests()[1].Instructions, usePolicy)
 }
 
 func (s *HarnessSuite) TestANewerRequestSupersedesTheOneItReplaces() {
@@ -929,6 +1114,31 @@ func (s *HarnessSuite) TestAColdLargePrefixIsCompactedPrivately() {
 	s.False(s.harness.Delegating(), "the caller is not waiting for private maintenance")
 }
 
+func (s *HarnessSuite) TestCompactionKeepsWholeTurns() {
+	s.build(true)
+	s.slow.automatic = "The caller asked about their calendar."
+	history := append(longHistory(),
+		llm.Message{Role: llm.User, Content: "ok check it"},
+		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "calendar__list_tools"}}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "c1", Content: "{}"},
+		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "calendar__call_tool"}}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: "{}"},
+		llm.Message{Role: llm.Assistant, Content: "Nothing today."},
+		llm.Message{Role: llm.User, Content: "and linear?"},
+	)
+
+	started, err := s.harness.MaybeCompact(history, compactionMinTokens, 0)
+	s.Require().NoError(err)
+	s.True(started)
+
+	s.eventually(func() bool { return len(compactedIn(s.events.seen())) == 1 },
+		"the conversation was never compacted")
+	prefix := compactedIn(s.events.seen())[0].Prefix
+	s.Equal(llm.User, history[len(prefix)].Role,
+		"the history kept opens on the caller, not on a tool call cut from its turn")
+	s.Equal("ok check it", history[len(prefix)].Content)
+}
+
 func (s *HarnessSuite) TestAnEffectivePrefixCacheKeepsVerbatimHistory() {
 	s.build(true)
 
@@ -941,6 +1151,21 @@ func (s *HarnessSuite) TestAnEffectivePrefixCacheKeepsVerbatimHistory() {
 	s.False(started)
 
 	s.Empty(s.slow.requests(), "cached history is cheaper and more faithful than a summary")
+}
+
+func (s *HarnessSuite) TestAPromptNearingTheContextWindowIsCompactedEvenWhenCached() {
+	// A cache that pays does not make room, so once the prompt has used most of the window
+	// the history is summarised before the next turn is refused for being too long.
+	s.build(true)
+
+	started, err := s.harness.MaybeCompact(longHistory(), 79_999, 79_999)
+	s.Require().NoError(err)
+	s.False(started, "under 80% of the window, a cached history stays verbatim")
+
+	started, err = s.harness.MaybeCompact(longHistory(), 80_000, 80_000)
+	s.Require().NoError(err)
+	s.True(started)
+	s.eventually(func() bool { return len(s.slow.requests()) == 1 }, "the summary was never asked for")
 }
 
 func (s *HarnessSuite) TestShortHistoryIsNotCompacted() {
@@ -1005,15 +1230,13 @@ func (s *HarnessSuite) TestResettingForgetsAnInterruptedReply() {
 	s.Equal("Hello.", s.reply("turn-2", "Hello."), "and does not leak into the next turn")
 }
 
-func (s *HarnessSuite) TestWorkerPreparationDoesNotBlockDelegationOrSpeech() {
+func (s *HarnessSuite) TestOpeningTheSubagentDoesNotBlockDelegationOrSpeech() {
 	fast := newStubLLM()
 	fast.automatic = "I can still talk."
 	h, err := New(Options{
-		Model: s.session(fast),
-		Workers: map[string]func(context.Context) (*llmrouter.Session, error){
-			"vision": func(ctx context.Context) (*llmrouter.Session, error) { <-ctx.Done(); return nil, ctx.Err() },
-		},
-		Skills: Skills{Skills: []Skill{{Name: "vision", Subagent: "vision", Description: "inspect", Instructions: "describe", Deadline: time.Minute}}},
+		Model:        s.session(fast),
+		OpenSubagent: func(ctx context.Context) (*llmrouter.Session, error) { <-ctx.Done(); return nil, ctx.Err() },
+		Skills:       Skills{Skills: []Skill{{Name: "vision", Description: "inspect", Instructions: "describe", Deadline: time.Minute}}},
 	})
 	s.Require().NoError(err)
 	events := collect(h)
@@ -1024,7 +1247,7 @@ func (s *HarnessSuite) TestWorkerPreparationDoesNotBlockDelegationOrSpeech() {
 	case err := <-accepted:
 		s.Require().NoError(err)
 	case <-time.After(time.Second):
-		s.T().Fatal("worker startup blocked acceptance")
+		s.T().Fatal("subagent startup blocked acceptance")
 	}
 	reply, err := h.Respond(s.ctx, Turn{ID: "turn-2", History: []llm.Message{{Role: llm.User, Content: "hello"}}})
 	s.Require().NoError(err)

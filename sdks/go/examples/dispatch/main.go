@@ -67,17 +67,7 @@ func build(_ context.Context, message agents.InboundMessage) (*agents.Agent, err
 	// answers as the one that was written to.
 	llm := stream.Accelerated(stream.Config{ConfigID: message.ConfigID, LLM: "llm-fast"})
 
-	if err := agents.RegisterFunction(llm, "get_weather",
-		"Get the current weather for a location",
-		func(_ context.Context, in struct {
-			Location string `json:"location" schema:"the city and state, e.g. Boulder, CO"`
-		}) (any, error) {
-			return fmt.Sprintf("It is 20 degrees and sunny in %s.", in.Location), nil
-		}); err != nil {
-		return nil, err
-	}
-
-	return agents.New(agents.Options{
+	agent, err := agents.New(agents.Options{
 		Name:         "jean",
 		Instructions: "You are Jean, a friendly assistant. Keep answers to a sentence or two.",
 		LLM:          llm,
@@ -90,4 +80,22 @@ func build(_ context.Context, message agents.InboundMessage) (*agents.Agent, err
 			"organization_id": message.Custom["organization_id"],
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+	if err := agent.Tools().Add(GetWeather{}); err != nil {
+		return nil, err
+	}
+	return agent, nil
+}
+
+// GetWeather is the one tool Jean has. Its field is what the model fills in.
+type GetWeather struct {
+	Location string `json:"location" schema:"the city and state, e.g. Boulder, CO"`
+}
+
+func (GetWeather) Name() string        { return "get_weather" }
+func (GetWeather) Description() string { return "Get the current weather for a location" }
+func (w GetWeather) Run(context.Context) (any, error) {
+	return fmt.Sprintf("It is 20 degrees and sunny in %s.", w.Location), nil
 }

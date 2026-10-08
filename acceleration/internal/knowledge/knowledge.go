@@ -71,6 +71,16 @@ type Writer interface {
 	// Delete removes passages by id. Ids that are not there are not an error: what the
 	// caller asked for is that they are gone.
 	Delete(ctx context.Context, namespace string, ids []string) error
+	// Fetch reads passages back by id, in the order asked for. Ids that are not there are
+	// left out.
+	Fetch(ctx context.Context, namespace string, ids []string) ([]Document, error)
+}
+
+// Scoped is the provider's name for one customer's knowledge base. A config names its base
+// with a word like "default" that any customer may choose, so every read and write goes
+// through this: without the customer in it, two apps would answer out of one handbook.
+func Scoped(customerID, namespace string) string {
+	return customerID + "__" + namespace
 }
 
 // Prompt renders passages as the answer to a lookup, which is what the model is handed.

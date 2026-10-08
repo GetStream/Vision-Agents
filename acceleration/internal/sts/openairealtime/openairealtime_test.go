@@ -94,6 +94,34 @@ func (s *RealtimeSuite) TestCapabilitiesDifferPerVendor() {
 	s.False(CapabilitiesFor(Qwen, "qwen3.5-omni-plus-realtime").Text, "Qwen takes no typed turns")
 	s.False(CapabilitiesFor(Qwen, "qwen3.5-omni-plus-realtime").Tools, "Qwen calls no tools")
 	s.Equal(60*time.Minute, CapabilitiesFor(OpenAI, "gpt-realtime-2").MaxDuration)
+
+	audio := CapabilitiesFor(Qwen, "qwen-audio-3.1-realtime-plus")
+	s.True(audio.Text, "Qwen-Audio takes typed turns")
+	s.True(audio.Tools, "Qwen-Audio calls tools")
+	s.True(audio.SemanticTurns, "smart_turn reads the words")
+	s.False(audio.Accepts(options.ModalityImage), "Qwen-Audio hears, it does not see")
+	s.False(audio.ToolsMidSession)
+	s.False(audio.Usage)
+}
+
+func (s *RealtimeSuite) TestQwenAudioIsSpelledItsOwnWay() {
+	qwen, err := New(Options{
+		Vendor: Qwen, APIKey: "k", Model: "qwen-audio-3.1-realtime-plus", Voice: "longanqian_v3.1",
+		TurnDetection: options.TurnSemantic, InputTranscript: true,
+		Tools: []llm.Tool{{Name: "get_weather", Description: "Weather.", Parameters: map[string]any{"type": "object"}}},
+	})
+	s.Require().NoError(err)
+	configured := qwen.session()
+	s.Equal("pcm", configured.InputAudioFormat)
+	s.Equal("pcm", configured.OutputAudioFormat)
+	s.Equal("longanqian_v3.1", configured.Voice)
+	s.Nil(configured.InputAudioTranscription, "Qwen-Audio picks its own transcriber")
+	s.Equal("smart_turn", configured.TurnDetection.Type)
+
+	encoded, err := json.Marshal(clientEvent{Type: eventSessionUpdate, Session: configured})
+	s.Require().NoError(err)
+	s.Contains(string(encoded), `"tools":[{"type":"function","function":{"name":"get_weather","description":"Weather.","parameters":{"type":"object"}}}]`)
+	s.NotContains(string(encoded), `"eagerness"`)
 }
 
 func (s *RealtimeSuite) TestTheEndpointCarriesTheModel() {

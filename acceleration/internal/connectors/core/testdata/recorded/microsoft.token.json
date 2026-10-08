@@ -1,0 +1,1 @@
+{"token_type":"Bearer","expires_in":3599,"scope":"openid profile offline_access https://graph.microsoft.com/user.read","access_token":"synthetic-access-token","refresh_token":"synthetic-refresh-token"}

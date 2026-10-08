@@ -94,7 +94,9 @@ extension AgentEvent {
         return ToolCall(
             id: self["id"].stringValue,
             name: self["name"].stringValue,
-            arguments: self["arguments"].stringValue)
+            arguments: self["arguments"].stringValue,
+            commandID: self["command_id"].stringValue,
+            turnID: self["turn_id"].stringValue)
     }
 
     /// A request from the model to run one of the caller's functions.
@@ -103,6 +105,9 @@ extension AgentEvent {
         public let name: String
         /// The arguments as the model wrote them, which is a JSON object encoded as a string.
         public let arguments: String
+        /// The durable command and turn that asked, which its result must name again.
+        public var commandID = ""
+        public var turnID = ""
 
         /// The arguments decoded, or an empty dictionary if the model wrote something else.
         public var argumentValues: [String: JSONValue] {

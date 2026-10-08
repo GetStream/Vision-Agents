@@ -10,7 +10,7 @@ import (
 	"slices"
 	"sync"
 
-	videosdk "github.com/GetStream/getstream-go-webrtc"
+	rtc "github.com/GetStream/getstream-go-webrtc"
 	sdktrack "github.com/GetStream/getstream-go-webrtc/track"
 	sfu_events "github.com/GetStream/protocol/protobuf/video/sfu/event"
 	sfu_models "github.com/GetStream/protocol/protobuf/video/sfu/models"
@@ -29,8 +29,8 @@ type rtcCall struct {
 	inbound *rtcaudio.Inbound
 	speaker *rtcaudio.Speaker
 
-	client *videosdk.Client
-	call   *videosdk.Call
+	client *rtc.Client
+	call   *rtc.Call
 
 	mu             sync.Mutex
 	subscribed     []*signal_rpc.TrackSubscriptionDetails
@@ -74,13 +74,13 @@ func join(ctx context.Context, options Options) (transport.Media, error) {
 }
 
 func (c *rtcCall) connect(ctx context.Context) error {
-	user := videosdk.User{ID: c.options.UserID, Name: c.options.UserName}
-	var client *videosdk.Client
+	user := rtc.User{ID: c.options.UserID, Name: c.options.UserName}
+	var client *rtc.Client
 	var err error
 	if c.options.UserToken != "" {
-		client, err = videosdk.NewClient(c.options.APIKey, user, videosdk.StaticToken(c.options.UserToken))
+		client, err = rtc.NewClient(c.options.APIKey, user, rtc.StaticToken(c.options.UserToken))
 	} else {
-		client, err = videosdk.NewClientWithSecret(c.options.APIKey, c.options.APISecret, user)
+		client, err = rtc.NewRTCClient(c.options.APIKey, c.options.APISecret, rtc.WithUser(user))
 	}
 	if err != nil {
 		return fmt.Errorf("streamrtc: connect: %w", err)
@@ -88,7 +88,7 @@ func (c *rtcCall) connect(ctx context.Context) error {
 	c.client = client
 	c.call = client.Call(c.options.CallType, c.options.CallID)
 
-	joined, err := c.call.Join(ctx, videosdk.WithOnTrack(videosdk.SubscriberFunc(func(remote videosdk.OnTrackReceived) {
+	joined, err := c.call.Join(ctx, rtc.WithOnTrack(rtc.SubscriberFunc(func(remote rtc.OnTrackReceived) {
 		c.listen(remote)
 	})))
 	if err != nil {
@@ -129,7 +129,7 @@ func (c *rtcCall) publish() error {
 	return nil
 }
 
-func (c *rtcCall) listen(remote videosdk.OnTrackReceived) {
+func (c *rtcCall) listen(remote rtc.OnTrackReceived) {
 	if remote.TrackType != sfu_models.TrackType_TRACK_TYPE_AUDIO {
 		return
 	}
@@ -145,7 +145,7 @@ func (c *rtcCall) listen(remote videosdk.OnTrackReceived) {
 }
 
 func (c *rtcCall) watchForNewTracks(ctx context.Context) {
-	unregister := videosdk.HandleCallEvent(c.call, func(event *sfu_events.SfuEvent_TrackPublished) {
+	unregister := rtc.HandleCallEvent(c.call, func(event *sfu_events.SfuEvent_TrackPublished) {
 		published := event.TrackPublished
 		if published.GetUserId() == c.options.UserID {
 			return

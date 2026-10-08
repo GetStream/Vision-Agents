@@ -1,0 +1,88 @@
+# WhatsApp through the customer's own Meta app (T51, AI-879), on the channel bridge: a channel
+# only, no tools. The customer's Meta app is the provider app: the app's backend puts its app
+# id and App Secret through PUT /v1/agents/connectors/whatsapp/oauth-client, and points the
+# app's WhatsApp webhook at POST /v1/connectors/events/whatsapp/{app id}, with the app id as
+# the Verify Token (wave 3d Q1). The replies go from the business number with the customer's
+# system-user access token. STOP, START and HELP are kept from the agent by the bridge
+# (channelbridge.keywords): Meta answers none of them itself. Text messages only; replies past
+# the 24-hour window (approved templates) and Meta's Tech Provider with Embedded Signup are
+# later tickets. internal/channels/whatsapp.go is where it started.
+# Meta's pages, opened October 8, 2026:
+#   [hooks]    https://developers.facebook.com/docs/graph-api/webhooks/getting-started
+#   [payload]  https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/payload-examples
+#   [send]     https://developers.facebook.com/docs/whatsapp/cloud-api/guides/send-messages
+#   [versions] https://developers.facebook.com/docs/graph-api/changelog
+id: whatsapp
+# A new revision for any change to what this file says; see AGENTS.md.
+revision: 1
+name: WhatsApp
+category: Communication
+description: Answer people on WhatsApp from the customer's own business number.
+# [send]: «Authorization: Bearer EAAJB...», the customer's access token.
+schemes: [bearer]
+inputs:
+  # The business number's id, value.metadata.phone_number_id in [payload] («106540352242922»),
+  # and the id a reply is posted to ([send], «POST /<WHATSAPP_BUSINESS_PHONE_NUMBER_ID>/messages»).
+  # It is the connection's account (identity below), which the bridge finds the connection of
+  # an event's number by (store.AppConnectionByAccount). # unverified: the length; [payload]'s
+  # example has 15 digits.
+  - name: phone_number_id
+    pattern: "[0-9]{1,32}"
+identity: [phone_number_id]
+client:
+  # The customer's own Meta app is the provider app: its App Secret signs the webhooks
+  # ([hooks]), so it is the signing secret. The record holds the app alone: no OAuth client.
+  registration: [customer]
+channel:
+  verifier:
+    # [hooks]: «We sign all Event Notification payloads with a SHA256 signature and include
+    # the signature in the request's X-Hub-Signature-256 header, preceded with sha256=», with
+    # the App Secret. No timestamp is signed.
+    kind: hmac_header
+    secret: provider_app
+    header: X-Hub-Signature-256
+    algorithm: sha256
+    encoding: hex
+    prefix: sha256=
+    signed: "{body}"
+  # [hooks]: the Verify Token check, a GET with hub.mode, hub.verify_token and hub.challenge.
+  handshake: hub_challenge
+  # [payload]. No event_id: a delivery names no id of its own ([payload]: object and entry,
+  # whose id is the WhatsApp Business Account's), so a forward is keyed by its body.
+  format: json
+  messages:
+    # [hooks]: deliveries are batched, «a maximum of 1000 updates»; [payload]: messages sit in
+    # entry[].changes[].value.messages[]. Statuses sit in value.statuses[], so each skips
+    # them.
+    each: $.entry[*].changes[*].value.messages[*]
+    # [payload]: «"type": "text"». Media, reactions, buttons and the rest are not read: a reply
+    # to a button only follows a template or interactive message the bridge never sends.
+    match:
+      $.entry[*].changes[*].value.messages[*].type: text
+    # [payload]: value.metadata.phone_number_id, the business number that received it.
+    provider_unit_id: $.entry[*].changes[*].value.metadata.phone_number_id
+    thread_key:
+      # [payload]: messages[].from, the person's number as digits («16505551234»). One thread
+      # for each person and business number, and the number a reply goes to.
+      - name: from
+        path: $.entry[*].changes[*].value.messages[*].from
+    # The contact map keys the person by the same number with a + (channelbridge.episodeSources).
+    author_id: $.entry[*].changes[*].value.messages[*].from
+    provider_message_id: $.entry[*].changes[*].value.messages[*].id
+    text: $.entry[*].changes[*].value.messages[*].text.body
+  reply:
+    # [send]: POST /<WHATSAPP_BUSINESS_PHONE_NUMBER_ID>/messages. v25.0: the newest version
+    # [versions] lists with an «Available Until» date (July 29, 2028); v26.0's is «TBD».
+    # Meta answers 200 with messages[].id when it takes the message ([send]).
+    url: https://graph.facebook.com/v25.0/{provider_unit_id}/messages
+    # [send], the text message example. "to" carries a "+": Meta's "WhatsApp user phone number
+    # formats" section of https://developers.facebook.com/docs/whatsapp/cloud-api/reference/messages
+    # says that without it the business number's country calling code is prepended, which can
+    # misdeliver the message. The webhook's "from" is digits only, so the "+" is added here.
+    body:
+      messaging_product: whatsapp
+      recipient_type: individual
+      to: "+{thread.from}"
+      type: text
+      text:
+        body: "{text}"

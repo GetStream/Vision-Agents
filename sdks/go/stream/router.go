@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -24,8 +25,9 @@ const audio = 64
 // Router is everything the acceleration backend routes, configured once.
 //
 // Each of the three streaming modalities has a Realtime session and a Recording job, and
-// search has neither, because a question and its answer are one round trip. Everything the
-// named config holds is a default that a per-call option overrides.
+// search and images have neither, because a question and its answer, or a prompt and its
+// pictures, are one round trip. Everything the named config holds is a default that a
+// per-call option overrides.
 //
 // Client.Router is how one of these is usually had, since that is where the backend was
 // settled; the fields are exported for a caller who wants tags or a logger on top.
@@ -76,9 +78,52 @@ func (r Router) Search(
 		return nil, fmt.Errorf("stream: searching: %w", err)
 	}
 	if found.JSON200 == nil {
-		return nil, refusal(found.Status(), found.JSON400, found.JSON401, found.JSON404)
+		return nil, refusal(found.HTTPResponse, found.Body)
 	}
 	return found.JSON200, nil
+}
+
+// Image draws pictures from a prompt.
+func (r Router) Image() Drawing { return Drawing{router: r} }
+
+// Drawing routes image generation.
+type Drawing struct{ router Router }
+
+// Generate draws pictures from a prompt and returns them.
+//
+// The pictures come back in the answer and the router keeps nothing. A router config
+// holds no image options, so only the tags travel. A generation that drew nothing is
+// handed back with its ErrorCode and Error set, alongside an error saying the same.
+func (d Drawing) Generate(
+	ctx context.Context,
+	prompt string,
+	options *acceleration.ImageOptions,
+) (*acceleration.ImageGeneration, error) {
+	client, err := d.router.client()
+	if err != nil {
+		return nil, err
+	}
+
+	body := acceleration.GenerateImageJSONRequestBody{Prompt: prompt, Options: options}
+	d.router.label(&body.Tags)
+
+	drawn, err := client.GenerateImageWithResponse(ctx, body)
+	if err != nil {
+		return nil, fmt.Errorf("stream: drawing: %w", err)
+	}
+	if drawn.JSON200 == nil {
+		return nil, refusal(drawn.HTTPResponse, drawn.Body)
+	}
+
+	generation := drawn.JSON200
+	if generation.Status == acceleration.ImageGenerationStatusFailed {
+		code := ""
+		if generation.ErrorCode != nil {
+			code = string(*generation.ErrorCode)
+		}
+		return generation, fmt.Errorf("stream: the image generation failed (%s): %s", code, value(generation.Error))
+	}
+	return generation, nil
 }
 
 // Transcribing routes transcription.
@@ -137,7 +182,7 @@ func (t Transcribing) Recording(
 		return nil, fmt.Errorf("stream: sending the recording: %w", err)
 	}
 	if accepted.JSON202 == nil {
-		return nil, refusal(accepted.Status(), accepted.JSON400, accepted.JSON401, accepted.JSON404)
+		return nil, refusal(accepted.HTTPResponse, accepted.Body)
 	}
 
 	job := accepted.JSON202
@@ -155,7 +200,7 @@ func (t Transcribing) Recording(
 			return nil, fmt.Errorf("stream: asking about the recording: %w", err)
 		}
 		if asked.JSON200 == nil {
-			return nil, refusal(asked.Status(), asked.JSON400, asked.JSON401, asked.JSON404)
+			return nil, refusal(asked.HTTPResponse, asked.Body)
 		}
 		job = asked.JSON200
 	}
@@ -217,7 +262,7 @@ func (s Speaking) recording(ctx context.Context, text string, options *accelerat
 		return nil, fmt.Errorf("stream: sending the text: %w", err)
 	}
 	if accepted.JSON202 == nil {
-		return nil, refusal(accepted.Status(), accepted.JSON400, accepted.JSON401, accepted.JSON404)
+		return nil, refusal(accepted.HTTPResponse, accepted.Body)
 	}
 
 	job := accepted.JSON202
@@ -231,7 +276,7 @@ func (s Speaking) recording(ctx context.Context, text string, options *accelerat
 			return nil, fmt.Errorf("stream: asking about the speech: %w", err)
 		}
 		if asked.JSON200 == nil {
-			return nil, refusal(asked.Status(), asked.JSON400, asked.JSON401, asked.JSON404)
+			return nil, refusal(asked.HTTPResponse, asked.Body)
 		}
 		job = asked.JSON200
 	}
@@ -723,14 +768,9 @@ func ended(logger *slog.Logger, modality string, err error) {
 	}
 }
 
-// refusal is what the router said went wrong, whichever field it said it in.
-func refusal(status string, failures ...*acceleration.Error) error {
-	for _, failure := range failures {
-		if failure != nil {
-			return fmt.Errorf("stream: %s", failure.Error)
-		}
-	}
-	return fmt.Errorf("stream: the router answered %s", strings.TrimSpace(status))
+// refusal is what the router said went wrong, read off the answer it gave instead.
+func refusal(response *http.Response, body []byte) error {
+	return NewRouterError(response, body, "stream", "", "the router answered "+strings.TrimSpace(response.Status))
 }
 
 // value reads a field that may not have been set.

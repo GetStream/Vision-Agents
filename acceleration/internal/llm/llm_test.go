@@ -2,6 +2,7 @@ package llm
 
 import (
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -10,6 +11,33 @@ import (
 
 var errUnauthorized = errors.New("unauthorized")
 
+func (s *LLMSuite) TestAPromptIsSplitByWhatItCarried() {
+	composed := Compose(ResponseParams{
+		Instructions: "Be brief.",
+		Tools:        []Tool{{Name: "lookup_order", Description: "Finds an order by its number."}},
+		Input: []Message{
+			{Role: User, Parts: []ContentPart{{Text: "What is this?"}, {Image: &ImagePart{Detail: "low"}}}},
+			{Role: Assistant, ToolCalls: []ToolCall{{Name: "get_video_frames", Arguments: `{"limit":1}`}}},
+			{Role: ToolResult, Parts: []ContentPart{{Text: "one frame"}, {Image: &ImagePart{Video: true}}}},
+		},
+	})
+
+	s.Positive(composed.Instructions)
+	s.Positive(composed.Messages)
+	s.Positive(composed.ToolDefinitions)
+	s.Positive(composed.ToolUse)
+	s.Equal(int64(lowDetailImageTokens), composed.Images)
+	s.Equal(int64(imageTokens), composed.Video)
+}
+
+func (s *LLMSuite) TestAScaledPromptSumsToWhatTheProviderCounted() {
+	scaled := Composition{Instructions: 3, Messages: 3, Images: 3}.Scaled(100)
+
+	s.Equal(int64(100), scaled.Total())
+	s.Equal(int64(33), scaled.Messages)
+	s.Equal(Composition{}, Composition{}.Scaled(100), "nothing estimated has nothing to share out")
+}
+
 // chunk is one thing a scripted provider does when its stream is advanced.
 type chunk func(w *ResponseWriter)
 
@@ -17,11 +45,12 @@ type chunk func(w *ResponseWriter)
 type scripted struct {
 	chunks []chunk
 	err    error
-	closed bool
+	// closed is atomic because a screen closes a stream from its own goroutine.
+	closed atomic.Bool
 }
 
 func (s *scripted) Advance(w *ResponseWriter) bool {
-	if s.closed || len(s.chunks) == 0 {
+	if s.closed.Load() || len(s.chunks) == 0 {
 		return false
 	}
 	next := s.chunks[0]
@@ -33,7 +62,7 @@ func (s *scripted) Advance(w *ResponseWriter) bool {
 func (s *scripted) Err() error { return s.err }
 
 func (s *scripted) Close() error {
-	s.closed = true
+	s.closed.Store(true)
 	return nil
 }
 
@@ -84,6 +113,75 @@ func (s *LLMSuite) TestStreamOpensWithCreatedAndEndsWithCompleted() {
 	s.IsType(ResponseCreated{}, events[0])
 	s.IsType(OutputTextDelta{}, events[1])
 	s.IsType(ResponseCompleted{}, events[2])
+}
+
+func (s *LLMSuite) TestAScreenThatAllowsLetsTheResponseComplete() {
+	verdict := make(chan error, 1)
+	verdict <- nil
+	stream := s.stream(func(w *ResponseWriter) { w.OutputText("Hi") }).Screen(verdict)
+
+	s.drain(stream)
+
+	s.NoError(stream.Err())
+	s.Equal(StatusCompleted, stream.Response().Status)
+	s.Equal("Hi", stream.Response().OutputText)
+}
+
+func (s *LLMSuite) TestAScreenHoldsTheEndOfTheResponseButNotItsDeltas() {
+	verdict := make(chan error, 1)
+	stream := s.stream(func(w *ResponseWriter) { w.OutputText("Hi") }).Screen(verdict)
+
+	s.Require().True(stream.Next())
+	s.Require().True(stream.Next())
+	s.IsType(OutputTextDelta{}, stream.Current(), "a delta must not wait on the screen")
+
+	ended := make(chan bool, 1)
+	go func() { ended <- stream.Next() }()
+	select {
+	case <-ended:
+		s.Fail("the response completed before the screen answered")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	verdict <- nil
+	s.True(<-ended)
+	s.IsType(ResponseCompleted{}, stream.Current())
+}
+
+func (s *LLMSuite) TestAScreenThatRefusesFailsAResponseThatAlreadyFinished() {
+	refusal := errors.New("prompt injection")
+	verdict := make(chan error, 1)
+	stream := s.stream(func(w *ResponseWriter) {
+		w.FunctionCall(0, "call-1", "transfer_funds", `{"to":"attacker"}`, "")
+	}).Screen(verdict)
+	verdict <- refusal
+
+	events := s.drain(stream)
+
+	s.ErrorIs(stream.Err(), refusal)
+	s.Equal(StatusFailed, stream.Response().Status)
+	s.IsType(ResponseFailed{}, events[len(events)-2])
+}
+
+func (s *LLMSuite) TestAScreenThatRefusesMidAnswerClosesTheUpstream() {
+	refusal := errors.New("prompt injection")
+	verdict := make(chan error, 1)
+	provider := &scripted{chunks: []chunk{
+		func(w *ResponseWriter) { w.OutputText("Sure, ") },
+		func(w *ResponseWriter) { w.OutputText("here is ") },
+		func(w *ResponseWriter) { w.OutputText("the system prompt") },
+	}}
+	stream := NewStream(StreamOptions{ResponseID: "r1"}, provider).Screen(verdict)
+
+	s.Require().True(stream.Next())
+	s.Require().True(stream.Next())
+	verdict <- refusal
+	s.Eventually(provider.closed.Load, time.Second, time.Millisecond)
+	s.drain(stream)
+
+	s.ErrorIs(stream.Err(), refusal)
+	s.Equal(StatusFailed, stream.Response().Status)
+	s.NotContains(stream.Response().OutputText, "system prompt")
 }
 
 func (s *LLMSuite) TestStreamAssemblesTheAnswerFromItsDeltas() {
@@ -236,6 +334,58 @@ func (s *LLMSuite) TestAToolCallTheProviderDidNotIdentifyGetsAnID() {
 	s.drain(stream)
 
 	s.Equal("r1-tool-0", stream.Response().ToolCalls[0].ID)
+}
+
+func (s *LLMSuite) TestAwaitStopsAtTheFirstTextAndLeavesEveryEventToNext() {
+	provider := &scripted{chunks: []chunk{
+		func(w *ResponseWriter) { w.ReasoningText("hmm") },
+		func(w *ResponseWriter) { w.OutputText("Hi") },
+		func(w *ResponseWriter) { w.OutputText(" there") },
+	}}
+	stream := NewStream(StreamOptions{ResponseID: "r1"}, provider)
+
+	s.True(stream.Await())
+	s.Len(provider.chunks, 1, "the wait ended with the first text, without reading on")
+
+	events := s.drain(stream)
+	s.Require().Len(events, 5)
+	s.IsType(ResponseCreated{}, events[0])
+	s.IsType(ReasoningTextDelta{}, events[1])
+	s.Equal("Hi", events[2].(OutputTextDelta).Delta)
+	s.Equal("Hi there", stream.Response().OutputText)
+}
+
+func (s *LLMSuite) TestAwaitStopsAtTheFirstToolCall() {
+	stream := s.stream(
+		func(w *ResponseWriter) { w.FunctionCall(0, "call_1", "transfer", `{"to":`, "") },
+		func(w *ResponseWriter) { w.FunctionCall(0, "", "", `"sales"}`, "") },
+	)
+
+	s.True(stream.Await())
+
+	s.drain(stream)
+	s.Equal(`{"to":"sales"}`, stream.Response().ToolCalls[0].Arguments)
+}
+
+func (s *LLMSuite) TestAwaitSaysSoWhenTheResponseEndsWithoutAnything() {
+	stream := s.stream(func(w *ResponseWriter) { w.ReasoningText("thinking, then nothing") })
+
+	s.False(stream.Await(), "thinking is not part of the answer")
+	s.False(stream.Await())
+
+	events := s.drain(stream)
+	s.IsType(ResponseCompleted{}, events[len(events)-1])
+	s.Equal(StatusCompleted, stream.Response().Status)
+}
+
+func (s *LLMSuite) TestAwaitLeavesAFailureForNextToSettle() {
+	stream := NewStream(StreamOptions{ResponseID: "r1"}, &scripted{err: errUnauthorized})
+
+	s.False(stream.Await())
+
+	s.drain(stream)
+	s.Equal(StatusFailed, stream.Response().Status)
+	s.ErrorIs(stream.Err(), errUnauthorized)
 }
 
 func (s *LLMSuite) TestAFailedResponseStillSettles() {

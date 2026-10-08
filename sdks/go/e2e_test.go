@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 	"github.com/GetStream/Vision-Agents/sdks/go/agents"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
@@ -115,7 +116,7 @@ func TestAConversationInWritingIsAnsweredByAModel(t *testing.T) {
 	}
 	defer session.Close(context.WithoutCancel(t.Context()))
 
-	if err := session.Respond("What is the capital of France?"); err != nil {
+	if _, err := session.Responses.Create(t.Context(), "What is the capital of France?"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -136,23 +137,14 @@ func TestAFunctionRegisteredHereIsRunHereWhenTheModelAsksForIt(t *testing.T) {
 		LLM:     "gemini/gemini-3.8-flash",
 	})
 
-	asked := make(chan string, 4)
-	err := agents.RegisterFunction(llm, "get_weather",
-		"Get the current weather for a location. Always use this rather than guessing.",
-		func(_ context.Context, in struct {
-			Location string `json:"location" schema:"the city and state, e.g. Boulder, CO"`
-		}) (any, error) {
-			asked <- in.Location
-			return "It is 20 degrees and raining sideways in " + in.Location + ".", nil
-		})
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	agent := chatting(t, agents.Options{
 		LLM:          llm,
 		Instructions: "You are Jean. Use your tools to answer, and keep replies to one sentence.",
 	})
+	asked := make(chan string, 4)
+	if err := agent.Tools().Add(getWeather{asked: asked}); err != nil {
+		t.Fatal(err)
+	}
 
 	session, err := agent.Chat(t.Context())
 	if err != nil {
@@ -160,7 +152,7 @@ func TestAFunctionRegisteredHereIsRunHereWhenTheModelAsksForIt(t *testing.T) {
 	}
 	defer session.Close(context.WithoutCancel(t.Context()))
 
-	if err := session.Respond("What is the weather in Boulder, CO right now?"); err != nil {
+	if _, err := session.Responses.Create(t.Context(), "What is the weather in Boulder, CO right now?"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -185,6 +177,21 @@ func TestAFunctionRegisteredHereIsRunHereWhenTheModelAsksForIt(t *testing.T) {
 	}
 }
 
+// getWeather reports the weather it was asked about and says where it was asked.
+type getWeather struct {
+	Location string `json:"location" schema:"the city and state, e.g. Boulder, CO"`
+	asked    chan<- string
+}
+
+func (getWeather) Name() string { return "get_weather" }
+func (getWeather) Description() string {
+	return "Get the current weather for a location. Always use this rather than guessing."
+}
+func (w getWeather) Run(context.Context) (any, error) {
+	w.asked <- w.Location
+	return "It is 20 degrees and raining sideways in " + w.Location + ".", nil
+}
+
 func TestSayingSomethingSkipsTheModelEntirely(t *testing.T) {
 	agent := chatting(t, agents.Options{Instructions: "You are Jean."})
 
@@ -194,7 +201,7 @@ func TestSayingSomethingSkipsTheModelEntirely(t *testing.T) {
 	}
 	defer session.Close(context.WithoutCancel(t.Context()))
 
-	if err := session.Say("We close in five minutes."); err != nil {
+	if err := session.Say("We close in five minutes.", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -210,17 +217,23 @@ func TestAHardQuestionIsHandedToTheThinkingModel(t *testing.T) {
 	// Both models are named rather than left to a capability shortcut, because what is
 	// under test is the pairing itself: a fast model that knows to hand work over, and a
 	// slow one behind it.
+	// The subagent is part of the stored config, so the session runs under the config Sync
+	// wrote.
 	agent := chatting(t, agents.Options{
+		Name:         "e2e-delegating",
 		Instructions: "You are Jean. Be brief.",
 		LLM: stream.Accelerated(stream.Config{
 			Backend: router(t),
+			Agent:   "e2e-delegating",
 			LLM:     "gemini/gemini-3.8-flash",
 		}),
 		Harness: &agents.Harness{
-			UseSkills: true,
 			Subagents: map[string]string{"default": "openai/gpt-5.6-sol"},
 		},
 	})
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 
 	session, err := agent.Chat(t.Context())
 	if err != nil {
@@ -228,8 +241,9 @@ func TestAHardQuestionIsHandedToTheThinkingModel(t *testing.T) {
 	}
 	defer session.Close(context.WithoutCancel(t.Context()))
 
-	if err := session.Respond(
-		"A train leaves at 14:05 and takes 3 hours 50 minutes, " +
+	if _, err := session.Responses.Create(
+		t.Context(),
+		"A train leaves at 14:05 and takes 3 hours 50 minutes, "+
 			"but loses 25 minutes at a signal. What time does it arrive? Work it out carefully.",
 	); err != nil {
 		t.Fatal(err)
@@ -263,7 +277,7 @@ func TestASessionIsRecordedAndCanBeReadBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	listed, err := client.ListSessionsWithResponse(t.Context())
+	listed, err := client.QuerySessionsWithResponse(t.Context(), acceleration.SessionQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +285,7 @@ func TestASessionIsRecordedAndCanBeReadBack(t *testing.T) {
 		t.Fatalf("the router answered %s: %s", listed.Status(), listed.Body)
 	}
 
-	for _, running := range *listed.JSON200 {
+	for _, running := range listed.JSON200.Items {
 		if running.Id == session.ID() {
 			return
 		}
@@ -284,7 +298,6 @@ func TestSyncStoresTheAgentAndEditsItTheSecondTime(t *testing.T) {
 		Name:         "e2e-sync",
 		Instructions: "You are Jean, the first time.",
 		Harness: &agents.Harness{
-			UseSkills: true,
 			Skills: []agents.Skill{{
 				Name:         "e2e-think",
 				Description:  "Work something out before answering",
@@ -342,7 +355,7 @@ func TestAStoredConfigIsWhatASessionStartsFrom(t *testing.T) {
 	}
 	defer session.Close(context.WithoutCancel(t.Context()))
 
-	if err := session.Respond("Hello, who is this?"); err != nil {
+	if _, err := session.Responses.Create(t.Context(), "Hello, who is this?"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -356,6 +369,7 @@ func TestADirectoryIsPushedAndLookedUpAgain(t *testing.T) {
 	backend := router(t)
 
 	root := t.TempDir() + "/e2e-knowledge"
+	writeFile(t, root+"/agent.yaml", "name: e2e-knowledge\n")
 	writeFile(t, root+"/instructions.md",
 		"You are Jean. Look things up rather than guessing, and answer in one sentence.")
 	writeFile(t, root+"/knowledge/refunds.md",
@@ -396,14 +410,14 @@ func TestADirectoryIsPushedAndLookedUpAgain(t *testing.T) {
 	}
 	defer session.Close(context.WithoutCancel(t.Context()))
 
-	if err := session.Respond("How many days do I have to ask Acme for a refund?"); err != nil {
+	if _, err := session.Responses.Create(t.Context(), "How many days do I have to ask Acme for a refund?"); err != nil {
 		t.Fatal(err)
 	}
 
 	// The lookup is a tool like any other, so the turn that reaches for it says nothing and
 	// the answer comes on the next one.
 	waitFor(t, session, "looked_up")
-	if err := session.Respond("So how many days is it?"); err != nil {
+	if _, err := session.Responses.Create(t.Context(), "So how many days is it?"); err != nil {
 		t.Fatal(err)
 	}
 

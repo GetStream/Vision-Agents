@@ -2,6 +2,7 @@ package voices
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -26,9 +27,11 @@ type ClonerSuite struct {
 type received struct {
 	method string
 	path   string
+	query  string
 	header http.Header
 	fields map[string][]string
 	files  map[string][]string
+	body   map[string]any
 }
 
 func TestClonerSuite(t *testing.T) {
@@ -45,12 +48,15 @@ func (s *ClonerSuite) SetupTest() {
 		s.seen = received{
 			method: r.Method,
 			path:   r.URL.Path,
+			query:  r.URL.RawQuery,
 			header: r.Header.Clone(),
 			fields: map[string][]string{},
 			files:  map[string][]string{},
 		}
 
-		if reader, err := r.MultipartReader(); err == nil {
+		if r.Header.Get("Content-Type") == "application/json" {
+			_ = json.NewDecoder(r.Body).Decode(&s.seen.body)
+		} else if reader, err := r.MultipartReader(); err == nil {
 			for {
 				part, err := reader.NextPart()
 				if err != nil {
@@ -162,6 +168,64 @@ func (s *ClonerSuite) TestAVoiceThatIsAlreadyGoneCountsAsDeleted() {
 	s.NoError(cloner.Delete(s.ctx, "el-77"), "the caller wanted it gone, and it is gone")
 	s.Equal(http.MethodDelete, s.seen.method)
 	s.Equal("/v1/voices/el-77", s.seen.path)
+}
+
+func (s *ClonerSuite) TestElevenLabsSpeaksInTheClonedVoice() {
+	s.reply = "mp3"
+	cloner, err := NewElevenLabs(ElevenLabsOptions{APIKey: "secret", BaseURL: s.server.URL})
+	s.Require().NoError(err)
+
+	speech, err := cloner.Speak(s.ctx, "el-77", "hello")
+	s.Require().NoError(err)
+
+	s.Equal([]byte("mp3"), speech.Audio)
+	s.Equal("audio/mpeg", speech.ContentType)
+	s.Equal("/v1/text-to-speech/el-77", s.seen.path)
+	s.Equal("output_format=mp3_44100_128", s.seen.query)
+	s.Equal("secret", s.seen.header.Get("xi-api-key"))
+	s.Equal("hello", s.seen.body["text"])
+}
+
+func (s *ClonerSuite) TestCartesiaSpeaksInTheClonedVoice() {
+	s.reply = "wav"
+	cloner, err := NewCartesia(CartesiaOptions{APIKey: "secret", BaseURL: s.server.URL, Language: "fr"})
+	s.Require().NoError(err)
+
+	speech, err := cloner.Speak(s.ctx, "ct-42", "bonjour")
+	s.Require().NoError(err)
+
+	s.Equal([]byte("wav"), speech.Audio)
+	s.Equal("audio/wav", speech.ContentType)
+	s.Equal("/tts/bytes", s.seen.path)
+	s.Equal("Bearer secret", s.seen.header.Get("Authorization"))
+	s.Equal("bonjour", s.seen.body["transcript"])
+	s.Equal(map[string]any{"id": "ct-42"}, s.seen.body["voice"])
+	s.Equal("fr", s.seen.body["language"])
+}
+
+func (s *ClonerSuite) TestFishSpeaksInTheClonedVoice() {
+	s.reply = "mp3"
+	cloner, err := NewFish(FishOptions{APIKey: "secret", BaseURL: s.server.URL})
+	s.Require().NoError(err)
+
+	speech, err := cloner.Speak(s.ctx, "fish-9", "hello")
+	s.Require().NoError(err)
+
+	s.Equal([]byte("mp3"), speech.Audio)
+	s.Equal("/v1/tts", s.seen.path)
+	s.Equal("fish-9", s.seen.body["reference_id"])
+	s.Equal("hello", s.seen.body["text"])
+}
+
+func (s *ClonerSuite) TestAProviderThatWillNotSpeakSaysWhy() {
+	s.status = http.StatusBadRequest
+	s.reply = `{"detail":"voice not found"}`
+	cloner, err := NewElevenLabs(ElevenLabsOptions{APIKey: "secret", BaseURL: s.server.URL})
+	s.Require().NoError(err)
+
+	_, err = cloner.Speak(s.ctx, "el-77", "hello")
+	s.Require().Error(err)
+	s.Contains(err.Error(), "voice not found")
 }
 
 func (s *ClonerSuite) TestAVoiceWithNoRecordingsIsNeverSent() {

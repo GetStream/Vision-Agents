@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 )
@@ -37,6 +38,7 @@ type Options struct {
 	Registry *Registry
 	Store    *store.Store
 	Live     *live.Client
+	Gate     routing.Gate
 	Logger   *slog.Logger
 }
 
@@ -94,6 +96,7 @@ func New(options Options) (*Router, error) {
 		Registry: options.Registry,
 		Store:    options.Store,
 		Live:     options.Live,
+		Gate:     options.Gate,
 		Logger:   options.Logger,
 	})
 	if err != nil {
@@ -133,12 +136,12 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 func declared(capabilities sts.Capabilities, config routing.ProviderConfig) error {
 	for _, term := range config.Terms {
 		if !capabilities.Expresses(term) {
-			return fmt.Errorf("%s declares %s, which its provider cannot express", config.Name(), term)
+			return stack.Wrap(fmt.Errorf("%s declares %s, which its provider cannot express", config.Name(), term))
 		}
 	}
 	for _, modality := range config.InputModalities {
 		if !capabilities.Accepts(modality) {
-			return fmt.Errorf("%s declares unsupported input modality %s", config.Name(), modality)
+			return stack.Wrap(fmt.Errorf("%s declares unsupported input modality %s", config.Name(), modality))
 		}
 	}
 	return nil

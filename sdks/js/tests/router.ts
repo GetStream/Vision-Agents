@@ -15,6 +15,9 @@ export interface Received {
 export interface Reply {
   status?: number;
   body?: unknown;
+  /** Sent as it is rather than as JSON, the way a proxy in front of the router answers. */
+  text?: string;
+  headers?: Record<string, string>;
 }
 
 /**
@@ -76,19 +79,34 @@ export class TestRouter {
         const answer = this.routes.get(route);
         if (!answer) {
           response.writeHead(404, { "Content-Type": "application/json" });
-          response.end(JSON.stringify({ error: `nothing serves ${url.pathname}` }));
+          response.end(
+            JSON.stringify({
+              error: {
+                message: `nothing serves ${url.pathname}`,
+                type: "not_found",
+                code: "not_found",
+                doc_url: "https://getstream.io/agents/docs/api/errors/#not_found",
+              },
+            }),
+          );
           return;
         }
         const seen = this.calls.get(route) ?? 0;
         this.calls.set(route, seen + 1);
         const reply = typeof answer === "function" ? answer(received, seen) : answer;
         const status = reply.status ?? 200;
+        const headers = reply.headers ?? {};
+        if (reply.text !== undefined) {
+          response.writeHead(status, { "Content-Type": "text/plain", ...headers });
+          response.end(reply.text);
+          return;
+        }
         if (status === 204 || reply.body === undefined) {
-          response.writeHead(status);
+          response.writeHead(status, headers);
           response.end();
           return;
         }
-        response.writeHead(status, { "Content-Type": "application/json" });
+        response.writeHead(status, { "Content-Type": "application/json", ...headers });
         response.end(JSON.stringify(reply.body));
       });
     });

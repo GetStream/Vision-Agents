@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
@@ -61,7 +62,7 @@ func NewRecorder(options RecorderOptions) (*Recorder, error) {
 		options.APIKey = os.Getenv("ELEVENLABS_API_KEY")
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("elevenlabs: api key is required (set ELEVENLABS_API_KEY)")
+		return nil, stack.Wrap(errors.New("elevenlabs: api key is required (set ELEVENLABS_API_KEY)"))
 	}
 	if options.VoiceID == "" {
 		options.VoiceID = os.Getenv("ELEVENLABS_VOICE_ID")
@@ -102,7 +103,7 @@ func (r *Recorder) Model() string { return r.options.Model }
 // Record speaks the text and returns the file.
 func (r *Recorder) Record(ctx context.Context, recording tts.Recording) (tts.Recorded, error) {
 	if err := recording.Validate(); err != nil {
-		return tts.Recorded{}, err
+		return tts.Recorded{}, stack.Wrap(err)
 	}
 
 	voice := recording.Voice
@@ -116,14 +117,14 @@ func (r *Recorder) Record(ctx context.Context, recording tts.Recording) (tts.Rec
 
 	body, err := json.Marshal(r.payload(recording))
 	if err != nil {
-		return tts.Recorded{}, fmt.Errorf("elevenlabs: encode request: %w", err)
+		return tts.Recorded{}, stack.Wrap(fmt.Errorf("elevenlabs: encode request: %w", err))
 	}
 
 	endpoint := fmt.Sprintf("%s/%s?output_format=%s",
 		r.options.BaseURL, url.PathEscape(voice), url.QueryEscape(format))
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return tts.Recorded{}, fmt.Errorf("elevenlabs: build request: %w", err)
+		return tts.Recorded{}, stack.Wrap(fmt.Errorf("elevenlabs: build request: %w", err))
 	}
 	request.Header.Set("xi-api-key", r.options.APIKey)
 	request.Header.Set("Content-Type", "application/json")
@@ -131,17 +132,17 @@ func (r *Recorder) Record(ctx context.Context, recording tts.Recording) (tts.Rec
 
 	response, err := r.client.Do(request)
 	if err != nil {
-		return tts.Recorded{}, fmt.Errorf("elevenlabs: record: %w", err)
+		return tts.Recorded{}, stack.Wrap(fmt.Errorf("elevenlabs: record: %w", err))
 	}
 	defer response.Body.Close()
 
 	audio, err := io.ReadAll(response.Body)
 	if err != nil {
-		return tts.Recorded{}, fmt.Errorf("elevenlabs: read audio: %w", err)
+		return tts.Recorded{}, stack.Wrap(fmt.Errorf("elevenlabs: read audio: %w", err))
 	}
 	if response.StatusCode != http.StatusOK {
-		return tts.Recorded{}, fmt.Errorf("elevenlabs: record: %s: %s",
-			response.Status, strings.TrimSpace(string(audio)))
+		return tts.Recorded{}, stack.Wrap(fmt.Errorf("elevenlabs: record: %s: %s",
+			response.Status, strings.TrimSpace(string(audio))))
 	}
 
 	return tts.Recorded{

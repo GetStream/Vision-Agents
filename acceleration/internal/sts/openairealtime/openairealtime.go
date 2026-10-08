@@ -32,6 +32,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -50,7 +51,15 @@ const (
 	// DialectQwen names its formats as words, pcm16 and pcm24, and its transcriber by a
 	// model of its own.
 	DialectQwen Dialect = "qwen"
+	// DialectQwenAudio is Qwen-Audio on the same socket as DialectQwen: one format, pcm,
+	// a transcriber it picks itself, tools nested under function the way Chat Completions
+	// nests them, and a semantic turn detector called smart_turn.
+	DialectQwenAudio Dialect = "qwen-audio"
 )
+
+// qwenAudioPrefix is what the model ids speaking DialectQwenAudio at the Qwen vendor
+// start with.
+const qwenAudioPrefix = "qwen-audio-"
 
 // Vendor is one endpoint that speaks this protocol, and what differs about it.
 type Vendor struct {
@@ -249,6 +258,14 @@ type turnDetection struct {
 
 type tool struct {
 	Type        string         `json:"type"`
+	Name        string         `json:"name,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+	// Function carries the name, description and parameters instead, for Qwen-Audio.
+	Function *function `json:"function,omitempty"`
+}
+
+type function struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	Parameters  map[string]any `json:"parameters,omitempty"`
@@ -358,6 +375,7 @@ func (e *apiError) Error() string {
 // STS is one realtime session.
 type STS struct {
 	options      Options
+	dialect      Dialect
 	capabilities sts.Capabilities
 	logger       *slog.Logger
 	emitter      *sts.Emitter
@@ -391,13 +409,13 @@ type STS struct {
 // New validates the settings and returns an unstarted provider.
 func New(settings Options) (*STS, error) {
 	if settings.Vendor.Provider == "" {
-		return nil, errors.New("openairealtime: a vendor is required")
+		return nil, stack.Wrap(errors.New("openairealtime: a vendor is required"))
 	}
 	if settings.APIKey == "" && settings.Vendor.APIKeyEnvVar != "" {
 		settings.APIKey = os.Getenv(settings.Vendor.APIKeyEnvVar)
 	}
 	if settings.APIKey == "" {
-		return nil, fmt.Errorf("%s: api key is required (set %s)", settings.Vendor.Provider, settings.Vendor.APIKeyEnvVar)
+		return nil, stack.Wrap(fmt.Errorf("%s: api key is required (set %s)", settings.Vendor.Provider, settings.Vendor.APIKeyEnvVar))
 	}
 	if settings.Model == "" {
 		settings.Model = settings.Vendor.Model
@@ -406,25 +424,25 @@ func New(settings Options) (*STS, error) {
 		settings.URL = settings.Vendor.URL
 	}
 	if !strings.HasPrefix(settings.URL, "ws://") && !strings.HasPrefix(settings.URL, "wss://") {
-		return nil, fmt.Errorf("%s: url must be ws:// or wss://, got %s", settings.Vendor.Provider, settings.URL)
+		return nil, stack.Wrap(fmt.Errorf("%s: url must be ws:// or wss://, got %s", settings.Vendor.Provider, settings.URL))
 	}
 	if settings.Vendor.InputSampleRate <= 0 || settings.Vendor.OutputSampleRate <= 0 {
-		return nil, fmt.Errorf("%s: the vendor's sample rates are required", settings.Vendor.Provider)
+		return nil, stack.Wrap(fmt.Errorf("%s: the vendor's sample rates are required", settings.Vendor.Provider))
 	}
 	capabilities := CapabilitiesFor(settings.Vendor, settings.Model)
 	switch settings.TurnDetection {
 	case "", options.TurnServerVAD:
 	case options.TurnSemantic:
 		if !capabilities.SemanticTurns {
-			return nil, fmt.Errorf("%s: %s has no semantic turn detector", settings.Vendor.Provider, settings.Model)
+			return nil, stack.Wrap(fmt.Errorf("%s: %s has no semantic turn detector", settings.Vendor.Provider, settings.Model))
 		}
 	case options.TurnManual:
-		return nil, fmt.Errorf("%s: manual turns are not supported", settings.Vendor.Provider)
+		return nil, stack.Wrap(fmt.Errorf("%s: manual turns are not supported", settings.Vendor.Provider))
 	default:
-		return nil, fmt.Errorf("%s: unknown turn detection %q", settings.Vendor.Provider, settings.TurnDetection)
+		return nil, stack.Wrap(fmt.Errorf("%s: unknown turn detection %q", settings.Vendor.Provider, settings.TurnDetection))
 	}
 	if len(settings.Tools) > 0 && !capabilities.Tools {
-		return nil, fmt.Errorf("%s: %s does not call tools", settings.Vendor.Provider, settings.Model)
+		return nil, stack.Wrap(fmt.Errorf("%s: %s does not call tools", settings.Vendor.Provider, settings.Model))
 	}
 	if settings.HandshakeTimeout == 0 {
 		settings.HandshakeTimeout = 30 * time.Second
@@ -436,6 +454,7 @@ func New(settings Options) (*STS, error) {
 
 	return &STS{
 		options:      settings,
+		dialect:      dialectOf(settings.Vendor, settings.Model),
 		capabilities: capabilities,
 		logger:       logger.With("provider", settings.Vendor.Provider, "model", settings.Model),
 		emitter:      sts.NewEmitter(sts.EmitterBuffer),
@@ -445,7 +464,7 @@ func New(settings Options) (*STS, error) {
 // CapabilitiesFor is what a model at a vendor can be asked for. It is a table rather than
 // something learned from the session, because routing checks it before a session exists.
 func CapabilitiesFor(vendor Vendor, model string) sts.Capabilities {
-	switch vendor.Dialect {
+	switch dialectOf(vendor, model) {
 	case DialectOpenAI:
 		return sts.Capabilities{
 			InputModalities:        []string{options.ModalityImage},
@@ -480,9 +499,29 @@ func CapabilitiesFor(vendor Vendor, model string) sts.Capabilities {
 			Endpointing:      true,
 			Usage:            true,
 		}
+	case DialectQwenAudio:
+		// Qwen-Audio hears no images and reports no usage on response.done. Nothing says
+		// its instructions or tools can change once the session is open, so they cannot.
+		return sts.Capabilities{
+			Text:             true,
+			Tools:            true,
+			InputTranscript:  true,
+			OutputTranscript: true,
+			SemanticTurns:    true,
+			Endpointing:      true,
+		}
 	default:
 		return sts.Capabilities{}
 	}
+}
+
+// dialectOf is how a model at a vendor spells its session. Qwen serves two families on one
+// socket, and the model id says which.
+func dialectOf(vendor Vendor, model string) Dialect {
+	if vendor.Dialect == DialectQwen && strings.HasPrefix(model, qwenAudioPrefix) {
+		return DialectQwenAudio
+	}
+	return vendor.Dialect
 }
 
 // Start dials the socket, configures the session and waits for the server to accept the
@@ -491,7 +530,7 @@ func (s *STS) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
-		return fmt.Errorf("%s: already started", s.options.Vendor.Provider)
+		return stack.Wrap(fmt.Errorf("%s: already started", s.options.Vendor.Provider))
 	}
 	s.started = true
 	s.mu.Unlock()
@@ -501,9 +540,9 @@ func (s *STS) Start(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, s.endpoint(), header)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("%s: dial: %w (http %d)", s.options.Vendor.Provider, err, response.StatusCode)
+			return stack.Wrap(fmt.Errorf("%s: dial: %w (http %d)", s.options.Vendor.Provider, err, response.StatusCode))
 		}
-		return fmt.Errorf("%s: dial: %w", s.options.Vendor.Provider, err)
+		return stack.Wrap(fmt.Errorf("%s: dial: %w", s.options.Vendor.Provider, err))
 	}
 	s.conn = conn
 
@@ -540,7 +579,7 @@ func (s *STS) ProcessAudio(pcm sts.PcmData, participant sts.Participant) error {
 // SendText injects a typed turn and asks the model to answer it.
 func (s *STS) SendText(text string, participant sts.Participant) error {
 	if !s.capabilities.Text {
-		return sts.ErrNoText
+		return stack.Wrap(sts.ErrNoText)
 	}
 	if err := s.ready(); err != nil {
 		return err
@@ -572,7 +611,7 @@ func (s *STS) SendFrame(frame llm.ImagePart) error {
 		return fmt.Errorf("%s: a frame has to carry its bytes", s.options.Vendor.Provider)
 	}
 
-	if s.options.Vendor.Dialect == DialectQwen {
+	if s.dialect == DialectQwen {
 		return s.send(clientEvent{Type: eventImageAppend, Image: base64.StdEncoding.EncodeToString(frame.Data)})
 	}
 	return s.send(clientEvent{Type: eventItemCreate, Item: &item{
@@ -585,13 +624,13 @@ func (s *STS) SendFrame(frame llm.ImagePart) error {
 // SetInstructions changes the system prompt for the replies that follow.
 func (s *STS) SetInstructions(text string) error {
 	if !s.capabilities.InstructionsMidSession {
-		return sts.ErrInstructionsFixed
+		return stack.Wrap(sts.ErrInstructionsFixed)
 	}
 	if err := s.ready(); err != nil {
 		return err
 	}
 	update := &session{Instructions: text}
-	if s.options.Vendor.Dialect == DialectOpenAI {
+	if s.dialect == DialectOpenAI {
 		update.Type = "realtime"
 	}
 	return s.send(clientEvent{Type: eventSessionUpdate, Session: update})
@@ -608,8 +647,8 @@ func (s *STS) SetTools(tools []llm.Tool) error {
 	if err := s.ready(); err != nil {
 		return err
 	}
-	update := &session{Tools: toolsOf(tools)}
-	if s.options.Vendor.Dialect == DialectOpenAI {
+	update := &session{Tools: toolsOf(s.dialect, tools)}
+	if s.dialect == DialectOpenAI {
 		update.Type = "realtime"
 	}
 	return s.send(clientEvent{Type: eventSessionUpdate, Session: update})
@@ -640,10 +679,22 @@ func (s *STS) Answer(callID string, output string, err error) error {
 // Prompt asks the model to reply now, guided by the text.
 func (s *STS) Prompt(text string) error {
 	if !s.capabilities.Text {
-		return sts.ErrNoText
+		return stack.Wrap(sts.ErrNoText)
 	}
 	if err := s.ready(); err != nil {
 		return err
+	}
+	// Qwen-Audio's response.create takes no instructions, so the guidance goes in as a
+	// system message ahead of the reply it asks for.
+	if s.dialect == DialectQwenAudio {
+		if err := s.send(clientEvent{Type: eventItemCreate, Item: &item{
+			Type:    "message",
+			Role:    "system",
+			Content: []content{{Type: "input_text", Text: text}},
+		}}); err != nil {
+			return err
+		}
+		return s.send(clientEvent{Type: eventResponseCreate})
 	}
 	return s.send(clientEvent{Type: eventResponseCreate, Response: &responseRequest{Instructions: text}})
 }
@@ -665,7 +716,8 @@ func (s *STS) Interrupt(playedMs int) error {
 	if err := s.send(clientEvent{Type: eventResponseCancel}); err != nil {
 		return err
 	}
-	if itemID == "" {
+	// Qwen-Audio has no truncate: a cancel keeps what was generated, heard or not.
+	if itemID == "" || s.dialect == DialectQwenAudio {
 		return nil
 	}
 	if playedMs <= 0 {
@@ -704,6 +756,9 @@ func (s *STS) Provider() string { return s.options.Vendor.Provider }
 // Model implements sts.STS.
 func (s *STS) Model() string { return s.options.Model }
 
+// Voice is the voice asked for, or empty when the vendor picks it.
+func (s *STS) Voice() string { return s.options.Voice }
+
 // SampleRate is the rate the model speaks at.
 func (s *STS) SampleRate() int { return s.options.Vendor.OutputSampleRate }
 
@@ -728,10 +783,10 @@ func (s *STS) ready() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return fmt.Errorf("%s: session closed", s.options.Vendor.Provider)
+		return stack.Wrap(fmt.Errorf("%s: session closed", s.options.Vendor.Provider))
 	}
 	if !s.started || s.conn == nil {
-		return fmt.Errorf("%s: not started", s.options.Vendor.Provider)
+		return stack.Wrap(fmt.Errorf("%s: not started", s.options.Vendor.Provider))
 	}
 	return nil
 }
@@ -741,31 +796,31 @@ func (s *STS) ready() error {
 // configured some other way.
 func (s *STS) handshake() error {
 	if err := s.conn.SetReadDeadline(time.Now().Add(s.options.HandshakeTimeout)); err != nil {
-		return fmt.Errorf("%s: read handshake: %w", s.options.Vendor.Provider, err)
+		return stack.Wrap(fmt.Errorf("%s: read handshake: %w", s.options.Vendor.Provider, err))
 	}
 	defer s.conn.SetReadDeadline(time.Time{})
 
 	created, err := s.next()
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	if created.Type != eventSessionCreated {
-		return fmt.Errorf("%s: expected %s, got %s", s.options.Vendor.Provider, eventSessionCreated, created.Type)
+		return stack.Wrap(fmt.Errorf("%s: expected %s, got %s", s.options.Vendor.Provider, eventSessionCreated, created.Type))
 	}
 
 	if err := s.send(clientEvent{Type: eventSessionUpdate, Session: s.session()}); err != nil {
-		return fmt.Errorf("%s: send session: %w", s.options.Vendor.Provider, err)
+		return stack.Wrap(fmt.Errorf("%s: send session: %w", s.options.Vendor.Provider, err))
 	}
 	for {
 		event, err := s.next()
 		if err != nil {
-			return err
+			return stack.Wrap(err)
 		}
 		switch event.Type {
 		case eventSessionUpdated:
 			return nil
 		case eventError:
-			return fmt.Errorf("%s: session rejected: %w", s.options.Vendor.Provider, event.Error)
+			return stack.Wrap(fmt.Errorf("%s: session rejected: %w", s.options.Vendor.Provider, event.Error))
 		}
 	}
 }
@@ -774,11 +829,11 @@ func (s *STS) handshake() error {
 func (s *STS) next() (serverEvent, error) {
 	_, raw, err := s.conn.ReadMessage()
 	if err != nil {
-		return serverEvent{}, fmt.Errorf("%s: read handshake: %w", s.options.Vendor.Provider, err)
+		return serverEvent{}, stack.Wrap(fmt.Errorf("%s: read handshake: %w", s.options.Vendor.Provider, err))
 	}
 	var event serverEvent
 	if err := json.Unmarshal(raw, &event); err != nil {
-		return serverEvent{}, fmt.Errorf("%s: decode handshake: %w", s.options.Vendor.Provider, err)
+		return serverEvent{}, stack.Wrap(fmt.Errorf("%s: decode handshake: %w", s.options.Vendor.Provider, err))
 	}
 	if event.Type == eventError && event.Error == nil {
 		event.Error = &apiError{Message: strings.TrimSpace(string(raw))}
@@ -788,11 +843,11 @@ func (s *STS) next() (serverEvent, error) {
 
 // session is the configuration frame, spelled the way this vendor wants it.
 func (s *STS) session() *session {
-	configured := &session{Instructions: s.options.Instructions, Tools: toolsOf(s.options.Tools)}
+	configured := &session{Instructions: s.options.Instructions, Tools: toolsOf(s.dialect, s.options.Tools)}
 	turns := s.turnDetection()
 	// xAI answers the caller on its own only when its detector is told to: a session
 	// that names no detector waits to be asked for every reply.
-	if s.options.Vendor.Dialect == DialectXAI {
+	if s.dialect == DialectXAI {
 		if turns == nil {
 			turns = &turnDetection{Type: "server_vad"}
 		}
@@ -800,7 +855,7 @@ func (s *STS) session() *session {
 		turns.CreateResponse = &answers
 	}
 
-	switch s.options.Vendor.Dialect {
+	switch s.dialect {
 	case DialectOpenAI:
 		configured.Type = "realtime"
 		configured.OutputModalities = []string{"audio"}
@@ -833,6 +888,13 @@ func (s *STS) session() *session {
 		// transcriber it has, so asking is not optional here.
 		configured.InputAudioTranscription = &transcription{Model: qwenTranscriber}
 		configured.TurnDetection = turns
+	case DialectQwenAudio:
+		// Qwen-Audio always transcribes, with a transcriber it does not let anyone name.
+		configured.Modalities = []string{"text", "audio"}
+		configured.Voice = s.options.Voice
+		configured.InputAudioFormat = "pcm"
+		configured.OutputAudioFormat = "pcm"
+		configured.TurnDetection = turns
 	}
 	return configured
 }
@@ -844,7 +906,7 @@ func (s *STS) transcription() *transcription {
 		return nil
 	}
 	model := s.options.TranscriptionModel
-	if model == "" && s.options.Vendor.Dialect == DialectOpenAI {
+	if model == "" && s.dialect == DialectOpenAI {
 		model = openaiTranscriber
 	}
 	return &transcription{Model: model}
@@ -854,6 +916,9 @@ func (s *STS) transcription() *transcription {
 func (s *STS) turnDetection() *turnDetection {
 	switch s.options.TurnDetection {
 	case options.TurnSemantic:
+		if s.dialect == DialectQwenAudio {
+			return &turnDetection{Type: "smart_turn"}
+		}
 		return &turnDetection{
 			Type:              "semantic_vad",
 			Eagerness:         s.options.Eagerness,
@@ -883,12 +948,20 @@ func (s *STS) turnDetection() *turnDetection {
 }
 
 // toolsOf is the model's shape for what it may call.
-func toolsOf(tools []llm.Tool) []tool {
+func toolsOf(dialect Dialect, tools []llm.Tool) []tool {
 	if len(tools) == 0 {
 		return nil
 	}
 	shaped := make([]tool, 0, len(tools))
 	for _, offered := range tools {
+		if dialect == DialectQwenAudio {
+			shaped = append(shaped, tool{Type: "function", Function: &function{
+				Name:        offered.Name,
+				Description: offered.Description,
+				Parameters:  offered.Parameters,
+			}})
+			continue
+		}
 		shaped = append(shaped, tool{
 			Type:        "function",
 			Name:        offered.Name,
@@ -902,13 +975,13 @@ func toolsOf(tools []llm.Tool) []tool {
 func (s *STS) send(event clientEvent) error {
 	payload, err := json.Marshal(event)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if err := s.conn.WriteMessage(websocket.TextMessage, payload); err != nil {
-		return fmt.Errorf("%s: write %s: %w", s.options.Vendor.Provider, event.Type, err)
+		return stack.Wrap(fmt.Errorf("%s: write %s: %w", s.options.Vendor.Provider, event.Type, err))
 	}
 	return nil
 }

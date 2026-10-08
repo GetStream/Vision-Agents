@@ -1,0 +1,76 @@
+# Calendly's hosted MCP server (internal/mcp/connectors.yaml:45-59 on codex/connector-support
+# at cf62af0d, «[proto]:N» below). Vendor pages, opened October 2, 2026:
+#   [mcp]     https://developer.calendly.com/docs/mcp/calendly-mcp-server
+#   [token]   https://developer.calendly.com/api-docs/calendly-o-auth/o-auth/post-oauth-refresh-token
+#   [rotate]  https://developer.calendly.com/refresh-token-rotation-guide
+#   [uri]     https://developer.calendly.com/docs/api-guides/how-to-find-the-organization-or-user-uri
+# And the servers' own metadata, fetched on October 2, 2026 («[prm]» and «[as]»):
+#   [prm] GET https://mcp.calendly.com/.well-known/oauth-protected-resource at
+#         2026-10-02T21:06:33Z: resource https://mcp.calendly.com/, authorization_servers
+#         [https://calendly.com/], scopes_supported [mcp:scheduling:read, mcp:scheduling:write].
+#   [as]  GET https://calendly.com/.well-known/oauth-authorization-server at
+#         2026-10-02T21:06:33Z: issuer https://calendly.com/, authorize and token at
+#         https://calendly.com/oauth/..., registration_endpoint https://calendly.com/oauth/register,
+#         token_endpoint_auth_methods_supported [none], code_challenge_methods_supported [S256],
+#         no revocation_endpoint.
+# [token], [rotate] and [uri] are Calendly's OAuth for apps registered in its console, at
+# https://auth.calendly.com/oauth/token. [as] puts the MCP clients' token endpoint on
+# calendly.com instead, so every value taken from those three is # unverified for it.
+id: calendly
+# A new revision for any change to what this file says; see AGENTS.md. 2 renames
+# client.policy to client.registration.
+revision: 2
+# [proto]:46-48
+name: Calendly
+category: Scheduling
+description: Check availability, create scheduling links, and book meetings.
+endpoints:
+  # «fully hosted by Calendly at https://mcp.calendly.com»: [mcp]; [proto]:49.
+  mcp: https://mcp.calendly.com
+  # The issuer [prm] names, pinned as [proto]:53 pinned it. Discovery from the MCP endpoint
+  # cannot be used here: [prm]'s resource carries a trailing slash the MCP endpoint does not,
+  # and oauth2_code takes a protected resource document only when its resource is exactly
+  # the endpoint (RFC 9728 section 3.3). With the issuer pinned, authorize, token and
+  # registration come from [as], which agrees with [proto]:54-56.
+  issuer: https://calendly.com/
+  # RFC 8707 resource indicator: [prm]'s resource, as [proto]:52 had it.
+  resource: https://mcp.calendly.com/
+# Authorization code with PKCE S256: [mcp] («OAuth 2.1 Authorization Code + PKCE (S256)»); [as].
+schemes: [oauth2_code]
+client:
+  # DCR only: [mcp] says console-issued credentials and «Static, pre-registered client_id
+  # flows without DCR» are not supported; [as] has a registration_endpoint and no
+  # client_id_metadata_document_supported, so not CIMD. [proto]:51.
+  registration: [dcr]
+scopes:
+  # [mcp]; [prm]; [proto]:57-59. All of [prm]'s scopes_supported, as MCP 2025-11-25 «Scope
+  # Selection Strategy» asks when the server names none in a challenge. No separator, so a
+  # space (RFC 6749 section 3.3).
+  list: [mcp:scheduling:read, mcp:scheduling:write]
+capture:
+  # The user and organization URIs, which [uri] says the token response carries as owner and
+  # organization; [token]'s example has them on https://api.calendly.com. The prototype read
+  # the same two into its account id (internal/mcp/oauth.go:838-858 at cf62af0d), which no
+  # live run confirmed (docs/connector-handover.md:184 there). Optional, and not the identity,
+  # because that response is not documented for MCP clients. # unverified
+  - name: owner
+    from: token_response
+    path: $.owner
+    optional: true
+    host_suffixes: [.calendly.com]
+    keep_path: true
+  - name: organization
+    from: token_response
+    path: $.organization
+    optional: true
+    host_suffixes: [.calendly.com]
+    keep_path: true
+# No identity: no account id is documented for an MCP client's token response (above).
+refresh:
+  # Single-use refresh tokens, «revoked immediately after a successful POST /oauth/token»:
+  # [rotate]. «Access Tokens expire after 2 hours»: [token]. # unverified for MCP clients
+  rotating: true
+  access_ttl: 2h
+sources:
+  - kind: mcp
+    endpoint: mcp

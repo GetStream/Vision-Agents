@@ -67,6 +67,14 @@ func (s *Session) recordLog(event Event) {
 		row.EventType = "left"
 		row.Message = "Agent left"
 		row.OccurredAt = e.At
+	case agent.ModelsChanged:
+		row.EventType = "models_changed"
+		row.Message = "Models changed for this session"
+		row.OccurredAt = e.At
+		row.Details = map[string]any{
+			"native": e.Native, "llm": e.LLM, "stt": e.STT, "tts": e.TTS,
+			"sts": e.STS, "subagent": e.Subagent, "voice": e.Voice,
+		}
 	case agent.ParticipantJoined:
 		row.EventType = "participant_joined"
 		row.Source = "user"

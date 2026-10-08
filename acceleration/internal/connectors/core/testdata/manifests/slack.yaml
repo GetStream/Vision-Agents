@@ -1,0 +1,57 @@
+# Stress-test row 5 (Slack, Enterprise Grid) of «Stress test: 12 awkward providers» in
+# acceleration/docs/connectors/architecture.md on connectors/planning. Slack's pages are not
+# in the doc's «Sources and evidence»; these two were opened on October 1, 2026:
+#   [install]  https://docs.slack.dev/authentication/installing-with-oauth
+#   [rotation] https://docs.slack.dev/authentication/using-token-rotation
+# This is the bot-token flow. The user-token flow the prototype ran (prototype
+# internal/mcp/connectors.yaml:10-12 on codex/connector-support at cf62af0d) is a second
+# manifest; see the PR for what it needs beyond this schema.
+id: slack
+revision: 1
+name: Slack
+endpoints:
+  # [install]
+  authorize: https://slack.com/oauth/v2/authorize
+  token: https://slack.com/api/oauth.v2.access
+  # auth.revoke is named in row 17 of «Axes where providers differ»; the URL form is
+  # assumed from the token method's host. # unverified
+  revoke: https://slack.com/api/auth.revoke
+  # prototype internal/mcp/connectors.yaml:6
+  mcp: https://mcp.slack.com/mcp
+schemes: [oauth2_code]
+client:
+  registration: [operator]
+  # prototype internal/mcp/connectors.yaml:13-14
+  auth_method: client_secret_post
+  env: SLACK
+scopes:
+  # A few of the prototype's scopes (prototype internal/mcp/connectors.yaml:15-44).
+  list: [channels:history, chat:write, users:read]
+  # Comma-separated: row 5; [install].
+  separator: ","
+capture:
+  # team.id and authed_user.id: row 5; [install] response shape.
+  - name: team_id
+    from: token_response
+    path: $.team.id
+  - name: user_id
+    from: token_response
+    path: $.authed_user.id
+  # Only an org install on Enterprise Grid carries it: row 5 («capture: enterprise_id»).
+  - name: enterprise_id
+    from: token_response
+    path: $.enterprise.id
+    optional: true
+# Team and user: row 5 («identity: $.team.id + $.authed_user.id»).
+identity: [team_id, user_id]
+refresh:
+  # Rotating, access token for 43,200 seconds: [rotation]. The grace is «brief» there, with
+  # no number, so none is set.
+  rotating: true
+  access_ttl: 12h
+rate_limit:
+  # Per workspace: row 5, here the tenant.
+  per: tenant
+sources:
+  - kind: mcp
+    endpoint: mcp

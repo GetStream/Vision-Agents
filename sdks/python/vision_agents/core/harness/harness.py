@@ -43,7 +43,6 @@ class Skill:
         description: The one line the fast model sees.
         instructions: The full prompt, which only the subagent sees.
         deadline_seconds: How long the work may run before it is abandoned.
-        subagent: Named worker to run this skill. Empty selects ``default``.
         capture_video: Capture task-scoped visual evidence before running the skill.
     """
 
@@ -51,7 +50,6 @@ class Skill:
     description: str
     instructions: str
     deadline_seconds: Optional[float] = None
-    subagent: str = ""
     capture_video: bool = False
 
 
@@ -65,7 +63,8 @@ class Harness:
     Attributes:
         use_skills: Offer the backend's built-in skills. Setting ``skills`` replaces them.
         subagents: Model targets for the work handed over, keyed by name. The entry under
-            ``default`` runs unbound skills; other entries run skills bound to that name.
+            ``default``, or the only entry, is the model that runs skills. Empty means the
+            fast model answers everything itself.
         vm: Where delegated code runs. Either a :class:`Sandbox` or the class itself, so
             ``vm=Daytona`` reads the way it is meant to.
         skills: Skills of your own, replacing the built-in set.
@@ -91,10 +90,12 @@ class Harness:
 
     @property
     def subagent(self) -> Optional[str]:
-        """The default worker's model, or None when no default is configured."""
+        """The model that runs delegated work, or None when nothing is delegated."""
         if not self.subagents:
             return None
-        return self.subagents.get("default")
+        if "default" in self.subagents:
+            return self.subagents["default"]
+        return next(iter(self.subagents.values()))
 
     def spec(self) -> dict[str, Any]:
         """Render the harness for a remote session.
@@ -105,8 +106,8 @@ class Harness:
             one turns delegation off, the other leaves the defaults alone.
         """
         spec: dict[str, Any] = {"tasks": self.tasks}
-        if self.subagents:
-            spec["subagents"] = dict(self.subagents)
+        if self.subagent is not None:
+            spec["subagent"] = self.subagent
         if self.vm is not None:
             spec["sandbox"] = self.vm.provider
 
@@ -114,7 +115,6 @@ class Harness:
             spec["skills"] = [
                 {
                     "name": skill.name,
-                    "subagent": skill.subagent,
                     "capture_video": skill.capture_video,
                     "description": skill.description,
                     "instructions": skill.instructions,

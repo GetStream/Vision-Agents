@@ -155,3 +155,9 @@ type STS interface {
 	// Capabilities is what this model can be asked for.
 	Capabilities() Capabilities
 }
+
+// Voiced is a model that can say which voice it speaks in. Empty means the vendor
+// chooses on its side.
+type Voiced interface {
+	Voice() string
+}

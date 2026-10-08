@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -18,15 +17,11 @@ import (
 )
 
 const (
-	// URLEnv names the router this SDK talks to.
+	// URLEnv points this SDK at another router, such as one running locally.
 	URLEnv = "STREAM_ACCELERATION_URL"
-	// CustomerEnv names who the work is billed to.
+	// CustomerEnv names who the work is billed to on a router with no proxy in front of it,
+	// which is one run locally. Setting it is what turns authentication off.
 	CustomerEnv = "STREAM_ACCELERATION_CUSTOMER_ID"
-	// AuthenticateEnv switches on the app credential, for a router reached through the
-	// authenticating proxy. It is opt-in rather than inferred from the presence of a
-	// credential, because a Stream key and secret are in the environment for plenty of
-	// reasons that have nothing to do with how this router is reached.
-	AuthenticateEnv = "STREAM_ACCELERATION_AUTHENTICATE"
 	// APIKeyEnv and APISecretEnv are the Stream app a hosted router is reached as. The
 	// proxy in front of one authenticates the app rather than trusting the header below.
 	APIKeyEnv    = "STREAM_API_KEY"
@@ -47,40 +42,42 @@ const (
 	AuthTypeJWT    = "jwt"
 	// AuthorizationHeader carries the token signed with the app's secret.
 	AuthorizationHeader = "authorization"
-	// DefaultURL is where a router started with no address of its own listens.
-	DefaultURL = "http://localhost:8080"
+	// UserHeader names the end user a server-side caller is acting for.
+	UserHeader = "X-Stream-User-Id"
+	// ClientHeader says which client a request came from, which is what the router's audit
+	// log records a configuration change as having been made with. An SDK syncing an agent
+	// directory is this one; the dashboard and the CLI name themselves.
+	ClientHeader = "X-Stream-Client"
+	ClientSDK    = "sdk"
+	// DefaultURL is the hosted router.
+	DefaultURL = "https://accelerate.gcp.stream-io-api.com"
 )
 
 // tokenValidity is how long a minted token lasts. Short, because it is minted per request
 // and a stolen one should stop working sooner than the credential behind it.
 const tokenValidity = time.Hour
 
-var (
-	// ErrNoCustomer is returned when nothing says who is calling: neither a customer id
-	// for a router that trusts one, nor a credential naming the app it belongs to.
-	ErrNoCustomer = errors.New("stream: who is calling is not set; set " + CustomerEnv +
-		", or " + AuthenticateEnv + " for a router behind the proxy")
-	// ErrNoCredential is returned when authentication is asked for without the credential
-	// it needs. Falling back to the customer header instead would send a request the proxy
-	// refuses, and report it as whatever the proxy says rather than as what it is.
-	ErrNoCredential = errors.New("stream: " + AuthenticateEnv + " needs " + APIKeyEnv +
-		" and " + APISecretEnv)
-)
+// ErrNoCredential is returned when there is no app credential to authenticate with. Falling
+// back to the customer header instead would send a request the proxy refuses, and report it
+// as whatever the proxy says rather than as what it is.
+var ErrNoCredential = errors.New("stream: set " + APIKeyEnv + " and " + APISecretEnv +
+	", or " + CustomerEnv + " for a local router")
 
 // Backend is where the acceleration router is, and who is calling it.
 type Backend struct {
-	// URL is the router's base URL. Empty falls back to STREAM_ACCELERATION_URL.
+	// URL is the router's base URL. Empty falls back to STREAM_ACCELERATION_URL, then to
+	// the hosted router.
 	URL string
 	// CustomerID is the identity every request and every cost row is keyed by. Empty falls
 	// back to STREAM_ACCELERATION_CUSTOMER_ID. A router behind the authenticating proxy
 	// works this out from the credential instead and ignores what it is told.
 	CustomerID string
 	// Authenticate says the router is reached through the proxy, so requests carry the app
-	// credential below rather than naming a customer. False falls back to
-	// STREAM_ACCELERATION_AUTHENTICATE.
+	// credential below rather than naming a customer. It is on whenever no customer id is
+	// set, whenever the router is the hosted one, and whenever a credential is passed in,
+	// which is every router but a local one told only who to bill.
 	Authenticate bool
-	// APIKey and APISecret are the Stream app to authenticate as, read only when
-	// Authenticate is set. Empty falls back to STREAM_API_KEY and STREAM_API_SECRET.
+	// APIKey and APISecret are the Stream app to authenticate as. Empty falls back to STREAM_API_KEY and STREAM_API_SECRET.
 	APIKey    string
 	APISecret string
 	// UserID is the end user this SDK is acting for, if it is acting for one. Empty speaks
@@ -94,6 +91,11 @@ type Backend struct {
 	// standing in for a device. With it, APISecret is not needed at all, which is the point
 	// -- a token is the whole credential and the secret behind it could mint any other.
 	Token string
+	// ActingFor is the end user a server-side credential speaks for, which is how a backend
+	// reaches a conversation that belongs to somebody. Unlike UserID it keeps the app's own
+	// credential, so the request is still the server's: what it writes is answered by the
+	// model rather than handed to a dispatch worker, and no daily limit is counted.
+	ActingFor string
 	// HTTPClient is used for both the REST calls and the socket handshake. Nil uses the
 	// default client.
 	HTTPClient *http.Client
@@ -113,14 +115,14 @@ func (b Backend) Resolve() (Backend, error) {
 		b.CustomerID = os.Getenv(CustomerEnv)
 	}
 
-	if !b.Authenticate {
-		if set := os.Getenv(AuthenticateEnv); set != "" {
-			on, err := strconv.ParseBool(set)
-			if err != nil {
-				return b, fmt.Errorf("stream: %s=%q is not a true or false: %w", AuthenticateEnv, set, err)
-			}
-			b.Authenticate = on
-		}
+	// A Stream key and secret are in the environment for video and chat whether or not a
+	// local router is being talked to, so a customer id is what says which: sending the
+	// credential to a router with nothing in front of it reads as an end user's device.
+	// What does not depend on the environment does say: the hosted router is always behind
+	// the proxy, and a credential passed in was passed in to be used.
+	passed := b.APIKey != "" && (b.APISecret != "" || b.Token != "")
+	if b.CustomerID == "" || b.URL == DefaultURL || passed {
+		b.Authenticate = true
 	}
 	if b.Authenticate {
 		if b.APIKey == "" {
@@ -134,12 +136,6 @@ func (b Backend) Resolve() (Backend, error) {
 		if b.APIKey == "" || (b.APISecret == "" && b.Token == "") {
 			return b, ErrNoCredential
 		}
-		// The credential names the app it belongs to and the proxy strips whatever this end
-		// claims, so there is nothing left for a customer id to answer.
-		return b, nil
-	}
-	if b.CustomerID == "" {
-		return b, ErrNoCustomer
 	}
 	return b, nil
 }
@@ -174,6 +170,10 @@ func (b Backend) token() (string, error) {
 // it when going through the proxy, and otherwise who is billed.
 func (b Backend) Credentials() (http.Header, error) {
 	header := http.Header{}
+	header.Set(ClientHeader, ClientSDK)
+	if b.ActingFor != "" {
+		header.Set(UserHeader, b.ActingFor)
+	}
 	if !b.Authenticate {
 		if b.CustomerID != "" {
 			header.Set(CustomerHeader, b.CustomerID)
@@ -197,7 +197,12 @@ func (b Backend) Client() (*acceleration.ClientWithResponses, error) {
 		return nil, err
 	}
 
+	doer := acceleration.HttpRequestDoer(&http.Client{})
+	if resolved.HTTPClient != nil {
+		doer = resolved.HTTPClient
+	}
 	options := []acceleration.ClientOption{
+		acceleration.WithHTTPClient(readable{doer: doer}),
 		acceleration.WithRequestEditorFn(func(_ context.Context, request *http.Request) error {
 			// Minted per request, so a client left idle longer than a token lasts does not
 			// wake up holding an expired one.
@@ -210,9 +215,6 @@ func (b Backend) Client() (*acceleration.ClientWithResponses, error) {
 			}
 			return nil
 		}),
-	}
-	if resolved.HTTPClient != nil {
-		options = append(options, acceleration.WithHTTPClient(resolved.HTTPClient))
 	}
 	return acceleration.NewClientWithResponses(resolved.URL, options...)
 }

@@ -2,68 +2,26 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
+	"github.com/danielgtaylor/huma/v2"
 )
 
-// noSessions is what every session path says on a deployment that only inspects routing.
+// errNoSessions is what every session path says on a deployment that only inspects routing.
 // It is a 404 rather than a 501 because the resource genuinely is not there: this router
 // runs no conversations, so it holds no sessions to find.
-const noSessions = "this deployment does not run sessions"
-
-// CreateSession joins a call and returns the session running it.
-func (s *Server) CreateSession(ctx context.Context, request CreateSessionRequestObject) (CreateSessionResponseObject, error) {
-	customerID, ok := CustomerFrom(ctx)
-	if !ok {
-		return CreateSession401JSONResponse{missingCustomer()}, nil
-	}
-	if s.sessions == nil {
-		return CreateSession404JSONResponse{NotFoundJSONResponse{Error: noSessions}}, nil
-	}
-	if request.Body == nil {
-		return CreateSession400JSONResponse{badRequest("a request body is required")}, nil
-	}
-
-	// A config is read before the session is created rather than inside it, so a caller
-	// naming one that is not theirs is told so instead of getting a session that quietly
-	// ignored it.
-	config, failure := s.configFor(ctx, customerID, request.Body.ConfigId, request.Body.Agent)
-	if failure != nil {
-		if failure.status == notFound {
-			return CreateSession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
-		}
-		return CreateSession400JSONResponse{badRequest(failure.message)}, nil
-	}
-
-	if err := workerConflict(request.Body.Subagent, request.Body.Subagents); err != nil {
-		return CreateSession400JSONResponse{badRequest(err.Error())}, nil
-	}
-	spec := specOf(*request.Body, customerID, config)
-	// Who asked comes from the credential rather than from specOf, which merges the request
-	// with the config and so only ever sees what the caller was willing to say about
-	// themselves. Both halves are recorded, because the name is only worth what the kind
-	// says it is: this pair is what the session is owned by and what every later request
-	// for it is matched against.
-	spec.Caller = CallerFrom(ctx)
-	spec.CallerKind = KindFrom(ctx)
-	created, err := s.sessions.Create(ctx, spec)
-	if err != nil {
-		// Everything that can go wrong here is the caller's spec or a provider that would
-		// not start, and both are worth reading rather than a 500 with the detail in a
-		// log the caller cannot see.
-		return CreateSession400JSONResponse{badRequest(err.Error())}, nil
-	}
-	return CreateSession201JSONResponse(sessionOf(created)), nil
-}
+var errNoSessions = notConfigured("this deployment does not run sessions")
 
 // configFor resolves whichever way the caller addressed the agent.
 //
@@ -71,282 +29,248 @@ func (s *Server) CreateSession(ctx context.Context, request CreateSessionRequest
 // though it costs a lookup. Both at once is refused rather than picking one: there is no
 // sensible answer when they disagree, and quietly preferring the id would leave a caller
 // wondering why the name they wrote had no effect.
-func (s *Server) configFor(ctx context.Context, customerID string, configID, name *string) (*store.AgentConfig, *lookupFailure) {
+func (s *Server) configFor(ctx context.Context, customerID string, configID, name *string) (*store.AgentConfig, error) {
 	id, named := value(configID), value(name)
 	switch {
 	case id == "" && named == "":
 		return nil, nil
 	case id != "" && named != "":
-		return nil, &lookupFailure{status: badInput,
-			message: "name an agent by config_id or by agent, not both"}
+		return nil, invalidRequest("name an agent by config_id or by agent, not both")
 	case s.store == nil:
-		return nil, &lookupFailure{status: badInput, message: noConfigs}
+		return nil, errNoConfigs
 	}
 
 	if id != "" {
-		found, err := s.store.AgentConfig(ctx, customerID, id)
+		found, err := s.configs.AgentConfig(ctx, customerID, id)
 		if err != nil {
-			return nil, &lookupFailure{status: notFound, message: unknownConfig}
+			return nil, errUnknownConfig
 		}
 		return &found, nil
 	}
 
-	found, exists, err := s.store.AgentConfigByName(ctx, customerID, named)
+	found, exists, err := s.configs.AgentConfigByName(ctx, customerID, named)
 	if err != nil {
-		return nil, &lookupFailure{status: badInput, message: err.Error()}
+		return nil, invalidRequest(err.Error())
 	}
 	if !exists {
 		// Refused rather than started unconfigured. A typo in a name would otherwise get a
 		// working session with default instructions, which is far harder to notice than an
 		// error: the agent answers, just not as the agent that was asked for.
-		return nil, &lookupFailure{status: notFound,
-			message: "there is no agent called " + named}
+		return nil, notFound("there is no agent called " + named)
 	}
 	return &found, nil
 }
 
-// ListSessions returns the calling customer's sessions, newest first.
-//
-// Without filters it is the live sessions, as it always was. With any of them it is a query
-// over what has happened too, so a caller asking for their conversations gets the ones that
-// ended as well as the one they are having.
-func (s *Server) ListSessions(ctx context.Context, request ListSessionsRequestObject) (ListSessionsResponseObject, error) {
-	if _, ok := CustomerFrom(ctx); !ok {
-		return ListSessions401JSONResponse{missingCustomer()}, nil
-	}
-	if s.sessions == nil {
-		return ListSessions200JSONResponse{}, nil
-	}
-
-	filter, err := sessionFilter(ctx, sessionQuery{
-		Agent: request.Params.Agent, ConfigID: request.Params.ConfigId,
-		UserID: request.Params.UserId, Project: request.Params.Project,
-		State: string(value(request.Params.State)), Custom: request.Params.Custom,
-		After: request.Params.CreatedAfter, Before: request.Params.CreatedBefore,
-		Limit: request.Params.Limit, Offset: request.Params.Offset,
-	})
-	if err != nil {
-		return ListSessions400JSONResponse{badRequest(err.Error())}, nil
-	}
-
-	found, err := s.sessions.Query(ctx, OwnerFrom(ctx), filter)
-	if err != nil {
-		return nil, err
-	}
-	return ListSessions200JSONResponse(sessionsOf(found)), nil
-}
-
-// SearchSessions finds a conversation by what the caller named it.
-func (s *Server) SearchSessions(ctx context.Context, request SearchSessionsRequestObject) (SearchSessionsResponseObject, error) {
-	if _, ok := CustomerFrom(ctx); !ok {
-		return SearchSessions401JSONResponse{missingCustomer()}, nil
-	}
-	if s.sessions == nil {
-		return SearchSessions200JSONResponse{}, nil
-	}
-
-	filter, err := sessionFilter(ctx, sessionQuery{
-		Agent: request.Params.Agent, ConfigID: request.Params.ConfigId,
-		UserID: request.Params.UserId, Project: request.Params.Project,
-		State: string(value(request.Params.State)), Custom: request.Params.Custom,
-		After: request.Params.CreatedAfter, Before: request.Params.CreatedBefore,
-		Limit: request.Params.Limit, Offset: request.Params.Offset,
-	})
-	if err != nil {
-		return SearchSessions400JSONResponse{badRequest(err.Error())}, nil
-	}
-
-	found, err := s.sessions.Search(ctx, OwnerFrom(ctx), value(request.Params.Q), filter)
-	if err != nil {
-		return nil, err
-	}
-	return SearchSessions200JSONResponse(sessionsOf(found)), nil
-}
-
-// ForkSession continues a conversation as a new one.
-func (s *Server) ForkSession(ctx context.Context, request ForkSessionRequestObject) (ForkSessionResponseObject, error) {
+// forkSession continues a conversation as a new one.
+func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (*forkSessionResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return ForkSession401JSONResponse{missingCustomer()}, nil
+		return nil, errMissingCustomer
 	}
 	if s.sessions == nil {
-		return ForkSession404JSONResponse{NotFoundJSONResponse{Error: noSessions}}, nil
+		return nil, errNoSessions
 	}
 
 	parent, failure := s.storedOrLiveSession(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return ForkSession401JSONResponse{missingCustomer()}, nil
-		}
-		return ForkSession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+		return nil, failure
 	}
 
 	body := ForkSessionRequest{}
 	if request.Body != nil {
 		body = *request.Body
 	}
+	// A fork opens a session as createSession does, so a device is refused there what it is
+	// refused here.
+	if body.Instructions != nil && !ServerSideFrom(ctx) {
+		return nil, errDeviceInstructions
+	}
 
 	// A named agent on the fork replaces the parent's config wholesale, which is the point:
 	// asking the same question of a different agent is the reason to fork.
 	config, failure := s.configFor(ctx, customerID, body.ConfigId, body.Agent)
 	if failure != nil {
-		if failure.status == notFound {
-			return ForkSession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
-		}
-		return ForkSession400JSONResponse{badRequest(failure.message)}, nil
+		return nil, failure
 	}
 
 	spec, err := forkSpec(parent, body, config)
 	if err != nil {
-		return ForkSession400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
+	}
+	// The connector bindings are the config's as it is now, not as the parent was opened
+	// with. The session re-resolves the parent's selections against them and against the
+	// caller asking for the fork, and drops the ones the config no longer declares. A config
+	// deleted since binds nothing, and its fork goes ahead as a fork did before bindings
+	// existed; a config that cannot be read fails the fork rather than dropping its bindings.
+	if config == nil {
+		spec.ConnectorBindings = nil
+		if s.store != nil && spec.ConfigID != "" {
+			current, err := s.store.AgentConfig(ctx, customerID, spec.ConfigID)
+			switch {
+			case err == nil:
+				spec.ConnectorBindings = current.Connectors
+			case !errors.Is(err, store.ErrNoAgentConfig):
+				return nil, err
+			}
+		}
+	}
+	recalled, err := s.recordedHistory(ctx, parent, body, spec.Recall)
+	switch {
+	case errors.Is(err, store.ErrUnknownResponse):
+		return nil, notFound(err.Error())
+	case errors.Is(err, errForkNeedsHistory):
+		return nil, invalidRequest(err.Error())
+	case err != nil:
+		return nil, err
+	}
+	if recalled != nil {
+		spec.Recall = &session.Recall{Messages: recalled}
 	}
 	spec.CustomerID = customerID
+	// A voice fork is keyed under the call it joins, which the request names.
+	ctx = s.threadConversation(ctx, customerID, &spec)
 	spec.Caller = CallerFrom(ctx)
 	spec.CallerKind = KindFrom(ctx)
 
 	created, err := s.sessions.Create(ctx, spec)
-	if err != nil {
-		return ForkSession400JSONResponse{badRequest(err.Error())}, nil
-	}
-	return ForkSession201JSONResponse(sessionOf(created)), nil
-}
-
-// GetSession returns one session.
-func (s *Server) GetSession(ctx context.Context, request GetSessionRequestObject) (GetSessionResponseObject, error) {
-	found, failure := s.session(ctx, request.Id)
-	if failure != nil {
-		switch failure.status {
-		case unauthorized:
-			return GetSession401JSONResponse{missingCustomer()}, nil
-		default:
-			return GetSession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
-		}
-	}
-	return GetSession200JSONResponse(sessionOf(found)), nil
-}
-
-// CloseSession ends a session, which is how the agent leaves the call.
-func (s *Server) CloseSession(ctx context.Context, request CloseSessionRequestObject) (CloseSessionResponseObject, error) {
-	if _, ok := CustomerFrom(ctx); !ok {
-		return CloseSession401JSONResponse{missingCustomer()}, nil
-	}
-	if s.sessions == nil {
-		return CloseSession404JSONResponse{NotFoundJSONResponse{Error: noSessions}}, nil
-	}
-
-	if _, failure := s.session(ctx, request.Id); failure != nil {
-		return CloseSession404JSONResponse{NotFoundJSONResponse{Error: unknownSession}}, nil
-	}
-	closed, err := s.sessions.Close(request.Id, OwnerFrom(ctx))
-	if err != nil {
+	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
 		return nil, err
 	}
-	if !closed {
-		return CloseSession404JSONResponse{NotFoundJSONResponse{Error: unknownSession}}, nil
+	if err != nil {
+		return nil, invalidRequest(err.Error())
 	}
-	return CloseSession204Response{}, nil
+	return &forkSessionResponse{Body: sessionOf(created)}, nil
 }
 
-// SaySession speaks a piece of text without going through the model.
-func (s *Server) SaySession(ctx context.Context, request SaySessionRequestObject) (SaySessionResponseObject, error) {
+// getSession returns one session.
+func (s *Server) getSession(ctx context.Context, request *getSessionRequest) (*getSessionResponse, error) {
 	found, failure := s.session(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return SaySession401JSONResponse{missingCustomer()}, nil
-		}
-		return SaySession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+		return nil, failure
+	}
+	return &getSessionResponse{Body: sessionOf(found)}, nil
+}
+
+// saySession speaks a piece of text without going through the model.
+func (s *Server) saySession(ctx context.Context, request *saySessionRequest) (*struct{}, error) {
+	found, failure := s.session(ctx, request.Id)
+	if failure != nil {
+		return nil, failure
 	}
 	if request.Body == nil || request.Body.Text == "" {
-		return SaySession400JSONResponse{badRequest("there is nothing to say")}, nil
+		return nil, invalidRequest("there is nothing to say")
 	}
 
 	if err := found.Say(ctx, request.Body.Text); err != nil {
-		return SaySession400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
 	}
-	return SaySession204Response{}, nil
+	return nil, nil
 }
 
-// RespondSession answers a piece of text through the model.
-func (s *Server) RespondSession(ctx context.Context, request RespondSessionRequestObject) (RespondSessionResponseObject, error) {
-	found, failure := s.session(ctx, request.Id)
+// respondSession answers a piece of text through the model.
+func (s *Server) respondSession(ctx context.Context, request *respondSessionRequest) (*respondSessionResponse, error) {
+	found, sent, failure := s.sessionToAnswer(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return RespondSession401JSONResponse{missingCustomer()}, nil
-		}
-		return RespondSession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+		return nil, failure
 	}
+	defer sent()
 	if request.Body == nil || request.Body.Text == "" {
-		return RespondSession400JSONResponse{badRequest("there is nothing to answer")}, nil
+		return nil, invalidRequest("there is nothing to answer")
 	}
 
 	if id := value(request.Body.CommandId); id != "" {
-		receipt, err := found.RespondCommand(ctx, id, request.Body.Text, value(request.Body.ClientId))
+		receipt, _, err := found.RespondCommand(ctx, id, request.Body.Text, value(request.Body.ClientId))
 		if errors.Is(err, conversation.ErrCommandConflict) {
-			return RespondSession409JSONResponse{Error: err.Error()}, nil
+			return nil, conflict(err.Error())
 		}
 		if err != nil {
-			return RespondSession400JSONResponse{badRequest(err.Error())}, nil
+			return nil, invalidRequest(err.Error())
 		}
-		return RespondSession200JSONResponse{CommandId: receipt.CommandID, UserMessageId: receipt.UserMessageID,
-			AssistantMessageId: receipt.AssistantMessageID, State: receipt.State, Duplicate: receipt.Duplicate}, nil
+		return &respondSessionResponse{Status: http.StatusOK, Body: &CommandReceipt{
+			CommandId: receipt.CommandID, UserMessageId: receipt.UserMessageID,
+			AssistantMessageId: receipt.AssistantMessageID, State: receipt.State, Duplicate: receipt.Duplicate,
+		}}, nil
 	}
 	if _, err := found.Respond(ctx, request.Body.Text, nil); err != nil {
-		return RespondSession400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
 	}
-	return RespondSession204Response{}, nil
+	return &respondSessionResponse{Status: http.StatusNoContent}, nil
 }
 
-// InterruptSession abandons the reply being spoken.
-func (s *Server) InterruptSession(ctx context.Context, request InterruptSessionRequestObject) (InterruptSessionResponseObject, error) {
+// respondSessionResponse is a durable command's receipt, or nothing when the text named no
+// command and the model is simply answering.
+type respondSessionResponse struct {
+	Status int
+	Body   *CommandReceipt
+}
+
+// interruptSession abandons the reply being spoken.
+func (s *Server) interruptSession(ctx context.Context, request *interruptSessionRequest) (*struct{}, error) {
 	found, failure := s.session(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return InterruptSession401JSONResponse{missingCustomer()}, nil
-		}
-		return InterruptSession404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+		return nil, failure
 	}
 
 	found.Interrupt()
-	return InterruptSession204Response{}, nil
+	return nil, nil
 }
 
-// GetSessionCommand reports what one durable command ended as, without running anything.
-func (s *Server) GetSessionCommand(ctx context.Context, request GetSessionCommandRequestObject) (GetSessionCommandResponseObject, error) {
+// rewindSession carries a conversation on from the end of one of its responses.
+func (s *Server) rewindSession(ctx context.Context, request *rewindSessionRequest) (*struct{}, error) {
 	found, failure := s.session(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return GetSessionCommand401JSONResponse{missingCustomer()}, nil
-		}
-		return GetSessionCommand404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+		return nil, failure
+	}
+	if request.Body == nil || request.Body.ResponseId == "" {
+		return nil, invalidRequest("name the response to carry on from")
+	}
+	if s.store == nil {
+		return nil, errNoStore
+	}
+
+	err := found.Rewind(ctx, s.store, request.Body.ResponseId)
+	switch {
+	case errors.Is(err, store.ErrUnknownResponse):
+		return nil, notFound(err.Error())
+	case errors.Is(err, session.ErrCannotRewind):
+		return nil, invalidRequest(err.Error())
+	case err != nil:
+		return nil, err
+	}
+	return nil, nil
+}
+
+// getSessionCommand reports what one durable command ended as, without running anything.
+func (s *Server) getSessionCommand(ctx context.Context, request *getSessionCommandRequest) (*getSessionCommandResponse, error) {
+	found, failure := s.session(ctx, request.Id)
+	if failure != nil {
+		return nil, failure
 	}
 
 	receipt, err := found.Command(request.CommandId)
 	if err != nil {
-		return GetSessionCommand404JSONResponse{NotFoundJSONResponse{Error: unknownCommand}}, nil
+		return nil, errUnknownCommand
 	}
-	return GetSessionCommand200JSONResponse(receiptOf(receipt)), nil
+	return &getSessionCommandResponse{Body: receiptOf(receipt)}, nil
 }
 
-// InterruptSessionCommand stops the named command and leaves every other one alone.
-func (s *Server) InterruptSessionCommand(ctx context.Context, request InterruptSessionCommandRequestObject) (InterruptSessionCommandResponseObject, error) {
+// interruptSessionCommand stops the named command and leaves every other one alone.
+func (s *Server) interruptSessionCommand(ctx context.Context, request *interruptSessionCommandRequest) (*interruptSessionCommandResponse, error) {
 	found, failure := s.session(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return InterruptSessionCommand401JSONResponse{missingCustomer()}, nil
-		}
-		return InterruptSessionCommand404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+		return nil, failure
 	}
 
 	receipt, err := found.InterruptCommand(request.CommandId)
 	if errors.Is(err, conversation.ErrCommandNotFound) {
-		return InterruptSessionCommand404JSONResponse{NotFoundJSONResponse{Error: unknownCommand}}, nil
+		return nil, errUnknownCommand
 	}
 	if err != nil {
 		// The stop was taken but its durable outcome is not known, so the caller is told
 		// to keep the intent and retry this command id rather than that it stopped.
-		return InterruptSessionCommand503JSONResponse{Error: err.Error()}, nil
+		return nil, unavailable(err.Error())
 	}
-	return InterruptSessionCommand200JSONResponse(receiptOf(receipt)), nil
+	return &interruptSessionCommandResponse{Body: receiptOf(receipt)}, nil
 }
 
 // receiptOf renders a durable command receipt for the wire.
@@ -360,58 +284,78 @@ func receiptOf(receipt conversation.CommandReceipt) CommandReceipt {
 	}
 }
 
-// SetSessionInstructions changes what the agent is told to be.
-func (s *Server) SetSessionInstructions(ctx context.Context, request SetSessionInstructionsRequestObject) (SetSessionInstructionsResponseObject, error) {
+// setSessionInstructions changes what the agent is told to be.
+func (s *Server) setSessionInstructions(ctx context.Context, request *setSessionInstructionsRequest) (*struct{}, error) {
 	found, failure := s.session(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return SetSessionInstructions401JSONResponse{missingCustomer()}, nil
-		}
-		return SetSessionInstructions404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+		return nil, failure
 	}
 	if request.Body == nil {
-		return SetSessionInstructions400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, invalidRequest("a request body is required")
 	}
 
 	found.SetInstructions(request.Body.Instructions)
-	return SetSessionInstructions204Response{}, nil
+	return nil, nil
 }
 
-// lookupStatus says which way finding a session failed.
-type lookupStatus int
+// setSessionSettings moves one running session onto other models or another voice. The
+// agent config it started from is untouched.
+func (s *Server) setSessionSettings(ctx context.Context, request *setSessionSettingsRequest) (*setSessionSettingsResponse, error) {
+	found, failure := s.session(ctx, request.Id)
+	if failure != nil {
+		return nil, failure
+	}
+	if request.Body == nil {
+		return nil, invalidRequest("a request body is required")
+	}
 
-const (
-	unauthorized lookupStatus = iota
-	notFound
-	// badInput is a request that could not be understood, as against one that named
-	// something real belonging to somebody else.
-	badInput
-)
+	body := request.Body
+	settings := session.Settings{
+		LLM: body.Llm, STT: body.Stt, TTS: body.Tts, STS: body.Sts,
+		Voice: body.Voice, Temperature: body.Temperature, MaxOutputTokens: body.MaxOutputTokens,
+	}
+	if body.Thinking != nil {
+		thinking := string(*body.Thinking)
+		settings.Thinking = &thinking
+	}
+	if body.Verbosity != nil {
+		verbosity := string(*body.Verbosity)
+		settings.Verbosity = &verbosity
+	}
+	if err := found.SetSettings(ctx, settings); err != nil {
+		if errors.Is(err, session.ErrCardedToNative) {
+			return nil, errCardedSessionToNative
+		}
+		return nil, invalidRequest(err.Error())
+	}
+	return &setSessionSettingsResponse{Body: sessionOf(found)}, nil
+}
 
-// unknownSession is what a caller is told about a session that is not theirs, which is the
+// errCardedSessionToNative is what setSessionSettings and updateSession answer a move onto a
+// speech-to-speech model of a session that started with the person's episode cards
+// (session.ErrCardedToNative).
+var errCardedSessionToNative = APIError{Type: ErrorTypeInvalidRequest, Code: codeCardedSessionToNative,
+	Message: "a session that started with the person's episode cards cannot move onto a speech-to-speech model; start a new session to use one"}
+
+// errUnknownSession is what a caller is told about a session that is not theirs, which is the
 // same thing they are told about one that never existed.
-const unknownSession = "no such session"
+var errUnknownSession = APIError{Type: ErrorTypeNotFound, Code: codeSessionNotFound, Message: "no such session"}
 
-// unknownCommand is what a caller is told about a command this conversation never
+// errUnknownCommand is what a caller is told about a command this conversation never
 // accepted, which is the same thing they are told about one they may not touch.
-const unknownCommand = "no such command"
-
-type lookupFailure struct {
-	status  lookupStatus
-	message string
-}
+var errUnknownCommand = APIError{Type: ErrorTypeNotFound, Code: codeCommandNotFound, Message: "no such command"}
 
 // session finds a session belonging to the calling customer.
-func (s *Server) session(ctx context.Context, id string) (*session.Session, *lookupFailure) {
+func (s *Server) session(ctx context.Context, id string) (*session.Session, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, &lookupFailure{status: unauthorized}
+		return nil, errMissingCustomer
 	}
 	if s.sessions == nil {
-		return nil, &lookupFailure{status: notFound, message: noSessions}
+		return nil, errNoSessions
 	}
 	found, ok := s.sessions.Get(id, OwnerFrom(ctx))
 	if !ok || !canReadSession(ctx, found.Spec()) {
-		return nil, &lookupFailure{status: notFound, message: unknownSession}
+		return nil, errUnknownSession
 	}
 	return found, nil
 }
@@ -424,12 +368,12 @@ func (s *Server) session(ctx context.Context, id string) (*session.Session, *loo
 //
 // A session that ended and one that belongs to somebody else are both reported as not
 // found: a different answer for each would make this a way to discover whose an id is.
-func (s *Server) storedOrLiveSession(ctx context.Context, id string) (session.Found, *lookupFailure) {
+func (s *Server) storedOrLiveSession(ctx context.Context, id string) (session.Found, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return session.Found{}, &lookupFailure{status: unauthorized}
+		return session.Found{}, errMissingCustomer
 	}
 	if s.sessions == nil {
-		return session.Found{}, &lookupFailure{status: notFound, message: noSessions}
+		return session.Found{}, errNoSessions
 	}
 
 	owner := OwnerFrom(ctx)
@@ -437,82 +381,142 @@ func (s *Server) storedOrLiveSession(ctx context.Context, id string) (session.Fo
 		return session.Found{Live: live}, nil
 	}
 	if s.store == nil {
-		return session.Found{}, &lookupFailure{status: notFound, message: unknownSession}
+		return session.Found{}, errUnknownSession
 	}
 
 	row, err := s.store.StoredSession(ctx, owner.CustomerID, id)
 	if err != nil {
-		return session.Found{}, &lookupFailure{status: notFound, message: unknownSession}
+		return session.Found{}, errUnknownSession
 	}
 	// The row carries who opened it, which is what the live path checks through the
 	// manager. Skipping it here would let one of a customer's users read another's.
 	if !owner.Reaches(session.Owner{
 		CustomerID: row.CustomerID, UserID: row.UserID, Kind: auth.Kind(row.CallerKind),
 	}) {
-		return session.Found{}, &lookupFailure{status: notFound, message: unknownSession}
+		return session.Found{}, errUnknownSession
 	}
 	return session.Found{Stored: &row}, nil
 }
 
-// sessionQuery is the filter as it arrives, which is the same set of parameters on listing
-// and on searching. Gathered into one struct so the two cannot drift apart in what they
-// admit: a filter honoured by one and forgotten by the other is one a caller uses to read
-// somebody else's conversations.
-type sessionQuery struct {
-	Agent, ConfigID, UserID, Project *string
-	// State is a string rather than either of the two generated enums, because the
-	// generator makes one type per operation and they are the same parameter.
-	State         string
-	Custom        *string
-	After, Before *time.Time
-	Limit, Offset *int
+// reopenSettleGap is how long a reopened conversation's agent stays quiet, with nothing left
+// to do, before the message that reopened it is taken as answered.
+const reopenSettleGap = 2 * time.Second
+
+// reopenHoldMost bounds how long a reopened conversation is held open for its message.
+const reopenHoldMost = 10 * time.Minute
+
+// sessionToAnswer finds the session a message is put to, along with what to call once the
+// message is in.
+//
+// A chat is never over for the person writing in it. Its session ends when the last watcher
+// leaves, which says nothing about whether they are done, so one that ended is carried on
+// under the same id, on the config it was opened with. It is held open until the agent has
+// answered, so a message sent with no socket attached still gets its reply, and then ends
+// the way any conversation does once nobody is watching.
+func (s *Server) sessionToAnswer(ctx context.Context, id string) (*session.Session, func(), error) {
+	found, failure := s.session(ctx, id)
+	var spec session.Spec
+	switch {
+	case failure == nil && (found.State() != session.Ended || !found.Spec().PersistConversation):
+		return found, func() {}, nil
+	case failure == nil:
+		// Ended here, so the spec it ran on is still at hand, tools and instructions included.
+		spec = found.Spec()
+		spec.Reopened = found.CreatedAt()
+	case errors.Is(failure, errUnknownSession):
+		if spec, failure = s.reopenedFromRow(ctx, id); failure != nil {
+			return nil, nil, failure
+		}
+	default:
+		return nil, nil, failure
+	}
+	spec.Greeting = ""
+	spec.Caller = CallerFrom(ctx)
+	spec.CallerKind = KindFrom(ctx)
+
+	reopened, err := s.sessions.Create(ctx, spec)
+	if errors.Is(err, session.ErrSessionExists) {
+		// Another message reopened it first.
+		found, failure := s.session(ctx, id)
+		return found, func() {}, failure
+	}
+	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
+		return nil, nil, err
+	}
+	if err != nil {
+		return nil, nil, invalidRequest(err.Error())
+	}
+	events, detach := reopened.Watch()
+	return reopened, func() { go holdUntilAnswered(reopened, events, detach) }, nil
 }
 
-// sessionFilter turns query parameters into a store filter, refusing what cannot be meant.
-//
-// The user id is the one parameter a caller does not get to choose freely: anybody who is
-// not the app's own backend is narrowed to their own sessions whatever they asked for,
-// because a filter a caller can widen is not a boundary. The manager narrows it again for
-// the same reason; two checks is the right number for something that decides whose
-// conversations a stranger can read.
-func sessionFilter(ctx context.Context, query sessionQuery) (store.SessionFilter, error) {
-	filter := store.SessionFilter{
-		AgentName: value(query.Agent),
-		ConfigID:  value(query.ConfigID),
-		Project:   value(query.Project),
-		State:     query.State,
-		Limit:     value(query.Limit),
-		Offset:    value(query.Offset),
+// reopenedFromRow is the spec a text session that ended in another process is carried on
+// with: the config it was opened with, and what its row remembers about it.
+func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, error) {
+	stored, failure := s.storedOrLiveSession(ctx, id)
+	if failure != nil {
+		return session.Spec{}, failure
 	}
-	if query.After != nil {
-		filter.After = *query.After
+	row := stored.Stored
+	if row == nil || row.CallID != "" || row.ConversationID == "" || row.UserID != CallerFrom(ctx).UserID {
+		return session.Spec{}, errUnknownSession
 	}
-	if query.Before != nil {
-		filter.Before = *query.Before
+	var spec session.Spec
+	if row.ConfigID != "" {
+		config, failure := s.configFor(ctx, row.CustomerID, &row.ConfigID, nil)
+		if failure != nil {
+			return session.Spec{}, failure
+		}
+		spec = session.FromConfig(*config)
 	}
+	spec.ID = row.ID
+	spec.Reopened = row.CreatedAt
+	spec.CustomerID = row.CustomerID
+	spec.Text = true
+	spec.STSTarget = ""
+	spec.PersistConversation = true
+	spec.ConversationID = row.ConversationID
+	spec.Title, spec.Description, spec.Project = row.Title, row.Description, row.Project
+	spec.Custom = row.Custom
+	spec.ModelOverwrites = row.ModelOverwrites
+	spec.ForkedFrom = row.ForkedFrom
+	// The caller's connections go on with the chat; the session checks each against the
+	// config as it is now and the caller asking, as it did when the chat opened.
+	spec.ConnectorSelections = selectionsOf(*row)
+	return spec, nil
+}
 
-	if requested := value(query.UserID); requested != "" {
-		if KindFrom(ctx) != auth.KindServer {
-			return store.SessionFilter{}, errors.New(
-				"only a server-side caller may list another user's sessions")
-		}
-		filter.UserID = requested
+// selectionsOf are the connections a stored session's caller chose for its session bindings.
+func selectionsOf(row store.AgentSession) []session.ConnectorSelection {
+	var chosen []session.ConnectorSelection
+	for _, selection := range row.ConnectorSelections {
+		chosen = append(chosen, session.ConnectorSelection{Name: selection.Name, ConnectionID: selection.ConnectionID})
 	}
+	return chosen
+}
 
-	if labels := value(query.Custom); labels != "" {
-		decoded := map[string]any{}
-		if err := json.Unmarshal([]byte(labels), &decoded); err != nil {
-			return store.SessionFilter{}, errors.New("custom must be a JSON object of labels")
-		}
-		filter.Custom = make(map[string]string, len(decoded))
-		for key, held := range decoded {
-			// Flattened to strings because that is what a query string carries and what the
-			// containment check compares: a caller who labelled a session with the number 4
-			// finds it again by typing 4.
-			filter.Custom[key] = fmt.Sprint(held)
+// holdUntilAnswered keeps a watcher on a reopened conversation until its agent settles.
+func holdUntilAnswered(reopened *session.Session, events <-chan session.Event, detach func()) {
+	defer detach()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	most := time.After(reopenHoldMost)
+	last := time.Now()
+	for {
+		select {
+		case _, open := <-events:
+			if !open {
+				return
+			}
+			last = time.Now()
+		case <-most:
+			return
+		case <-ticker.C:
+			if time.Since(last) >= reopenSettleGap && !reopened.Busy() {
+				return
+			}
 		}
 	}
-	return filter, nil
 }
 
 // sessionsOf renders a query's results, taking the live half where there is one: a session
@@ -548,16 +552,24 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	if config != nil {
 		spec = session.FromConfig(*config)
 	}
+	spec.ID = value(request.Id)
 	spec.CallID = value(request.CallId)
 	spec.CustomerID = customerID
 	spec.Text = value(request.Text)
-	spec.PersistConversation = value(request.PersistConversation)
+	// A text conversation is kept in Stream Chat unless it is incognito, which Normalize
+	// turns off, so any Chat client can read it back.
+	spec.PersistConversation = spec.Text
 	spec.ConversationID = value(request.ConversationId)
+	for _, said := range value(request.History) {
+		spec.History = append(spec.History, conversation.HistoryLine{
+			Role: string(said.Role), Text: said.Text, Name: value(said.Name), At: value(said.CreatedAt),
+		})
+	}
 
 	spec.Incognito = value(request.Incognito)
 	spec.Title = override(spec.Title, request.Title)
 	spec.Description = override(spec.Description, request.Description)
-	spec.Project = override(spec.Project, request.Project)
+	spec.Project = override(spec.Project, request.ProjectId)
 	if request.Custom != nil {
 		spec.Custom = *request.Custom
 	}
@@ -581,35 +593,22 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	if spec.Text {
 		spec.STSTarget = ""
 	}
-	spec.SubagentTarget = override(spec.SubagentTarget, request.Subagent)
-	if request.Subagent != nil && spec.Subagents != nil {
-		delete(spec.Subagents, "default")
-	}
-	if request.Subagents != nil {
-		if spec.Subagents == nil {
-			spec.Subagents = map[string]string{}
-		}
-		for name, target := range *request.Subagents {
-			spec.Subagents[name] = target
-		}
-	}
 	spec.SearchTarget = override(spec.SearchTarget, request.Search)
 	spec.Voice = override(spec.Voice, request.Voice)
 	spec.MaxTokens = override(spec.MaxTokens, request.MaxTokens)
-	spec.Tasks = override(spec.Tasks, request.Tasks)
 	spec.ToolTimeoutMs = override(spec.ToolTimeoutMs, request.ToolTimeoutMs)
 	spec.Backchannel = override(spec.Backchannel, request.Backchannel)
 	spec.MinConfidence = override(spec.MinConfidence, request.MinConfidence)
-
-	if request.Sandbox != nil {
-		spec.Sandbox = string(*request.Sandbox)
-	}
 
 	if request.Languages != nil {
 		spec.LanguageHints = *request.Languages
 	}
 	if request.Keyterms != nil {
 		spec.Keyterms = *request.Keyterms
+	}
+	for _, chosen := range value(request.ConnectorBindings) {
+		spec.ConnectorSelections = append(spec.ConnectorSelections,
+			session.ConnectorSelection{Name: chosen.Name, ConnectionID: chosen.ConnectionId})
 	}
 	// Cost labels are merged rather than replaced: a config labels which agent the spend
 	// belongs to and a call labels which conversation, and both are worth billing on.
@@ -641,22 +640,6 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 		spec.VideoSource = override(spec.VideoSource, request.Video.Source)
 		spec.VideoMaxFrames = override(spec.VideoMaxFrames, request.Video.MaxFrames)
 	}
-	if request.Skills != nil {
-		skills := harness.Skills{Skills: make([]harness.Skill, 0, len(*request.Skills))}
-		for _, skill := range *request.Skills {
-			skills.Skills = append(skills.Skills, harness.Skill{
-				Name: skill.Name, Revision: value(skill.Revision),
-				Subagent: value(skill.Subagent), CaptureVideo: value(skill.CaptureVideo),
-				Description:  skill.Description,
-				Instructions: skill.Instructions,
-				Deadline:     time.Duration(value(skill.DeadlineMs)) * time.Millisecond,
-			})
-		}
-		spec.Skills = &skills
-	}
-	if request.SkillNames != nil {
-		spec.SkillNames = *request.SkillNames
-	}
 	if request.Tools != nil {
 		for _, tool := range *request.Tools {
 			declared := harness.Tool{Name: tool.Name, Description: tool.Description, DisplayTitle: value(tool.DisplayTitle)}
@@ -665,6 +648,12 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 			}
 			if tool.Executor != nil && *tool.Executor == SessionToolExecutorClient {
 				declared.Client = true
+			}
+			if approval := tool.Approval; approval != nil && approval.Title != "" {
+				declared.Approval = &harness.ToolApproval{
+					Title: approval.Title, Message: value(approval.Message), ReasonArgument: value(approval.ReasonArgument),
+					AllowTitle: value(approval.AllowTitle), DeclineTitle: value(approval.DeclineTitle),
+				}
 			}
 			spec.Tools = append(spec.Tools, declared)
 		}
@@ -686,9 +675,9 @@ func sessionOf(found *session.Session) Session {
 		UserId:    spec.UserID,
 		AgentId:   spec.AgentID,
 		State:     SessionState(found.State()),
+		Modality:  SessionModality(found.Modality()),
 		CreatedAt: found.CreatedAt(),
 	}
-	rendered.Subagents = &spec.Subagents
 	if found.CapturesVideo() {
 		rendered.Video = &SessionVideo{Source: &spec.VideoSource, MaxFrames: &spec.VideoMaxFrames}
 	}
@@ -706,11 +695,15 @@ func sessionOf(found *session.Session) Session {
 		rendered.Tts = &voice
 	}
 	if think != "" {
-		rendered.Subagent = &think
+		rendered.ThinkingLlm = &think
 	}
 	if speech := found.Speech(); speech != "" {
 		rendered.Sts = &speech
 	}
+	_, speaking := found.Voice()
+	rendered.Voice = optional(speaking)
+	mode := SessionMode(found.Mode())
+	rendered.Mode = &mode
 	if instructions != "" {
 		rendered.Instructions = &instructions
 	}
@@ -737,7 +730,7 @@ func describe(rendered *Session, spec session.Spec) {
 		rendered.Description = &spec.Description
 	}
 	if spec.Project != "" {
-		rendered.Project = &spec.Project
+		rendered.ProjectId = &spec.Project
 	}
 	if len(spec.Custom) > 0 {
 		rendered.Custom = &spec.Custom
@@ -762,8 +755,11 @@ func storedSessionOf(row store.AgentSession) Session {
 		CallType:  row.CallType,
 		UserId:    row.UserID,
 		AgentId:   row.AgentID,
-		State:     SessionState(row.State),
+		State:     Live,
 		CreatedAt: row.CreatedAt,
+	}
+	if row.State == store.SessionClosed {
+		rendered.State = Ended
 	}
 	// A session with no call was held in writing, which is what the absence of one means.
 	if row.CallID == "" {
@@ -780,6 +776,10 @@ func storedSessionOf(row store.AgentSession) Session {
 // mergeStored writes what only the row knows onto a rendered session: the labels, and when
 // it ended.
 func mergeStored(rendered *Session, row *store.AgentSession) {
+	// A live session knows its modality before the row that records it.
+	if rendered.Modality == "" {
+		rendered.Modality = SessionModality(row.Modality)
+	}
 	if row.AgentName != "" {
 		rendered.Agent = &row.AgentName
 	}
@@ -793,7 +793,7 @@ func mergeStored(rendered *Session, row *store.AgentSession) {
 		rendered.Description = &row.Description
 	}
 	if row.Project != "" {
-		rendered.Project = &row.Project
+		rendered.ProjectId = &row.Project
 	}
 	if len(row.Custom) > 0 {
 		custom := row.Custom
@@ -815,7 +815,7 @@ func mergeStored(rendered *Session, row *store.AgentSession) {
 func modelOverwritesOf(sent ModelOverwrites) store.ModelOverwrites {
 	return store.ModelOverwrites{
 		LLM: value(sent.Llm), STT: value(sent.Stt), TTS: value(sent.Tts),
-		STS: value(sent.Sts), Subagent: value(sent.Subagent), Search: value(sent.Search),
+		STS: value(sent.Sts), Search: value(sent.Search),
 		Thinking:        string(value(sent.Thinking)),
 		Temperature:     sent.Temperature,
 		MaxOutputTokens: sent.MaxOutputTokens,
@@ -839,9 +839,6 @@ func modelOverwritesFor(held store.ModelOverwrites) *ModelOverwrites {
 	}
 	if held.STS != "" {
 		rendered.Sts = &held.STS
-	}
-	if held.Subagent != "" {
-		rendered.Subagent = &held.Subagent
 	}
 	if held.Search != "" {
 		rendered.Search = &held.Search
@@ -876,8 +873,8 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 		parentID = parent.Live.ID()
 		wasText = spec.Text
 		if spec.Incognito {
-			return session.Spec{}, errors.New(
-				"an incognito session is not recorded, so there is nothing to fork from")
+			return session.Spec{}, stack.Wrap(errors.New(
+				"an incognito session is not recorded, so there is nothing to fork from"))
 		}
 		if spec.ConversationID != "" {
 			recall = &session.Recall{AgentID: spec.AgentID, ConversationID: spec.ConversationID}
@@ -890,6 +887,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 			Custom: row.Custom, ModelOverwrites: row.ModelOverwrites,
 			CallType: row.CallType,
 		}
+		spec.ConnectorSelections = selectionsOf(*row)
 		parentID = row.ID
 		wasText = row.CallID == ""
 		spec.Text = wasText
@@ -897,7 +895,14 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 			recall = &session.Recall{AgentID: row.AgentID, ConversationID: row.ConversationID}
 		}
 	default:
-		return session.Spec{}, errors.New("there is nothing to fork")
+		return session.Spec{}, stack.Wrap(errors.New("there is nothing to fork"))
+	}
+	// A thread channel's conversation is everyone's in the external thread (Spec.Shared). A
+	// fork would carry their words into a conversation one caller owns, outside the thread
+	// and the shared session's connector rule, so none is made, whoever asks: the backend
+	// carries on in the thread by opening it again by its agent id (threadConversation).
+	if recall != nil && (session.Spec{ConversationID: recall.ConversationID}).Shared() {
+		return session.Spec{}, stack.Wrap(errors.New("a thread channel's conversation is not forked"))
 	}
 
 	// A config named on the fork replaces the parent's models wholesale rather than merging
@@ -909,13 +914,14 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 		fresh.Title, fresh.Description = spec.Title, spec.Description
 		fresh.Project, fresh.Custom = spec.Project, spec.Custom
 		fresh.CallType = spec.CallType
+		fresh.ConnectorSelections = spec.ConnectorSelections
 		spec = fresh
 	}
 
 	spec.ForkedFrom = parentID
 	spec.Title = override(spec.Title, request.Title)
 	spec.Description = override(spec.Description, request.Description)
-	spec.Project = override(spec.Project, request.Project)
+	spec.Project = override(spec.Project, request.ProjectId)
 	spec.Instructions = override(spec.Instructions, request.Instructions)
 	spec.Incognito = value(request.Incognito)
 	if request.Custom != nil {
@@ -927,14 +933,15 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 
 	// The fork is its own conversation, so it gets its own channel and its own agent id:
 	// sharing the parent's would have two sessions writing into one transcript.
+	spec.ID = ""
 	spec.ConversationID = ""
 	spec.AgentID = ""
 	spec.CallID = value(request.CallId)
 	switch {
 	case wasText && spec.CallID != "":
-		return session.Spec{}, errors.New("a text session cannot be forked into a call")
+		return session.Spec{}, stack.Wrap(errors.New("a text session cannot be forked into a call"))
 	case !wasText && spec.CallID == "":
-		return session.Spec{}, errors.New("forking a voice session needs a call to join")
+		return session.Spec{}, stack.Wrap(errors.New("forking a voice session needs a call to join"))
 	}
 
 	// History comes across by default: the usual reason to fork is to carry on from what was
@@ -942,12 +949,49 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 	// write -- so a fork that is carrying history persists, and a parent that kept none has
 	// none to hand over. Recall is cleared rather than inherited, because a fork of a fork
 	// reads its own parent and not its grandparent: the parent's channel already holds both.
+	spec.PersistConversation = spec.Text
 	spec.Recall = nil
 	if recall != nil && (request.Messages == nil || *request.Messages) {
 		spec.PersistConversation = true
 		spec.Recall = recall
 	}
 	return spec, nil
+}
+
+var errForkNeedsHistory = errors.New(
+	"response_id says where the carried history stops, so it cannot be combined with messages false")
+
+// recordedHistory is the history a fork reads out of what its parent recorded rather than
+// out of a Chat channel: up to the named response, or all of it for a parent that kept no
+// channel to read. Nil leaves the fork carrying whatever forkSpec decided.
+func (s *Server) recordedHistory(ctx context.Context, parent session.Found, request ForkSessionRequest, recall *session.Recall) ([]llm.Message, error) {
+	carry := request.Messages == nil || *request.Messages
+	responseID := value(request.ResponseId)
+	switch {
+	case responseID != "" && !carry:
+		return nil, stack.Wrap(errForkNeedsHistory)
+	case responseID == "" && (!carry || recall != nil):
+		return nil, nil
+	case s.store == nil && responseID != "":
+		return nil, errNoStore
+	case s.store == nil:
+		return nil, nil
+	}
+
+	// A running parent may have said something the writer has not caught up with yet.
+	if parent.Live != nil {
+		if err := parent.Live.FlushRecords(ctx); err != nil {
+			return nil, err
+		}
+	}
+	exchanges, err := s.store.Exchanges(ctx, OwnerFrom(ctx).CustomerID, parent.ID(), responseID)
+	if err != nil {
+		return nil, err
+	}
+	if len(exchanges) == 0 && responseID == "" {
+		return nil, nil
+	}
+	return session.HistoryOf(exchanges), nil
 }
 
 // value reads an optional field, which the generated types carry as pointers.
@@ -971,4 +1015,378 @@ func override[T any](base T, requested *T) T {
 // Persistent personal sessions use the same caller binding as their Chat channel.
 func canReadSession(ctx context.Context, spec session.Spec) bool {
 	return !spec.PersistConversation || spec.Caller.UserID == CallerFrom(ctx).UserID
+}
+
+// registerSessions declares the operations served in sessions.go.
+func (s *Server) registerSessions(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "getSession",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/sessions/{id}",
+		Summary:     "One session",
+		Description: "Reading a session is open to the device holding it, for the same reason listing and " +
+			"stopping are: it is the conversation the caller is having. A session belonging to " +
+			"somebody else is reported as not found rather than refused, so this is not a way to " +
+			"find out whose an id is.",
+		Extensions: map[string]any{clientAccessibleExtension: true},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The session"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.getSession)
+	huma.Register(api, huma.Operation{
+		OperationID: "forkSession",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/sessions/{id}/fork",
+		Summary:     "Continue a conversation as a new one",
+		Description: "Opens a session from another's spec, carrying its history across by default, and " +
+			"records where it came from. The usual reason is to ask the same question of a different " +
+			"model without losing the original answer, which is why anything in the request is " +
+			"written over what the parent was opened with.\n" +
+			"The parent is untouched and keeps running if it was running. Forking an incognito " +
+			"session is refused rather than answered with an empty conversation: there is nothing " +
+			"recorded to fork from, and pretending otherwise would hand back a session that quietly " +
+			"lost everything the caller thought they were continuing.",
+		Extensions:    map[string]any{clientAccessibleExtension: true},
+		DefaultStatus: http.StatusCreated,
+		Responses: map[string]*huma.Response{
+			"201": {Description: "The fork is running"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.forkSession)
+	huma.Register(api, huma.Operation{
+		OperationID: "rewindSession",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/sessions/{id}/rewind",
+		Summary:     "Go back to a response and carry on from there",
+		Description: "The conversation continues as though nothing after the named response had been said: " +
+			"the reply being spoken is abandoned, the agent's history is cut back to the end of that " +
+			"response, and every later response is marked rewound, so neither the responses nor " +
+			"their items list them again. The named response itself is kept.\n" +
+			"The history is rebuilt from what the session recorded, the question and the answer of " +
+			"each turn, so a session that recorded nothing cannot be rewound: an incognito one, one " +
+			"on a deployment with no store, and a native speech-to-speech one, whose model keeps its " +
+			"own context. A persistent conversation is refused as well, because its transcript lives " +
+			"in Chat and would bring the rewound turns back the next time it opened; fork it at the " +
+			"response instead.",
+		Extensions:    map[string]any{clientAccessibleExtension: true},
+		DefaultStatus: http.StatusNoContent,
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The conversation carries on from the end of that response"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.rewindSession)
+	huma.Register(api, huma.Operation{
+		OperationID: "saySession",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/sessions/{id}/say",
+		Summary:     "Speak a piece of text without going through the model",
+		Description: "For when the caller already knows what should be said, such as a greeting. A model " +
+			"would only add latency and cost to words that were never in question.",
+		DefaultStatus: http.StatusNoContent,
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The text is being spoken"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.saySession)
+	huma.Register(api, huma.Operation{
+		OperationID: "respondSession",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/sessions/{id}/respond",
+		Summary:     "Answer a piece of text through the model, as though it had been said",
+		Description: "A text session that ended is reopened under the same id, on the config it was " +
+			"opened with: a chat is never over for the person writing in it. A call that ended is " +
+			"not found.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "Durable command accepted or replayed; only a new command starts inference"},
+			"409": errorResponse("The command ID was already accepted with different content"),
+			"204": {Description: "The model is answering"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.respondSession)
+	huma.Register(api, huma.Operation{
+		OperationID: "interruptSession",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/sessions/{id}/interrupt",
+		Summary:     "Abandon the reply being spoken",
+		Description: "What a caller outside the call has instead of a voice. A murmur is not interrupted, " +
+			"because it was meant to overlap with whoever is talking.",
+		DefaultStatus: http.StatusNoContent,
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The reply was abandoned, if there was one"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.interruptSession)
+	huma.Register(api, huma.Operation{
+		OperationID: "getSessionCommand",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/sessions/{id}/commands/{command_id}",
+		Summary:     "What is known about one durable command",
+		Description: "Reads a command's receipt without accepting, running or stopping anything. It is how a " +
+			"client whose stop or submission had an unknown outcome reconciles the same command id " +
+			"rather than inventing another one.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The command's current receipt"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound},
+	}, s.getSessionCommand)
+	huma.Register(api, huma.Operation{
+		OperationID: "interruptSessionCommand",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/sessions/{id}/commands/{command_id}/interrupt",
+		Summary:     "Stop one named command, and nothing else",
+		Description: "Abandons the reply that command is generating. Unlike interrupting the session, a stop " +
+			"that arrives after its command finished replays that command's terminal receipt and " +
+			"leaves the command running now alone, so a delayed stop for one question can never take " +
+			"the answer to the next one.\n" +
+			"A command accepted but not yet generating is prevented from starting. A command already " +
+			"completed, failed, cancelled or interrupted returns what it ended as. An unknown " +
+			"command is a 404, the same answer as a conversation the caller does not own.\n" +
+			"Interrupting model work claims nothing about a tool whose external side effect already " +
+			"happened.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The command's terminal receipt"},
+			"503": errorResponse("The stop was accepted but its durable outcome is unknown. The command is not reported stopped; retry the same command id."),
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound},
+	}, s.interruptSessionCommand)
+	huma.Register(api, huma.Operation{
+		OperationID: "setSessionInstructions",
+		Method:      http.MethodPut,
+		Path:        "/v1/agents/sessions/{id}/instructions",
+		Summary:     "Change what the agent is told to be",
+		Description: "Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps " +
+			"the prompt it started with, because rewriting it mid-sentence would have the agent " +
+			"change character in the middle of a thought.",
+		DefaultStatus: http.StatusNoContent,
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The next turn will use them"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.setSessionInstructions)
+	huma.Register(api, huma.Operation{
+		OperationID: "setSessionSettings",
+		Method:      http.MethodPatch,
+		Path:        "/v1/agents/sessions/{id}/settings",
+		Summary:     "Change the models and voice of one running session",
+		Description: "Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, " +
+			"for this session only: the agent config it started from is untouched. The new models " +
+			"are opened before anything changes, so a target that does not route is refused and the " +
+			"agent carries on as it was. They take over from the next turn; a reply being spoken " +
+			"finishes on the models it started with.\n" +
+			"Naming sts makes the session native, and an empty sts makes it a cascade again, on " +
+			"whatever llm, stt and tts it names or had before. The conversation carries across: a " +
+			"conversation model is handed the history on every turn, and a speech-to-speech model is " +
+			"opened with the recent transcript in its instructions. A session that started with the " +
+			"person's episode cards cannot be moved onto a speech-to-speech model: 400, " +
+			"carded_session_to_native.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The session, on its new models"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.setSessionSettings)
+}
+
+type getSessionRequest struct {
+	Id string `path:"id" doc:"The session, as returned when it was created."`
+}
+
+type getSessionResponse struct {
+	Body Session
+}
+
+type forkSessionRequest struct {
+	Id   string `path:"id" doc:"The session, as returned when it was created."`
+	Body *ForkSessionRequest
+}
+
+type forkSessionResponse struct {
+	Body Session
+}
+
+type rewindSessionRequest struct {
+	Id   string                `path:"id" doc:"The session, as returned when it was created."`
+	Body *RewindSessionRequest `required:"true"`
+}
+
+type saySessionRequest struct {
+	Id   string      `path:"id" doc:"The session, as returned when it was created."`
+	Body *SayRequest `required:"true"`
+}
+
+type respondSessionRequest struct {
+	Id   string          `path:"id" doc:"The session, as returned when it was created."`
+	Body *RespondRequest `required:"true"`
+}
+
+type interruptSessionRequest struct {
+	Id string `path:"id" doc:"The session, as returned when it was created."`
+}
+
+type getSessionCommandRequest struct {
+	Id        string `path:"id" doc:"The session, as returned when it was created."`
+	CommandId string `path:"command_id" doc:"The client's own command id, as sent when the command was submitted."`
+}
+
+type getSessionCommandResponse struct {
+	Body CommandReceipt
+}
+
+type interruptSessionCommandRequest struct {
+	Id        string `path:"id" doc:"The session, as returned when it was created."`
+	CommandId string `path:"command_id" doc:"The client's own command id, as sent when the command was submitted."`
+}
+
+type interruptSessionCommandResponse struct {
+	Body CommandReceipt
+}
+
+type setSessionInstructionsRequest struct {
+	Id   string               `path:"id" doc:"The session, as returned when it was created."`
+	Body *InstructionsRequest `required:"true"`
+}
+
+type setSessionSettingsRequest struct {
+	Id   string                  `path:"id" doc:"The session, as returned when it was created."`
+	Body *SessionSettingsRequest `required:"true"`
+}
+
+type setSessionSettingsResponse struct {
+	Body Session
+}
+
+// ForkSessionRequest Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
+type ForkSessionRequest struct {
+	Agent           *string                 `json:"agent,omitempty"`
+	CallId          *string                 `json:"call_id,omitempty" doc:"The call the fork joins. A voice session cannot be forked into a text one or the other way about, so this is required when the parent held a call and refused when it did not."`
+	ConfigId        *string                 `json:"config_id,omitempty"`
+	Custom          *map[string]interface{} `json:"custom,omitempty"`
+	Description     *string                 `json:"description,omitempty"`
+	Incognito       *bool                   `json:"incognito,omitempty" doc:"Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept."`
+	Instructions    *string                 `json:"instructions,omitempty" doc:"Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession."`
+	Messages        *bool                   `json:"messages,omitempty" doc:"Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants." default:"true"`
+	ModelOverwrites *ModelOverwrites        `json:"model_overwrites,omitempty"`
+	ProjectId       *string                 `json:"project_id,omitempty"`
+	ResponseId      *string                 `json:"response_id,omitempty" doc:"Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false."`
+	Title           *string                 `json:"title,omitempty"`
+}
+
+func (*ForkSessionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model."
+	return schema
+}
+
+// InstructionsRequest is the InstructionsRequest schema.
+type InstructionsRequest struct {
+	Instructions string `json:"instructions"`
+}
+
+// ModelOverwrites What to change about the models for one session, over whatever its agent config decided.
+// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
+type ModelOverwrites struct {
+	Llm             *string                   `json:"llm,omitempty" doc:"A provider/model or a capability shortcut, in place of the config's."`
+	MaxOutputTokens *int                      `json:"max_output_tokens,omitempty" doc:"Caps the reply, reasoning included. Omitted leaves the provider's default."`
+	Search          *string                   `json:"search,omitempty"`
+	Sts             *string                   `json:"sts,omitempty" doc:"A speech-to-speech target. Naming one here makes the session native even if the config did not, which means no transcriber, model or voice is opened."`
+	Stt             *string                   `json:"stt,omitempty"`
+	Temperature     *float64                  `json:"temperature,omitempty" doc:"How random the answer is. Omitted leaves the provider's own default, which is not the same as zero: zero is a real request for a deterministic model."`
+	Thinking        *ModelOverwritesThinking  `json:"thinking,omitempty" doc:"How hard to reason before answering. It becomes the reasoning effort on the request, which is the vocabulary the providers that support one already speak, and means nothing to a model that does not reason." enum:"none,minimal,low,medium,high"`
+	Tts             *string                   `json:"tts,omitempty"`
+	Verbosity       *ModelOverwritesVerbosity `json:"verbosity,omitempty" doc:"How much detail to give. Dropped for models that do not take it." enum:"low,medium,high"`
+}
+
+func (*ModelOverwrites) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["max_output_tokens"].Format = ""
+	schema.Description = "What to change about the models for one session, over whatever its agent config decided.\nIt is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent."
+	return schema
+}
+
+// ModelOverwritesThinking is the ModelOverwritesThinking schema.
+type ModelOverwritesThinking string
+
+// Defines values for ModelOverwritesThinking.
+const (
+	ModelOverwritesThinkingHigh    ModelOverwritesThinking = "high"
+	ModelOverwritesThinkingLow     ModelOverwritesThinking = "low"
+	ModelOverwritesThinkingMedium  ModelOverwritesThinking = "medium"
+	ModelOverwritesThinkingMinimal ModelOverwritesThinking = "minimal"
+	ModelOverwritesThinkingNone    ModelOverwritesThinking = "none"
+)
+
+// Valid indicates whether the value is a known member of the ModelOverwritesThinking enum.
+func (e ModelOverwritesThinking) Valid() bool {
+	switch e {
+	case ModelOverwritesThinkingHigh:
+		return true
+	case ModelOverwritesThinkingLow:
+		return true
+	case ModelOverwritesThinkingMedium:
+		return true
+	case ModelOverwritesThinkingMinimal:
+		return true
+	case ModelOverwritesThinkingNone:
+		return true
+	default:
+		return false
+	}
+}
+
+// ModelOverwritesVerbosity is the ModelOverwritesVerbosity schema.
+type ModelOverwritesVerbosity string
+
+// Defines values for ModelOverwritesVerbosity.
+const (
+	ModelOverwritesVerbosityHigh   ModelOverwritesVerbosity = "high"
+	ModelOverwritesVerbosityLow    ModelOverwritesVerbosity = "low"
+	ModelOverwritesVerbosityMedium ModelOverwritesVerbosity = "medium"
+)
+
+// Valid indicates whether the value is a known member of the ModelOverwritesVerbosity enum.
+func (e ModelOverwritesVerbosity) Valid() bool {
+	switch e {
+	case ModelOverwritesVerbosityHigh:
+		return true
+	case ModelOverwritesVerbosityLow:
+		return true
+	case ModelOverwritesVerbosityMedium:
+		return true
+	default:
+		return false
+	}
+}
+
+// RespondRequest is the RespondRequest schema.
+type RespondRequest struct {
+	ClientId  *string `json:"client_id,omitempty" doc:"The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it." pattern:"^[A-Za-z0-9_.:-]{1,128}$"`
+	CommandId *string `json:"command_id,omitempty" doc:"Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	Text      string  `json:"text" minLength:"1"`
+}
+
+// RewindSessionRequest is the RewindSessionRequest schema.
+type RewindSessionRequest struct {
+	ResponseId string `json:"response_id" doc:"The response to carry on from. It is kept; everything after it is not."`
+}
+
+// SayRequest is the SayRequest schema.
+type SayRequest struct {
+	Text string `json:"text"`
+}
+
+// SessionSettingsRequest What to change about one running session's models. A field left out is left as it is. The same safe knobs as ModelOverwrites, plus the voice.
+type SessionSettingsRequest struct {
+	Llm             *string                          `json:"llm,omitempty" doc:"The conversation model, a provider/model or a capability shortcut."`
+	MaxOutputTokens *int                             `json:"max_output_tokens,omitempty"`
+	Sts             *string                          `json:"sts,omitempty" doc:"A speech-to-speech target, which makes the session native. Empty makes it a cascade again."`
+	Stt             *string                          `json:"stt,omitempty"`
+	Temperature     *float64                         `json:"temperature,omitempty"`
+	Thinking        *SessionSettingsRequestThinking  `json:"thinking,omitempty" enum:"none,minimal,low,medium,high"`
+	Tts             *string                          `json:"tts,omitempty"`
+	Verbosity       *SessionSettingsRequestVerbosity `json:"verbosity,omitempty" enum:"low,medium,high"`
+	Voice           *string                          `json:"voice,omitempty" doc:"The voice to speak in, in the provider's own terms. Empty returns to the provider's default."`
+}
+
+func (*SessionSettingsRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["max_output_tokens"].Format = ""
+	schema.Description = "What to change about one running session's models. A field left out is left as it is. The same safe knobs as ModelOverwrites, plus the voice."
+	return schema
 }

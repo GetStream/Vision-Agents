@@ -65,14 +65,32 @@ false` is deliberate: a field the spec gives a default is one the caller may lea
 generated non-nullable it would be required on the way in, so every session request would have
 to spell out the defaults it wanted.
 
-**One method per HTTP method, not one per endpoint.** The spec has 93 operations and the shapes
-are already generated, so 93 wrappers would say nothing the types do not, and a new endpoint
-would need one written before it could be called.
+**The public API is resources, never raw requests** (see "Resource methods, never raw requests"
+in the `sdk` skill). Customers, examples, the README and the docs never write this:
 
 ```ts
-const configs = await api.get("/v1/agents/configs");
-await api.delete("/v1/agents/sessions/{id}", { path: { id } });
+// never
+const simulation = await client.post("/v1/agents/simulations", { body });
 ```
+
+They write `client.simulations.create(body)`. Each resource is a small class in its own module
+(`simulations.ts`, `memories.ts`, `sessions.ts`) built on the client, hung off `Client` or a
+handle, and exported from `index.ts`:
+
+```ts
+const simulation = await client.simulations.create(body);
+let run = await client.simulations.run(simulation.id);
+run = await client.simulations.runs.get(run.id);
+```
+
+Underneath, `Client` keeps one typed method per HTTP method (`get`, `post`, `put`, `patch`,
+`delete`), typed from the spec. Resources are built on them, and they reach an endpoint no
+resource covers yet. They are plumbing, not what a snippet shows. A new endpoint is not done
+until it has a resource method, and the docs use it.
+
+A resource method takes the generated request schema (or an options object when it renames
+query parameters to camelCase, as `runs.list({ simulationId })` does) and returns the generated
+response. It adds no defaults and re-declares nothing.
 
 The type machinery in `client.ts` is load-bearing and worth reading before editing:
 
@@ -86,8 +104,7 @@ The type machinery in `client.ts` is load-bearing and worth reading before editi
   from the query string rather than sent as the word.
 - `Result` maps 204 to `void`, which is most of the ways a session is acted on.
 
-Never add a method that names one endpoint. Never re-declare a schema by hand — name it
-`Schemas["CreateSessionRequest"]`.
+Never re-declare a schema by hand — name it `Schemas["CreateSessionRequest"]`.
 
 ## Sockets
 
@@ -143,12 +160,12 @@ Hence the conditional-spread style throughout `agent.ts`:
 A boolean tests `=== undefined`, because `false` is a value somebody chose. A string tests
 truthiness, because an empty target means the same as no target.
 
-An absent skill list and an empty one differ: absent leaves the built-in set, `useSkills:
-false` or `skills: []` sends `skills: []` and turns delegation off.
+An absent skill list and an empty one differ: absent leaves the built-in set, `skills: []`
+sends `skills: []` and turns delegation off. Both live on the agent config, written by `sync`.
 
 ## A backend rule the caller cannot guess gets a function, not a doc note
 
-`conversation.ts` is the pattern. Holding a text conversation has two rules that are nowhere in
+Holding a text conversation is the example. It has two rules that are nowhere in
 the spec and both load-bearing: the channel is the backend's to name, so a first open passes no
 `conversation_id` and a resume passes the one the first was given; and a resume has to come back
 as the same `agent_id`, because the backend checks a conversation is reopened by whoever held it.
@@ -162,7 +179,7 @@ Naming the channel on a first open reads like the obvious thing — it makes `ag
 outright, because a resume reads the channel without creating it. What follows is that a session
 a browser opened cannot be driven by writing into its channel: the hook looks for a session
 whose `agent_id` is the channel, the backend named the channel something else, and the write
-lands nowhere. Chat is the transcript; `respond` over the session socket is the way in.
+lands nowhere. Chat is the transcript; `responses.create` is the way in.
 
 ## Check a claim about the backend against the backend
 
@@ -197,9 +214,11 @@ would have to be found and undone by whoever fixes it.
   number.
 - What is written in code wins over what a `folder` says. A directory is a starting point.
 - `sync` uses **`POST /v1/agents/sync`**, one request carrying the whole directory, not the
-  configs/skills/knowledge sequence the Go SDK hand-rolls. It sends a SHA-256 `fingerprint` of
-  everything in the body, so syncing on startup does nothing when nothing changed, and it
-  writes the knowledge urls only when the router says something did.
+  configs/skills/knowledge sequence, with the directory's knowledge urls as `knowledge_urls` in
+  the same body. It sends a SHA-256 `fingerprint` of everything in the body, and a folder
+  from `loadFolder` records it in `.agent_sync`, so syncing on startup sends nothing when
+  nothing changed. The stamp's file access is handed in as `Folder.stamp` by `./node`, which
+  keeps `Agent.sync` free of `node:fs` in the browser entry.
 - `resolveConfig` turns a config *name* into an id once and caches it. A name matching nothing
   stored is passed through, because it is then either an id or a mistake the router can report
   better than a guess here.
@@ -213,9 +232,12 @@ runs has to be publicly reachable.
   worker rather than queueing behind it.
 - Handlers run on their own, never awaited in the read loop. Answering one caller in line
   leaves the next listening to a ringing phone.
-- A call is reported `accepted` or `rejected` with the reason; **a message is not**. Accepting
-  and rejecting are about a caller waiting on a line, and there is no line for a message.
-- A message only arrives when no agent is running on its channel. `sessionFor` keeps one
+- Every call and message is reported `done` with its `work_id`, with an `error` when it failed
+  or had no handler: that is what gives the worker its room back. `active` and `handles` go on
+  the handshake.
+- A message with a `sessionId` was written to a running session whose agent leaves text to
+  dispatch; `answer` has the model reply there, as the server acting for the writer. Any other
+  message only arrives when no agent is running on its channel. `sessionFor` keeps one
   session per channel for the same reason: the session that answered the last message is the
   one that knows what has been said.
 - `load` reports only `active_agents` and a round trip this side measured. Host CPU and memory
@@ -254,6 +276,12 @@ checked.
 - One error type per failure kind: `RouterError` (status, operation, what the router said),
   `SocketClosedError`, `ConfigurationError`. A request that never arrived is `status: 0`,
   because a caller retrying a network failure and one retrying a 500 are different.
+- Every non-2xx response becomes a `RouterError` through `errorOf`, which reads the envelope
+  into `type` (the generated `ErrorType`, open to one it does not know), `code` and `docUrl`,
+  and `X-Request-Id` into `requestId`. A body that is not the envelope keeps its text as the
+  message and leaves those three undefined rather than throwing a JSON error. A refused socket
+  upgrade is still a `SocketClosedError`: the WebSocket API, in a browser and in Node 22,
+  exposes neither the status nor the body.
 - Do not add a logger. A library that logs is a library deciding where a customer's transcripts
   go.
 
@@ -262,7 +290,8 @@ checked.
 Reject it if it:
 
 - adds a runtime dependency, or reaches for `node:` anything outside `folder.ts`;
-- adds a client method for a single endpoint, or re-declares a generated schema;
+- shows `client.get/post/put/patch/delete("/v1/...")` in an example, the README or the docs
+  instead of a resource method, or re-declares a generated schema;
 - copies a schema default into a request, or sends a field the caller did not set;
 - handles a tool call anywhere a caller must be iterating for it to run;
 - treats an unknown frame as fatal, or drops its payload;
@@ -270,3 +299,9 @@ Reject it if it:
 - opens two readers on one socket;
 - asserts that a method was called, or replaces the test server with a stubbed `fetch`;
 - hand-edits `src/generated/api.ts`.
+
+## Pagination
+
+`sessions.query`, `sessions.search`, `responses.list` and `items.list` take a `cursor` and return
+the page, `{items, has_more, next_cursor}`. `items.unwind` follows `next_cursor` until `has_more`
+is false. See the `pagination` skill.

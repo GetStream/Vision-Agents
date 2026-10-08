@@ -89,9 +89,21 @@ did not have to know which vendor answered. So options become `Terms()`, and onl
 `supports:` lists every term asked for are candidates.
 
 Today the batch entry `elevenlabs/eleven_v3` declares `[speed, stability, format]`, which is
-the recorded path; the live entries declare nothing, so they serve requests that ask only for a
-target, a voice and a language. Adding to that list means sending the field in that provider's
-package under [`internal/tts`](../../../acceleration/internal/tts) first.
+the recorded path. Of the live entries, only `eleven_flash_v2_5` and `eleven_multilingual_v2`
+declare anything: `[speed]`, sent as `voice_settings.speed` when each context opens, and a
+speed outside 0.7–1.2 is refused when the provider is built. The dialogue models (v3
+conversational, v4, v4 Turbo) have no speed, so a request naming one routes past them, and
+`NewDialogue` refuses one rather than drop it. Every other live entry declares nothing, so it
+serves requests that ask only for a target, a voice and a language. Cartesia
+(`generation_config.speed`, 0.6–1.5) and Inworld (`audioConfig.speakingRate`, 0.5–1.5) can
+express a speed but do not send one yet; wire it in their package, refuse outside their range,
+then add `speed` to their `supports:`. Adding to that list means sending the field in that
+provider's package under [`internal/tts`](../../../acceleration/internal/tts) first.
+
+An agent asks for a speed through its config: `speed` on the agent config (create, update,
+patch and `syncAgent`, and `speed:` in an agent folder's `agent.yaml`) becomes the voice
+session's `options.TTS.Speed`. Zero or absent names no speed, which leaves every voice a
+candidate.
 
 That `speed` is the one declaration the vendor docs do not clearly back. `voice_settings.speed`
 is documented at 0.7–1.2 for text to speech generally, but v3's documented voice setting is
@@ -114,15 +126,17 @@ the provider's library.
   training and no retention, so `allow_training: false` routes there until an account
   elsewhere is opted out and its entry is edited.
 - `overwrites` is per vendor, decoded into a typed struct with `DisallowUnknownFields`, so a
-  misspelt key fails at build time. Since the live entries express no terms, this is the only
-  way to steer a live voice: `elevenlabs: {voice_id}`, `inworld: {voice_id, delivery_mode}`.
+  misspelt key fails at build time. Since the live entries express no terms beyond a speed,
+  this is the only other way to steer a live voice: `elevenlabs: {voice_id}`,
+  `inworld: {voice_id, delivery_mode}`.
 
 ## Adding an option
 
 1. A field on `options.TTS`, with `Merge` and a `Term` plus a line in `Terms()` if it is
    optional behaviour.
-2. The same field on `TtsOptions` in
-   [`openapi.yaml`](../../../acceleration/api/openapi.yaml), then regenerate all three clients.
+2. The same field on `TtsOptions`, on its Go struct in
+   `internal/api`. Then run
+   `go run ./cmd/openapi` and regenerate all three clients.
 3. Read it in each provider that can express it, refuse it where the vendor has a range and the
    request is outside it, and declare it in `supports:`.
 4. A test for the refusal, not only for the happy path.

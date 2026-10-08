@@ -108,7 +108,7 @@ func (s *TelnyxIntegrationSuite) TestCallingAHandsetRingsItAndBridgesItToATrunk(
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	stream, err := phone.NewStream(phone.StreamOptions{})
+	stream, err := phone.NewStream(phone.StreamOptions{APIKey: os.Getenv("STREAM_API_KEY"), APISecret: os.Getenv("STREAM_API_SECRET")})
 	s.Require().NoError(err)
 
 	callID := "outbound-" + strconv.FormatInt(time.Now().UnixNano(), 10)

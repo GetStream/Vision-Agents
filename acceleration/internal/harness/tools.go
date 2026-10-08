@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // defaultToolsFS carries the built-in tool set so an agent with telephony works without an
@@ -37,6 +38,20 @@ type Tool struct {
 	Client bool `yaml:"-"`
 	// DisplayTitle is what a call is doing, in words for the people in the conversation.
 	DisplayTitle string `yaml:"-"`
+	// Approval, when set, is what a person is asked before each call runs. A persistent
+	// conversation shows the call as awaiting their answer.
+	Approval *ToolApproval `yaml:"-"`
+}
+
+// ToolApproval is the question a person answers before a call runs.
+type ToolApproval struct {
+	Title   string
+	Message string
+	// ReasonArgument names the string argument in which the model says why it wants the
+	// call, which is shown as the question's reason.
+	ReasonArgument string
+	AllowTitle     string
+	DeclineTitle   string
 }
 
 // Tools is the set a harness was configured with.
@@ -73,19 +88,58 @@ func (t Tools) Requests() []llm.Tool {
 	return rendered
 }
 
+// usePolicy is what a reply model is told about using the tools it is offered. A model that
+// answers as fast as a voice needs to will otherwise gather more than a tool asks for, ask
+// leave to do what it was just asked, or stop after one call, and a caller hangs up on a
+// conversation that never acts. Acting at once is not the same as acting in silence: whatever
+// the operator's instructions have the agent say before acting, such as reading the caller's
+// details back, is still said, in the same turn as the call, and a bare filler does not stand
+// in for it.
+//
+// The caller also hears nothing but that sentence while a slow tool runs, and a read-back
+// takes seconds to say, so a hold phrase tacked on at its end, or after the result, comes
+// after the wait it was meant to cover. The sentence therefore opens with the hold phrase and
+// runs on into the read-back. It is one sentence, not a one-word sentence and then the
+// read-back, because the pause between two utterances is where a caller's interruption lands.
+// After a result the answer is given without another hold phrase, so a wait has one.
+//
+// It says nothing about any one tool, so it holds for any set, and it leaves confirmation to
+// the operator's own instructions and to a tool's approval.
+const usePolicy = "Before calling a tool, say one short sentence that opens with a brief hold " +
+	"phrase, such as \"One moment,\" and goes straight on, with no full stop between, into what " +
+	"your instructions ask you to say before acting (such as reading the caller's details back) " +
+	"or else what you are doing. Say the hold phrase there and only there: never as a sentence " +
+	"of its own, never in place of a required read-back, never after the call or after a " +
+	"result. Then call the tool in the same turn once every argument it requires is known. " +
+	"Do not collect optional arguments or ask permission for what was asked. Take a name or " +
+	"value as given (a surname is a name). After a result, answer from it; if the request " +
+	"needs another tool, open that call with its own sentence. Pass bare values, not " +
+	"phrases. Where your instructions or a tool's approval require confirmation first, " +
+	"follow them."
+
+// Prompt is what the model is told about using its tools: when to call one and how to fill
+// it in. It is empty when there are none, so a harness without tools adds nothing to the
+// system prompt.
+func (t Tools) Prompt() string {
+	if len(t.Tools) == 0 {
+		return ""
+	}
+	return usePolicy
+}
+
 // Validate reports the first tool the harness could not use.
 func (t Tools) Validate() error {
 	seen := map[string]struct{}{}
 	for _, tool := range t.Tools {
 		if tool.Name == "" {
-			return errors.New("harness: every tool needs a name")
+			return stack.Wrap(errors.New("harness: every tool needs a name"))
 		}
 		if tool.Description == "" {
-			return fmt.Errorf("harness: tool %s has no description, so the model would "+
-				"never know when to use it", tool.Name)
+			return stack.Wrap(fmt.Errorf("harness: tool %s has no description, so the model would "+
+				"never know when to use it", tool.Name))
 		}
 		if _, duplicate := seen[tool.Name]; duplicate {
-			return fmt.Errorf("harness: tool %s is declared twice", tool.Name)
+			return stack.Wrap(fmt.Errorf("harness: tool %s is declared twice", tool.Name))
 		}
 		seen[tool.Name] = struct{}{}
 	}
@@ -96,7 +150,7 @@ func (t Tools) Validate() error {
 func DefaultTools() (Tools, error) {
 	raw, err := defaultToolsFS.ReadFile("tools.yaml")
 	if err != nil {
-		return Tools{}, fmt.Errorf("harness: read default tools: %w", err)
+		return Tools{}, stack.Wrap(fmt.Errorf("harness: read default tools: %w", err))
 	}
 	return parseTools(raw)
 }
@@ -117,7 +171,7 @@ func LoadTools(path string) (Tools, error) {
 func parseTools(raw []byte) (Tools, error) {
 	var tools Tools
 	if err := yaml.Unmarshal(raw, &tools); err != nil {
-		return Tools{}, fmt.Errorf("harness: parse tools: %w", err)
+		return Tools{}, stack.Wrap(fmt.Errorf("harness: parse tools: %w", err))
 	}
 	if err := tools.Validate(); err != nil {
 		return Tools{}, err

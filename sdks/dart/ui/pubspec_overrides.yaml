@@ -1,0 +1,5 @@
+# Development only: the core from this repository rather than pub.dev. Not published, and
+# ignored by anybody depending on the hosted package.
+dependency_overrides:
+  vision_agents_core:
+    path: ../core

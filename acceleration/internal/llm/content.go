@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 const (
@@ -83,22 +85,22 @@ func (p ImagePart) DataURI() string {
 // local bytes, and a URL the upstream cannot fetch would be a 400 halfway through a call.
 func ParseDataURI(value string) (ImagePart, error) {
 	if !strings.HasPrefix(value, "data:") {
-		return ImagePart{}, fmt.Errorf("llm: image_url must be a data URI")
+		return ImagePart{}, stack.Wrap(fmt.Errorf("llm: image_url must be a data URI"))
 	}
 	rest := strings.TrimPrefix(value, "data:")
 	mime, encoded, found := strings.Cut(rest, ";base64,")
 	if !found {
-		return ImagePart{}, fmt.Errorf("llm: image_url must be a base64 data URI")
+		return ImagePart{}, stack.Wrap(fmt.Errorf("llm: image_url must be a base64 data URI"))
 	}
 	if mime == "" {
-		return ImagePart{}, fmt.Errorf("llm: image_url is missing a mime type")
+		return ImagePart{}, stack.Wrap(fmt.Errorf("llm: image_url is missing a mime type"))
 	}
 	raw, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		return ImagePart{}, fmt.Errorf("llm: image_url is not valid base64: %w", err)
+		return ImagePart{}, stack.Wrap(fmt.Errorf("llm: image_url is not valid base64: %w", err))
 	}
 	if len(raw) == 0 {
-		return ImagePart{}, fmt.Errorf("llm: image_url carries no bytes")
+		return ImagePart{}, stack.Wrap(fmt.Errorf("llm: image_url carries no bytes"))
 	}
 	return ImagePart{MIME: mime, Data: raw}, nil
 }
@@ -172,21 +174,21 @@ func samePart(a, b ContentPart) bool {
 // Validate checks image sources before they reach a provider.
 func (p ImagePart) Validate() error {
 	if (p.URL == "") == (len(p.Data) == 0) {
-		return fmt.Errorf("llm: an image needs exactly one of URL or bytes")
+		return stack.Wrap(fmt.Errorf("llm: an image needs exactly one of URL or bytes"))
 	}
 	if p.Detail != "" && p.Detail != "auto" && p.Detail != "low" && p.Detail != "high" {
-		return fmt.Errorf("llm: invalid image detail %q", p.Detail)
+		return stack.Wrap(fmt.Errorf("llm: invalid image detail %q", p.Detail))
 	}
 	if p.URL != "" {
 		source, err := url.Parse(p.URL)
 		if err != nil || (source.Scheme != "https" && source.Scheme != "http") || source.Hostname() == "" || source.User != nil {
-			return fmt.Errorf("llm: image URL must be an absolute HTTP(S) URL without credentials")
+			return stack.Wrap(fmt.Errorf("llm: image URL must be an absolute HTTP(S) URL without credentials"))
 		}
 	} else {
 		switch p.MIME {
 		case "", "image/jpeg", "image/png", "image/webp", "image/gif":
 		default:
-			return fmt.Errorf("llm: unsupported image media type %q", p.MIME)
+			return stack.Wrap(fmt.Errorf("llm: unsupported image media type %q", p.MIME))
 		}
 	}
 	return nil

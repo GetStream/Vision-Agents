@@ -10,12 +10,13 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // judgeInstructions is what the judging model is told.
 //
 // It is asked for a probability rather than a verdict so that one threshold means the same
-// thing whichever backend is judging: a policy can be moved between llm and llm_classifier
+// thing whichever backend is judging: a policy can be moved between llm and lcm
 // without its threshold changing meaning. A model's number is not calibrated the way a
 // classifier's is, and that difference is the reason to prefer the classifier rather than a
 // reason to ask this one a different question.
@@ -49,7 +50,7 @@ type judgeVerdict struct {
 // every turn.
 func newJudge(ctx context.Context, policy Policy, deps Deps) (Guardrail, error) {
 	if deps.LLM == nil {
-		return nil, errors.New("guardrail: this deployment routes no llm, so it cannot judge a turn")
+		return nil, stack.Wrap(errors.New("guardrail: this deployment routes no llm, so it cannot judge a turn"))
 	}
 
 	target := policy.Target

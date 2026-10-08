@@ -1,0 +1,88 @@
+name: mcp_plugins
+description: Reads the team's issues and your own calendar and files, and makes 3D renders with Blender.
+mode: text
+llm: llm-fast
+# This agent has dozens of tools, and some servers write a page of instructions and examples
+# into a tool's description. progressive_tools offers each tool by the first line of its
+# description instead, and the first call to a tool returns the rest without running it,
+# which costs one more model turn per tool used. Off when left out.
+progressive_tools: true
+# The company's accounts: connected once each, on the dashboard, for every conversation.
+agent_plugins:
+  - name: sentry
+    tools: [find_organizations, find_projects, search_issues, search_errors, get_sentry_resource, analyze_issue_with_seer, update_issue]
+  - github
+  - hubspot
+  - salesforce
+# Each person's own: the agent asks for one in the chat the first time it needs it.
+# Linear, Calendly and Cal.com register their own OAuth clients, so they need nothing
+# configured on the router: ask about an issue and the login works.
+# A plugin named by its id alone is the catalog's: Linear at https://mcp.linear.app/mcp,
+# asking for read and write. Name it with a mapping to change how it is reached. readonly
+# reaches https://mcp.linear.app/mcp/readonly instead, which has no tool that writes and
+# asks only for read; scopes replaces what the login asks for. A login made before a change
+# keeps what it was granted, so connect again after changing either. toolsets limits
+# Cal.com to some of its tools, and needs no new login. tools offers the model only the
+# tools named, or matching a pattern such as get_*, on any plugin or MCP server; left out,
+# all of them.
+user_plugins:
+  - name: linear
+    tools: [list_issues, get_issue, save_issue, list_comments, save_comment, list_projects, get_project, list_cycles, list_teams, list_users, list_issue_statuses]
+  # - name: linear
+  #   readonly: true
+  #   scopes: [read]
+  #   tools: [list_issues, get_issue]
+  - google_calendar
+  - google_drive
+  # - name: google_drive
+  #   scopes:
+  #     - https://www.googleapis.com/auth/drive.readonly
+  #     - https://www.googleapis.com/auth/drive.file
+  - google_docs
+  - calendly
+  - calcom
+  # - name: calcom
+  #   toolsets: [bookings, availability, event-types]
+  - slack
+# Any other MCP server, by its URL. The router opens it for every conversation and offers
+# its tools as tablejourney__<tool>; tools offers only those named or matching a pattern.
+# The server says whether it needs a login: TableJourney needs none. The app connects one
+# that does once on the dashboard, as for agent_plugins; with user: true, each person
+# connects their own in the chat, as for user_plugins. scopes, left out, asks for what the
+# server advertises. The server has to offer dynamic client registration. A login made before
+# a change of scopes keeps what it was granted, so connect again after changing them.
+mcp_servers:
+  - name: tablejourney
+    url: https://tablejourney.com/mcp
+    tools: [search_places, place, dishes, plan_day, festivals, experiences, itineraries, cities]
+#   - name: crm
+#     url: https://crm.example.com/mcp
+#     scopes: [contacts.read]
+#   - name: notes
+#     url: https://notes.example.com/mcp
+#     user: true
+# Blender for the render skill, in the router's Daytona sandbox.
+sandbox: daytona
+sandbox_options:
+  # bpy is Blender as a Python module, for Python 3.13. The libraries are the X and GL
+  # ones its wheel links against that a slim Debian does not have.
+  setup:
+    - >-
+      apt-get update && apt-get install -y --no-install-recommends
+      libgl1 libx11-6 libxext6 libxfixes3 libxi6 libxkbcommon0 libxrender1
+      libxxf86vm1 libsm6 libice6 libxt6 && rm -rf /var/lib/apt/lists/*
+    - pip install --no-cache-dir bpy==5.2.2
+  timeout: 5m
+  cpu: 2
+  memory_gb: 4
+# The lines this agent answers on besides its Stream Chat channel. The provider's
+# credentials are not here: the app connects each line once on the router, which answers
+# what arrives and writes the reply back. identity: phone, the default, makes every number
+# that writes an end user of its own; link answers a number only once somebody signed in has
+# tied it to themselves with a code, which is what reading their own calendar needs.
+channels:
+  whatsapp:
+    number: "+15556325550"
+  sms:
+    number: "+12187021098"
+  identity: link

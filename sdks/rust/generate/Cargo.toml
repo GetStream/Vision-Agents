@@ -1,0 +1,16 @@
+[package]
+name = "generate"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Regenerates src/types.rs and src/operations.rs from acceleration/api/openapi.yaml"
+
+[dependencies]
+typify = { version = "0.8", default-features = false }
+schemars = "0.8.22"
+serde_json = "1"
+yaml-rust2 = "0.13"
+syn = { version = "3", features = ["full"] }
+prettyplease = "0.3"
+quote = "1"
+heck = "0.5"

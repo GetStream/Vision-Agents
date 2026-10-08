@@ -2,9 +2,8 @@
 //
 // It is the transport half of internal/agent: everything about credentials, tracks,
 // subscriptions and codecs lives here, so the agent itself only ever sees 16 kHz mono PCM
-// in and out. Inbound Opus is decoded and resampled by media-sdk, which is the same path
-// cmd/transcribe already uses for LiveKit; outbound PCM is encoded back to 48 kHz Opus for
-// the track the agent publishes.
+// in and out. Inbound Opus is decoded straight to 16 kHz; outbound PCM is encoded back to
+// 48 kHz Opus for the track the agent publishes.
 package streamedge
 
 import (
@@ -12,30 +11,27 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
+	"net/http"
 	"slices"
 	"sync"
+	"time"
 
-	videosdk "github.com/GetStream/getstream-go-webrtc"
+	rtc "github.com/GetStream/getstream-go-webrtc"
+	"github.com/GetStream/getstream-go-webrtc/audio/opus"
+	audiortc "github.com/GetStream/getstream-go-webrtc/audio/rtc"
 	"github.com/GetStream/getstream-go-webrtc/track"
+	getstream "github.com/GetStream/getstream-go/v5"
 	sfu_events "github.com/GetStream/protocol/protobuf/video/sfu/event"
 	sfu_models "github.com/GetStream/protocol/protobuf/video/sfu/models"
 	"github.com/GetStream/protocol/protobuf/video/sfu/signal_rpc"
 	"github.com/google/uuid"
-	"github.com/livekit/media-sdk"
-	lkmedia "github.com/livekit/server-sdk-go/v2/pkg/media"
 	"github.com/pion/webrtc/v4"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/emit"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
-)
-
-const (
-	apiKeyEnvVar    = "STREAM_API_KEY"
-	apiSecretEnvVar = "STREAM_API_SECRET"
-	userTokenEnvVar = "STREAM_USER_TOKEN"
 )
 
 // defaultCallType is the call type an agent joins under.
@@ -50,8 +46,9 @@ const audioBuffer = 10
 // would hold up every other event the SFU is trying to report.
 const attendanceBuffer = 32
 
-// Options configures an Edge. The credentials fall back to the environment, which is how
-// every other provider in this service is configured.
+// Options configures an Edge. The credentials are whoever builds the edge's to give: the
+// router gives the identity of the Stream app the session is pinned to, and nothing is read
+// from the environment, which would make every call the deployment's.
 type Options struct {
 	// CallID is the call to join.
 	CallID string
@@ -60,13 +57,17 @@ type Options struct {
 	// User is the identity the agent joins as.
 	User User
 
-	// APIKey defaults to STREAM_API_KEY.
+	// APIKey is the app's key.
 	APIKey string
-	// APISecret defaults to STREAM_API_SECRET. It mints the agent's token, which is why a
-	// server-side agent needs no token of its own.
+	// APISecret mints the agent's token, which is why a server-side agent needs no token
+	// of its own.
 	APISecret string
-	// UserToken defaults to STREAM_USER_TOKEN and is used in preference to a secret.
+	// UserToken is a fixed token used in preference to a secret.
 	UserToken string
+	// BaseURL is the Stream API the app is reached at, and HTTPClient what reaches it.
+	// Empty leaves both to the SDK.
+	BaseURL    string
+	HTTPClient *http.Client
 
 	Logger *slog.Logger
 }
@@ -90,13 +91,13 @@ type Edge struct {
 	attending *emit.Emitter[agent.Attendance]
 	speaker   *speaker
 
-	client *videosdk.Client
-	call   *videosdk.Call
+	client *rtc.Client
+	call   *rtc.Call
 
 	mu sync.Mutex
-	// listening holds the decoder per subscribed track, so a track that goes away stops
-	// being decoded.
-	listening map[string]*lkmedia.PCMRemoteTrack
+	// listening holds what stops the decoding of each subscribed track, so a track that
+	// goes away stops being decoded.
+	listening map[string]chan struct{}
 	// subscribed is the whole subscription list, because the SFU replaces it wholesale on
 	// every update rather than adding to it.
 	subscribed  []*signal_rpc.TrackSubscriptionDetails
@@ -104,33 +105,25 @@ type Edge struct {
 	left        bool
 
 	leaveOnce sync.Once
+	leftDone  chan struct{}
 }
 
 // New validates the options and returns an Edge. It connects nothing; Join does that.
 func New(options Options) (*Edge, error) {
 	if options.CallID == "" {
-		return nil, errors.New("streamedge: a call id is required")
+		return nil, stack.Wrap(errors.New("streamedge: a call id is required"))
 	}
 	if options.User.ID == "" {
-		return nil, errors.New("streamedge: a user id is required")
+		return nil, stack.Wrap(errors.New("streamedge: a user id is required"))
 	}
 	if options.CallType == "" {
 		options.CallType = defaultCallType
 	}
 	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APISecret == "" {
-		options.APISecret = os.Getenv(apiSecretEnvVar)
-	}
-	if options.UserToken == "" {
-		options.UserToken = os.Getenv(userTokenEnvVar)
-	}
-	if options.APIKey == "" {
-		return nil, fmt.Errorf("streamedge: %s is not set", apiKeyEnvVar)
+		return nil, stack.Wrap(errors.New("streamedge: an api key is required"))
 	}
 	if options.APISecret == "" && options.UserToken == "" {
-		return nil, fmt.Errorf("streamedge: set %s or %s", userTokenEnvVar, apiSecretEnvVar)
+		return nil, stack.Wrap(errors.New("streamedge: a secret or a user token is required"))
 	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
@@ -142,26 +135,33 @@ func New(options Options) (*Edge, error) {
 		inbound:   emit.New[agent.InboundAudio](audioBuffer),
 		attending: emit.New[agent.Attendance](attendanceBuffer),
 		speaker:   newSpeaker(options.Logger),
-		listening: map[string]*lkmedia.PCMRemoteTrack{},
+		listening: map[string]chan struct{}{},
+		leftDone:  make(chan struct{}),
 	}, nil
 }
 
 // Join connects, subscribes to what the participants are already saying, and publishes the
 // agent's own audio track.
 func (e *Edge) Join(ctx context.Context) error {
+	started := time.Now()
 	client, err := e.connect()
 	if err != nil {
 		return err
 	}
 	e.client = client
 
-	e.call = client.Call(e.options.CallType, e.options.CallID)
-	joined, err := e.call.Join(ctx, videosdk.WithOnTrack(videosdk.SubscriberFunc(func(remote videosdk.OnTrackReceived) {
+	// Kept off the edge until the join succeeds: leaving a call that never connected panics
+	// in the SDK, which has no signaling client yet to report its stats through.
+	call := client.Call(e.options.CallType, e.options.CallID)
+	signalingStarted := time.Now()
+	joined, err := call.Join(ctx, rtc.WithOnTrack(rtc.SubscriberFunc(func(remote rtc.OnTrackReceived) {
 		e.listen(remote)
 	})))
 	if err != nil {
-		return fmt.Errorf("streamedge: join %s:%s: %w", e.options.CallType, e.options.CallID, err)
+		return stack.Wrap(fmt.Errorf("streamedge: join %s:%s: %w", e.options.CallType, e.options.CallID, err))
 	}
+	e.call = call
+	signalingMs := float64(time.Since(signalingStarted).Microseconds()) / 1000
 
 	// Joining subscribes to nothing, so the SFU has to be told what to forward: whatever is
 	// already being published, and then whatever is published later.
@@ -170,18 +170,26 @@ func (e *Edge) Join(ctx context.Context) error {
 	subscriptions := slices.Clone(e.subscribed)
 	e.mu.Unlock()
 
+	subscribeStarted := time.Now()
 	if err := e.call.SubscribeToTracks(ctx, subscriptions...); err != nil {
-		return fmt.Errorf("streamedge: subscribe: %w", err)
+		return stack.Wrap(fmt.Errorf("streamedge: subscribe: %w", err))
 	}
+	subscribeMs := float64(time.Since(subscribeStarted).Microseconds()) / 1000
 	e.watchForNewTracks(ctx)
 	// Registered before the people already here are reported, so somebody arriving during
 	// this is reported once rather than not at all.
 	e.watchAttendance()
 	e.reportPresent(joined.GetCallState())
 
+	publishStarted := time.Now()
 	if err := e.publish(); err != nil {
 		return err
 	}
+	e.logger.Info("call connection timing", "signaling_ms", signalingMs,
+		"subscribe_ms", subscribeMs,
+		"publish_ms", float64(time.Since(publishStarted).Microseconds())/1000,
+		"join_ms", float64(time.Since(started).Microseconds())/1000)
+	go e.reportICE(ctx, started)
 
 	e.logger.Info("joined the call",
 		"user", e.options.User.ID, "session", e.call.SessionID.Load(), "tracks", len(subscriptions))
@@ -196,6 +204,13 @@ func (e *Edge) Attendance() <-chan agent.Attendance { return e.attending.Events(
 
 // PublishAudio sends a chunk of the agent's speech to the call.
 func (e *Edge) PublishAudio(pcm audio.PcmData) error { return e.speaker.Write(pcm) }
+
+// PublishAudioMarked sends a chunk of speech like PublishAudio, and tells marks when its first
+// frame was queued and when the call took the first one that was not silence, satisfying
+// agent.MarkedPlayout.
+func (e *Edge) PublishAudioMarked(pcm audio.PcmData, marks agent.PlayoutMarks) error {
+	return e.speaker.WriteMarked(pcm, marks)
+}
 
 // SpeechPending reports whether published speech is still waiting to go out, satisfying
 // agent.Playout.
@@ -213,30 +228,25 @@ func (e *Edge) Leave() error {
 }
 
 // Call exposes the underlying call, so a caller can reach the SDK's own features.
-func (e *Edge) Call() *videosdk.Call { return e.call }
+func (e *Edge) Call() *rtc.Call { return e.call }
 
 func (e *Edge) leave() error {
+	close(e.leftDone)
 	e.mu.Lock()
 	e.left = true
 	unregisters := e.unregisters
 	e.unregisters = nil
-	decoders := make([]*lkmedia.PCMRemoteTrack, 0, len(e.listening))
-	for _, decoder := range e.listening {
-		decoders = append(decoders, decoder)
+	for _, stop := range e.listening {
+		close(stop)
 	}
-	e.listening = map[string]*lkmedia.PCMRemoteTrack{}
+	e.listening = map[string]chan struct{}{}
 	e.mu.Unlock()
 
 	for _, unregister := range unregisters {
 		unregister()
 	}
-	// The channel closes before the decoders do, because closing a decoder waits for its
-	// decode goroutine: one blocked handing over its last chunk would never be let go of.
 	e.inbound.Close()
 	e.attending.Close()
-	for _, decoder := range decoders {
-		decoder.Close()
-	}
 
 	var failures []error
 	if err := e.speaker.Close(); err != nil {
@@ -253,28 +263,75 @@ func (e *Edge) leave() error {
 	return errors.Join(failures...)
 }
 
+// reportICE observes the two peer connections without replacing the SDK's own ICE
+// callbacks. Sampling adds at most 20 ms to the reported connection time.
+func (e *Edge) reportICE(ctx context.Context, started time.Time) {
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.NewTimer(30 * time.Second)
+	defer timeout.Stop()
+	timeoutCh := timeout.C
+	var publisherMs, subscriberMs float64
+	for {
+		if pc := e.call.PublisherPC(); pc != nil && publisherMs == 0 && iceConnected(pc.ICEConnectionState()) {
+			publisherMs = float64(time.Since(started).Microseconds()) / 1000
+			e.logger.Info("ice connection timing", "peer", "publisher", "connected_ms", publisherMs)
+			timeout.Stop()
+			timeoutCh = nil
+		}
+		if pc := e.call.SubscriberPC(); pc != nil && subscriberMs == 0 && iceConnected(pc.ICEConnectionState()) {
+			subscriberMs = float64(time.Since(started).Microseconds()) / 1000
+			e.logger.Info("ice connection timing", "peer", "subscriber", "connected_ms", subscriberMs)
+		}
+		if publisherMs > 0 && subscriberMs > 0 {
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-timeoutCh:
+			e.logger.Warn("publisher ice connection did not complete")
+			return
+		case <-ctx.Done():
+			return
+		case <-e.leftDone:
+			return
+		}
+	}
+}
+
+func iceConnected(state webrtc.ICEConnectionState) bool {
+	return state == webrtc.ICEConnectionStateConnected || state == webrtc.ICEConnectionStateCompleted
+}
+
 // connect builds the SDK client, preferring a token over a secret.
 //
 // The coordinator websocket stays on even though the agent reads none of its events: it is
 // what registers the agent as a user, and the coordinator refuses to let a user it has never
 // seen join a call.
-func (e *Edge) connect() (*videosdk.Client, error) {
-	user := videosdk.User{ID: e.options.User.ID, Name: e.options.User.Name}
+func (e *Edge) connect() (*rtc.Client, error) {
+	user := rtc.User{ID: e.options.User.ID, Name: e.options.User.Name}
 	if user.Name == "" {
 		user.Name = user.ID
 	}
 
 	if e.options.UserToken != "" {
-		client, err := videosdk.NewClient(e.options.APIKey, user, videosdk.StaticToken(e.options.UserToken))
+		client, err := rtc.NewClient(e.options.APIKey, user, rtc.StaticToken(e.options.UserToken))
 		if err != nil {
-			return nil, fmt.Errorf("streamedge: connect: %w", err)
+			return nil, stack.Wrap(fmt.Errorf("streamedge: connect: %w", err))
 		}
 		return client, nil
 	}
 
-	client, err := videosdk.NewClientWithSecret(e.options.APIKey, e.options.APISecret, user)
+	options := []rtc.ClientOption{rtc.WithUser(user)}
+	if e.options.BaseURL != "" {
+		options = append(options, getstream.WithBaseUrl(e.options.BaseURL))
+	}
+	if e.options.HTTPClient != nil {
+		options = append(options, getstream.WithHTTPClient(e.options.HTTPClient))
+	}
+	client, err := rtc.NewRTCClient(e.options.APIKey, e.options.APISecret, options...)
 	if err != nil {
-		return nil, fmt.Errorf("streamedge: connect: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("streamedge: connect: %w", err))
 	}
 	return client, nil
 }
@@ -292,10 +349,10 @@ func (e *Edge) publish() error {
 		Channels:  opusNegotiatedChannels,
 	})
 	if err != nil {
-		return fmt.Errorf("streamedge: build audio track: %w", err)
+		return stack.Wrap(fmt.Errorf("streamedge: build audio track: %w", err))
 	}
 	if _, err := e.call.AddTrack(info, voice); err != nil {
-		return fmt.Errorf("streamedge: publish audio track: %w", err)
+		return stack.Wrap(fmt.Errorf("streamedge: publish audio track: %w", err))
 	}
 	return nil
 }
@@ -303,7 +360,7 @@ func (e *Edge) publish() error {
 // listen decodes one participant's track into the audio the agent listens to. Reading the
 // track is also what pulls media through the receiver, so a track nobody reads is a track
 // that never arrives.
-func (e *Edge) listen(remote videosdk.OnTrackReceived) {
+func (e *Edge) listen(remote rtc.OnTrackReceived) {
 	if remote.TrackType != sfu_models.TrackType_TRACK_TYPE_AUDIO {
 		return
 	}
@@ -324,36 +381,59 @@ func (e *Edge) listen(remote videosdk.OnTrackReceived) {
 		participant.Name = remote.Participant.Name
 	}
 
-	decoder, err := lkmedia.NewPCMRemoteTrack(remote.Track,
-		&listener{inbound: e.inbound, participant: participant},
-		lkmedia.WithTargetSampleRate(stt.SampleRate),
-		lkmedia.WithTargetChannels(1),
-	)
+	reader, err := audiortc.NewTrackReader(remote.Track,
+		audiortc.ReaderConfig{Opus: opus.Config{SampleRate: stt.SampleRate}})
 	if err != nil {
 		e.logger.Error("could not decode a participant's audio",
 			"participant", participant.UserID, "error", err)
 		return
 	}
 
+	stop := make(chan struct{})
 	e.mu.Lock()
 	if e.left {
 		e.mu.Unlock()
-		decoder.Close()
 		return
 	}
 	if previous, ok := e.listening[remote.Track.ID()]; ok {
-		previous.Close()
+		close(previous)
 	}
-	e.listening[remote.Track.ID()] = decoder
+	e.listening[remote.Track.ID()] = stop
 	e.mu.Unlock()
 
 	e.logger.Debug("listening to a participant", "participant", participant.UserID)
+	go e.hear(reader, participant, stop)
+}
+
+// hear hands one participant's decoded audio to the agent until the track ends or stop is
+// closed.
+func (e *Edge) hear(reader *audiortc.TrackReader, participant stt.Participant, stop <-chan struct{}) {
+	defer reader.Close()
+	for pcm, err := range reader.Frames() {
+		if err != nil {
+			e.logger.Debug("stopped hearing a participant", "participant", participant.UserID, "error", err)
+			return
+		}
+		select {
+		case <-stop:
+			return
+		default:
+		}
+		e.inbound.Send(agent.InboundAudio{
+			Participant: participant,
+			Audio: audio.PcmData{
+				Samples:    pcm.ToInt16().Int16(),
+				SampleRate: stt.SampleRate,
+				Channels:   1,
+			},
+		})
+	}
 }
 
 // watchForNewTracks subscribes to whatever is published after the agent joined, which is
 // how someone who joins later gets heard.
 func (e *Edge) watchForNewTracks(ctx context.Context) {
-	unregister := videosdk.HandleCallEvent(e.call, func(event *sfu_events.SfuEvent_TrackPublished) {
+	unregister := rtc.HandleCallEvent(e.call, func(event *sfu_events.SfuEvent_TrackPublished) {
 		published := event.TrackPublished
 		if published.GetUserId() == e.options.User.ID {
 			return
@@ -392,10 +472,10 @@ func (e *Edge) watchForNewTracks(ctx context.Context) {
 // a caller who has not spoken yet is still somebody to say hello to, and a track is the only
 // other evidence there would be.
 func (e *Edge) watchAttendance() {
-	joined := videosdk.HandleCallEvent(e.call, func(event *sfu_events.SfuEvent_ParticipantJoined) {
+	joined := rtc.HandleCallEvent(e.call, func(event *sfu_events.SfuEvent_ParticipantJoined) {
 		e.report(event.ParticipantJoined.GetParticipant(), true)
 	})
-	left := videosdk.HandleCallEvent(e.call, func(event *sfu_events.SfuEvent_ParticipantLeft) {
+	left := rtc.HandleCallEvent(e.call, func(event *sfu_events.SfuEvent_ParticipantLeft) {
 		e.report(event.ParticipantLeft.GetParticipant(), false)
 	})
 
@@ -456,24 +536,3 @@ func audioSubscriptions(state *sfu_models.CallState, selfUserID string) []*signa
 	}
 	return subscriptions
 }
-
-// listener hands one participant's decoded audio to the agent.
-type listener struct {
-	inbound     *emit.Emitter[agent.InboundAudio]
-	participant stt.Participant
-}
-
-func (l *listener) WriteSample(sample media.PCM16Sample) error {
-	// The decoder reuses its buffer, so what crosses to the agent has to be a copy.
-	l.inbound.Send(agent.InboundAudio{
-		Participant: l.participant,
-		Audio: audio.PcmData{
-			Samples:    slices.Clone(sample),
-			SampleRate: stt.SampleRate,
-			Channels:   1,
-		},
-	})
-	return nil
-}
-
-func (l *listener) Close() error { return nil }

@@ -46,6 +46,15 @@ func TestAcceleratedPipelineEnvDefaults(t *testing.T) {
 	}
 }
 
+func TestAcceleratedPipelineEnvEmptiesCustomerIDBehindProxy(t *testing.T) {
+	t.Setenv("STREAM_ACCELERATION_AUTHENTICATE", "true")
+	t.Setenv("STREAM_ACCELERATION_CUSTOMER_ID", "voicebench")
+	env := acceleratedPipelineEnv()
+	if got := env[len(env)-1]; got != "STREAM_ACCELERATION_CUSTOMER_ID=" {
+		t.Fatalf("a customer id would override the proxy credential: %v", env)
+	}
+}
+
 func TestLiveKitPipelineEnvDefaultsToRealtime(t *testing.T) {
 	clearLiveKitEnv(t)
 	got := liveKitPipelineEnv()

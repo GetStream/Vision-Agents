@@ -23,7 +23,6 @@ vision-agents-plugins-huggingface = { workspace = true }
 vision-agents-plugins-ultralytics = { workspace = true }
 vision-agents-plugins-smart-turn = { workspace = true }
 vision-agents-plugins-wizper = { workspace = true }
-vision-agents-plugins-lemonslice = { workspace = true }
 vision-agents-plugins-inworld = { workspace = true }
 vision-agents-plugins-moondream = { workspace = true }
 vision-agents-plugins-vogent = { workspace = true }
@@ -41,16 +40,21 @@ vision-agents-plugins-assemblyai = { workspace = true }
 vision-agents-plugins-local = { workspace = true }
 vision-agents-plugins-anam = { workspace = true }
 vision-agents-plugins-sarvam = { workspace = true }
-vision-agents-plugins-liveavatar = { workspace = true }
 vision-agents-plugins-tencent = { workspace = true }
 vision-agents-plugins-twelvelabs = { workspace = true }
 vision-agents-plugins-speechify = { workspace = true }
 vision-agents-plugins-stream = { workspace = true }
+vision-agents-plugins-omni = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
 # vogent-turn requires numpy<2.0, so we override to use 1.26.x
 override-dependencies = ["numpy>=1.26.0,<2.0"]
+
+# curated-tokenizers 0.0.9 (kokoro -> misaki[en] -> spacy-curated-transformers)
+# ships no cp313 wheels, so it is built from source. Its build requirement is an
+# unpinned `cython>=0.25` and Cython 3.3 crashes cythonizing `_bbpe.pyx`.
+build-constraint-dependencies = ["cython<3.3"]
 
 # Store uv cache in project directory for better sandboxing
 cache-dir = ".uv-cache"
@@ -76,7 +80,6 @@ members = [
     "plugins/ultralytics",
     "plugins/smart_turn",
     "plugins/wizper",
-    "plugins/lemonslice",
     "plugins/inworld",
     "plugins/vogent",
     "plugins/moondream",
@@ -94,11 +97,11 @@ members = [
     "plugins/local",
     "plugins/anam",
     "plugins/sarvam",
-    "plugins/liveavatar",
     "plugins/tencent",
     "plugins/twelvelabs",
     "plugins/speechify",
     "plugins/stream",
+    "plugins/omni",
 ]
 exclude = [
     "**/__pycache__",
@@ -131,6 +134,8 @@ dev = [
     "hatch>=1.14.2",
     "blockbuster>=1.5.5,<1.6",
     "aiofiles>=25.1.0",
+    "types-aiofiles>=25.1.0",
+    "types-PyYAML>=6.0.12",
     "pyinstrument>=5.1.1",
     "toml>=0.10.2",
     "asgi-lifespan>=2.1.0",

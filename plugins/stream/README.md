@@ -8,7 +8,14 @@ functions the model asks for.
 uv add vision-agents-plugins-stream
 ```
 
-Two environment variables point at the backend:
+It talks to Stream's hosted router with your app's credential:
+
+```bash
+STREAM_API_KEY=your_api_key
+STREAM_API_SECRET=your_api_secret
+```
+
+To use a router running locally instead, name it and the customer it bills:
 
 ```bash
 STREAM_ACCELERATION_URL=http://localhost:8080
@@ -19,7 +26,6 @@ STREAM_ACCELERATION_CUSTOMER_ID=acme
 
 ```python
 from vision_agents.core import Agent
-from vision_agents.core.harness import Daytona, DefaultHarness
 from vision_agents.plugins import getstream, stream
 
 agent = Agent(
@@ -27,7 +33,6 @@ agent = Agent(
     agent_user=agent_user,
     instructions="Keep your replies short.",
     llm=stream.Accelerated(model="gemma4", stt="realtime-best", tts="sonic_36"),
-    harness=DefaultHarness(use_skills=True, subagents={"default": "llm-smart"}, vm=Daytona),
     cost_tracking={"project": "moderation", "environment": "dev"},
     memory_filter={"user_id": "222", "company_id": "12312"},
 )
@@ -41,16 +46,18 @@ async def weather(city: str) -> str:
 `register_function` works as it does with any other LLM. The model asks for the function
 over the session's socket, this plugin runs it here and sends back what it returned.
 
-`harness`, `cost_tracking` and `memory_filter` are configuration rather than behaviour: they
-are serialized into the session and acted on by the backend. `memory_filter["user_id"]` is
-who the memories are about, and everything else in it narrows recall further.
+`cost_tracking` and `memory_filter` are configuration rather than behaviour: they are
+serialized into the session and acted on by the backend. `memory_filter["user_id"]` is who
+the memories are about, and everything else in it narrows recall further.
 
 The agent's transcripts, conversation and events all work as they do locally, because the
 events the backend sends back are recorded into the same places.
 
-`vm=Daytona` gives the subagent somewhere to run code it writes, and needs `DAYTONA_API_KEY`
-on the backend. Only the subagent is offered it: running code takes seconds, and the model
-holding the conversation has none to spare.
+The harness (the subagent, its sandbox and its skills) is agent config, never session
+config: declare `thinking_llm:`, `sandbox:` and `skills/` in the agent's directory, or pass
+`thinking_llm=` and `vm=` to `define_agent`. `sandbox: daytona` gives the subagent somewhere to
+run code it writes, and needs `DAYTONA_API_KEY` on the backend. Only a voice agent names a
+`thinking_llm`: a text agent runs everything, skills included, on its `llm`.
 
 ## An agent as a directory
 
@@ -72,10 +79,12 @@ name: customer_support
 description: Support for a subscription business.
 mode: voice
 llm: llm-fast
-subagent: llm-thinking
+thinking_llm: llm-thinking
 stt: stt-fast
 tts: tts-fast
 voice: aurora
+speed: 1.1
+harness: default
 search: search-fast
 greeting: Thanks for calling, how can I help?
 sandbox: daytona
@@ -91,6 +100,13 @@ Everything but the name is optional, and a setting the file leaves out leaves wh
 stored, so a model chosen in the dashboard survives a sync that says nothing about it. A key
 nobody knows is refused rather than dropped: a misspelled `llm` that went quietly would
 leave the agent running on a model the file does not name.
+
+A page in `knowledge/urls.yaml` written as a mapping may say `refresh_hours: 24` to be read
+again on a schedule. `simulations/*.yaml` each list simulations (`name`, `scenario`,
+`assertion`, and optionally `mode`, `variations`, `max_turns`, `caller_target`,
+`judge_target`, `caller_stt`, `caller_tts`, `caller_voice`, `tags`). A sync makes them the
+config's simulations exactly, so an empty `simulations/` deletes them; without the
+directory the stored ones are left alone. Run them with `stream.Client().simulations.run(id)`.
 
 `.agent_sync` next to `agent.yaml` records the md5 of what was last stored, so a run that
 changed nothing costs a file read rather than a request. `sync_agent("customer_support")`
@@ -116,7 +132,7 @@ config = await stream.define_agent(
     name="docs-agent",
     instructions="Answer questions about the documentation.",
     llm="llm-fast",
-    subagent="llm-smart",
+    thinking_llm="llm-smart",
     skills=[Skill(name="explain", description="...", instructions="...")],
     knowledge="docs",
 )
@@ -160,6 +176,65 @@ agent = Agent(
 The name is resolved when the agent joins, so the config can be defined somewhere else and
 need not exist yet when the agent is built. Anything else passed to `Accelerated` overrides
 what the config says.
+
+## Sessions, memories and simulations
+
+```python
+api = stream.Client()
+docs = api.agent("docs")
+
+session = await docs.sessions.create(stream.SessionOptions(project_id="support"))
+await session.update(title="Pricing", llm="openai/gpt-5")
+await session.close()  # stops it; what it recorded and remembered is kept
+
+page = await docs.sessions.query(stream.Query(user_id="u1", state="live"))
+while page.has_more:
+    page = await docs.sessions.query(
+        stream.Query(user_id="u1", state="live", cursor=page.next_cursor)
+    )
+
+await docs.sessions.update(session.id, title="Pricing, again")  # an ended one too
+await docs.sessions.delete_memories(session.id)
+await docs.sessions.delete(session.id)  # its turns and memories go with it
+await api.memories.truncate("u1")  # everything remembered about one user
+
+await docs.update_config(stream.AgentConfigPatch(guardrail="Never discuss pricing."))
+
+run = await api.simulations.run(simulation_id)
+run = await api.simulations.runs.get(run.id)
+```
+
+Lists page by cursor: each returns `items`, `has_more` and `next_cursor`.
+
+Anything the router refuses, a socket included, raises `RouterError` with the router's
+message and `status`, `type`, `code` (what to branch on; new ones appear), `doc_url` and
+`request_id`, the `X-Request-Id` to quote to support. A body that is not the router's own,
+such as a proxy's error page, is the message as it was, with `type`, `code` and `doc_url`
+left None; so is a refused socket, whose body aiohttp never reads.
+
+## Tools hosted for an agent
+
+A session's own functions run in the process that opened it. `dispatch.host` is the other
+direction: the router offers an agent's functions to every session under that agent,
+wherever it was opened, and sends each call to this worker.
+
+```python
+agent = stream.Client().agent("stream-support")
+
+
+@agent.register(description="Read the SDK's source")
+async def investigate_sdk(sdk: str) -> str:
+    return await read_source(sdk)
+
+
+dispatch = stream.Dispatch()
+dispatch.host(agent, tool_timeout=60)
+await dispatch.run()
+```
+
+`timeout` is how long the router gives one call, in seconds; zero takes its default. The
+worker declares its tools again whenever it reconnects, and `run` raises `RouterError` if the
+router refuses them.
 
 ## Calling somebody
 
@@ -211,20 +286,21 @@ know it.
 
 ## A router config, four modalities
 
-`stream.Router` is the same routing with the options said once. It names a stored router
-config, and every keyword on a call overrides one field of it:
+`client.router(name)` is the same routing with the options said once. It names a stored router
+config, which also says which model answers (`target`), and every keyword on a call overrides
+one field of it:
 
 ```python
-from vision_agents.plugins.stream import Router, define_router
+from vision_agents.plugins.stream import Client, define_router
 
 await define_router(
     "healthcare",
-    stt={"diarize": True, "keyterms": ["metformin", "sertraline"]},
+    stt={"target": "en-low-latency", "diarize": True, "keyterms": ["metformin", "sertraline"]},
     tts={"voice": "dc4e4a1f", "speed": 1.1},
     search={"include_domains": ["pubmed.ncbi.nlm.nih.gov"]},
 )
 
-router = Router("healthcare")
+router = Client().router("healthcare")
 
 async with router.stt.realtime() as stt:
     ...
@@ -256,27 +332,23 @@ than being told. What each provider can express is in the `router-stt`, `router-
 
 ## Images and delegated vision
 
-Keep the conversation on `llm-fast` and bind visual analysis to a separate worker in
+Keep the conversation on `llm-fast` and put the subagent on a model that can see, in
 `agent.yaml`:
 
 ```yaml
 llm: llm-fast
-subagents:
-  default: llm-thinking
-  vision: vlm
+thinking_llm: vlm
 video:
   max_frames: 1
 ```
 
-The built-in `vision` skill captures evidence when asked and runs on the `vision` worker.
-Worker preparation, frame encoding and inference run asynchronously, so the conversation
-can continue. Custom skills opt in with `subagent: vision` and `capture_video: true`.
-`subagent: llm-thinking` remains shorthand for `subagents.default`; declare only one form
-of the default in a configuration layer. Named overrides merge by key; an empty target
-removes that worker. `stream.define_agent` also accepts `subagents`, `video_source` and
-`video_max_frames`.
+A skill with `capture_video: true` captures evidence when asked and hands it to the
+subagent. The built-in `vision` skill is one. It is only offered to an agent that names
+it, since it needs a subagent that can see and the rest of the built-in set does not. Opening the
+subagent, encoding frames and inference run asynchronously, so the conversation can
+continue. `stream.define_agent` also accepts `video_source` and `video_max_frames`.
 
-Explicit attachments use the same worker in an accelerated agent:
+Explicit attachments go to the same skill in an accelerated agent:
 
 ```python
 from vision_agents.core.llm import ImageContent
@@ -288,7 +360,7 @@ await agent.responses.create(
 ```
 
 The main conversation receives the question, pending task and eventual findings. The
-vision worker receives the images. For standalone inference, use
+subagent receives the images. For standalone inference, use
 `stream.LLM(target="vlm").responses.create(...)` and iterate the response stream. The
 standalone API also accepts an ordered list of strings and `ImageContent` as its first
 argument to preserve text/image interleaving. With an attached conversation, images remain
@@ -298,8 +370,8 @@ by the SDK; the wire format is `{"type":"image_url","image_url":{"url":"…","de
 Image detail accepts `auto`, `low` or `high`. `vlm` requires image capability before model
 selection; `llm-fast` retains its existing routing policy.
 
-Camera evidence uses local receive timestamps in Unix milliseconds; backend and video
-worker system clocks must be synchronized. Each observation
+Camera evidence uses local receive timestamps in Unix milliseconds; the backend's clock and
+the clock of the process capturing video must be synchronized. Each observation
 buffer retains at most 64 frames and 32 MiB. Capture selects 1–8 frames at or before task
 acceptance, pins them for that task, and rejects missing or stale evidence. The newest
 selected frame must be no more than five seconds old. Multiple available cameras require

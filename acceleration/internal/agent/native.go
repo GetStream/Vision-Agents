@@ -10,8 +10,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -28,7 +27,7 @@ import (
 // the tools the model asks for.
 
 // native reports whether this agent is held by one speech-to-speech model.
-func (a *Agent) native() bool { return a.options.STS != nil }
+func (a *Agent) native() bool { return a.nativeMode.Load() }
 
 // speech returns the native session, or nil when the agent has not joined or is a cascade.
 func (a *Agent) speech() *stsrouter.Session {
@@ -37,97 +36,15 @@ func (a *Agent) speech() *stsrouter.Session {
 	return a.sts
 }
 
-// joinNative opens the one session a native agent needs, then joins the call.
-//
-// Both transcripts are asked for, and asked for as terms: what the caller said and what
-// the model said back are what the history, the chat log, the review and memory are all
-// built on, so a model that cannot write them down is not a candidate.
-func (a *Agent) joinNative() error {
-	// Searching is routed before the tools are worked out, because whether the model is
-	// offered one depends on whether a provider answered.
-	a.startSearching(a.ctx)
-	workers, err := a.workers()
-	if err != nil {
-		return err
-	}
-	if len(workers) > 0 {
-		a.harness, err = harness.New(harness.Options{
-			Workers: workers, Capture: a.captureVideo, Skills: a.options.Skills,
-			Sandbox: a.options.Sandbox, Tasks: a.options.Tasks, Logger: a.logger,
-		})
-		if err != nil {
-			return err
-		}
-		a.harnessDrained = make(chan struct{})
-		a.running.Add(1)
-		go a.consumeHarness()
-	}
-	tools, err := a.nativeTools()
-	if err != nil {
-		return err
-	}
-
-	// What earlier conversations established goes into the instructions the session
-	// opens with, since a native model takes its prompt once rather than per turn.
-	if a.memory != nil {
-		a.recalled = memory.Prompt(a.memory.Recall(a.ctx, a.options.RecallLimit))
-	}
-
-	on := true
-	session, err := a.options.STS.Start(a.ctx, stsrouter.Request{
-		CustomerID:    a.options.CustomerID,
-		AgentID:       a.options.AgentID,
-		CallID:        a.options.CallID,
-		Tags:          a.options.Tags,
-		Target:        a.options.STSTarget,
-		LanguageHints: a.options.LanguageHints,
-		Tools:         tools,
-		Options: options.STS{
-			Instructions:     a.nativeInstructions(),
-			Voice:            a.options.Voice,
-			InputTranscript:  &on,
-			OutputTranscript: &on,
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("agent: start sts: %w", err)
-	}
-	a.sts = session
-
-	if err := a.options.Edge.Join(a.ctx); err != nil {
-		return fmt.Errorf("agent: join edge: %w", err)
-	}
-
-	a.mu.Lock()
-	a.arrivals = map[string]struct{}{}
-	a.lastSpokeAt = time.Now()
-	a.mu.Unlock()
-
-	events := make(chan sts.Event, sts.EmitterBuffer)
-	a.running.Add(4)
-	go a.receiveSTS(a.sts.Events(), events)
-	go a.consumeSTS(events)
-	go a.consumeEdge()
-	go a.consumeNativePresence()
-	if roster, ok := a.options.Edge.(Roster); ok {
-		a.running.Add(1)
-		go a.consumeRoster(roster)
-	}
-
-	a.logger.Info("joined", "sts", session.Provider()+"/"+session.Model())
-	a.emitter.Send(Joined{At: time.Now()})
-	return nil
-}
-
 // Prompt asks a native model to speak now, guided by the text. It is what a greeting is
 // on a native call: the model says what it makes of the words rather than the words.
 func (a *Agent) Prompt(ctx context.Context, text string) error {
 	session := a.speech()
 	if session == nil {
 		if a.native() {
-			return errors.New("agent: not joined")
+			return stack.Wrap(errors.New("agent: not joined"))
 		}
-		return errors.New("agent: only a speech-to-speech agent takes a prompt; use Say")
+		return stack.Wrap(errors.New("agent: only a speech-to-speech agent takes a prompt; use Say"))
 	}
 	return session.Prompt(text)
 }
@@ -137,11 +54,11 @@ func (a *Agent) Prompt(ctx context.Context, text string) error {
 // its own business, and a typed turn is words.
 func (a *Agent) respondNative(text string, images []llm.ImagePart) error {
 	if len(images) > 0 {
-		return errors.New("agent: a speech-to-speech agent takes no images on a typed turn")
+		return stack.Wrap(errors.New("agent: a speech-to-speech agent takes no images on a typed turn"))
 	}
 	session := a.speech()
 	if session == nil {
-		return errors.New("agent: not joined")
+		return stack.Wrap(errors.New("agent: not joined"))
 	}
 	caller := stt.Participant{ID: "caller"}
 	// A typed turn is not transcribed, so it is written into the history here, where a
@@ -198,8 +115,8 @@ func (a *Agent) unbind(participant stt.Participant) {
 }
 
 // receiveSTS stops interrupted playback before queuing the remaining ordered events.
-func (a *Agent) receiveSTS(source <-chan sts.Event, events chan<- sts.Event) {
-	defer a.running.Done()
+func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- sts.Event) {
+	defer p.running.Done()
 	defer close(events)
 	for event := range source {
 		switch typed := event.(type) {
@@ -262,7 +179,7 @@ func (a *Agent) receiveSTS(source <-chan sts.Event, events chan<- sts.Event) {
 		}
 		select {
 		case events <- event:
-		case <-a.ctx.Done():
+		case <-p.ctx.Done():
 			return
 		default:
 			a.fail(errors.New("agent: speech-to-speech playback queue is full"), "sts")
@@ -274,8 +191,8 @@ func (a *Agent) receiveSTS(source <-chan sts.Event, events chan<- sts.Event) {
 
 // consumeSTS keeps transcripts and playback in provider order. Interruption is handled
 // separately by receiveSTS because PublishAudio can block until queued audio plays.
-func (a *Agent) consumeSTS(events <-chan sts.Event) {
-	defer a.running.Done()
+func (a *Agent) consumeSTS(p *pipeline, events <-chan sts.Event) {
+	defer p.running.Done()
 
 	for event := range events {
 		switch typed := event.(type) {
@@ -332,7 +249,10 @@ func (a *Agent) consumeSTS(events <-chan sts.Event) {
 
 	// The model's session ending is the whole conversation ending: there is nothing
 	// else on this call that can hear or speak. Closing waits for this goroutine, so it is
-	// done from another.
+	// done from another. A pipeline that was stopped is being replaced, not lost.
+	if p.ctx.Err() != nil {
+		return
+	}
 	a.mu.Lock()
 	closed := a.closed
 	a.mu.Unlock()
@@ -431,7 +351,7 @@ func (a *Agent) replyStarted(started sts.ResponseStarted) {
 	a.mu.Unlock()
 
 	if !waiting.IsZero() {
-		a.turns.begin(started.ResponseID, participant, waiting, 0)
+		a.turns.begin(started.ResponseID, participant, waiting, waiting, 0)
 	}
 	a.emitter.Send(Responding{TurnID: started.ResponseID, Participant: participant, Prompt: prompt})
 }
@@ -442,7 +362,13 @@ func (a *Agent) replyAudio(chunk sts.AudioChunk) {
 		a.turns.dropped(chunk.ResponseID, chunk.Audio.DurationMs())
 		return
 	}
-	if err := a.options.Edge.PublishAudio(chunk.Audio); err != nil {
+	var err error
+	if marked, ok := a.options.Edge.(MarkedPlayout); ok {
+		err = marked.PublishAudioMarked(chunk.Audio, a.turns.marksFor(chunk.ResponseID))
+	} else {
+		err = a.options.Edge.PublishAudio(chunk.Audio)
+	}
+	if err != nil {
 		a.fail(err, "edge")
 	}
 	if a.abandonedTurn(chunk.ResponseID) {
@@ -521,8 +447,10 @@ const (
 	cancelSkill   = "cancel_skill"
 )
 
-func (a *Agent) nativeInstructions() string {
-	if a.harness == nil || len(a.options.Skills.Skills) == 0 {
+// nativeInstructions is what a speech-to-speech model is told, including how to hand work
+// over when it has a subagent to hand it to. The caller holds the lock.
+func (a *Agent) nativeInstructions(delegating bool) string {
+	if !delegating || len(a.options.Skills.Skills) == 0 {
 		return a.instructions()
 	}
 	return a.instructions() + "\n\nUse delegate_skill for work that needs a subagent. " +
@@ -531,14 +459,14 @@ func (a *Agent) nativeInstructions() string {
 		"Use cancel_skill when the caller no longer needs that work. Interrupting speech alone does not cancel it."
 }
 
-func (a *Agent) nativeTools() ([]llm.Tool, error) {
+func (a *Agent) nativeTools(delegating bool) ([]llm.Tool, error) {
 	tools := a.availableTools()
-	if a.harness == nil || len(a.options.Skills.Skills) == 0 {
+	if !delegating || len(a.options.Skills.Skills) == 0 {
 		return tools.Requests(), nil
 	}
 	for _, name := range []string{delegateSkill, cancelSkill} {
 		if _, exists := tools.Lookup(name); exists {
-			return nil, fmt.Errorf("agent: %s is reserved for native delegation", name)
+			return nil, stack.Wrap(fmt.Errorf("agent: %s is reserved for native delegation", name))
 		}
 	}
 	names := make([]string, 0, len(a.options.Skills.Skills))
@@ -574,7 +502,7 @@ func (a *Agent) nativeDelegate(call llm.ToolCall) ([]llm.ContentPart, bool, erro
 		return nil, false, err
 	}
 	if a.harness == nil {
-		return nil, false, errors.New("agent: no subagents configured")
+		return nil, false, errors.New("agent: no subagent configured")
 	}
 	if call.Name == cancelSkill {
 		err := a.harness.CancelSkill(arguments.Skill)
@@ -621,15 +549,15 @@ func (a *Agent) followNative() error {
 	return nil
 }
 
-func (a *Agent) consumeNativePresence() {
-	defer a.running.Done()
+func (a *Agent) consumeNativePresence(p *pipeline) {
+	defer p.running.Done()
 	ticker := time.NewTicker(presenceTick)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
 			a.followUp()
-		case <-a.ctx.Done():
+		case <-p.ctx.Done():
 			return
 		}
 	}

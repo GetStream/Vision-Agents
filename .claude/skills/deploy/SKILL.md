@@ -35,8 +35,8 @@ docker run --rm --platform linux/arm64 \
 ```
 
 `GOWORK=off` because `go.work` otherwise puts the module in workspace mode, which the build
-refuses; `GOPROXY=off` builds from the host module cache, which is how the private
-`getstream-go-webrtc` module gets in without handing a container a token. Repeat with
+refuses; `GOPROXY=off` builds from the host module cache, so the container uses exactly the
+modules the host resolved. Repeat with
 `--platform linux/amd64`, which works under emulation.
 
 Versions are `vX.Y.Z` or `vX.Y.Z-<prerelease>`, an unreleased build is named after its

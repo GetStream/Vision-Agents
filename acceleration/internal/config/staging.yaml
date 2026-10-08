@@ -1,0 +1,8 @@
+# The hosted staging router. The database, Redis and every credential come from the
+# chart in Stream's infra repo, which wins over this file; see the deploy skill.
+auth:
+  mode: proxy
+# An app reaches two numbers, with 30 messages and 30 minutes of calls a day, until a
+# 10DLC use case of its is approved.
+sandbox:
+  enabled: true

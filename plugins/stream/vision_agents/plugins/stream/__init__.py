@@ -3,13 +3,25 @@ from vision_agents.core.telephony import CallContext, InboundCall
 
 from ._backend import Backend
 from ._generated.models import (
+    AgentConfigPatch,
+    AttachedNumber,
     GuestUser,
+    HistoryMessage,
+    HistoryRole,
+    ImageSource,
+    ImageSourceDetail,
     ModelOverwrites,
     ModelOverwritesThinking,
     ModelOverwritesVerbosity,
+    NumberSearchResult,
+    PhoneCapability,
+    PhoneNumber,
+    PhoneNumberType,
+    SimulationRequest,
+    SkippedVendor,
 )
 from .accelerated import Accelerated
-from .client import Agent, Client, GuestOptions
+from .client import Agent, Client, GuestOptions, Memories
 from .config import define_agent, define_skills, ensure_agent, sync_agent
 from .dispatch import Dispatch
 from .folder import Folder, load
@@ -27,6 +39,7 @@ from .sessions import (
     SessionOptions,
     Sessions,
 )
+from .simulations import SimulationRuns, Simulations
 from .sts import STS
 from .stt import STT
 from .tts import TTS
@@ -34,7 +47,9 @@ from .tts import TTS
 __all__ = [
     "Accelerated",
     "Agent",
+    "AgentConfigPatch",
     "AgentResponse",
+    "AttachedNumber",
     "Backend",
     "CallContext",
     "Client",
@@ -43,17 +58,26 @@ __all__ = [
     "ForkOptions",
     "GuestOptions",
     "GuestUser",
+    "HistoryMessage",
+    "HistoryRole",
+    "ImageSource",
+    "ImageSourceDetail",
     "InboundCall",
     "InboundMessage",
     "Items",
     "Knowledge",
     "LLM",
+    "Memories",
     "MessageContext",
     "ModelOverwrites",
     "ModelOverwritesThinking",
     "ModelOverwritesVerbosity",
+    "NumberSearchResult",
     "Participant",
     "Phone",
+    "PhoneCapability",
+    "PhoneNumber",
+    "PhoneNumberType",
     "Query",
     "Responses",
     "Router",
@@ -64,6 +88,10 @@ __all__ = [
     "SessionEvent",
     "SessionOptions",
     "Sessions",
+    "SimulationRequest",
+    "SimulationRuns",
+    "Simulations",
+    "SkippedVendor",
     "TTS",
     "define_agent",
     "define_router",

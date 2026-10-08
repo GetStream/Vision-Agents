@@ -13,11 +13,12 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
-	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // dsnEnvVar is where the tests look for a Postgres to run against.
@@ -27,12 +28,15 @@ type ServiceSuite struct {
 	suite.Suite
 	ctx      context.Context
 	store    *store.Store
+	configs  *appconfig.Store
 	bucket   *blob.Bucket
 	service  *Service
 	resolver *Resolver
 	// reply is what the fake provider hands back when asked to clone.
 	reply  string
 	status int
+	// requests is every method and path the fake provider was sent, in order.
+	requests []string
 }
 
 func TestServiceSuite(t *testing.T) {
@@ -47,11 +51,15 @@ func (s *ServiceSuite) SetupSuite() {
 
 	s.ctx = context.Background()
 
-	opened, err := store.Open(dsn)
+	// A database of this suite's own, since it empties the voices between tests.
+	opened, err := store.Open(testenv.Database(dsn, "voices"))
 	s.Require().NoError(err)
 	s.store = opened
 	s.Require().NoError(opened.Migrate(s.ctx))
-	s.resolver = NewResolver(opened)
+	configs, err := appconfig.New(appconfig.Options{Store: opened})
+	s.Require().NoError(err)
+	s.configs = configs
+	s.resolver = NewResolver(configs)
 }
 
 func (s *ServiceSuite) TearDownSuite() {
@@ -66,8 +74,10 @@ func (s *ServiceSuite) SetupTest() {
 
 	s.status = http.StatusOK
 	s.reply = `{"voice_id":"el-1"}`
+	s.requests = nil
 
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.requests = append(s.requests, r.Method+" "+r.URL.Path)
 		w.WriteHeader(s.status)
 		_, _ = w.Write([]byte(s.reply))
 	}))
@@ -85,7 +95,7 @@ func (s *ServiceSuite) SetupTest() {
 	cloners := NewRegistry()
 	cloners.Register("elevenlabs", cloner)
 
-	service, err := NewService(Options{Store: s.store, Bucket: bucket, Cloners: cloners})
+	service, err := NewService(Options{Store: s.configs, Bucket: bucket, Cloners: cloners})
 	s.Require().NoError(err)
 	s.service = service
 }
@@ -221,6 +231,54 @@ func (s *ServiceSuite) TestABindingRecordsWhenTheProviderLastHadTheVoice() {
 	s.Require().NotNil(bindings[0].SyncedAt)
 	s.WithinDuration(prepared, *bindings[0].SyncedAt, time.Millisecond,
 		"a failed attempt is not a sync, and updated_at is what moved")
+}
+
+func (s *ServiceSuite) TestPreparingAgainReplacesTheProvidersPreviousCopy() {
+	voice := s.recorded()
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+
+	s.reply = `{"voice_id":"el-2"}`
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+
+	external, err := s.resolver.ResolveVoice(s.ctx, "acme", "elevenlabs", "founder")
+	s.Require().NoError(err)
+	s.Equal("el-2", external)
+	s.Contains(s.requests, "DELETE /v1/voices/el-1",
+		"a replaced clone left on the provider is one nobody here can delete")
+}
+
+func (s *ServiceSuite) TestAFailedReprepareStillKnowsWhatToDelete() {
+	voice := s.recorded()
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+
+	s.status = http.StatusUnprocessableEntity
+	s.reply = `{"detail":"too quiet"}`
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+
+	s.status = http.StatusOK
+	s.Require().NoError(s.service.Delete(s.ctx, "acme", voice.ID))
+	s.Contains(s.requests, "DELETE /v1/voices/el-1")
+}
+
+func (s *ServiceSuite) TestAPreparedVoiceCanBeHeard() {
+	voice := s.recorded()
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+
+	s.reply = "mp3"
+	speech, err := s.service.Speak(s.ctx, "acme", voice.ID, "elevenlabs", "hello")
+	s.Require().NoError(err)
+
+	s.Equal([]byte("mp3"), speech.Audio)
+	s.Contains(s.requests, "POST /v1/text-to-speech/el-1")
+}
+
+func (s *ServiceSuite) TestAVoiceIsNotHeardThroughAProviderThatNeverHadIt() {
+	voice := s.recorded()
+
+	_, err := s.service.Speak(s.ctx, "acme", voice.ID, "elevenlabs", "hello")
+
+	s.ErrorIs(err, store.ErrNoVoice)
+	s.Empty(s.requests, "a provider that was never given the voice has nothing to say in it")
 }
 
 func (s *ServiceSuite) TestABindingThatWasNeverReadyWasNeverSynced() {

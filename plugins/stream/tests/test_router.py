@@ -35,6 +35,7 @@ class Router:
 
     def __init__(self):
         self.started: dict[str, dict[str, Any]] = {}
+        self.headers: dict[str, dict[str, str]] = {}
         self.spoken: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.transcriptions: list[dict[str, Any]] = []
         self.speeches: list[dict[str, Any]] = []
@@ -59,7 +60,37 @@ class Router:
         app.router.add_get("/v1/router/configs", self._list_configs)
         app.router.add_post("/v1/router/configs", self._create_config)
         app.router.add_put("/v1/router/configs/{id}", self._update_config)
+        app.router.add_get("/v1/{modality}/routes/{target}", self._routes)
         return app
+
+    async def _routes(self, request: web.Request) -> web.Response:
+        """gemma4 is a model and nothing else: a proxy fails the tts lookup with a page,
+        and the router answers the rest with the envelope's 404."""
+        modality = request.match_info["modality"]
+        if modality == "tts":
+            return web.Response(status=500, text="<html>internal error</html>")
+        if modality != "llm":
+            return web.json_response(
+                status=404,
+                data={
+                    "error": {
+                        "message": "nothing routes gemma4",
+                        "type": "not_found",
+                        "code": "not_found",
+                        "doc_url": "https://getstream.io/agents/docs/api/errors/#not_found",
+                    }
+                },
+            )
+        health = {
+            "available": True,
+            "error_rate": 0.0,
+            "errors": 0,
+            "latency_ms_avg": 120.0,
+            "requests": 10,
+        }
+        return web.json_response(
+            [{"provider": "baseten", "model": "gemma4", "health": health}]
+        )
 
     async def opening(self, modality: str) -> dict[str, Any]:
         """The start frame a session opened with."""
@@ -68,6 +99,7 @@ class Router:
 
     async def _stream(self, request: web.Request) -> web.WebSocketResponse:
         modality = request.match_info["modality"]
+        self.headers[modality] = dict(request.headers)
         socket = web.WebSocketResponse()
         await socket.prepare(request)
 
@@ -196,6 +228,24 @@ class TestRouter:
         assert opening["tags"] == {"project": "clinic"}
         assert opening["stt"] == {}, "a call that overrides nothing sends nothing"
 
+    async def test_a_router_from_the_client_calls_as_the_client(self, backend: Router):
+        client = stream.Client(
+            backend=stream.Backend(
+                url=backend.url, customer_id="acme", acting_for="jlahey"
+            )
+        )
+        router = client.router("healthcare")
+
+        for session in (router.stt.realtime(), router.tts.realtime()):
+            assert session.backend is client.backend
+
+        async with router.stt.realtime():
+            opening = await backend.opening("stt")
+
+        assert opening["config_id"] == "healthcare"
+        assert backend.headers["stt"]["X-Stream-User-Id"] == "jlahey"
+        assert backend.headers["stt"]["X-Customer-Id"] == "acme"
+
     async def test_a_keyword_overrides_one_field_of_the_config(
         self, router: stream.Router, backend: Router
     ):
@@ -318,6 +368,14 @@ class TestRouter:
             "include_domains": ["nice.org.uk"],
         }
         assert backend.searches[0]["config_id"] == "healthcare"
+
+    async def test_a_name_resolves_past_the_modalities_that_refuse_it(
+        self, router: stream.Router
+    ):
+        # resolve asks synchronously, so it runs off the loop the fake answers on.
+        resolved = await asyncio.to_thread(router.resolve, "gemma4")
+
+        assert isinstance(resolved, stream.LLM)
 
     async def test_a_config_is_stored_under_its_name_and_edited_next_time(
         self, backend: Router
@@ -456,8 +514,6 @@ class TestRouter:
         write_router(
             tmp_path,
             "healthcare",
-            "tags:\n"
-            "  team: clinical\n"
             "stt:\n"
             "  providers: [deepgram, parakeet]\n"
             "  data_policy:\n"
@@ -493,7 +549,6 @@ class TestRouter:
         )
         assert stored[0].stt.providers == ["deepgram", "parakeet"]
         assert stored[0].stt.data_policy.retention == "none"
-        assert stored[0].tags.additional_properties == {"team": "clinical"}
         assert stored[1].stt.providers == ["grok"]
 
     async def test_syncing_the_same_directory_twice_edits_what_is_stored(

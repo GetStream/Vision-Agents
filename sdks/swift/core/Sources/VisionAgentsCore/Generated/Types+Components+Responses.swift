@@ -16,12 +16,12 @@ extension Components {
             /// - Remark: Generated from `#/components/responses/BadRequest/content`.
             internal enum Body: Sendable, Hashable {
                 /// - Remark: Generated from `#/components/responses/BadRequest/content/application\/json`.
-                case json(Components.Schemas._Error)
+                case json(Components.Schemas.ErrorResponse)
                 /// The associated value of the enum case if `self` is `.json`.
                 ///
                 /// - Throws: An error if `self` is not `.json`.
                 /// - SeeAlso: `.json`.
-                internal var json: Components.Schemas._Error {
+                internal var json: Components.Schemas.ErrorResponse {
                     get throws {
                         switch self {
                         case let .json(body):
@@ -40,16 +40,16 @@ extension Components {
                 self.body = body
             }
         }
-        internal struct Unauthorized: Sendable, Hashable {
-            /// - Remark: Generated from `#/components/responses/Unauthorized/content`.
+        internal struct Forbidden: Sendable, Hashable {
+            /// - Remark: Generated from `#/components/responses/Forbidden/content`.
             internal enum Body: Sendable, Hashable {
-                /// - Remark: Generated from `#/components/responses/Unauthorized/content/application\/json`.
-                case json(Components.Schemas._Error)
+                /// - Remark: Generated from `#/components/responses/Forbidden/content/application\/json`.
+                case json(Components.Schemas.ErrorResponse)
                 /// The associated value of the enum case if `self` is `.json`.
                 ///
                 /// - Throws: An error if `self` is not `.json`.
                 /// - SeeAlso: `.json`.
-                internal var json: Components.Schemas._Error {
+                internal var json: Components.Schemas.ErrorResponse {
                     get throws {
                         switch self {
                         case let .json(body):
@@ -59,12 +59,40 @@ extension Components {
                 }
             }
             /// Received HTTP response body
-            internal var body: Components.Responses.Unauthorized.Body
-            /// Creates a new `Unauthorized`.
+            internal var body: Components.Responses.Forbidden.Body
+            /// Creates a new `Forbidden`.
             ///
             /// - Parameters:
             ///   - body: Received HTTP response body
-            internal init(body: Components.Responses.Unauthorized.Body) {
+            internal init(body: Components.Responses.Forbidden.Body) {
+                self.body = body
+            }
+        }
+        internal struct InternalError: Sendable, Hashable {
+            /// - Remark: Generated from `#/components/responses/InternalError/content`.
+            internal enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/components/responses/InternalError/content/application\/json`.
+                case json(Components.Schemas.ErrorResponse)
+                /// The associated value of the enum case if `self` is `.json`.
+                ///
+                /// - Throws: An error if `self` is not `.json`.
+                /// - SeeAlso: `.json`.
+                internal var json: Components.Schemas.ErrorResponse {
+                    get throws {
+                        switch self {
+                        case let .json(body):
+                            return body
+                        }
+                    }
+                }
+            }
+            /// Received HTTP response body
+            internal var body: Components.Responses.InternalError.Body
+            /// Creates a new `InternalError`.
+            ///
+            /// - Parameters:
+            ///   - body: Received HTTP response body
+            internal init(body: Components.Responses.InternalError.Body) {
                 self.body = body
             }
         }
@@ -72,12 +100,12 @@ extension Components {
             /// - Remark: Generated from `#/components/responses/NotFound/content`.
             internal enum Body: Sendable, Hashable {
                 /// - Remark: Generated from `#/components/responses/NotFound/content/application\/json`.
-                case json(Components.Schemas._Error)
+                case json(Components.Schemas.ErrorResponse)
                 /// The associated value of the enum case if `self` is `.json`.
                 ///
                 /// - Throws: An error if `self` is not `.json`.
                 /// - SeeAlso: `.json`.
-                internal var json: Components.Schemas._Error {
+                internal var json: Components.Schemas.ErrorResponse {
                     get throws {
                         switch self {
                         case let .json(body):
@@ -93,6 +121,34 @@ extension Components {
             /// - Parameters:
             ///   - body: Received HTTP response body
             internal init(body: Components.Responses.NotFound.Body) {
+                self.body = body
+            }
+        }
+        internal struct Unauthorized: Sendable, Hashable {
+            /// - Remark: Generated from `#/components/responses/Unauthorized/content`.
+            internal enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/components/responses/Unauthorized/content/application\/json`.
+                case json(Components.Schemas.ErrorResponse)
+                /// The associated value of the enum case if `self` is `.json`.
+                ///
+                /// - Throws: An error if `self` is not `.json`.
+                /// - SeeAlso: `.json`.
+                internal var json: Components.Schemas.ErrorResponse {
+                    get throws {
+                        switch self {
+                        case let .json(body):
+                            return body
+                        }
+                    }
+                }
+            }
+            /// Received HTTP response body
+            internal var body: Components.Responses.Unauthorized.Body
+            /// Creates a new `Unauthorized`.
+            ///
+            /// - Parameters:
+            ///   - body: Received HTTP response body
+            internal init(body: Components.Responses.Unauthorized.Body) {
                 self.body = body
             }
         }

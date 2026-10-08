@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -34,8 +35,10 @@ const itemBatchSize = 64
 // would race: a response row written before the session row it points at violates the
 // foreign key, and items written before their response do the same.
 type recordWrite struct {
-	// session is a session that opened or was renamed, nil otherwise.
+	// session is a session that opened or was renamed, nil otherwise, and tools what its
+	// model is offered.
 	session *store.AgentSession
+	tools   []store.ToolDefinition
 	// closed is the session that ended, and closedAt when.
 	closed   string
 	closedAt time.Time
@@ -48,6 +51,14 @@ type recordWrite struct {
 	finishedAt time.Time
 	// items are things that happened during a turn.
 	items []store.AgentResponseItem
+	// described is a session given a new title and description, nil otherwise.
+	described *described
+	// sawVideo is the session whose user's video the agent saw.
+	sawVideo string
+	// chose is a connection a login in the conversation chose for a binding, nil otherwise.
+	chose *chose
+	// flushed is closed once everything queued before it has been written.
+	flushed chan struct{}
 }
 
 // recorder is what a session needs of the writer behind it, which is less than the writer
@@ -61,6 +72,15 @@ type recorder interface {
 	Responded(id, status, failure string, at time.Time)
 	// Item says one thing that happened during it.
 	Item(item store.AgentResponseItem)
+	// Described says the session was renamed. A nil custom leaves the labels as they were.
+	Described(customerID, id, title, description string, custom map[string]any)
+	// SawVideo says the agent saw the user's video.
+	SawVideo(id string)
+	// Chose says a login in the conversation chose a connection for the binding called name.
+	Chose(customerID, id, name, connectionID string)
+	// Flush waits until everything said so far has been written, which is what reading the
+	// conversation back straight after it happened needs.
+	Flush(ctx context.Context) error
 }
 
 // sessionRecorder writes sessions, turns and items to Postgres off the conversation's path.
@@ -96,13 +116,40 @@ func newSessionRecorder(pgStore *store.Store, logger *slog.Logger) *sessionRecor
 }
 
 // Opened queues the row for a session that has just started.
-func (r *sessionRecorder) Opened(row store.AgentSession) {
-	r.queueWrite(recordWrite{session: &row})
+func (r *sessionRecorder) Opened(row store.AgentSession, tools []store.ToolDefinition) {
+	r.queueWrite(recordWrite{session: &row, tools: tools})
 }
 
 // Closed queues the time a session ended.
 func (r *sessionRecorder) Closed(id string, at time.Time) {
 	r.queueWrite(recordWrite{closed: id, closedAt: at})
+}
+
+// described is what a session was renamed to.
+type described struct {
+	customerID, id, title, description string
+	custom                             map[string]any
+}
+
+// Described queues a session's new name. It goes through the queue rather than straight to
+// the store so it cannot be written before the row it renames.
+func (r *sessionRecorder) Described(customerID, id, title, description string, custom map[string]any) {
+	r.queueWrite(recordWrite{described: &described{customerID, id, title, description, custom}})
+}
+
+// chose is the connection a login chose for one of a session's bindings.
+type chose struct {
+	customerID, id, name, connectionID string
+}
+
+// Chose queues a connection a login chose, behind the row it changes, as Described does.
+func (r *sessionRecorder) Chose(customerID, id, name, connectionID string) {
+	r.queueWrite(recordWrite{chose: &chose{customerID, id, name, connectionID}})
+}
+
+// SawVideo queues that a session became a video one, behind the row it changes.
+func (r *sessionRecorder) SawVideo(id string) {
+	r.queueWrite(recordWrite{sawVideo: id})
 }
 
 // Responding queues a turn that has just begun.
@@ -118,6 +165,24 @@ func (r *sessionRecorder) Responded(id, status, failure string, at time.Time) {
 // Item queues one thing that happened during a turn.
 func (r *sessionRecorder) Item(item store.AgentResponseItem) {
 	r.queueWrite(recordWrite{items: []store.AgentResponseItem{item}})
+}
+
+// Flush waits for the writer to catch up with everything queued before it. Unlike the other
+// writes it waits for room rather than being dropped, because the caller is about to read
+// what it wrote.
+func (r *sessionRecorder) Flush(ctx context.Context) error {
+	flushed := make(chan struct{})
+	select {
+	case r.queue <- recordWrite{flushed: flushed}:
+	case <-ctx.Done():
+		return stack.Wrap(ctx.Err())
+	}
+	select {
+	case <-flushed:
+		return nil
+	case <-ctx.Done():
+		return stack.Wrap(ctx.Err())
+	}
 }
 
 // Dropped reports how many writes were thrown away, for a test or a health check that wants
@@ -187,9 +252,16 @@ func (r *sessionRecorder) write(write recordWrite) {
 	defer cancel()
 
 	switch {
+	case write.flushed != nil:
+		// The items pending ahead of it were written before this was reached.
+		close(write.flushed)
 	case write.session != nil:
 		if err := r.store.SaveSession(ctx, write.session); err != nil {
 			r.logger.Error("could not record the session starting", "error", err)
+			return
+		}
+		if err := r.store.SaveSessionTools(ctx, write.session.ID, write.tools); err != nil {
+			r.logger.Error("could not record the session's tools", "error", err)
 		}
 	case write.closed != "":
 		if err := r.store.CloseSession(ctx, write.closed, write.closedAt); err != nil {
@@ -202,6 +274,20 @@ func (r *sessionRecorder) write(write recordWrite) {
 	case write.finished != "":
 		if err := r.store.FinishResponse(ctx, write.finished, write.status, write.failure, write.finishedAt); err != nil {
 			r.logger.Error("could not record the turn ending", "error", err)
+		}
+	case write.described != nil:
+		d := write.described
+		if err := r.store.DescribeSession(ctx, d.customerID, d.id, d.title, d.description, d.custom); err != nil {
+			r.logger.Error("could not record the session's title", "session", d.id, "error", err)
+		}
+	case write.chose != nil:
+		c := write.chose
+		if err := r.store.ChooseSessionConnection(ctx, c.customerID, c.id, c.name, c.connectionID); err != nil {
+			r.logger.Error("could not record the connection a login chose", "session", c.id, "error", err)
+		}
+	case write.sawVideo != "":
+		if err := r.store.SawVideo(ctx, write.sawVideo); err != nil {
+			r.logger.Error("could not record the session's video", "session", write.sawVideo, "error", err)
 		}
 	}
 }
@@ -231,6 +317,7 @@ func sessionRow(created *Session) store.AgentSession {
 	row := store.AgentSession{
 		ID:              created.id,
 		CustomerID:      spec.CustomerID,
+		StreamAppPK:     spec.StreamApp,
 		ConfigID:        spec.ConfigID,
 		AgentName:       spec.AgentName,
 		AgentID:         spec.AgentID,
@@ -244,6 +331,7 @@ func sessionRow(created *Session) store.AgentSession {
 		ModelOverwrites: spec.ModelOverwrites,
 		ForkedFrom:      spec.ForkedFrom,
 		State:           store.SessionRunning,
+		Modality:        created.Modality(),
 		CreatedAt:       created.created.UTC(),
 	}
 	// Whose the session is comes from the credential rather than from the spec's UserID,
@@ -251,5 +339,21 @@ func sessionRow(created *Session) store.AgentSession {
 	// would make every session look like it belonged to the agent.
 	row.UserID = spec.Caller.UserID
 	row.CallerKind = string(spec.CallerKind)
+	// Only the alias and the connection's id, so a fork can choose them again: a selection
+	// is a reference, and the credential stays sealed on the connection.
+	for _, selection := range spec.ConnectorSelections {
+		row.ConnectorSelections = append(row.ConnectorSelections,
+			store.SessionConnectorSelection{Name: selection.Name, ConnectionID: selection.ConnectionID})
+	}
 	return row
+}
+
+// toolRows is what a session's model is offered, as it is kept.
+func toolRows(created *Session) []store.ToolDefinition {
+	offered := created.ToolDefinitions()
+	rows := make([]store.ToolDefinition, 0, len(offered))
+	for _, tool := range offered {
+		rows = append(rows, store.ToolDefinition{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters})
+	}
+	return rows
 }

@@ -58,3 +58,9 @@ type TTS interface {
 	// rather than reading them out. A voice that does not gets them taken out first.
 	Performs() bool
 }
+
+// Voiced is a provider that can say which voice it speaks in, its own default included
+// when none was asked for. Empty means the vendor chooses on its side.
+type Voiced interface {
+	Voice() string
+}

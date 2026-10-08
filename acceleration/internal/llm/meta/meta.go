@@ -10,6 +10,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 const ProviderName = "meta"
@@ -35,13 +36,13 @@ func New(options Options) (*LLM, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("meta: META_API_KEY is required")
+		return nil, stack.Wrap(errors.New("meta: META_API_KEY is required"))
 	}
 	if options.Model == "" {
 		options.Model = DefaultModel
 	}
 	if options.Model != DefaultModel {
-		return nil, fmt.Errorf("meta: unsupported model %q", options.Model)
+		return nil, stack.Wrap(fmt.Errorf("meta: unsupported model %q", options.Model))
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
@@ -50,7 +51,8 @@ func New(options Options) (*LLM, error) {
 		options.ReasoningEffort = "low"
 	}
 	capabilities := llm.Capabilities{
-		ReasoningEfforts: []string{"minimal", "low", "medium", "high", "xhigh"},
+		// max is Standard-tier 1.3 only; the contributor models answer it with a 400.
+		ReasoningEfforts: []string{"minimal", "low", "medium", "high", "xhigh", "max"},
 		DefaultEffort:    options.ReasoningEffort,
 		InputModalities:  []string{llm.ModalityImage},
 		// Chat Completions reports reasoning token counts, not reasoning text.
@@ -79,7 +81,7 @@ func New(options Options) (*LLM, error) {
 func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	// Do not silently weaken required/none to auto: that changes execution semantics.
 	if params.ToolChoice != "" && params.ToolChoice != "auto" {
-		return nil, fmt.Errorf("meta: tool choice %q is unsupported; use auto or omit tools", params.ToolChoice)
+		return nil, stack.Wrap(fmt.Errorf("meta: tool choice %q is unsupported; use auto or omit tools", params.ToolChoice))
 	}
 	return l.LLM.Create(ctx, params)
 }

@@ -16,19 +16,28 @@ export interface InboundCall {
 }
 
 /**
- * A message written to an agent that is not running.
+ * A message written to an agent that is not running, or to a running session whose agent
+ * leaves text to dispatch.
  *
- * One written to an agent that is already running never arrives here: the router answers it
- * from that session, because that agent is the one that knows what has been said so far.
+ * Otherwise one written to an agent that is already running never arrives here: the router
+ * answers it from that session, because that agent is the one that knows what has been said
+ * so far.
  */
 export interface InboundMessage {
-  /** The channel it was written in, which is the conversation to answer in. */
+  /** The channel it was written in, which is the conversation to answer in. May be empty. */
   channelId: string;
   channelType: string;
   /** Who to answer as, which names the channel replies are written into. */
   agentId: string;
   /** The stored agent config the router matched, if it matched one. */
   configId: string;
+  /**
+   * The running session it was written to, set when its agent leaves text to dispatch.
+   * Nothing has answered it: `dispatch.answer` has the model do so.
+   */
+  sessionId: string;
+  /** The durable command it was sent as, which the answer is created under. May be empty. */
+  commandId: string;
   text: string;
   messageId: string;
   userId: string;
@@ -57,6 +66,8 @@ export function messageOf(frame: Frame): InboundMessage {
     channelType: text(frame, "channel_type") || "agent",
     agentId: text(frame, "agent_id"),
     configId: text(frame, "config_id"),
+    sessionId: text(frame, "session_id"),
+    commandId: text(frame, "command_id"),
     text: text(frame, "text"),
     messageId: text(frame, "message_id"),
     userId: text(frame, "user_id"),

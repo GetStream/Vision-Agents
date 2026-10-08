@@ -1,171 +1,252 @@
 package api
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
-	"image"
-	_ "image/png"
-	"io"
+	"fmt"
 	"net/http"
-	"net/url"
+	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
+
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/google/uuid"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
-// ImageGenerator is a server-owned provider; caller input cannot change its URL or credentials.
-type ImageGenerator interface {
-	Generate(context.Context, string) ([]byte, string, string, error)
-}
-type FALImages struct {
-	key   string
-	slots chan struct{}
-}
+// imageDeadline bounds one generation. A queued provider can hold a job for minutes, and
+// a caller waiting on one response is owed an answer rather than a connection held open
+// until something upstream gives up.
+const imageDeadline = 240 * time.Second
 
-func NewFALImages(key string) *FALImages {
-	return &FALImages{key: key, slots: make(chan struct{}, 2)}
-}
+// errNoImages is what the image path says on a deployment that does not generate images.
+var errNoImages = notConfigured("this deployment does not generate images")
 
-const imageModel = "alibaba/qwen-image-3/text-to-image"
-
-func (g *FALImages) Generate(ctx context.Context, prompt string) ([]byte, string, string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 240*time.Second)
-	defer cancel()
-	select {
-	case g.slots <- struct{}{}:
-		defer func() { <-g.slots }()
-	case <-ctx.Done():
-		return nil, "", "", ctx.Err()
-	}
-	body, _ := json.Marshal(map[string]any{"prompt": prompt, "image_size": "square_hd", "num_images": 1, "output_format": "png", "sync_mode": true, "enable_safety_checker": true})
-	data, err := g.request(ctx, "POST", "https://queue.fal.run/"+imageModel, body)
-	if err != nil {
-		return nil, "", "", err
-	}
-	var job struct {
-		StatusURL   string `json:"status_url"`
-		ResponseURL string `json:"response_url"`
-		CancelURL   string `json:"cancel_url"`
-	}
-	if json.Unmarshal(data, &job) != nil || !falQueueURL(job.StatusURL) || !falQueueURL(job.ResponseURL) || !falQueueURL(job.CancelURL) {
-		return nil, "", "", errors.New("invalid image job")
-	}
-	completed := false
-	defer func() {
-		if !completed {
-			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer cancel()
-			_, _ = g.request(cleanup, "PUT", job.CancelURL, nil)
-		}
-	}()
-	timer := time.NewTicker(3 * time.Second)
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, "", "", ctx.Err()
-		case <-timer.C:
-		}
-		data, err = g.request(ctx, "GET", job.StatusURL, nil)
-		if err != nil {
-			return nil, "", "", err
-		}
-		var status struct {
-			Status string `json:"status"`
-		}
-		if json.Unmarshal(data, &status) != nil {
-			return nil, "", "", errors.New("invalid image status")
-		}
-		switch status.Status {
-		case "COMPLETED":
-			completed = true
-			data, err = g.request(ctx, "GET", job.ResponseURL, nil)
-			if err != nil {
-				return nil, "", "", err
-			}
-			return decodeFALImage(data)
-		case "IN_QUEUE", "IN_PROGRESS":
-		default:
-			return nil, "", "", errors.New("invalid image status")
-		}
-	}
-}
-
-func falQueueURL(raw string) bool {
-	u, err := url.Parse(raw)
-	return err == nil && u.Scheme == "https" && u.Host == "queue.fal.run" && u.User == nil && strings.HasPrefix(u.Path, "/alibaba/qwen-image-3/") && u.RawQuery == "" && u.Fragment == ""
-}
-
-func (g *FALImages) request(ctx context.Context, method, endpoint string, body []byte) ([]byte, error) {
-	if !falQueueURL(endpoint) {
-		return nil, errors.New("invalid image endpoint")
-	}
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Key "+g.key)
-	client := http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	res, err := client.Do(req)
-	if err != nil {
-		return nil, errors.New("image provider unavailable")
-	}
-	defer res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return nil, errors.New("image provider rejected generation")
-	}
-	data, err := io.ReadAll(io.LimitReader(res.Body, 16<<20+1))
-	if err != nil || len(data) > 16<<20 {
-		return nil, errors.New("image response too large")
-	}
-	return data, nil
-}
-
-func decodeFALImage(data []byte) ([]byte, string, string, error) {
-	var output struct {
-		Images []struct {
-			URL string `json:"url"`
-		} `json:"images"`
-	}
-	if json.Unmarshal(data, &output) != nil || len(output.Images) != 1 {
-		return nil, "", "", errors.New("provider returned no image")
-	}
-	// sync_mode returns bytes inline; never fetch a provider-supplied URL.
-	encoded, ok := strings.CutPrefix(output.Images[0].URL, "data:image/png;base64,")
+// generateImage draws pictures from a prompt and returns them.
+//
+// It is answered inline and nothing is kept: the pictures are in the response and the
+// only thing written down is what they cost. A generation that reached a provider is a 200
+// whether or not it drew, the way an inline recording is a 202 whether or not it spoke,
+// since the failure is part of the answer rather than something wrong with the request.
+// A caller that hangs up cancels the job at the provider, because the request's context
+// is what the provider waits on.
+func (s *Server) generateImage(ctx context.Context, request *generateImageRequest) (*generateImageResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return nil, "", "", errors.New("invalid image response")
+		return nil, errMissingCustomer
 	}
-	raw, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil || len(raw) > 10<<20 {
-		return nil, "", "", errors.New("invalid image data")
+	if s.streams == nil || s.streams.Image == nil {
+		return nil, errNoImages
 	}
-	dimensions, format, err := image.DecodeConfig(bytes.NewReader(raw))
-	if err != nil || format != "png" || dimensions.Width < 1 || dimensions.Height < 1 || dimensions.Width > 2048 || dimensions.Height > 2048 {
-		return nil, "", "", errors.New("invalid image dimensions")
+	if request.Body == nil {
+		return nil, invalidRequest("a request body is required")
 	}
-	if _, _, err := image.Decode(bytes.NewReader(raw)); err != nil {
-		return nil, "", "", errors.New("invalid image data")
+
+	drawing, err := imageRequestOf(request.Body)
+	if err != nil {
+		return nil, invalidRequest(err.Error())
 	}
-	return raw, "image/png", imageModel, nil
+	if err := drawing.Validate(); err != nil {
+		return nil, invalidRequest(err.Error())
+	}
+	tags := tagsSent(request.Body.Tags)
+	if err := tags.Validate(); err != nil {
+		return nil, invalidRequest(err.Error())
+	}
+
+	sent := value(request.Body.Options)
+	ctx, cancel := context.WithTimeout(ctx, imageDeadline)
+	defer cancel()
+	generation, err := s.streams.Image.Generate(ctx, imagerouter.Request{
+		CustomerID: customerID,
+		Tags:       tags,
+		Target:     value(sent.Target),
+		Providers:  value(sent.Providers),
+		Image:      drawing,
+	})
+	var failure *imagegen.Error
+	if err != nil && !errors.As(err, &failure) {
+		return nil, invalidRequest(err.Error())
+	}
+	return &generateImageResponse{Body: imageGenerationOf(generation, err)}, nil
 }
 
-func (s *Server) GenerateImage(ctx context.Context, request GenerateImageRequestObject) (GenerateImageResponseObject, error) {
-	if _, ok := CustomerFrom(ctx); !ok {
-		return GenerateImage401JSONResponse{missingCustomer()}, nil
+// imageRequestOf reads what to draw out of the request.
+func imageRequestOf(body *ImageGenerationRequest) (imagegen.Request, error) {
+	sent := value(body.Options)
+	if sent.N != nil && *sent.N < 1 {
+		return imagegen.Request{}, stack.Wrap(fmt.Errorf("n must be between 1 and %d", imagegen.MaxImages))
 	}
-	if s.images == nil {
-		return GenerateImage404JSONResponse{NotFoundJSONResponse{Error: "image generation unavailable"}}, nil
+	drawing := imagegen.Request{
+		Prompt:         body.Prompt,
+		NegativePrompt: value(sent.NegativePrompt),
+		AspectRatio:    value(sent.AspectRatio),
+		N:              count(sent.N),
+		Seed:           sent.Seed,
+		Format:         string(value(sent.OutputFormat)),
 	}
-	if request.Body == nil || strings.TrimSpace(request.Body.Prompt) == "" || !utf8.ValidString(request.Body.Prompt) || utf8.RuneCountInString(request.Body.Prompt) > 4000 {
-		return GenerateImage400JSONResponse{badRequest("prompt must contain 1 to 4000 characters")}, nil
+	if size := value(sent.Size); size != "" {
+		width, height, _ := strings.Cut(size, "x")
+		w, widthErr := strconv.Atoi(width)
+		h, heightErr := strconv.Atoi(height)
+		if widthErr != nil || heightErr != nil || w < 1 || h < 1 {
+			return imagegen.Request{}, stack.Wrap(fmt.Errorf("size %q is not a width and a height such as 1024x1024", size))
+		}
+		drawing.Width, drawing.Height = w, h
 	}
-	data, mime, model, err := s.images.Generate(ctx, request.Body.Prompt)
-	if err != nil {
-		return GenerateImage502JSONResponse{Error: "image generation failed"}, nil
+	return drawing, nil
+}
+
+// imageGenerationOf renders a generation for the wire, and why it failed when it did.
+func imageGenerationOf(generation imagerouter.Generation, failure error) ImageGeneration {
+	rendered := ImageGeneration{
+		Id:         "img_" + uuid.NewString(),
+		Status:     ImageGenerationStatusCompleted,
+		Provider:   optional(generation.Provider),
+		Model:      optional(generation.Model),
+		Images:     make([]GeneratedImage, 0, len(generation.Images)),
+		CostMicros: generation.CostMicros,
 	}
-	return GenerateImage200JSONResponse{Data: base64.StdEncoding.EncodeToString(data), MediaType: mime, Model: model}, nil
+	for _, picture := range generation.Images {
+		rendered.Images = append(rendered.Images, GeneratedImage{
+			Data:      picture.Data,
+			MediaType: GeneratedImageMediaType(picture.MediaType),
+			Width:     picture.Width,
+			Height:    picture.Height,
+			Seed:      picture.Seed,
+		})
+	}
+	if failure != nil {
+		code := ImageErrorCode(imagegen.CodeOf(failure))
+		rendered.Status = ImageGenerationStatusFailed
+		rendered.ErrorCode = &code
+		rendered.Error = optional(failure.Error())
+	}
+	return rendered
+}
+
+// registerImages declares the operations served in images.go.
+func (s *Server) registerImages(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "generateImage",
+		Method:      http.MethodPost,
+		Path:        "/v1/image/generations",
+		Summary:     "Draw pictures from a prompt, and return them",
+		Description: "Routed like search: a target or a priority list picks the model, failover and billing " +
+			"work as they do everywhere else, and one request is one stat row counting its pictures. " +
+			"The pictures come back in the response as bytes, never as a link, and nothing is " +
+			"stored, so the id cannot be fetched again.\n" +
+			"The request is answered when the pictures are drawn, within 240 seconds; a caller that " +
+			"hangs up cancels the job at the provider. A generation that got as far as a provider " +
+			"answers 200 whether it drew or not: a failed one carries status failed, an error_code " +
+			"and the error, and costs nothing. A request that could not be routed at all, or that " +
+			"asks for something no model could draw, is a 400.\n" +
+			"A failed generation is asked of the next candidate only when the provider never " +
+			"accepted the job, and never after a safety filter refused it, since asking the next " +
+			"vendor is shopping for a laxer filter.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "What was drawn, or why nothing was"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.generateImage)
+}
+
+type generateImageRequest struct {
+	Body *ImageGenerationRequest `required:"true"`
+}
+
+type generateImageResponse struct {
+	Body ImageGeneration
+}
+
+// GeneratedImage is the GeneratedImage schema.
+type GeneratedImage struct {
+	Data      []byte                  `json:"data" doc:"The picture, base64. Decoded and checked before it was returned, and never more than 10 MiB." format:"byte" nullable:"false"`
+	Height    int                     `json:"height"`
+	MediaType GeneratedImageMediaType `json:"media_type" doc:"What the picture is, read off the picture itself rather than the provider's label." enum:"image/png,image/jpeg"`
+	Seed      *int64                  `json:"seed,omitempty" doc:"The seed the provider reports, which draws the same picture again. Absent when it reports none."`
+	Width     int                     `json:"width"`
+}
+
+func (*GeneratedImage) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["height"].Format = ""
+	schema.Properties["width"].Format = ""
+	return schema
+}
+
+// GeneratedImageMediaType is the GeneratedImageMediaType schema.
+type GeneratedImageMediaType string
+
+// Defines values for GeneratedImageMediaType.
+const (
+	Imagejpeg GeneratedImageMediaType = "image/jpeg"
+	Imagepng  GeneratedImageMediaType = "image/png"
+)
+
+// Valid indicates whether the value is a known member of the GeneratedImageMediaType enum.
+func (e GeneratedImageMediaType) Valid() bool {
+	switch e {
+	case Imagejpeg:
+		return true
+	case Imagepng:
+		return true
+	default:
+		return false
+	}
+}
+
+// ImageErrorCode Why a generation drew nothing, absent when it completed. content_filtered is a safety filter refusing the prompt or the picture; unsupported_option a size, shape or setting no candidate could honour; provider_failed anything else a provider did wrong; timeout the 240 seconds running out; cancelled the caller hanging up.
+type ImageErrorCode string
+
+// Defines values for ImageErrorCode.
+const (
+	ImageErrorCodeCancelled         ImageErrorCode = "cancelled"
+	ImageErrorCodeContentFiltered   ImageErrorCode = "content_filtered"
+	ImageErrorCodeProviderFailed    ImageErrorCode = "provider_failed"
+	ImageErrorCodeTimeout           ImageErrorCode = "timeout"
+	ImageErrorCodeUnsupportedOption ImageErrorCode = "unsupported_option"
+)
+
+// Valid indicates whether the value is a known member of the ImageErrorCode enum.
+func (e ImageErrorCode) Valid() bool {
+	switch e {
+	case ImageErrorCodeCancelled:
+		return true
+	case ImageErrorCodeContentFiltered:
+		return true
+	case ImageErrorCodeProviderFailed:
+		return true
+	case ImageErrorCodeTimeout:
+		return true
+	case ImageErrorCodeUnsupportedOption:
+		return true
+	default:
+		return false
+	}
+}
+
+func (ImageErrorCode) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "ImageErrorCode", "Why a generation drew nothing, absent when it completed. content_filtered is a safety filter refusing the prompt or the picture; unsupported_option a size, shape or setting no candidate could honour; provider_failed anything else a provider did wrong; timeout the 240 seconds running out; cancelled the caller hanging up.", "content_filtered", "unsupported_option", "provider_failed", "timeout", "cancelled")
+}
+
+// ImageGeneration is the ImageGeneration schema.
+type ImageGeneration struct {
+	CostMicros int64                 `json:"cost_micros" doc:"Millionths of a dollar, priced per picture or per megapixel from what came back. Zero when it failed."`
+	Error      *string               `json:"error,omitempty" doc:"What went wrong, in words. Absent when the generation completed."`
+	ErrorCode  *ImageErrorCode       `json:"error_code,omitempty"`
+	Id         string                `json:"id" doc:"This response's own id, for logs. Nothing is stored under it." example:"img_1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed"`
+	Images     []GeneratedImage      `json:"images" doc:"The pictures, as many as were asked for. Empty when the generation failed." nullable:"false"`
+	Model      *string               `json:"model,omitempty" example:"alibaba/qwen-image-3/text-to-image"`
+	Provider   *string               `json:"provider,omitempty" doc:"Who drew it, or who refused to. Absent when nothing got as far as a provider." example:"fal"`
+	Status     ImageGenerationStatus `json:"status"`
+}
+
+// ImageGenerationRequest is the ImageGenerationRequest schema.
+type ImageGenerationRequest struct {
+	Options *ImageOptions      `json:"options,omitempty"`
+	Prompt  string             `json:"prompt" doc:"What to draw, in the caller's own words." example:"A yellow watering can beside a seedling, flat illustration, no text"`
+	Tags    *map[string]string `json:"tags,omitempty"`
 }

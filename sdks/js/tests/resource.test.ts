@@ -5,6 +5,7 @@ import {
   Client,
   ConfigurationError,
   GUEST_STORAGE_KEY,
+  RouterError,
   Session,
   type CreateSessionOptions,
   type GuestStore,
@@ -21,6 +22,7 @@ function session(over: Partial<Schemas["Session"]> = {}): Schemas["Session"] {
     user_id: "jlahey",
     agent_id: "docs",
     state: "live",
+    modality: "text",
     created_at: new Date().toISOString(),
     ...over,
   };
@@ -61,6 +63,29 @@ describe("the agent handle", () => {
     router.serve("GET", "/v1/agents/configs", { body: [] });
 
     assert.equal(await api.agent("docs").config(), undefined);
+  });
+
+  it("updates a config by sending only what changed, so the rest of it is kept", async () => {
+    router.serve("GET", "/v1/agents/configs", { body: [{ id: "config-1", name: "docs" }] });
+    router.serve("PATCH", "/v1/agents/configs/config-1", {
+      body: { id: "config-1", name: "docs", guardrail: "Only Acme.", instructions: "Be brief." },
+    });
+
+    const updated = await api.agent("docs").updateConfig({ guardrail: "Only Acme." });
+
+    assert.equal(updated.instructions, "Be brief.");
+    assert.deepEqual(router.requestsTo("PATCH", "/v1/agents/configs/config-1")[0]?.body, {
+      guardrail: "Only Acme.",
+    });
+  });
+
+  it("refuses to update an agent nothing is configured under", async () => {
+    router.serve("GET", "/v1/agents/configs", { body: [] });
+
+    await assert.rejects(
+      () => api.agent("docs").updateConfig({ guardrail: "Only Acme." }),
+      ConfigurationError,
+    );
   });
 });
 
@@ -118,37 +143,71 @@ describe("sessions", () => {
     await held.close();
   });
 
-  it("puts a query on the wire as the parameters the router reads", async () => {
-    router.serve("GET", "/v1/agents/sessions", { body: [session()] });
-    const after = new Date("2026-01-01T00:00:00.000Z");
-
-    await api.agent("docs").sessions.query({
-      project: "Health",
-      state: "closed",
-      custom: { tab: "docs", seat: 4 },
-      createdAfter: after,
-      limit: 10,
+  it("puts a query on the wire as the filter the router reads", async () => {
+    router.serve("POST", "/v1/agents/sessions/query", {
+      body: { items: [session()], has_more: false },
     });
 
-    const query = router.last.query;
-    assert.equal(query.get("agent"), "docs", "an agent's sessions are the agent's own");
-    assert.equal(query.get("project"), "Health");
-    assert.equal(query.get("state"), "closed");
-    assert.equal(query.get("custom"), '{"tab":"docs","seat":4}');
-    assert.equal(query.get("created_after"), after.toISOString());
-    assert.equal(query.get("limit"), "10");
-    assert.equal(query.get("user_id"), null, "a filter nobody set is not sent empty");
+    await api.agent("docs").sessions.query({
+      projectId: "health",
+      modality: "voice",
+      state: "live",
+      agentId: "support-7",
+      limit: 10,
+      cursor: "page-2",
+    });
+
+    assert.deepEqual(
+      router.last.body,
+      {
+        filter: {
+          agent: "docs",
+          project_id: "health",
+          modality: "voice",
+          state: "live",
+          agent_id: "support-7",
+        },
+        limit: 10,
+        cursor: "page-2",
+      },
+      "an agent's sessions are the agent's own, and a filter nobody set is not sent empty",
+    );
   });
 
-  it("searches on the search path, carrying the same filters", async () => {
-    router.serve("GET", "/v1/agents/sessions/search", { body: [session()] });
+  it("searches through the same query, as a text match", async () => {
+    router.serve("POST", "/v1/agents/sessions/query", {
+      body: { items: [session()], has_more: false },
+    });
 
-    await api.agent("docs").sessions.search("sendbird", { project: "Health" });
+    await api.agent("docs").sessions.search("sendbird", { userId: "ana" });
 
-    assert.equal(router.last.path, "/v1/agents/sessions/search");
-    assert.equal(router.last.query.get("q"), "sendbird");
-    assert.equal(router.last.query.get("project"), "Health");
-    assert.equal(router.last.query.get("agent"), "docs");
+    assert.deepEqual(router.last.body, {
+      filter: { agent: "docs", user_id: "ana", text: { $q: "sendbird" } },
+    });
+  });
+
+  it("stops an unwatched session on close rather than deleting it, so what it said is kept", async () => {
+    router.serve("POST", "/v1/agents/sessions", { status: 201, body: session() });
+    router.serve("POST", "/v1/agents/sessions/session-1/stop", { status: 204 });
+    const held = await api.agent("docs").sessions.create({ watch: false });
+
+    await held.close();
+
+    assert.equal(router.requestsTo("POST", "/v1/agents/sessions/session-1/stop").length, 1);
+    assert.equal(router.requestsTo("DELETE", "/v1/agents/sessions/session-1").length, 0);
+  });
+
+  it("deletes a conversation, held or not, only when asked", async () => {
+    const { session: held } = await open();
+    router.serve("DELETE", "/v1/agents/sessions/session-1", { status: 204 });
+    router.serve("DELETE", "/v1/agents/sessions/session-9", { status: 204 });
+
+    await held.delete();
+    await api.agent("docs").sessions.delete("session-9");
+
+    assert.equal(router.requestsTo("DELETE", "/v1/agents/sessions/session-1").length, 1);
+    assert.equal(router.requestsTo("DELETE", "/v1/agents/sessions/session-9").length, 1);
+    await held.close();
   });
 
   it("forks into a session of its own and keeps watching it", async () => {
@@ -171,6 +230,203 @@ describe("sessions", () => {
 
     await forked.close();
     await parent.close();
+  });
+
+  it("changes a running session and hands back the session as it now is", async () => {
+    const { session: held } = await open();
+    router.serve("PATCH", "/v1/agents/sessions/session-1", {
+      status: 200,
+      body: session({ llm: "llm-thinking" }),
+    });
+
+    const updated = await held.update({ title: "Order 1042", llm: "llm-thinking", thinking: "high" });
+
+    assert.equal(updated.id, "session-1");
+    assert.equal(updated.llm, "llm-thinking");
+    const [sent] = router.requestsTo("PATCH", "/v1/agents/sessions/session-1");
+    assert.ok(sent, "no update reached the router");
+    assert.deepEqual(
+      sent.body,
+      { title: "Order 1042", llm: "llm-thinking", thinking: "high" },
+      "only what was named is sent",
+    );
+
+    await held.close();
+  });
+
+  it("deletes what one session remembered without ending it", async () => {
+    const { session: held } = await open();
+    router.serve("DELETE", "/v1/agents/sessions/session-1/memories", { status: 204 });
+
+    await held.deleteMemories();
+
+    assert.equal(router.requestsTo("DELETE", "/v1/agents/sessions/session-1/memories").length, 1);
+    assert.equal(
+      router.requestsTo("DELETE", "/v1/agents/sessions/session-1").length,
+      0,
+      "deleting what a session remembered must not end it",
+    );
+    await held.close();
+  });
+
+  it("deletes an ended session's memories by its id", async () => {
+    router.serve("DELETE", "/v1/agents/sessions/session-9/memories", { status: 204 });
+
+    await api.agent("docs").sessions.deleteMemories("session-9");
+
+    assert.equal(router.last.path, "/v1/agents/sessions/session-9/memories");
+  });
+
+  it("says why the router would not delete a session's memories", async () => {
+    router.serve("DELETE", "/v1/agents/sessions/someone-elses/memories", {
+      status: 404,
+      body: { error: { message: "unknown session", type: "not_found", code: "not_found" } },
+    });
+
+    await assert.rejects(
+      api.agent("docs").sessions.deleteMemories("someone-elses"),
+      (error: unknown) => error instanceof RouterError && error.status === 404,
+    );
+  });
+});
+
+describe("memories", () => {
+  let router: TestRouter;
+  let api: Client;
+
+  beforeEach(async () => {
+    router = await TestRouter.start();
+    api = new Client({ url: router.url, customerId: "local" });
+  });
+
+  afterEach(async () => {
+    await router.stop();
+  });
+
+  it("truncates everything remembered about one user", async () => {
+    router.serve("DELETE", "/v1/agents/users/user%20123/memories", { status: 204 });
+
+    await api.memories.truncate("user 123");
+
+    assert.equal(router.last.method, "DELETE");
+    assert.equal(router.last.path, "/v1/agents/users/user%20123/memories");
+  });
+
+  it("refuses to truncate nobody before asking the router", async () => {
+    await assert.rejects(api.memories.truncate(""), ConfigurationError);
+    assert.equal(router.received.length, 0);
+  });
+});
+
+describe("simulations", () => {
+  let router: TestRouter;
+  let api: Client;
+
+  const request: Schemas["SimulationRequest"] = {
+    name: "capital",
+    config_id: "config-1",
+    scenario: "Ask what the capital of France is.",
+    assertion: "The agent says Paris.",
+  };
+
+  const simulation: Schemas["Simulation"] = {
+    ...request,
+    id: "simulation-1",
+    mode: "text",
+    variations: 1,
+    max_turns: 12,
+    created_at: new Date().toISOString(),
+  };
+
+  function run(over: Partial<Schemas["SimulationRun"]> = {}): Schemas["SimulationRun"] {
+    return {
+      id: "run-1",
+      simulation_id: "simulation-1",
+      state: "running",
+      cases: 1,
+      passed: 0,
+      failed: 0,
+      started_at: new Date().toISOString(),
+      ...over,
+    };
+  }
+
+  beforeEach(async () => {
+    router = await TestRouter.start();
+    api = new Client({ url: router.url, customerId: "local" });
+  });
+
+  afterEach(async () => {
+    await router.stop();
+  });
+
+  it("creates a simulation from the request as written", async () => {
+    router.serve("POST", "/v1/agents/simulations", { status: 201, body: simulation });
+
+    const created = await api.simulations.create(request);
+
+    assert.equal(created.id, "simulation-1");
+    assert.deepEqual(router.last.body, request, "nothing the caller left out is filled in");
+  });
+
+  it("replaces a simulation in place, by its id", async () => {
+    router.serve("PUT", "/v1/agents/simulations/simulation-1", {
+      body: { ...simulation, assertion: "The agent says Paris, France." },
+    });
+
+    const updated = await api.simulations.update("simulation-1", {
+      ...request,
+      assertion: "The agent says Paris, France.",
+    });
+
+    assert.equal(updated.assertion, "The agent says Paris, France.");
+    assert.equal((router.last.body as Record<string, unknown>)["assertion"], "The agent says Paris, France.");
+  });
+
+  it("starts a run and reads it until it settles", async () => {
+    router.serve("POST", "/v1/agents/simulations/simulation-1/run", { status: 202, body: run() });
+    router.serve("GET", "/v1/agents/simulation-runs/run-1", { body: run({ state: "passed", passed: 1 }) });
+
+    const started = await api.simulations.run("simulation-1");
+    const settled = await api.simulations.runs.get(started.id);
+
+    assert.equal(started.state, "running", "a run answers before its conversations are had");
+    assert.equal(settled.state, "passed");
+    assert.equal(settled.passed, 1);
+  });
+
+  it("lists one simulation's runs, and leaves out a filter nobody set", async () => {
+    router.serve("GET", "/v1/agents/simulation-runs", { body: [run()] });
+
+    await api.simulations.runs.list({ simulationId: "simulation-1" });
+    assert.equal(router.last.query.get("simulation_id"), "simulation-1");
+    assert.equal(router.last.query.get("limit"), null);
+
+    await api.simulations.runs.list();
+    assert.equal(router.last.query.get("simulation_id"), null);
+  });
+
+  it("cancels a run and deletes a simulation", async () => {
+    router.serve("POST", "/v1/agents/simulation-runs/run-1/cancel", { body: run({ state: "cancelled" }) });
+    router.serve("DELETE", "/v1/agents/simulations/simulation-1", { status: 204 });
+
+    const cancelled = await api.simulations.runs.cancel("run-1");
+    await api.simulations.delete("simulation-1");
+
+    assert.equal(cancelled.state, "cancelled");
+    assert.equal(router.requestsTo("DELETE", "/v1/agents/simulations/simulation-1").length, 1);
+  });
+
+  it("says why the router would not run a simulation", async () => {
+    router.serve("POST", "/v1/agents/simulations/gone/run", {
+      status: 404,
+      body: { error: { message: "unknown simulation", type: "not_found", code: "not_found" } },
+    });
+
+    await assert.rejects(
+      api.simulations.run("gone"),
+      (error: unknown) => error instanceof RouterError && error.status === 404,
+    );
   });
 });
 
@@ -209,10 +465,32 @@ describe("responses", () => {
 
     assert.equal(answering.id, "response-1");
     assert.equal(answering.status, "running");
-    assert.equal(
-      (router.last.body as Record<string, unknown>)["text"],
-      "Is Stream better than Sendbird?",
-    );
+    const body = router.last.body as Record<string, unknown>;
+    assert.equal(body["text"], "Is Stream better than Sendbird?");
+    assert.equal(body["command_id"], undefined, "a session keeping no conversation names no command");
+  });
+
+  it("names each question on a session that keeps its conversation", async () => {
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: session({ id: "session-2", conversation_id: "agent:support-1" }),
+    });
+    const kept = await api.agent("docs").sessions.create({ text: true, watch: false });
+    router.serve("POST", "/v1/agents/sessions/session-2/responses", {
+      status: 202,
+      body: { id: "response-1", session_id: "session-2", status: "running", created_at: new Date().toISOString() },
+    });
+
+    await kept.responses.create("First question");
+    const first = (router.last.body as Record<string, unknown>)["command_id"];
+    await kept.responses.create("Second question");
+    const second = (router.last.body as Record<string, unknown>)["command_id"];
+    await kept.responses.create("Retried question", { commandId: "request-7" });
+
+    assert.match(String(first), /^[0-9a-f-]{36}$/);
+    assert.notEqual(first, second, "two questions are two commands");
+    assert.equal((router.last.body as Record<string, unknown>)["command_id"], "request-7");
+    await kept.close();
   });
 
   it("reads one turn's items rather than the whole conversation's", async () => {
@@ -225,7 +503,7 @@ describe("responses", () => {
         created_at: new Date().toISOString(),
       },
     });
-    router.serve("GET", "/v1/agents/sessions/session-1/responses/items", { body: [] });
+    router.serve("GET", "/v1/agents/sessions/session-1/responses/items", { body: { items: [], has_more: false } });
 
     const answering = await held.responses.create("Anything");
     await answering.items.all();
@@ -234,17 +512,20 @@ describe("responses", () => {
   });
 
   it("reads the whole conversation's items when nothing narrows it", async () => {
-    router.serve("GET", "/v1/agents/sessions/session-1/responses/items", { body: [] });
+    router.serve("GET", "/v1/agents/sessions/session-1/responses/items", { body: { items: [], has_more: false } });
 
     await held.responses.items.all();
 
     assert.equal(router.last.query.get("response_id"), null);
   });
 
-  it("pages until a short page says there is no more", async () => {
+  it("follows the cursor until a page says there is no more", async () => {
     const page = 2;
     router.serve("GET", "/v1/agents/sessions/session-1/responses/items", (_, calls) => ({
-      body: calls === 0 ? [item(0), item(1)] : [item(2)],
+      body:
+        calls === 0
+          ? { items: [item(0), item(1)], has_more: true, next_cursor: "after-1" }
+          : { items: [item(2)], has_more: false },
     }));
 
     const read: number[] = [];
@@ -254,8 +535,50 @@ describe("responses", () => {
 
     assert.deepEqual(read, [0, 1, 2]);
     const asked = router.requestsTo("GET", "/v1/agents/sessions/session-1/responses/items");
-    assert.equal(asked.length, 2, "a short page is the last page, so nothing is asked again");
-    assert.equal(asked[1]?.query.get("offset"), "2", "the second page picks up where the first ended");
+    assert.equal(asked.length, 2, "the last page says so, so nothing is asked again");
+    assert.equal(asked[1]?.query.get("cursor"), "after-1", "the second page picks up where the first ended");
+  });
+
+  it("rewinds to the response an item belongs to, since an item is what a transcript shows", async () => {
+    // A stored text conversation cannot be rewound, so this is a call's, read back.
+    const call = api.agent("docs").sessions.responses("call-1");
+    router.serve("POST", "/v1/agents/sessions/call-1/rewind", { status: 204 });
+
+    await call.rewind(item(3));
+    assert.deepEqual(router.last.body, { response_id: "response-1" });
+
+    await call.rewind("response-2");
+    assert.deepEqual(router.last.body, { response_id: "response-2" });
+  });
+
+  it("says why the router would not rewind", async () => {
+    router.serve("POST", "/v1/agents/sessions/session-1/rewind", {
+      status: 400,
+      body: { error: { message: "session: a stored text conversation cannot be rewound; fork it at the response", type: "invalid_request", code: "invalid_request" } },
+    });
+
+    await assert.rejects(
+      () => held.responses.rewind("response-1"),
+      (error: unknown) =>
+        error instanceof RouterError && error.status === 400 && /cannot be rewound/.test(error.message),
+    );
+  });
+
+  it("refuses to rewind to a response a session that records nothing never had", async () => {
+    await assert.rejects(() => held.responses.rewind(""), ConfigurationError);
+    assert.equal(router.requestsTo("POST", "/v1/agents/sessions/session-1/rewind").length, 0);
+  });
+
+  it("forks at a response, carrying the history only that far", async () => {
+    router.serve("POST", "/v1/agents/sessions/session-1/fork", {
+      status: 201,
+      body: session({ id: "session-2", forked_from: "session-1" }),
+    });
+
+    const forked = await held.fork({ response_id: "response-1", watch: false });
+
+    assert.equal(forked.id, "session-2");
+    assert.deepEqual(router.last.body, { response_id: "response-1" });
   });
 });
 

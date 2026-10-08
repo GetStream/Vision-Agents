@@ -12,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Disposition says what to do with a stable transcript revision.
@@ -61,9 +62,10 @@ type FlowTurn struct {
 }
 
 type flow struct {
-	model   *llmrouter.Session
-	emitter *Emitter
-	logger  *slog.Logger
+	model       *llmrouter.Session
+	emitter     *Emitter
+	logger      *slog.Logger
+	onModelCall func(llm.CallTiming)
 
 	mu sync.Mutex
 	// pending holds each candidate still with the controller: when it was asked about, so
@@ -79,14 +81,15 @@ type flow struct {
 	// request open until headers or a 429 retry, and waiting for that used to leave the
 	// follow-up never asked.
 	inFlight string
-	running  sync.WaitGroup
+	// retired are controllers a swap replaced, closed with the flow so a decision they
+	// were still making can settle.
+	retired []*llmrouter.Session
+	running sync.WaitGroup
 }
 
 // flowDeadline bounds one floor decision. The conversation model may sit for minutes;
-// the controller must not, or a 429 leaves the caller unanswered. Three seconds is
-// enough for a dedicated classifier and too short for Muse Spark, which is what
-// Athena's isolated llm-flow alias actually is.
-const flowDeadline = 12 * time.Second
+// the controller must not, or a 429 leaves the caller unanswered.
+const flowDeadline = 3 * time.Second
 
 // Ongoing speech cannot wait for the conversation model to finish reasoning.
 // Noise is filtered before an overlap reaches the controller; on timeout yield
@@ -154,10 +157,10 @@ func newFlow(model *llmrouter.Session, emitter *Emitter, logger *slog.Logger) *f
 
 func (f *flow) Decide(turn FlowTurn) error {
 	if strings.TrimSpace(turn.ID) == "" {
-		return errors.New("harness: a flow candidate id is required")
+		return stack.Wrap(errors.New("harness: a flow candidate id is required"))
 	}
 	if strings.TrimSpace(turn.Text) == "" {
-		return errors.New("harness: flow candidate text is required")
+		return stack.Wrap(errors.New("harness: flow candidate text is required"))
 	}
 
 	deadline := flowDeadline
@@ -191,8 +194,14 @@ func (f *flow) run(asked *candidate) {
 	defer f.running.Done()
 	defer f.advance(turn.ID)
 
-	stream, err := f.model.Create(asked.ctx, llm.ResponseParams{
+	f.mu.Lock()
+	model := f.model
+	f.mu.Unlock()
+	stream, err := model.Create(asked.ctx, llm.ResponseParams{
 		ID:           turn.ID,
+		Purpose:      "flow",
+		TurnID:       turn.ID,
+		OnTiming:     f.onModelCall,
 		Instructions: flowInstructions + "\n\nThe agent has been told:\n" + turn.Instructions,
 		Input:        []llm.Message{{Role: llm.User, Content: flowQuestion(turn)}},
 		// A decision is one small JSON object. Gemini 3 still thinks first, and 32 tokens
@@ -350,13 +359,27 @@ func (f *flow) Close() error {
 		asked.cancel()
 	}
 	clear(f.pending)
+	sessions := append([]*llmrouter.Session{f.model}, f.retired...)
 	f.mu.Unlock()
 
 	// Closing the session abandons whatever the controller is still deciding, which is
 	// what lets every consumer reach the end of its stream.
-	err := f.model.Close()
+	var failures []error
+	for _, session := range sessions {
+		if err := session.Close(); err != nil {
+			failures = append(failures, err)
+		}
+	}
 	f.running.Wait()
-	return err
+	return errors.Join(failures...)
+}
+
+// setModel decides from the next candidate on another session.
+func (f *flow) setModel(model *llmrouter.Session) {
+	f.mu.Lock()
+	f.retired = append(f.retired, f.model)
+	f.model = model
+	f.mu.Unlock()
 }
 
 // consume waits for one decision and reports it.

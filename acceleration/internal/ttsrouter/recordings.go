@@ -50,6 +50,7 @@ func NewRecordings(options Options) (*Recordings, error) {
 		Store:    options.Store,
 		Live:     options.Live,
 		Voices:   options.Voices,
+		Gate:     options.Gate,
 		Logger:   options.Logger,
 	})
 	if err != nil {

@@ -102,12 +102,14 @@ func (s *STSRouterSuite) newStubbedRouter(built *[]routing.Spec) *Router {
 	s.Require().NoError(err)
 
 	registry := NewRegistry()
+	// One provider name can serve models from more than one package, so the stub takes the
+	// capabilities of the model it is built for rather than of the provider.
 	for _, provider := range config[routing.STS].Providers {
-		capabilities, _ := capabilitiesFor(provider.Provider, provider.Model)
-		registry.Register(provider.Provider, func(spec routing.Spec) (sts.STS, error) {
+		name := provider.Provider
+		registry.Register(name, func(spec routing.Spec) (sts.STS, error) {
 			*built = append(*built, spec)
 			stub := newStubSTS()
-			stub.capabilities = capabilities
+			stub.capabilities, _ = capabilitiesFor(name, spec.Model)
 			return stub, nil
 		})
 	}
@@ -193,6 +195,21 @@ func (s *STSRouterSuite) TestRegistryKnowsEveryConfiguredProvider() {
 	}
 }
 
+func (s *STSRouterSuite) TestOpenAIServesLiveAndRealtimeModelsFromOneName() {
+	s.T().Setenv("OPENAI_API_KEY", "sk-test")
+	registry := DefaultRegistry()
+
+	live, err := registry.Build("openai", routing.Spec{Model: "gpt-live-1"})
+	s.Require().NoError(err)
+	s.False(live.Capabilities().SemanticTurns, "the Live API has no turn detector to tune")
+	s.False(live.Capabilities().Accepts("image"), "the Live API does not see")
+
+	realtime, err := registry.Build("openai", routing.Spec{Model: "gpt-realtime-2"})
+	s.Require().NoError(err)
+	s.True(realtime.Capabilities().SemanticTurns, "a Realtime model keeps its semantic turn detector")
+	s.True(realtime.Capabilities().Accepts("image"), "a Realtime model keeps its eyes")
+}
+
 func (s *STSRouterSuite) TestAConfigPromisingWhatItsProviderCannotSendIsRefusedAtBoot() {
 	config := routing.ModalityConfig{Providers: []routing.ProviderConfig{{
 		Provider:   "qwen",
@@ -206,6 +223,19 @@ func (s *STSRouterSuite) TestAConfigPromisingWhatItsProviderCannotSendIsRefusedA
 	_, err := New(Options{Config: config, Registry: DefaultRegistry()})
 	s.ErrorContains(err, "declares tools, which its provider cannot express",
 		"a term declared and never sent is the one thing terms exist to prevent")
+}
+
+func (s *STSRouterSuite) TestFastConversationalLandsOnGemini38Live() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+
+	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "sts-fast"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Require().Len(built, 1)
+	s.Equal("gemini", session.Provider())
+	s.Equal("gemini-3.8-live", built[0].Model, "the conversation nobody picked a model for gets the one the pin names")
 }
 
 func (s *STSRouterSuite) TestSemanticTurnsRouteOnlyToAModelThatReadsTheWords() {

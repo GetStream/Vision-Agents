@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // How many sessions are handed back at once. A person scrolling a sidebar reads a page at a
@@ -26,11 +29,29 @@ const (
 	maxItemLimit     = 1000
 )
 
+// SessionLimit is the page size a session or turn list uses for the limit asked for.
+//
+// The queries return one row more than this, so a caller can tell the page is not the last
+// without counting.
+func SessionLimit(asked int) int { return clampLimit(asked, defaultSessionLimit, maxSessionLimit) }
+
+// ItemLimit is the page size an item list uses for the limit asked for. SessionItems
+// returns one row more than this, the same as the session queries.
+func ItemLimit(asked int) int { return clampLimit(asked, defaultItemLimit, maxItemLimit) }
+
+func clampLimit(asked, fallback, most int) int {
+	if asked <= 0 {
+		return fallback
+	}
+	return min(asked, most)
+}
+
 // SaveSession records that a session was opened.
 //
 // Written when the session starts rather than when it ends, so a session that is still
 // running is findable and one the process died during is not simply lost. Saving the same
-// session twice updates the row: a retried write must not become a second conversation.
+// session twice updates the row: a retried write must not become a second conversation. It
+// also opens a text session that ended again, which is how one is carried on under its id.
 //
 // Incognito sessions never get here. The manager does not call this for one, which is what
 // the flag means -- not a row that is hidden, but no row at all.
@@ -49,8 +70,18 @@ func (s *Store) SaveSession(ctx context.Context, session *AgentSession) error {
 	if session.State == "" {
 		session.State = SessionRunning
 	}
+	if session.Modality == "" {
+		session.Modality = ModalityVoice
+		if session.CallID == "" {
+			session.Modality = ModalityText
+		}
+	}
 	if session.Custom == nil {
 		session.Custom = map[string]any{}
+	}
+	// The column's own default, which a nil slice would write as JSON null.
+	if session.ConnectorSelections == nil {
+		session.ConnectorSelections = []SessionConnectorSelection{}
 	}
 
 	_, err := s.db.NewInsert().Model(session).
@@ -60,12 +91,67 @@ func (s *Store) SaveSession(ctx context.Context, session *AgentSession) error {
 		Set("custom = EXCLUDED.custom").
 		Set("conversation_id = EXCLUDED.conversation_id").
 		Set("state = EXCLUDED.state").
+		Set("closed_at = NULL").
 		Set("updated_at = EXCLUDED.updated_at").
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("store: save session: %w", err)
 	}
 	return nil
+}
+
+// ErrNoSessionTools is a session that recorded no tools.
+var ErrNoSessionTools = errors.New("store: the session recorded no tools")
+
+// ToolDefinition is one tool as a session's model was offered it.
+type ToolDefinition struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+}
+
+// agentSessionTools is the tools a session was offered, kept apart from its row.
+type agentSessionTools struct {
+	bun.BaseModel `bun:"table:agent_session_tools"`
+
+	SessionID string           `bun:"session_id,pk"`
+	Tools     []ToolDefinition `bun:"tools,type:jsonb,notnull"`
+	UpdatedAt time.Time        `bun:"updated_at,notnull"`
+}
+
+// SaveSessionTools records what a session's model is offered, replacing what it was offered
+// before: a reopened session is offered what it has now.
+func (s *Store) SaveSessionTools(ctx context.Context, sessionID string, tools []ToolDefinition) error {
+	if sessionID == "" {
+		return errors.New("store: a session id is required")
+	}
+	if tools == nil {
+		tools = []ToolDefinition{}
+	}
+	_, err := s.db.NewInsert().
+		Model(&agentSessionTools{SessionID: sessionID, Tools: tools, UpdatedAt: time.Now().UTC()}).
+		On("CONFLICT (session_id) DO UPDATE").
+		Set("tools = EXCLUDED.tools").
+		Set("updated_at = EXCLUDED.updated_at").
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: save session tools: %w", err)
+	}
+	return nil
+}
+
+// SessionTools is what a session's model was last offered. A session that recorded none is
+// ErrNoSessionTools.
+func (s *Store) SessionTools(ctx context.Context, sessionID string) ([]ToolDefinition, error) {
+	var stored agentSessionTools
+	err := s.db.NewSelect().Model(&stored).Where("session_id = ?", sessionID).Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNoSessionTools
+	}
+	if err != nil {
+		return nil, fmt.Errorf("store: session tools: %w", err)
+	}
+	return stored.Tools, nil
 }
 
 // CloseSession records that a session ended. One that already ended keeps the first time: a
@@ -91,12 +177,30 @@ func (s *Store) CloseSession(ctx context.Context, id string, at time.Time) error
 	return nil
 }
 
+// SawVideo records that the agent saw the user's video on a session. The session's clock is
+// left alone: the turn that looked at the video moves it.
+func (s *Store) SawVideo(ctx context.Context, id string) error {
+	if id == "" {
+		return errors.New("store: a session id is required")
+	}
+
+	_, err := s.db.NewUpdate().Model((*AgentSession)(nil)).
+		Set("modality = ?", ModalityVideo).
+		Where("id = ?", id).
+		Where("modality <> ?", ModalityVideo).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: saw video: %w", err)
+	}
+	return nil
+}
+
 // DescribeSession changes what a session is called. It is separate from SaveSession because
 // renaming a conversation is something a person does long after it ended, when there is no
 // spec left to save.
 func (s *Store) DescribeSession(ctx context.Context, customerID, id, title, description string, custom map[string]any) error {
 	if customerID == "" || id == "" {
-		return errors.New("store: a customer and a session id are required")
+		return stack.Wrap(errors.New("store: a customer and a session id are required"))
 	}
 
 	query := s.db.NewUpdate().Model((*AgentSession)(nil)).
@@ -111,11 +215,11 @@ func (s *Store) DescribeSession(ctx context.Context, customerID, id, title, desc
 
 	result, err := query.Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: describe session: %w", err)
+		return stack.Wrap(fmt.Errorf("store: describe session: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: describe session: %w", err)
+		return stack.Wrap(fmt.Errorf("store: describe session: %w", err))
 	}
 	if affected == 0 {
 		return unknownStoredSession(id)
@@ -123,10 +227,43 @@ func (s *Store) DescribeSession(ctx context.Context, customerID, id, title, desc
 	return nil
 }
 
+// ChooseSessionConnection records connectionID as the session's selection for the connector
+// binding called name, replacing one it had, in one statement so two writes for different
+// names never drop each other's. A fork or a reopened chat re-resolves it as it does the
+// selections the session was opened with. A session with no row, such as an incognito one,
+// is left as it is.
+func (s *Store) ChooseSessionConnection(ctx context.Context, customerID, id, name, connectionID string) error {
+	if customerID == "" || id == "" || name == "" || connectionID == "" {
+		return stack.Wrap(errors.New("store: a customer, a session, a binding name and a connection id are required"))
+	}
+	_, err := s.db.NewUpdate().Model((*AgentSession)(nil)).
+		Set("updated_at = ?", time.Now().UTC()).
+		Set(`connector_selections = (
+			SELECT coalesce(jsonb_agg(chosen), '[]'::jsonb) FROM jsonb_array_elements(connector_selections) AS chosen
+			WHERE chosen->>'name' <> ?) || jsonb_build_array(jsonb_build_object('name', ?::text, 'connection_id', ?::text))`,
+			name, name, connectionID).
+		Where("id = ?", id).
+		Where("customer_id = ?", customerID).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: choose session connection: %w", err))
+	}
+	return nil
+}
+
+// SessionExists reports whether any customer has a session with this id.
+func (s *Store) SessionExists(ctx context.Context, id string) (bool, error) {
+	exists, err := s.db.NewSelect().Model((*AgentSession)(nil)).Where("id = ?", id).Exists(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: session exists: %w", err))
+	}
+	return exists, nil
+}
+
 // StoredSession returns one session a customer ran.
 func (s *Store) StoredSession(ctx context.Context, customerID, id string) (AgentSession, error) {
 	if customerID == "" || id == "" {
-		return AgentSession{}, errors.New("store: a customer and a session id are required")
+		return AgentSession{}, stack.Wrap(errors.New("store: a customer and a session id are required"))
 	}
 
 	var session AgentSession
@@ -139,30 +276,70 @@ func (s *Store) StoredSession(ctx context.Context, customerID, id string) (Agent
 		return AgentSession{}, unknownStoredSession(id)
 	}
 	if err != nil {
-		return AgentSession{}, fmt.Errorf("store: stored session: %w", err)
+		return AgentSession{}, stack.Wrap(fmt.Errorf("store: stored session: %w", err))
 	}
 	return session, nil
 }
 
-// QuerySessions returns a customer's sessions, newest first, narrowed by the filter.
+// ConversationPin is the Stream app a customer's conversation was kept in, read off the
+// newest session that held it. Found is false for a conversation no session of theirs did.
+func (s *Store) ConversationPin(ctx context.Context, customerID, conversationID string) (int64, bool, error) {
+	var pin sql.NullInt64
+	err := s.db.NewSelect().Model((*AgentSession)(nil)).Column("stream_app_pk").
+		Where("customer_id = ?", customerID).
+		Where("conversation_id = ?", conversationID).
+		OrderExpr("created_at DESC").
+		Limit(1).
+		Scan(ctx, &pin)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("store: conversation pin: %w", err)
+	}
+	return pin.Int64, true, nil
+}
+
+// DeleteSession deletes one of a customer's sessions, and its turns and their items with it.
+// A session that is not there is not an error: a retried delete has nothing left to do.
+func (s *Store) DeleteSession(ctx context.Context, customerID, id string) error {
+	if customerID == "" || id == "" {
+		return stack.Wrap(errors.New("store: a customer and a session id are required"))
+	}
+
+	_, err := s.db.NewDelete().Model((*AgentSession)(nil)).
+		Where("id = ?", id).
+		Where("customer_id = ?", customerID).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: delete session: %w", err))
+	}
+	return nil
+}
+
+// QuerySessions returns a customer's sessions, most recently updated first, narrowed by the
+// filter.
 //
 // This is the structured half of finding an old conversation: everything here is an exact
-// match or a range, so the answer is the same every time and a page can hold a cursor into
-// it. SearchSessions is the other half, for when what the caller has is words rather than a
+// match, so the answer is the same every time and a page can hold a cursor into it.
+// SearchSessions is the other half, for when what the caller has is words rather than a
 // filter.
 func (s *Store) QuerySessions(ctx context.Context, customerID string, filter SessionFilter) ([]AgentSession, error) {
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
 	query := s.db.NewSelect().Model((*AgentSession)(nil)).
 		Where("customer_id = ?", customerID).
-		Order("created_at DESC", "id DESC")
+		Order("updated_at DESC", "id DESC")
+	if after := filter.Cursor; after != nil {
+		query = query.Where("(updated_at, id) < (?, ?)", after.UpdatedAt, after.ID)
+	}
 	query = narrowSessions(query, filter)
 
 	var sessions []AgentSession
 	if err := query.Scan(ctx, &sessions); err != nil {
-		return nil, fmt.Errorf("store: query sessions: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: query sessions: %w", err))
 	}
 	return sessions, nil
 }
@@ -181,7 +358,7 @@ func (s *Store) QuerySessions(ctx context.Context, customerID string, filter Ses
 // their conversations.
 func (s *Store) SearchSessions(ctx context.Context, customerID, text string, filter SessionFilter) ([]AgentSession, error) {
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 	if text == "" {
 		return s.QuerySessions(ctx, customerID, filter)
@@ -190,16 +367,22 @@ func (s *Store) SearchSessions(ctx context.Context, customerID, text string, fil
 	// websearch_to_tsquery rather than to_tsquery, because the text comes from a search
 	// box: it takes quoted phrases and bare words and never fails on punctuation, where
 	// to_tsquery would answer a syntax error to somebody who typed an apostrophe.
+	const rank = "ts_rank(searchable, websearch_to_tsquery('english', ?))"
 	query := s.db.NewSelect().Model((*AgentSession)(nil)).
+		ColumnExpr("?TableColumns").
+		ColumnExpr(rank+" AS rank", text).
 		Where("customer_id = ?", customerID).
 		Where("searchable @@ websearch_to_tsquery('english', ?)", text).
-		OrderExpr("ts_rank(searchable, websearch_to_tsquery('english', ?)) DESC", text).
-		Order("created_at DESC", "id DESC")
+		Order("rank DESC", "updated_at DESC", "id DESC")
+	if after := filter.Cursor; after != nil {
+		query = query.Where("("+rank+", updated_at, id) < (?::real, ?, ?)",
+			text, after.Rank, after.UpdatedAt, after.ID)
+	}
 	query = narrowSessions(query, filter)
 
 	var sessions []AgentSession
 	if err := query.Scan(ctx, &sessions); err != nil {
-		return nil, fmt.Errorf("store: search sessions: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: search sessions: %w", err))
 	}
 	return sessions, nil
 }
@@ -209,17 +392,7 @@ func (s *Store) SearchSessions(ctx context.Context, customerID, text string, fil
 // honoured by query and forgotten by search is one a caller uses to read somebody else's
 // conversations.
 func narrowSessions(query *bun.SelectQuery, filter SessionFilter) *bun.SelectQuery {
-	limit := filter.Limit
-	if limit <= 0 {
-		limit = defaultSessionLimit
-	}
-	if limit > maxSessionLimit {
-		limit = maxSessionLimit
-	}
-	query = query.Limit(limit)
-	if filter.Offset > 0 {
-		query = query.Offset(filter.Offset)
-	}
+	query = query.Limit(SessionLimit(filter.Limit) + 1)
 
 	if filter.UserID != "" {
 		query = query.Where("user_id = ?", filter.UserID)
@@ -233,11 +406,14 @@ func narrowSessions(query *bun.SelectQuery, filter SessionFilter) *bun.SelectQue
 	if filter.Project != "" {
 		query = query.Where("project = ?", filter.Project)
 	}
-	switch filter.State {
-	case SessionRunning:
-		query = query.Where("closed_at IS NULL")
-	case SessionClosed:
-		query = query.Where("closed_at IS NOT NULL")
+	if filter.Modality != "" {
+		query = query.Where("modality = ?", filter.Modality)
+	}
+	if filter.AgentID != "" {
+		query = query.Where("agent_id = ?", filter.AgentID)
+	}
+	if filter.State != "" {
+		query = query.Where("state = ?", filter.State)
 	}
 	if len(filter.Custom) > 0 {
 		// Containment rather than a key at a time, so the GIN index on custom is usable
@@ -318,30 +494,25 @@ func (s *Store) FinishResponse(ctx context.Context, id, status, failure string, 
 }
 
 // SessionResponses returns a session's turns, oldest first, which read in order are the
-// conversation.
-func (s *Store) SessionResponses(ctx context.Context, customerID, sessionID string, limit, offset int) ([]AgentResponse, error) {
+// conversation. A nil after is the first page.
+func (s *Store) SessionResponses(ctx context.Context, customerID, sessionID string, limit int, after *ResponsePosition) ([]AgentResponse, error) {
 	if customerID == "" || sessionID == "" {
-		return nil, errors.New("store: a customer and a session id are required")
-	}
-	if limit <= 0 {
-		limit = defaultSessionLimit
-	}
-	if limit > maxSessionLimit {
-		limit = maxSessionLimit
+		return nil, stack.Wrap(errors.New("store: a customer and a session id are required"))
 	}
 
 	query := s.db.NewSelect().Model((*AgentResponse)(nil)).
 		Where("customer_id = ?", customerID).
 		Where("session_id = ?", sessionID).
+		Where("rewound_at IS NULL").
 		Order("created_at ASC", "id ASC").
-		Limit(limit)
-	if offset > 0 {
-		query = query.Offset(offset)
+		Limit(SessionLimit(limit) + 1)
+	if after != nil {
+		query = query.Where("(created_at, id) > (?, ?)", after.CreatedAt, after.ID)
 	}
 
 	var responses []AgentResponse
 	if err := query.Scan(ctx, &responses); err != nil {
-		return nil, fmt.Errorf("store: session responses: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: session responses: %w", err))
 	}
 	return responses, nil
 }
@@ -383,16 +554,11 @@ func (s *Store) AppendResponseItems(ctx context.Context, items []AgentResponseIt
 //
 // One flat stream rather than a list per turn, because that is how a conversation reads and
 // how it is rendered: the question, what the agent did about it, what it said, then the next
-// question. A caller that wants one turn's items passes that response id.
-func (s *Store) SessionItems(ctx context.Context, customerID, sessionID, responseID string, limit, offset int) ([]AgentResponseItem, error) {
+// question. A caller that wants one turn's items passes that response id. A nil after is
+// the first page.
+func (s *Store) SessionItems(ctx context.Context, customerID, sessionID, responseID string, limit int, after *ItemPosition) ([]AgentResponseItem, error) {
 	if customerID == "" || sessionID == "" {
-		return nil, errors.New("store: a customer and a session id are required")
-	}
-	if limit <= 0 {
-		limit = defaultItemLimit
-	}
-	if limit > maxItemLimit {
-		limit = maxItemLimit
+		return nil, stack.Wrap(errors.New("store: a customer and a session id are required"))
 	}
 
 	// Joined to responses rather than trusting the session id on the item, because the
@@ -402,65 +568,175 @@ func (s *Store) SessionItems(ctx context.Context, customerID, sessionID, respons
 		Join("JOIN agent_responses AS r ON r.id = ari.response_id").
 		Where("r.customer_id = ?", customerID).
 		Where("ari.session_id = ?", sessionID).
+		Where("r.rewound_at IS NULL").
 		Order("ari.at ASC", "ari.response_id ASC", "ari.ordinal ASC").
-		Limit(limit)
+		Limit(ItemLimit(limit) + 1)
 	if responseID != "" {
 		query = query.Where("ari.response_id = ?", responseID)
 	}
-	if offset > 0 {
-		query = query.Offset(offset)
+	if after != nil {
+		query = query.Where("(ari.at, ari.response_id, ari.ordinal) > (?, ?, ?)",
+			after.At, after.ResponseID, after.Ordinal)
 	}
 
 	var items []AgentResponseItem
 	if err := query.Scan(ctx, &items); err != nil {
-		return nil, fmt.Errorf("store: session items: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: session items: %w", err))
 	}
 	return items, nil
 }
 
-// RecordGuest stores a guest this app handed out, so it can later be claimed.
-func (s *Store) RecordGuest(ctx context.Context, guest *GuestUser) error {
-	if guest.ID == "" {
-		return errors.New("store: a guest id is required")
-	}
-	if guest.CustomerID == "" {
-		return errors.New("store: customer id is required")
-	}
-	if guest.CreatedAt.IsZero() {
-		guest.CreatedAt = time.Now().UTC()
-	}
-	if guest.Custom == nil {
-		guest.Custom = map[string]any{}
+// ErrUnknownResponse is a response that is not part of the session's conversation: it does
+// not exist, belongs to another session, or was rewound.
+var ErrUnknownResponse = errors.New("store: that response is not part of this conversation")
+
+// Exchanges returns a session's conversation as a model would be given it again, oldest
+// first: each turn's question and everything it answered. A non-empty upTo stops after that
+// response, which is where a rewind or a fork carries on from.
+//
+// Only questions and answers are kept. A tool's call and its result were the agent working
+// the answer out, and the answer is what the conversation carries forward, which is also all
+// a transcript read out of Chat gives a model.
+func (s *Store) Exchanges(ctx context.Context, customerID, sessionID, upTo string) ([]Exchange, error) {
+	if customerID == "" || sessionID == "" {
+		return nil, stack.Wrap(errors.New("store: a customer and a session id are required"))
 	}
 
-	// Getting a guest is get-or-create, so the same id arriving again is the same person
-	// coming back rather than a conflict.
-	_, err := s.db.NewInsert().Model(guest).
-		On("CONFLICT (id) DO NOTHING").
+	var responses []AgentResponse
+	err := s.db.NewSelect().Model(&responses).
+		Where("customer_id = ?", customerID).
+		Where("session_id = ?", sessionID).
+		Where("rewound_at IS NULL").
+		Order("created_at ASC", "id ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: exchanges: %w", err))
+	}
+	if upTo != "" {
+		end := -1
+		for i, response := range responses {
+			if response.ID == upTo {
+				end = i
+				break
+			}
+		}
+		if end < 0 {
+			return nil, stack.Wrap(ErrUnknownResponse)
+		}
+		responses = responses[:end+1]
+	}
+	if len(responses) == 0 {
+		return nil, nil
+	}
+
+	ids := make([]string, 0, len(responses))
+	for _, response := range responses {
+		ids = append(ids, response.ID)
+	}
+	var answers []AgentResponseItem
+	err = s.db.NewSelect().Model(&answers).
+		Where("response_id IN (?)", bun.In(ids)).
+		Where("kind = ?", ItemAnswer).
+		Order("response_id ASC", "ordinal ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: exchanges: answers: %w", err))
+	}
+	// An agent that speaks again once delegated work comes back answers one question twice,
+	// and both halves are the answer.
+	answered := map[string][]string{}
+	for _, answer := range answers {
+		answered[answer.ResponseID] = append(answered[answer.ResponseID], answer.Text)
+	}
+
+	exchanges := make([]Exchange, 0, len(responses))
+	for _, response := range responses {
+		exchanges = append(exchanges, Exchange{
+			ResponseID: response.ID, Said: response.Said,
+			Answer: strings.Join(answered[response.ID], "\n\n"),
+		})
+	}
+	return exchanges, nil
+}
+
+// RewindResponses takes every response after kept out of the session's conversation.
+func (s *Store) RewindResponses(ctx context.Context, customerID, sessionID, kept string, at time.Time) error {
+	if customerID == "" || sessionID == "" || kept == "" {
+		return stack.Wrap(errors.New("store: a customer, a session and a response id are required"))
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+
+	_, err := s.db.NewUpdate().Model((*AgentResponse)(nil)).
+		Set("rewound_at = ?", at).
+		Where("customer_id = ?", customerID).
+		Where("session_id = ?", sessionID).
+		Where("rewound_at IS NULL").
+		Where("(created_at, id) > (SELECT created_at, id FROM agent_responses WHERE id = ?)", kept).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: record guest: %w", err)
+		return stack.Wrap(fmt.Errorf("store: rewind responses: %w", err))
 	}
 	return nil
 }
 
-// Guest returns one guest of a customer's.
-func (s *Store) Guest(ctx context.Context, customerID, id string) (GuestUser, error) {
-	if customerID == "" || id == "" {
-		return GuestUser{}, errors.New("store: a customer and a guest id are required")
+// RecordUser stores an end user this app was seen acting for.
+func (s *Store) RecordUser(ctx context.Context, user *User) error {
+	if user.ID == "" {
+		return stack.Wrap(errors.New("store: a user id is required"))
+	}
+	if user.CustomerID == "" {
+		return stack.Wrap(errors.New("store: customer id is required"))
+	}
+	if user.Kind == "" {
+		return stack.Wrap(errors.New("store: a user kind is required"))
+	}
+	if user.CreatedAt.IsZero() {
+		user.CreatedAt = time.Now().UTC()
+	}
+	if user.Custom == nil {
+		user.Custom = map[string]any{}
 	}
 
-	var guest GuestUser
+	// Recording a user is get-or-create, so the same id arriving again is the same person
+	// coming back rather than a conflict. A row already here is left alone: a guest who
+	// signed up is claimed rather than overwritten, and overwriting would lose the kind
+	// the claim path reads.
+	_, err := s.db.NewInsert().Model(user).
+		On("CONFLICT (customer_id, id) DO NOTHING").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: record user: %w", err))
+	}
+	return nil
+}
+
+// RecordGuest stores a guest this app handed out, so it can later be claimed.
+func (s *Store) RecordGuest(ctx context.Context, guest *User) error {
+	guest.Kind = UserKindGuest
+	return s.RecordUser(ctx, guest)
+}
+
+// Guest returns one guest of a customer's. A user of some other kind is not one: an
+// account that signed up is nobody's to claim.
+func (s *Store) Guest(ctx context.Context, customerID, id string) (User, error) {
+	if customerID == "" || id == "" {
+		return User{}, stack.Wrap(errors.New("store: a customer and a guest id are required"))
+	}
+
+	var guest User
 	err := s.db.NewSelect().Model(&guest).
 		Where("id = ?", id).
 		Where("customer_id = ?", customerID).
+		Where("kind = ?", UserKindGuest).
 		Limit(1).
 		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return GuestUser{}, notAGuest(id, customerID)
+		return User{}, notAGuest(id, customerID)
 	}
 	if err != nil {
-		return GuestUser{}, fmt.Errorf("store: guest: %w", err)
+		return User{}, stack.Wrap(fmt.Errorf("store: guest: %w", err))
 	}
 	return guest, nil
 }
@@ -473,20 +749,21 @@ func (s *Store) Guest(ctx context.Context, customerID, id string) (GuestUser, er
 // somebody else.
 func (s *Store) ClaimGuest(ctx context.Context, customerID, guestID, userID string) (int64, error) {
 	if customerID == "" || guestID == "" || userID == "" {
-		return 0, errors.New("store: a customer, a guest and a user id are required")
+		return 0, stack.Wrap(errors.New("store: a customer, a guest and a user id are required"))
 	}
 	if guestID == userID {
-		return 0, errors.New("store: a guest cannot be claimed by itself")
+		return 0, stack.Wrap(errors.New("store: a guest cannot be claimed by itself"))
 	}
 
 	var moved int64
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		now := time.Now().UTC()
-		claimed, err := tx.NewUpdate().Model((*GuestUser)(nil)).
+		claimed, err := tx.NewUpdate().Model((*User)(nil)).
 			Set("claimed_by = ?", userID).
 			Set("claimed_at = ?", now).
 			Where("id = ?", guestID).
 			Where("customer_id = ?", customerID).
+			Where("kind = ?", UserKindGuest).
 			Where("claimed_by IS NULL").
 			Exec(ctx)
 		if err != nil {
@@ -500,10 +777,11 @@ func (s *Store) ClaimGuest(ctx context.Context, customerID, guestID, userID stri
 			// Either there is no such guest or somebody already claimed them, and the
 			// caller is told which: a guest already claimed is a retry, and a guest that
 			// never existed is a different mistake.
-			var existing GuestUser
+			var existing User
 			err := tx.NewSelect().Model(&existing).
 				Where("id = ?", guestID).
 				Where("customer_id = ?", customerID).
+				Where("kind = ?", UserKindGuest).
 				Limit(1).
 				Scan(ctx)
 			if errors.Is(err, sql.ErrNoRows) {
@@ -531,7 +809,7 @@ func (s *Store) ClaimGuest(ctx context.Context, customerID, guestID, userID stri
 		return nil
 	})
 	if err != nil {
-		return 0, fmt.Errorf("store: %w", err)
+		return 0, stack.Wrap(fmt.Errorf("store: %w", err))
 	}
 	return moved, nil
 }
@@ -548,9 +826,9 @@ func jsonbOf[V any](values map[string]V) string {
 }
 
 func unknownStoredSession(id string) error {
-	return fmt.Errorf("store: there is no session %s", id)
+	return stack.Wrap(fmt.Errorf("store: there is no session %s", id))
 }
 
 func notAGuest(id, customerID string) error {
-	return fmt.Errorf("store: %s is not a guest of %s", id, customerID)
+	return stack.Wrap(fmt.Errorf("store: %s is not a guest of %s", id, customerID))
 }

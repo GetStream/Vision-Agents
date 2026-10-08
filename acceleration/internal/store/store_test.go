@@ -5,12 +5,13 @@ package store
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/suite"
 
-	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // DSNEnvVar is where the tests look for a Postgres to run against.
@@ -19,7 +20,10 @@ const DSNEnvVar = "ROUTER_POSTGRES_DSN"
 type StoreSuite struct {
 	suite.Suite
 	store *Store
-	ctx   context.Context
+	// dsn is the suite's own database, for a test that needs another pool on it, as a second
+	// router would have.
+	dsn string
+	ctx context.Context
 	// base is the start of a fixed hour, so bucket boundaries are predictable.
 	base time.Time
 }
@@ -34,11 +38,18 @@ func (s *StoreSuite) SetupSuite() {
 		s.T().Skipf("%s not set", DSNEnvVar)
 	}
 
-	store, err := Open(dsn)
+	// A database of this suite's own: it drops the schema and empties tables between
+	// tests, which is not something to do to a database another package is reading.
+	s.dsn = testenv.Database(dsn, "store")
+	store, err := Open(s.dsn)
 	s.Require().NoError(err)
 	s.store = store
 	s.ctx = context.Background()
 	s.Require().NoError(store.Ping(s.ctx))
+
+	var database string
+	s.Require().NoError(store.DB().QueryRowContext(s.ctx, "SELECT current_database()").Scan(&database))
+	s.Require().True(strings.HasSuffix(database, "_test"), "refusing to drop the schema of %s, which is not a test database", database)
 
 	// Start from an empty schema so the embedded migrations are what create the tables.
 	_, err = store.DB().ExecContext(s.ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public")
@@ -58,9 +69,15 @@ func (s *StoreSuite) SetupTest() {
 	_, err := s.store.DB().ExecContext(
 		s.ctx,
 		"TRUNCATE requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily,"+
-			" turns, turn_stats_hourly, turn_stats_daily, call_events, phone_numbers, voices,"+
-			" agent_sessions, agent_responses, agent_response_items, guest_users,"+
-			" organizations CASCADE",
+			" turns, turn_stats_hourly, turn_stats_daily, calls, call_events, phone_numbers, sip_trunks,"+
+			" voices, agent_sessions, agent_responses, agent_response_items, users,"+
+			" policies, app_organizations, call_resources, organizations, agent_configs,"+
+			" agent_plugin_connections, agent_plugin_clients, data_changes, data_change_capture, stream_apps, connector_definitions,"+
+			" connector_connections, connector_authorization_attempts, connector_oauth_clients,"+
+			" connector_config_tokens, channel_threads, channel_thread_messages,"+
+			" connector_event_destinations, connector_event_deliveries, contact_map, episodes,"+
+			" connection_event_subscriptions, connection_event_deliveries,"+
+			" connector_invocations, connector_audit CASCADE",
 	)
 	s.Require().NoError(err)
 }
@@ -275,6 +292,19 @@ func (s *StoreSuite) TestCustomerStatsAreIsolatedPerCustomer() {
 	s.EqualValues(5000, globex[0].AudioMsTotal)
 }
 
+func (s *StoreSuite) TestModelRequestsCountEveryCustomerSinceTheWindowOpened() {
+	s.record("acme", s.base.Add(1*time.Minute), 1000, 100, true)
+	s.record("globex", s.base.Add(2*time.Minute), 1000, 100, false)
+	s.record("acme", s.base.Add(-time.Hour), 1000, 100, true)
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "llm", CustomerID: "acme", Provider: "openai", Model: "gpt-5.6-sol", StartedAt: s.base, Success: true,
+	}))
+
+	counts, err := s.store.ModelRequests(s.ctx, "stt", s.base)
+	s.Require().NoError(err)
+	s.Equal(map[string]int64{"deepgram/flux-general-en": 2}, counts)
+}
+
 func (s *StoreSuite) TestCustomerStatsIsEmptyForAnUnknownCustomer() {
 	buckets, err := s.store.CustomerStats(s.ctx, "stt", "nobody", Hourly, s.base, s.base.Add(time.Hour), nil)
 	s.Require().NoError(err)
@@ -388,6 +418,29 @@ func (s *StoreSuite) TestTurnStatsReportThePercentilesOfWhatCallersWaited() {
 	s.InDelta(250, *buckets[0].RoundtripP50Ms, 0.001, "the median of 100,200,300,400")
 }
 
+func (s *StoreSuite) TestWhenAReplyWasQueuedAndHeardIsReadBackWithItsTurn() {
+	queuedMs, audibleMs, speechEndMs := 880.0, 940.0, 1060.0
+	turn := s.turn("turn-1", s.base.Add(time.Minute), 1400)
+	turn.FirstFrameQueuedMs = &queuedMs
+	turn.FirstAudibleFrameMs = &audibleMs
+	turn.SpeechEndToAudibleMs = &speechEndMs
+	unreported := s.turn("turn-2", s.base.Add(2*time.Minute), 900)
+	s.Require().NoError(s.store.RecordTurn(s.ctx, turn))
+	s.Require().NoError(s.store.RecordTurn(s.ctx, unreported))
+
+	turns, err := s.store.CallTurns(s.ctx, "acme", "agent-1", s.base, nil)
+
+	s.Require().NoError(err)
+	s.Require().Len(turns, 2)
+	s.Require().NotNil(turns[0].FirstAudibleFrameMs)
+	s.InDelta(880, *turns[0].FirstFrameQueuedMs, 0.001)
+	s.InDelta(940, *turns[0].FirstAudibleFrameMs, 0.001)
+	s.InDelta(1060, *turns[0].SpeechEndToAudibleMs, 0.001)
+	s.InDelta(1400, *turns[0].RoundtripMs, 0.001, "the figure taken at the return is kept")
+	s.Nil(turns[1].FirstFrameQueuedMs, "an edge that does not report them leaves them out")
+	s.Nil(turns[1].FirstAudibleFrameMs)
+}
+
 func (s *StoreSuite) TestALegThatNeverHappenedIsNotCountedAsInstant() {
 	// A realtime model that hears and speaks for itself has no transcription leg, and
 	// counting that as zero would flatter the percentiles.
@@ -489,6 +542,75 @@ func (s *StoreSuite) TestACallReportsTheModelsThatServedIt() {
 	}, used)
 }
 
+func (s *StoreSuite) TestACallAddsUpWhatEveryOneOfItsRequestsSpent() {
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "llm", CustomerID: "acme", AgentID: "agent-1",
+		Provider: "openai", Model: "gpt-5.6-sol", StartedAt: s.base.Add(time.Second),
+		InputTokens: 800, CachedInputTokens: 500, OutputTokens: 120,
+		CostMicros: 1400, Success: true,
+	}))
+	// A turn the model read and then failed on is still billed for the reading.
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "llm", CustomerID: "acme", AgentID: "agent-1",
+		Provider: "openai", Model: "gpt-5.6-sol", StartedAt: s.base.Add(2 * time.Second),
+		InputTokens: 200, OutputTokens: 0, CostMicros: 100,
+		Success: false, ErrorCode: "overloaded",
+	}))
+	// Another agent's spend is not this call's.
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "llm", CustomerID: "acme", AgentID: "agent-2",
+		Provider: "openai", Model: "gpt-5.6-sol", StartedAt: s.base.Add(time.Second),
+		InputTokens: 9000, OutputTokens: 9000, CostMicros: 90000, Success: true,
+	}))
+
+	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-1", s.base, nil)
+
+	s.Require().NoError(err)
+	s.Equal(CallUsage{
+		InputTokens: 1000, CachedInputTokens: 500, OutputTokens: 120,
+		CostMicros: 1500, Requests: 2,
+	}, spent)
+}
+
+func (s *StoreSuite) TestACallThatMadeNoRequestsSpentNothing() {
+	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-with-no-work", s.base, nil)
+
+	s.Require().NoError(err)
+	s.Equal(CallUsage{}, spent)
+}
+
+func (s *StoreSuite) TestWhatWasSpentAfterACallEndedIsNotTheCallsToPayFor() {
+	ended := s.base.Add(10 * time.Second)
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "llm", CustomerID: "acme", AgentID: "agent-1",
+		Provider: "openai", Model: "gpt-5.6-sol", StartedAt: s.base.Add(time.Second),
+		InputTokens: 300, CostMicros: 400, Success: true,
+	}))
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "llm", CustomerID: "acme", AgentID: "agent-1",
+		Provider: "openai", Model: "gpt-5.6-sol", StartedAt: ended.Add(time.Minute),
+		InputTokens: 7000, CostMicros: 8000, Success: true,
+	}))
+
+	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-1", s.base, &ended)
+
+	s.Require().NoError(err)
+	s.Equal(int64(300), spent.InputTokens)
+	s.Equal(int64(1), spent.Requests)
+}
+
+func (s *StoreSuite) TestACallRemembersWhoTheAgentSpokeTo() {
+	s.Require().NoError(s.store.StartCall(s.ctx, &Call{
+		ID: "call-with-a-user", CustomerID: "acme", CallID: "stream-1",
+		AgentID: "agent-1", UserID: "ada", StartedAt: s.base,
+	}))
+
+	found, err := s.store.Call(s.ctx, "acme", "call-with-a-user")
+
+	s.Require().NoError(err)
+	s.Equal("ada", found.UserID)
+}
+
 func (s *StoreSuite) TestRecordingNoDecisionsIsNotAnError() {
 	s.Require().NoError(s.store.RecordCallEvents(s.ctx, nil))
 }
@@ -555,7 +677,7 @@ func (s *StoreSuite) TestANumberRemembersWhichTrunkItsCallsArriveOn() {
 	}))
 
 	s.Require().NoError(s.store.AttachNumber(
-		s.ctx, "acme", "+15125551234", "trunk-7", "default", "phone-+15125551234"))
+		s.ctx, "acme", "+15125551234", NumberAttachment{TrunkID: "trunk-7", CallType: "default", CallID: "phone-+15125551234"}))
 
 	number, err := s.store.Number(s.ctx, "acme", "+15125551234")
 	s.Require().NoError(err)
@@ -570,9 +692,9 @@ func (s *StoreSuite) TestAnArrivingCallNamesTheCustomerWhoseNumberWasRung() {
 		CustomerID: "acme", PurchasedAt: s.base,
 	}))
 	s.Require().NoError(s.store.AttachNumber(
-		s.ctx, "acme", "+15125551234", "trunk-7", "support", "the-support-line"))
+		s.ctx, "acme", "+15125551234", NumberAttachment{TrunkID: "trunk-7", CallType: "support", CallID: "the-support-line"}))
 
-	number, err := s.store.NumberByCall(s.ctx, "support", "the-support-line")
+	number, err := s.store.NumberByCallInApp(s.ctx, AppScope{Unpinned: true}, "support", "the-support-line")
 
 	s.Require().NoError(err)
 	s.Equal("acme", number.CustomerID)
@@ -591,7 +713,7 @@ func (s *StoreSuite) TestANumberAttachedBeforeItsCallWasRecordedIsStillFound() {
 		Exec(s.ctx)
 	s.Require().NoError(err)
 
-	number, err := s.store.NumberByCall(s.ctx, "default", "phone-+15125551234")
+	number, err := s.store.NumberByCallInApp(s.ctx, AppScope{Unpinned: true}, "default", "phone-+15125551234")
 
 	s.Require().NoError(err)
 	s.Equal("acme", number.CustomerID)
@@ -603,7 +725,7 @@ func (s *StoreSuite) TestACallNoNumberReachesIsNotAttributedToAnybody() {
 		CustomerID: "acme", PurchasedAt: s.base,
 	}))
 
-	_, err := s.store.NumberByCall(s.ctx, "default", "some-video-call")
+	_, err := s.store.NumberByCallInApp(s.ctx, AppScope{Unpinned: true}, "default", "some-video-call")
 
 	s.ErrorContains(err, "no number reaches call default:some-video-call")
 }
@@ -614,10 +736,10 @@ func (s *StoreSuite) TestAReleasedNumbersCallIsNotAttributedToItsFormerHolder() 
 		CustomerID: "acme", PurchasedAt: s.base,
 	}))
 	s.Require().NoError(s.store.AttachNumber(
-		s.ctx, "acme", "+15125551234", "trunk-7", "default", "phone-+15125551234"))
+		s.ctx, "acme", "+15125551234", NumberAttachment{TrunkID: "trunk-7", CallType: "default", CallID: "phone-+15125551234"}))
 	s.Require().NoError(s.store.ReleaseNumber(s.ctx, "acme", "+15125551234", s.base.Add(time.Hour)))
 
-	_, err := s.store.NumberByCall(s.ctx, "default", "phone-+15125551234")
+	_, err := s.store.NumberByCallInApp(s.ctx, AppScope{Unpinned: true}, "default", "phone-+15125551234")
 
 	s.ErrorContains(err, "no number reaches call")
 }
@@ -753,4 +875,73 @@ func (s *StoreSuite) TestAgentLogProviderFailureDetails() {
 	s.NotContains(detail.Details["error_message"], "private-key-value")
 	_, err = s.store.AgentLog(s.ctx, "another-customer", rows[0].ID)
 	s.Require().Error(err)
+}
+
+// recordCancelled stores a request its caller gave up on after it had generated something.
+func (s *StoreSuite) recordCancelled(at time.Time, latencyMs *float64) {
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "stt", CustomerID: "acme", Provider: "deepgram", Model: "flux-general-en",
+		Tags: map[string]string{"project": "support"}, StartedAt: at,
+		AudioMs: 700, CostMicros: 50, LatencyMs: latencyMs,
+		Success: false, ErrorCode: ErrorCancelled,
+	}))
+}
+
+func (s *StoreSuite) TestACancelledRequestIsSpendButNeitherAnErrorNorALatency() {
+	for index, latency := range []float64{100, 200} {
+		s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+			Modality: "stt", CustomerID: "acme", Provider: "deepgram", Model: "flux-general-en",
+			Tags: map[string]string{"project": "support"}, StartedAt: s.base.Add(time.Duration(index+1) * time.Minute),
+			AudioMs: 1000, CostMicros: 100, LatencyMs: &latency, Success: true,
+		}))
+	}
+	failedLatency := 900.0
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "stt", CustomerID: "acme", Provider: "deepgram", Model: "flux-general-en",
+		Tags: map[string]string{"project": "support"}, StartedAt: s.base.Add(3 * time.Minute),
+		AudioMs: 500, CostMicros: 60, LatencyMs: &failedLatency, Success: false, ErrorCode: "upstream_error",
+	}))
+	// Closed after a first token, and so with a latency, and closed before one, with none.
+	cancelledLatency := 5.0
+	s.recordCancelled(s.base.Add(4*time.Minute), &cancelledLatency)
+	s.recordCancelled(s.base.Add(5*time.Minute), nil)
+
+	_, err := s.store.Rollup(s.ctx, Hourly, s.base, s.base.Add(time.Hour))
+	s.Require().NoError(err)
+
+	check := func(name string, requests, errors, audio, cost int64, p50 *float64, uptime *float64) {
+		s.EqualValues(5, requests, name+": a cancelled request is still a request")
+		s.EqualValues(1, errors, name+": and is no error")
+		s.EqualValues(3900, audio, name+": what it generated is still counted")
+		s.EqualValues(360, cost, name+": and still billed")
+		s.Require().NotNil(p50, name)
+		s.InDelta(200.0, *p50, 0.001, name+": its latency is not one the provider had")
+		s.Require().NotNil(uptime, name)
+		s.InDelta(4.0/5.0, *uptime, 0.001, name+": nor is it downtime")
+	}
+
+	byProvider, err := s.store.CustomerStats(s.ctx, "stt", "acme", Hourly, s.base, s.base.Add(time.Hour), nil)
+	s.Require().NoError(err)
+	s.Require().Len(byProvider, 1)
+	bucket := byProvider[0]
+	check("rollup", bucket.RequestCount, bucket.ErrorCount, bucket.AudioMsTotal, bucket.CostMicrosTotal,
+		bucket.LatencyP50Ms, bucket.Uptime)
+
+	byTag, err := s.store.CustomerTagStats(s.ctx, "stt", "acme", "project", Hourly, s.base, s.base.Add(time.Hour))
+	s.Require().NoError(err)
+	s.Require().Len(byTag, 1)
+	tag := byTag[0]
+	s.EqualValues(5, tag.RequestCount, "tag rollup: a cancelled request is still a request")
+	s.EqualValues(1, tag.ErrorCount, "tag rollup: and is no error")
+	s.EqualValues(360, tag.CostMicrosTotal, "tag rollup: and still billed")
+	s.Require().NotNil(tag.LatencyP50Ms)
+	s.InDelta(200.0, *tag.LatencyP50Ms, 0.001, "tag rollup: its latency is not one the provider had")
+
+	filtered, err := s.store.CustomerStats(s.ctx, "stt", "acme", Hourly, s.base, s.base.Add(time.Hour),
+		map[string]string{"project": "support"})
+	s.Require().NoError(err)
+	s.Require().Len(filtered, 1)
+	bucket = filtered[0]
+	check("raw rows", bucket.RequestCount, bucket.ErrorCount, bucket.AudioMsTotal, bucket.CostMicrosTotal,
+		bucket.LatencyP50Ms, bucket.Uptime)
 }

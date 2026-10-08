@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 
@@ -10,23 +11,27 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/danielgtaylor/huma/v2"
 )
 
-// noRouterConfigs is what the router config paths say on a deployment without a database.
-const noRouterConfigs = "router configs are not available: no database configured"
+// errNoRouterConfigs is what the router config paths say on a deployment without a database.
+var errNoRouterConfigs = notConfigured("router configs are not available: no database configured")
 
-// unknownRouterConfig is what a caller is told about a config that is not theirs, which is
+// errUnknownRouterConfig is what a caller is told about a config that is not theirs, which is
 // the same thing they are told about one that never existed.
-const unknownRouterConfig = "no such router config"
+var errUnknownRouterConfig = APIError{
+	Type: ErrorTypeNotFound, Code: codeRouterConfigNotFound,
+	Message: "no such router config",
+}
 
-// ListRouterConfigs returns the calling customer's router configs, newest first.
-func (s *Server) ListRouterConfigs(ctx context.Context, _ ListRouterConfigsRequestObject) (ListRouterConfigsResponseObject, error) {
+// listRouterConfigs returns the calling customer's router configs, newest first.
+func (s *Server) listRouterConfigs(ctx context.Context, _ *listRouterConfigsRequest) (*listRouterConfigsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return ListRouterConfigs401JSONResponse{missingCustomer()}, nil
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return ListRouterConfigs400JSONResponse{badRequest(noRouterConfigs)}, nil
+		return nil, errNoRouterConfigs
 	}
 
 	stored, err := s.store.CustomerRouterConfigs(ctx, customerID)
@@ -38,107 +43,121 @@ func (s *Server) ListRouterConfigs(ctx context.Context, _ ListRouterConfigsReque
 	for _, config := range stored {
 		listed = append(listed, routerConfigOf(config))
 	}
-	return ListRouterConfigs200JSONResponse(listed), nil
+	return &listRouterConfigsResponse{Body: listed}, nil
 }
 
-// CreateRouterConfig stores a named set of per-modality routing options.
-func (s *Server) CreateRouterConfig(ctx context.Context, request CreateRouterConfigRequestObject) (CreateRouterConfigResponseObject, error) {
+// createRouterConfig stores a named set of per-modality routing options.
+func (s *Server) createRouterConfig(ctx context.Context, request *createRouterConfigRequest) (*createRouterConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return CreateRouterConfig401JSONResponse{missingCustomer()}, nil
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return CreateRouterConfig400JSONResponse{badRequest(noRouterConfigs)}, nil
+		return nil, errNoRouterConfigs
 	}
 	if request.Body == nil {
-		return CreateRouterConfig400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, invalidRequest("a request body is required")
 	}
 	if message, ok := s.routerConfigComplaint(*request.Body); !ok {
-		return CreateRouterConfig400JSONResponse{badRequest(message)}, nil
+		return nil, invalidRequest(message)
 	}
 
 	config := storedRouterConfig(*request.Body, customerID)
-	if err := s.store.CreateRouterConfig(ctx, &config); err != nil {
-		return CreateRouterConfig400JSONResponse{badRequest(err.Error())}, nil
+	if err := s.configs.CreateRouterConfig(ctx, &config); err != nil {
+		return nil, invalidRequest(err.Error())
 	}
-	return CreateRouterConfig201JSONResponse(routerConfigOf(config)), nil
+	stored := routerConfigOf(config)
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditRouterConfig, ResourceID: config.ID, ResourceName: config.Name,
+		Action: store.AuditCreated, Changes: auditDiff(nil, stored),
+	})
+	return &createRouterConfigResponse{Body: stored}, nil
 }
 
-// GetRouterConfig returns one router config.
-func (s *Server) GetRouterConfig(ctx context.Context, request GetRouterConfigRequestObject) (GetRouterConfigResponseObject, error) {
+// getRouterConfig returns one router config.
+func (s *Server) getRouterConfig(ctx context.Context, request *getRouterConfigRequest) (*getRouterConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return GetRouterConfig401JSONResponse{missingCustomer()}, nil
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return GetRouterConfig400JSONResponse{badRequest(noRouterConfigs)}, nil
+		return nil, errNoRouterConfigs
 	}
 
-	config, err := s.store.RouterConfig(ctx, customerID, request.Id)
+	config, err := s.configs.RouterConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return GetRouterConfig404JSONResponse{NotFoundJSONResponse{Error: unknownRouterConfig}}, nil
+		return nil, errUnknownRouterConfig
 	}
-	return GetRouterConfig200JSONResponse(routerConfigOf(config)), nil
+	return &getRouterConfigResponse{Body: routerConfigOf(config)}, nil
 }
 
-// UpdateRouterConfig replaces a router config with what it now is.
-func (s *Server) UpdateRouterConfig(ctx context.Context, request UpdateRouterConfigRequestObject) (UpdateRouterConfigResponseObject, error) {
+// updateRouterConfig replaces a router config with what it now is.
+func (s *Server) updateRouterConfig(ctx context.Context, request *updateRouterConfigRequest) (*updateRouterConfigResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return UpdateRouterConfig401JSONResponse{missingCustomer()}, nil
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return UpdateRouterConfig400JSONResponse{badRequest(noRouterConfigs)}, nil
+		return nil, errNoRouterConfigs
 	}
 	if request.Body == nil {
-		return UpdateRouterConfig400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, invalidRequest("a request body is required")
 	}
 	if message, ok := s.routerConfigComplaint(*request.Body); !ok {
-		return UpdateRouterConfig400JSONResponse{badRequest(message)}, nil
+		return nil, invalidRequest(message)
 	}
 
-	existing, err := s.store.RouterConfig(ctx, customerID, request.Id)
+	existing, err := s.configs.RouterConfig(ctx, customerID, request.Id)
 	if err != nil {
-		return UpdateRouterConfig404JSONResponse{NotFoundJSONResponse{Error: unknownRouterConfig}}, nil
+		return nil, errUnknownRouterConfig
 	}
 
 	config := storedRouterConfig(*request.Body, customerID)
 	config.ID = existing.ID
 	config.CreatedAt = existing.CreatedAt
-	if err := s.store.UpdateRouterConfig(ctx, &config); err != nil {
-		return UpdateRouterConfig400JSONResponse{badRequest(err.Error())}, nil
+	if err := s.configs.UpdateRouterConfig(ctx, &config); err != nil {
+		return nil, invalidRequest(err.Error())
 	}
-	return UpdateRouterConfig200JSONResponse(routerConfigOf(config)), nil
+	stored := routerConfigOf(config)
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditRouterConfig, ResourceID: config.ID, ResourceName: config.Name,
+		Action: store.AuditUpdated, Changes: auditDiff(routerConfigOf(existing), stored),
+	})
+	return &updateRouterConfigResponse{Body: stored}, nil
 }
 
-// DeleteRouterConfig stops a router config being usable.
-func (s *Server) DeleteRouterConfig(ctx context.Context, request DeleteRouterConfigRequestObject) (DeleteRouterConfigResponseObject, error) {
+// deleteRouterConfig stops a router config being usable.
+func (s *Server) deleteRouterConfig(ctx context.Context, request *deleteRouterConfigRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return DeleteRouterConfig401JSONResponse{missingCustomer()}, nil
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return DeleteRouterConfig400JSONResponse{badRequest(noRouterConfigs)}, nil
+		return nil, errNoRouterConfigs
 	}
 
-	if err := s.store.DeleteRouterConfig(ctx, customerID, request.Id); err != nil {
-		return DeleteRouterConfig404JSONResponse{NotFoundJSONResponse{Error: unknownRouterConfig}}, nil
+	// Read before it goes, so the entry recording the deletion can say what was deleted.
+	existing, err := s.configs.RouterConfig(ctx, customerID, request.Id)
+	if err != nil {
+		return nil, errUnknownRouterConfig
 	}
-	return DeleteRouterConfig204Response{}, nil
+	if err := s.configs.DeleteRouterConfig(ctx, customerID, request.Id); err != nil {
+		return nil, errUnknownRouterConfig
+	}
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditRouterConfig, ResourceID: existing.ID, ResourceName: existing.Name,
+		Action: store.AuditDeleted, Changes: auditDiff(routerConfigOf(existing), nil),
+	})
+	return nil, nil
 }
 
-// routerConfigComplaint reports what is wrong with a router config, if anything. The tags
-// and the keyterms are checked here rather than left to the request that uses the config,
-// because a config nothing can be routed under is worth hearing about while it is being
-// written and not once a socket is open.
+// routerConfigComplaint reports what is wrong with a router config, if anything. The
+// keyterms are checked here rather than left to the request that uses the config, because
+// a config nothing can be routed under is worth hearing about while it is being written
+// and not once a socket is open.
 func (s *Server) routerConfigComplaint(request RouterConfigRequest) (string, bool) {
 	if strings.TrimSpace(request.Name) == "" {
 		return "a router config needs a name", false
-	}
-	if request.Tags != nil {
-		if err := routing.Tags(*request.Tags).Validate(); err != nil {
-			return err.Error(), false
-		}
 	}
 	if request.Stt != nil && request.Stt.Keyterms != nil && len(*request.Stt.Keyterms) > stt.MaxKeyterms {
 		return fmt.Sprintf("a config may name at most %d keyterms", stt.MaxKeyterms), false
@@ -164,8 +183,37 @@ func (s *Server) routerConfigComplaint(request RouterConfigRequest) (string, boo
 	if err := conversation.Validate(); err != nil {
 		return err.Error(), false
 	}
+	// A config decides where a conversation goes, not what is said in it. The agent
+	// holding it has instructions of its own and sends them when it opens the session,
+	// which is the only moment they are known.
+	if conversation.Instructions != "" {
+		return "a router config carries no instructions: the agent sends its own when it opens the session", false
+	}
 	if message, ok := s.stsComplaint(conversation); !ok {
 		return message, false
+	}
+	if message, ok := s.chainComplaint(routing.LLM, llmOptionsOf(request.Llm).Providers); !ok {
+		return message, false
+	}
+	if message, ok := s.chainComplaint(routing.Search, searchOptionsOf(request.Search).Providers); !ok {
+		return message, false
+	}
+	return "", true
+}
+
+// chainComplaint is the priority list half of sttComplaint, for the modalities whose
+// configs hold nothing else only their router can check.
+func (s *Server) chainComplaint(modality routing.Modality, providers []string) (string, bool) {
+	routed, ok := s.routerFor(Modality(modality))
+	if !ok {
+		return "", true
+	}
+	config := routed.Config()
+	for _, target := range providers {
+		if !config.Names(target) {
+			return fmt.Sprintf(
+				"%q is not a provider, a provider/model or a capability shortcut this deployment offers", target), false
+		}
 	}
 	return "", true
 }
@@ -284,9 +332,6 @@ func storedRouterConfig(request RouterConfigRequest, customerID string) store.Ro
 		STS:        stsOptionsOf(request.Sts),
 		Search:     searchOptionsOf(request.Search),
 	}
-	if request.Tags != nil {
-		config.Tags = *request.Tags
-	}
 	config.STT.Keyterms = stt.CleanKeyterms(config.STT.Keyterms)
 	return config
 }
@@ -304,10 +349,6 @@ func routerConfigOf(config store.RouterConfig) RouterConfig {
 		CreatedAt: config.CreatedAt,
 		UpdatedAt: config.UpdatedAt,
 	}
-	if len(config.Tags) > 0 {
-		tags := config.Tags
-		rendered.Tags = &tags
-	}
 	return rendered
 }
 
@@ -323,29 +364,26 @@ func (s *Server) routerOptions(ctx context.Context, customerID, configID string)
 		return store.RouterConfig{}, nil
 	}
 	if s.store == nil {
-		return store.RouterConfig{}, fmt.Errorf("%s", noRouterConfigs)
+		return store.RouterConfig{}, errNoRouterConfigs
 	}
 
-	if config, err := s.store.RouterConfig(ctx, customerID, configID); err == nil {
+	if config, err := s.configs.RouterConfig(ctx, customerID, configID); err == nil {
 		return config, nil
 	}
-	config, found, err := s.store.RouterConfigByName(ctx, customerID, configID)
+	config, found, err := s.configs.RouterConfigByName(ctx, customerID, configID)
 	if err != nil {
 		return store.RouterConfig{}, err
 	}
 	if !found {
-		return store.RouterConfig{}, fmt.Errorf("%s: %s", unknownRouterConfig, configID)
+		return store.RouterConfig{}, errUnknownRouterConfig
 	}
 	return config, nil
 }
 
-// tagsUnder are the labels a request is billed with: the config's own, with the request's
-// written over them, so a caller can add a label to one job without restating the rest.
-func tagsUnder(config store.RouterConfig, sent *map[string]string) routing.Tags {
+// tagsSent are the labels a request is billed with, which are the caller's own and
+// nobody else's: a router config says where to route, not who to bill.
+func tagsSent(sent *map[string]string) routing.Tags {
 	tags := routing.Tags{}
-	for key, value := range config.Tags {
-		tags[key] = value
-	}
 	if sent != nil {
 		for key, value := range *sent {
 			tags[key] = value
@@ -383,4 +421,121 @@ func recordedTarget(languages []string) string {
 		}
 	}
 	return "en-recorded"
+}
+
+// registerRouterconfigs declares the operations served in routerconfigs.go.
+func (s *Server) registerRouterconfigs(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "listRouterConfigs",
+		Method:      http.MethodGet,
+		Path:        "/v1/router/configs",
+		Summary:     "The router configs the calling customer holds",
+		Description: "A router config is what an agent config is for a session, for a caller that routes one " +
+			"modality at a time: the target, the language and every per-modality option, decided " +
+			"once and named. It is separate from an agent config because it configures transcribing, " +
+			"speaking, answering and searching on their own, with no conversation behind them.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The customer's router configs, newest first"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.listRouterConfigs)
+	huma.Register(api, huma.Operation{
+		OperationID: "createRouterConfig",
+		Method:      http.MethodPost,
+		Path:        "/v1/router/configs",
+		Summary:     "Store a named set of per-modality routing options",
+		Description: "A modality block that names no target falls back to what a session falls back to, so a " +
+			"config only has to say what it wants changed.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+			"user's device.",
+		DefaultStatus: http.StatusCreated,
+		Responses: map[string]*huma.Response{
+			"201": {Description: "The config was stored"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.createRouterConfig)
+	huma.Register(api, huma.Operation{
+		OperationID: "getRouterConfig",
+		Method:      http.MethodGet,
+		Path:        "/v1/router/configs/{id}",
+		Summary:     "One router config",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The config"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.getRouterConfig)
+	huma.Register(api, huma.Operation{
+		OperationID: "updateRouterConfig",
+		Method:      http.MethodPut,
+		Path:        "/v1/router/configs/{id}",
+		Summary:     "Replace a router config",
+		Description: "Every field is written, so the body is what the config now is rather than what changed " +
+			"about it. Sockets already open keep the options they were started with.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+			"user's device.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The config as it now is"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.updateRouterConfig)
+	huma.Register(api, huma.Operation{
+		OperationID: "deleteRouterConfig",
+		Method:      http.MethodDelete,
+		Path:        "/v1/router/configs/{id}",
+		Summary:     "Delete a router config",
+		Description: "The requests that ran under it still name it, so the config stops being usable rather " +
+			"than stops having existed.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+			"user's device.",
+		DefaultStatus: http.StatusNoContent,
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The config is gone"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.deleteRouterConfig)
+}
+
+type listRouterConfigsRequest struct{}
+
+type listRouterConfigsResponse struct {
+	Body []RouterConfig `nullable:"false"`
+}
+
+type createRouterConfigRequest struct {
+	Body *RouterConfigRequest `required:"true"`
+}
+
+type createRouterConfigResponse struct {
+	Body RouterConfig
+}
+
+type getRouterConfigRequest struct {
+	Id string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+type getRouterConfigResponse struct {
+	Body RouterConfig
+}
+
+type updateRouterConfigRequest struct {
+	Id   string               `path:"id" doc:"The resource, as returned when it was created."`
+	Body *RouterConfigRequest `required:"true"`
+}
+
+type updateRouterConfigResponse struct {
+	Body RouterConfig
+}
+
+type deleteRouterConfigRequest struct {
+	Id string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+// RouterConfigRequest is the RouterConfigRequest schema.
+type RouterConfigRequest struct {
+	Llm    *LlmOptions    `json:"llm,omitempty"`
+	Name   string         `json:"name" doc:"What the config is called, which is unique among the customer's own."`
+	Search *SearchOptions `json:"search,omitempty"`
+	Sts    *StsOptions    `json:"sts,omitempty"`
+	Stt    *SttOptions    `json:"stt,omitempty"`
+	Tts    *TtsOptions    `json:"tts,omitempty"`
 }

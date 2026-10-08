@@ -12,7 +12,6 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.llm_options import LlmOptions
-    from ..models.router_config_tags import RouterConfigTags
     from ..models.search_options import SearchOptions
     from ..models.sts_options import StsOptions
     from ..models.stt_options import SttOptions
@@ -26,11 +25,18 @@ T = TypeVar("T", bound="RouterConfig")
 class RouterConfig:
     """
     Attributes:
+        created_at (datetime.datetime):
         id (str):
         name (str):
-        created_at (datetime.datetime):
         updated_at (datetime.datetime):
-        tags (RouterConfigTags | Unset):
+        llm (LlmOptions | Unset): How this config answers. The names are the response parameters the router already
+            speaks rather than a second vocabulary for the same things. The system prompt is not among them: what the model
+            answers under belongs to the agent asking, not to the config that decides where the asking goes.
+        search (SearchOptions | Unset): How this config finds out today's answers.
+        sts (StsOptions | Unset): How this config holds a conversation with one native audio model, in place of a
+            transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a
+            term, and a request naming a term is routed to a model that declared it or refused, never served by one that
+            ignores it.
         stt (SttOptions | Unset): How this config transcribes, live or from a recording. A field that only means
             something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to
             write subtitles from. A provider that cannot express a term refuses the request rather than dropping it
@@ -38,39 +44,39 @@ class RouterConfig:
         tts (TtsOptions | Unset): How this config speaks. A provider that cannot express a term refuses the request
             rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that
             says it cannot.
-        llm (LlmOptions | Unset): How this config answers. The names are the response parameters the router already
-            speaks rather than a second vocabulary for the same things.
-        sts (StsOptions | Unset): How this config holds a conversation with one native audio model, in place of a
-            transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a
-            term, and a request naming a term is routed to a model that declared it or refused, never served by one that
-            ignores it.
-        search (SearchOptions | Unset): How this config finds out today's answers.
     """
 
+    created_at: datetime.datetime
     id: str
     name: str
-    created_at: datetime.datetime
     updated_at: datetime.datetime
-    tags: RouterConfigTags | Unset = UNSET
+    llm: LlmOptions | Unset = UNSET
+    search: SearchOptions | Unset = UNSET
+    sts: StsOptions | Unset = UNSET
     stt: SttOptions | Unset = UNSET
     tts: TtsOptions | Unset = UNSET
-    llm: LlmOptions | Unset = UNSET
-    sts: StsOptions | Unset = UNSET
-    search: SearchOptions | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        created_at = self.created_at.isoformat()
+
         id = self.id
 
         name = self.name
 
-        created_at = self.created_at.isoformat()
-
         updated_at = self.updated_at.isoformat()
 
-        tags: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.tags, Unset):
-            tags = self.tags.to_dict()
+        llm: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.llm, Unset):
+            llm = self.llm.to_dict()
+
+        search: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.search, Unset):
+            search = self.search.to_dict()
+
+        sts: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.sts, Unset):
+            sts = self.sts.to_dict()
 
         stt: dict[str, Any] | Unset = UNSET
         if not isinstance(self.stt, Unset):
@@ -80,67 +86,66 @@ class RouterConfig:
         if not isinstance(self.tts, Unset):
             tts = self.tts.to_dict()
 
-        llm: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.llm, Unset):
-            llm = self.llm.to_dict()
-
-        sts: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.sts, Unset):
-            sts = self.sts.to_dict()
-
-        search: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.search, Unset):
-            search = self.search.to_dict()
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "created_at": created_at,
                 "id": id,
                 "name": name,
-                "created_at": created_at,
                 "updated_at": updated_at,
             }
         )
-        if tags is not UNSET:
-            field_dict["tags"] = tags
+        if llm is not UNSET:
+            field_dict["llm"] = llm
+        if search is not UNSET:
+            field_dict["search"] = search
+        if sts is not UNSET:
+            field_dict["sts"] = sts
         if stt is not UNSET:
             field_dict["stt"] = stt
         if tts is not UNSET:
             field_dict["tts"] = tts
-        if llm is not UNSET:
-            field_dict["llm"] = llm
-        if sts is not UNSET:
-            field_dict["sts"] = sts
-        if search is not UNSET:
-            field_dict["search"] = search
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.llm_options import LlmOptions
-        from ..models.router_config_tags import RouterConfigTags
         from ..models.search_options import SearchOptions
         from ..models.sts_options import StsOptions
         from ..models.stt_options import SttOptions
         from ..models.tts_options import TtsOptions
 
         d = dict(src_dict)
+        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
         id = d.pop("id")
 
         name = d.pop("name")
 
-        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
-
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
-        _tags = d.pop("tags", UNSET)
-        tags: RouterConfigTags | Unset
-        if isinstance(_tags, Unset):
-            tags = UNSET
+        _llm = d.pop("llm", UNSET)
+        llm: LlmOptions | Unset
+        if isinstance(_llm, Unset):
+            llm = UNSET
         else:
-            tags = RouterConfigTags.from_dict(_tags)
+            llm = LlmOptions.from_dict(_llm)
+
+        _search = d.pop("search", UNSET)
+        search: SearchOptions | Unset
+        if isinstance(_search, Unset):
+            search = UNSET
+        else:
+            search = SearchOptions.from_dict(_search)
+
+        _sts = d.pop("sts", UNSET)
+        sts: StsOptions | Unset
+        if isinstance(_sts, Unset):
+            sts = UNSET
+        else:
+            sts = StsOptions.from_dict(_sts)
 
         _stt = d.pop("stt", UNSET)
         stt: SttOptions | Unset
@@ -156,38 +161,16 @@ class RouterConfig:
         else:
             tts = TtsOptions.from_dict(_tts)
 
-        _llm = d.pop("llm", UNSET)
-        llm: LlmOptions | Unset
-        if isinstance(_llm, Unset):
-            llm = UNSET
-        else:
-            llm = LlmOptions.from_dict(_llm)
-
-        _sts = d.pop("sts", UNSET)
-        sts: StsOptions | Unset
-        if isinstance(_sts, Unset):
-            sts = UNSET
-        else:
-            sts = StsOptions.from_dict(_sts)
-
-        _search = d.pop("search", UNSET)
-        search: SearchOptions | Unset
-        if isinstance(_search, Unset):
-            search = UNSET
-        else:
-            search = SearchOptions.from_dict(_search)
-
         router_config = cls(
+            created_at=created_at,
             id=id,
             name=name,
-            created_at=created_at,
             updated_at=updated_at,
-            tags=tags,
+            llm=llm,
+            search=search,
+            sts=sts,
             stt=stt,
             tts=tts,
-            llm=llm,
-            sts=sts,
-            search=search,
         )
 
         router_config.additional_properties = d

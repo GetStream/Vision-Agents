@@ -1,8 +1,5 @@
 name: switchboard
 description: A voice that has to be English and quick to start, never a named model.
 
-tags:
-  team: support
-
 tts:
   target: en-low-latency

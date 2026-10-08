@@ -1,0 +1,76 @@
+# Google Docs' hosted MCP server, moved from the plugin catalog
+# (internal/plugins/plugins.yaml, entry google_docs, «[plugin]» below; T58 in
+# acceleration/docs/connectors/subtasks.md on connectors/planning). Vendor pages, opened
+# October 7, 2026:
+#   [setup] https://developers.google.com/workspace/docs/api/guides/configure-mcp-server
+#   [web]   https://developers.google.com/identity/protocols/oauth2/web-server
+# And the servers' own metadata, fetched on October 7, 2026 («[prm]» and «[as]»):
+#   [prm] GET https://docsmcp.googleapis.com/.well-known/oauth-protected-resource/mcp/v1 at
+#         2026-10-07T14:28:23Z: resource https://docsmcp.googleapis.com/mcp/v1,
+#         authorization_servers [https://accounts.google.com/], scopes_supported
+#         [drive.readonly, documents.readonly, drive, documents] under
+#         https://www.googleapis.com/auth/.
+#   [as]  GET https://accounts.google.com/.well-known/oauth-authorization-server at
+#         2026-10-07T14:28:24Z, as google_calendar.yaml quotes it.
+id: google_docs
+# A new revision for any change to what this file says; see AGENTS.md. 2 stores rotating:
+# false, which revision 1 was stored without (refresh.rotating became a pointer).
+revision: 2
+# [plugin]
+name: Google Docs
+category: Documents
+description: Read documents and their contents.
+setup:
+  # [plugin] setup_url and setup_steps.
+  url: https://console.cloud.google.com/auth/clients
+  steps:
+    - title: Enable the API
+      # [setup] lists the Google Docs API and the Google Docs MCP API. Neither service name,
+      # docs.googleapis.com or docsmcp.googleapis.com, is quoted there; the second is
+      # [prm]'s host. # unverified
+      description: In a Google Cloud project of your own, enable docs.googleapis.com and docsmcp.googleapis.com in the API Library.
+    - title: Set up the consent screen
+      description: Under Google Auth Platform, Branding, name the app and give a support email. Choose Internal to let only your Workspace's accounts in, without Google's review.
+    - title: Add the scopes
+      description: Under Data Access, add https://www.googleapis.com/auth/documents.readonly and https://www.googleapis.com/auth/drive.readonly.
+    - title: Create a web client
+      # [setup]: a «Web application» client.
+      description: Under Clients, create a client of type Web application, with the redirect URI shown on this page as an authorized redirect URI.
+    - title: Copy the credentials
+      description: Copy the Client ID and Client secret into this page. The same client serves Google Calendar, Google Drive and Gmail.
+endpoints:
+  # [setup]; [plugin] url; [prm]'s resource.
+  mcp: https://docsmcp.googleapis.com/mcp/v1
+  # Pinned for the trailing slash [prm] and [as] disagree on, as in google_calendar.yaml.
+  issuer: https://accounts.google.com
+  # RFC 8707 resource indicator: [prm]'s resource.
+  resource: https://docsmcp.googleapis.com/mcp/v1
+# Authorization code with PKCE S256: [as]; [web].
+schemes: [oauth2_code]
+client:
+  # As google_calendar.yaml.
+  registration: [operator, customer]
+  auth_method: client_secret_post
+  env: GOOGLE
+# [web]; [plugin] authorize_params.
+authorize_params:
+  access_type: offline
+  prompt: consent
+scopes:
+  # [plugin] scopes: Docs read, and Drive read, because a document is found before it is
+  # read ([plugin]'s comment). [setup] adds drive.file and documents; the plugin's two are
+  # kept, so a moved grant keeps what it was granted.
+  list:
+    - https://www.googleapis.com/auth/documents.readonly
+    - https://www.googleapis.com/auth/drive.readonly
+# No identity, as google_calendar.yaml.
+refresh:
+  # Not rotating: «Refresh tokens are valid until the user revokes access or the refresh
+  # token expires» ([web], opened 2026-10-07); stress-test row 7 of the architecture doc.
+  rotating: false
+rate_limit:
+  # Per OAuth app: row 7.
+  per: app
+sources:
+  - kind: mcp
+    endpoint: mcp

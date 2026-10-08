@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional, Union
 
+from ._errors import raise_refusal
 from ._generated import AuthenticatedClient
 
 URL_ENV = "STREAM_ACCELERATION_URL"
@@ -16,7 +17,9 @@ API_SECRET_ENV = "STREAM_API_SECRET"
 AUTHENTICATE_ENV = "STREAM_ACCELERATION_AUTHENTICATE"
 
 CUSTOMER_HEADER = "X-Customer-Id"
-DEFAULT_URL = "http://localhost:8080"
+USER_HEADER = "X-Stream-User-Id"
+# Stream's hosted router, which is where a client goes when nothing says otherwise.
+DEFAULT_URL = "https://accelerate.gcp.stream-io-api.com"
 
 # How long a token minted here lasts. Short, because it is minted per request and a stolen
 # one should stop working sooner than the credential behind it.
@@ -33,7 +36,8 @@ class Backend:
     anything acting on one person's behalf.
 
     Attributes:
-        url: The router's base URL. Defaults to ``STREAM_ACCELERATION_URL``, then localhost.
+        url: The router's base URL. Defaults to ``STREAM_ACCELERATION_URL``, then Stream's
+            hosted router, so only a self-hosted or local router needs it.
         customer_id: Who the work is billed to, taken at face value. What a router running
             without keys in front of it reads. Defaults to
             ``STREAM_ACCELERATION_CUSTOMER_ID``.
@@ -47,12 +51,14 @@ class Backend:
             speaks for the app itself, which is what a backend does and what keeps the
             per-user daily limits out of it.
         authenticate: Whether the router is reached through Stream's authenticating proxy,
-            which is what every hosted deployment sits behind. Opt in rather than inferred
-            from holding a credential, because a Stream key and secret are in the environment
-            for plenty of reasons that have nothing to do with this router. Defaults to
-            ``STREAM_ACCELERATION_AUTHENTICATE``.
+            which is what every hosted deployment sits behind. On for the hosted router.
+            Anywhere else it is opt in rather than inferred from holding a credential, because
+            a Stream key and secret are in the environment for plenty of reasons that have
+            nothing to do with this router. Defaults to ``STREAM_ACCELERATION_AUTHENTICATE``.
         user: The user this is acting for, as chat and video want them. The id is what the
             router reads; a name is what a transcript shows without a second lookup.
+        acting_for: The end user a server-side credential speaks for. Unlike ``user_id``
+            it keeps the app's own credential, so the request is still the server's.
     """
 
     url: Optional[str] = None
@@ -63,6 +69,7 @@ class Backend:
     user_id: str = ""
     authenticate: Optional[bool] = None
     user: dict[str, object] = field(default_factory=dict)
+    acting_for: str = ""
 
     def __post_init__(self):
         self.url = (self.url or os.environ.get(URL_ENV) or DEFAULT_URL).rstrip("/")
@@ -81,7 +88,9 @@ class Backend:
         if self.api_secret is None:
             self.api_secret = "" if self.token else os.environ.get(API_SECRET_ENV, "")
         if self.authenticate is None:
-            self.authenticate = _flag(os.environ.get(AUTHENTICATE_ENV))
+            self.authenticate = (
+                _flag(os.environ.get(AUTHENTICATE_ENV)) or self.url == DEFAULT_URL
+            )
 
         if self.user and not self.user_id:
             self.user_id = str(self.user.get("id", ""))
@@ -149,6 +158,13 @@ class Backend:
         Minted per read, so a client left idle longer than a token lasts does not wake up
         holding an expired one.
         """
+        headers = self._credentials()
+        if self.acting_for:
+            headers[USER_HEADER] = self.acting_for
+        return headers
+
+    def _credentials(self) -> dict[str, str]:
+        """Who is calling, as headers."""
         if not self.api_key:
             return {CUSTOMER_HEADER: str(self.customer_id)}
 
@@ -167,7 +183,7 @@ class Backend:
             headers["Authorization"] = f"Bearer {self._server_token()}"
             headers["Stream-Auth-Type"] = "server"
             if self.user_id:
-                headers["X-Stream-User-Id"] = self.user_id
+                headers[USER_HEADER] = self.user_id
             return headers
 
         headers["Authorization"] = f"Bearer {self.token}"
@@ -179,14 +195,17 @@ class Backend:
 
         The generated client puts one credential in one header, so the rest go in as plain
         headers. Built per call rather than kept, which is also what keeps a minted token
-        fresh.
+        fresh. An answer outside 2xx raises RouterError before anything parses it.
         """
+        refusals = {"event_hooks": {"response": [raise_refusal]}}
         if not self.api_key:
             return AuthenticatedClient(
                 base_url=str(self.url),
                 token=str(self.customer_id),
                 auth_header_name=CUSTOMER_HEADER,
                 prefix="",
+                headers={USER_HEADER: self.acting_for} if self.acting_for else {},
+                httpx_args=refusals,
             )
 
         credentials = dict(self.headers)
@@ -197,6 +216,7 @@ class Backend:
             auth_header_name="Authorization",
             prefix="Bearer",
             headers=credentials,
+            httpx_args=refusals,
         )
 
     def socket(self, path: str) -> str:

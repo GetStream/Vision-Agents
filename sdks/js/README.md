@@ -27,28 +27,29 @@ Which one a deployment uses is a property of the deployment rather than a choice
 ```ts
 import { Client } from "@stream-io/vision-agents";
 
-// On your own server.
-const api = new Client({ apiKey: process.env.STREAM_API_KEY, apiSecret: process.env.STREAM_API_SECRET });
+// On your own server, with STREAM_API_KEY and STREAM_API_SECRET in the environment.
+const api = new Client();
 
 // In a browser, with a token your backend minted for this user.
 const api = new Client({ apiKey: "vak_live_…", token: () => fetch("/api/token").then((r) => r.text()) });
 ```
 
-`url` falls back to `STREAM_ACCELERATION_URL`, then `http://localhost:8080`. `customerId`,
-`apiKey` and `apiSecret` fall back to `STREAM_ACCELERATION_CUSTOMER_ID`, `STREAM_API_KEY`
-and `STREAM_API_SECRET`.
+`url` falls back to `STREAM_ACCELERATION_URL`, then Stream's hosted router, so it is only
+passed for a self-hosted or local one. `customerId`, `apiKey` and `apiSecret` fall back to
+`STREAM_ACCELERATION_CUSTOMER_ID`, `STREAM_API_KEY` and `STREAM_API_SECRET`.
 
-A hosted deployment is reached through Stream's authenticating proxy, which wants the
-credential spelled its own way. Pass `authenticate: true`, or set
-`STREAM_ACCELERATION_AUTHENTICATE`:
+The hosted router is reached through Stream's authenticating proxy, which wants the
+credential spelled its own way; that is on by default for it. A self-hosted deployment
+behind the same proxy passes `authenticate: true`, or sets `STREAM_ACCELERATION_AUTHENTICATE`:
 
 ```ts
-const api = new Client({
-  url: "https://accelerate.gcp.stream-io-api.com",
-  apiKey: process.env.STREAM_API_KEY,
-  apiSecret: process.env.STREAM_API_SECRET,
-  authenticate: true,
-});
+const api = new Client({ url: "https://agents.example.com", authenticate: true });
+```
+
+A router running locally with nothing in front of it is reached by customer id:
+
+```ts
+const api = new Client({ url: "http://localhost:8080", customerId: "examples" });
 ```
 
 It is a switch rather than an extra header or two because the two spellings contradict each
@@ -61,47 +62,46 @@ A secret belongs on a server. A browser holding one could rewrite every agent in
 which is why the browser passes a token instead — and why the operations that configure an
 agent answer a browser with a 403 rather than trusting it.
 
-## Every endpoint, typed from the spec
+## Resources, typed from the spec
 
-`Client` has one method per HTTP method rather than one per endpoint. The paths, the
-parameters, the body and the answer all come from `acceleration/api/openapi.yaml`, so the
-spec is the API surface: all 93 operations are reachable, and a new one needs nothing
-written here to be callable.
+The API is grouped by resource, with the request and response types generated from
+`acceleration/api/openapi.yaml`:
 
 ```ts
-const configs = await api.get("/v1/agents/configs");
-const calls = await api.get("/v1/agents/calls", { query: { limit: 20 } });
-const answer = await api.post("/v1/search", { body: { query: "what changed in v3" } });
-await api.delete("/v1/agents/sessions/{id}", { path: { id: "sess_1" } });
+const simulation = await api.simulations.create({ name, config_id, scenario, assertion });
+let run = await api.simulations.run(simulation.id);
+run = await api.simulations.runs.get(run.id);
+await api.memories.truncate("user-123");
 ```
 
-TypeScript will not let you `get` a path that only answers POST, misname a query
-parameter, or forget a required body. A failure raises `RouterError`, carrying the status,
-the operation and what the router said went wrong.
+A failure raises `RouterError`, carrying the status, the operation and what the router said
+went wrong. Branch on `code` (`not_configured`, `validation_failed`, ...) or `type`, not on the
+message, and expect codes you do not know; quote `requestId` to support, since a 500 says only
+"something went wrong".
 
 ## A conversation somebody comes back to
 
 A text conversation is kept in Stream Chat, so what was said outlives the session that
-heard it. `conversation` returns the session holding one and opens one only if none is.
+heard it.
 
 ```ts
-import { conversation } from "@stream-io/vision-agents";
+const support = api.agent("support");
+const session = await support.sessions.create({ agent_id: "ana-support" });
+// Keep session.conversationId. It is the channel, and the way back to what was said.
+await session.responses.create("Where is my order?");
 
-const session = await conversation(api, { id, conversationId: stored, config_id: "cfg_1" });
-// Keep session.conversation_id. It is the channel, and the way back to what was said.
+// Later: ana's conversations still running, without paging through every one that ended.
+const live = await support.sessions.query({ agentId: "ana-support", state: "live" });
 ```
 
-`id` is your own name for the conversation, stable across the sessions that hold it, and
-what a running one is found by — so two people's conversations must not share it. The
-channel is the backend's to name: a first open takes none, and every later one takes the
-`conversation_id` the first was given. It cannot be named up front, because naming one is a
-resume, and a resume reads the channel without creating it — so a name nothing has been
-held in yet is refused. Come back as the same `id` too; the backend checks a conversation
-is reopened by whoever held it.
+The channel is the backend's to name: a first open takes no `conversation_id`, and every
+later one takes the one the first was given. Come back as the same `agent_id` too; the
+backend checks a conversation is reopened by whoever held it.
 
-The one caller this cannot find a session for is an anonymous one going by no name, which
-the backend tells about no sessions at all. Hold onto the session id and read it back with
-`getSession` instead.
+`session.close()` stops a conversation and keeps everything it recorded and remembered, so
+a conversation in writing is usually left running. `session.delete()`, or
+`sessions.delete(id)` without a handle, deletes it with its turns and what it taught
+memory.
 
 ## An agent
 
@@ -156,8 +156,12 @@ dispatch.onCall(async (call) => {
 });
 
 dispatch.onMessage(async (message) => {
+  if (message.sessionId) {
+    await dispatch.answer(message);
+    return;
+  }
   const session = await dispatch.sessionFor(message, () => new Agent({ name: "John" }));
-  session.respond(message.text);
+  await session.responses.create(message.text);
 });
 
 await dispatch.run();
@@ -165,12 +169,29 @@ await dispatch.run();
 
 `capacity` is a promise about what this process can answer: the router passes over a full
 worker rather than queueing behind it. Several workers can wait at once, and the work is
-shared between them.
+shared between them. Each call and message is reported `done` to the router when its handler
+returns, with the error when it throws, which is what frees the room it took.
 
-A message only arrives here when no agent is running on its channel — one written to an
-agent that is already running is answered by the router from that session, because that
+A message usually arrives here only when no agent is running on its channel — one written to
+an agent that is already running is answered by the router from that session, because that
 agent is the one that knows what has been said. `sessionFor` keeps one conversation per
-channel for the same reason.
+channel for the same reason. The exception is an agent whose agent.yaml says
+`dispatch: {text: enabled}`: what its end users write comes here with the `sessionId` it was
+written to and a `commandId`, unanswered, and `dispatch.answer(message)` has the model answer
+it, with this worker's credential acting for the user who wrote it.
+
+A worker can also host tools for every session opened under an agent id, including one a
+browser opened, where the session's own process cannot reach what the tool needs:
+
+```ts
+const agent = client.agent("my-agent");
+agent.tools.register({ name: "lookup", description: "Look up an order", run: lookup });
+dispatch.host(agent, { toolTimeoutMs: 60_000 });
+```
+
+The router offers them to each session naming the agent and sends every call here. `run`
+works with only hosted tools and no handler, and throws `HostingRefusedError` if the router
+refuses them.
 
 Server side only. A worker is offered other people's callers, so anything that can open
 that socket could answer for the whole app.
@@ -188,11 +209,14 @@ rather than talked over.
 
 ```
 agents/jean/
+  agent.yaml            required: the name and what it runs on (llm, stt, tts, speed, harness, tags, ...)
   instructions.md
   guardrail.md
   skills/think.md
   knowledge/pricing.md
-  knowledge/urls.yaml
+  knowledge/urls.yaml   pages to read, each optionally with refresh_hours
+  simulations/lunch.yaml
+  .agent_sync           written by sync: the fingerprint last synced and when
 ```
 
 ```ts
@@ -203,16 +227,40 @@ const agent = new Agent({ folder: await loadFolder("agents/jean") });
 await agent.sync();
 ```
 
-`sync` stores it as a config a session can then be created from by name. It carries a
-fingerprint of everything in it, so syncing on every startup does nothing when nothing has
-changed, and a setting left out leaves whatever is stored — a model chosen in the dashboard
-survives a sync that says nothing about it.
+`sync` stores it as a config a session can then be created from by name, in one request
+carrying the files, the pages and what `agent.yaml` declares. A key `agent.yaml` does not
+know is refused. The request carries a fingerprint of everything in it and `.agent_sync`
+records it, so syncing on every startup only reads the config back when nothing has changed.
+A setting left out leaves whatever is stored — a model chosen in the dashboard survives a
+sync that says nothing about it. The harness (`harness`, subagent, sandbox and skills) is
+stored on the config this way too, never on a session: a session runs its config's.
+
+Each file in `simulations/` is a list of `name`, `scenario` and `assertion`, with `mode`,
+`variations`, `max_turns`, `caller_*`, `judge_target` and `tags` optional. With a
+`simulations/` directory the config's simulations become exactly what it declares, so an
+empty one deletes them; without one, the stored ones are left alone.
 
 What is written in code wins over what the directory says, so a directory is a starting
 point rather than an override.
 
 `loadFolder` needs a filesystem, which is why it is the one thing in the `/node` entry
-point rather than the main one.
+point rather than the main one. It hands `sync` the stamp to read and write, so `sync`
+itself touches no filesystem.
+
+## Going back, and branching off
+
+```ts
+const items = await session.responses.items.all();
+await session.responses.rewind(items[2]); // carry on as though nothing after it was said
+const branch = await session.fork({ response_id: items[2].response_id, title: "asked again" });
+```
+
+`rewind` takes a response, a response's id, or any item of one. The model forgets the later
+turns, and they drop out of what `responses` reads back. A text conversation is kept in
+Stream Chat unless it is incognito, and so cannot be rewound, since the channel would still
+hold the later turns: fork it at the
+response instead, which starts a new session carrying the history only that far. Both work
+from a browser as well as a server.
 
 ## Sockets
 
@@ -237,8 +285,9 @@ for await (const message of socket.messages()) {
 ```
 
 Credentials go in the query string, because a browser WebSocket carries no headers of its
-own. `Stream-Auth-Type` has no query counterpart on purpose, which is why a socket opened
-from a browser cannot claim to be a backend.
+own. A socket never says it is a backend: `Stream-Auth-Type: server` has no query
+counterpart on purpose, and the proxy is only ever told `stream-auth-type=jwt`, which is how
+it reads a user's token.
 
 ## Working on this package
 

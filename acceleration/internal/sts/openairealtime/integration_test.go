@@ -52,3 +52,13 @@ type QwenIntegrationSuite struct {
 func TestQwenIntegrationSuite(t *testing.T) {
 	suite.Run(t, &QwenIntegrationSuite{Suite: realtimeSuite(t, Qwen)})
 }
+
+type QwenAudioIntegrationSuite struct {
+	stssuite.Suite
+}
+
+func TestQwenAudioIntegrationSuite(t *testing.T) {
+	vendor := Qwen
+	vendor.Model = "qwen-audio-3.1-realtime-plus"
+	suite.Run(t, &QwenAudioIntegrationSuite{Suite: realtimeSuite(t, vendor)})
+}

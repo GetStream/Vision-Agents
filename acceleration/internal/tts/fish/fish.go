@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
@@ -104,7 +105,7 @@ func New(options Options) (*TTS, error) {
 		options.APIKey = os.Getenv("FISH_API_KEY")
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("fish: api key is required (set FISH_API_KEY)")
+		return nil, stack.Wrap(errors.New("fish: api key is required (set FISH_API_KEY)"))
 	}
 	if options.Voice == "" {
 		options.Voice = os.Getenv("FISH_VOICE_ID")
@@ -116,7 +117,7 @@ func New(options Options) (*TTS, error) {
 		options.SampleRate = DefaultSampleRate
 	}
 	if options.SampleRate <= 0 {
-		return nil, fmt.Errorf("fish: sample rate must be positive, got %d", options.SampleRate)
+		return nil, stack.Wrap(fmt.Errorf("fish: sample rate must be positive, got %d", options.SampleRate))
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
@@ -150,7 +151,7 @@ func (t *TTS) Start(ctx context.Context) error {
 	defer t.mu.Unlock()
 
 	if t.started {
-		return errors.New("fish: already started")
+		return stack.Wrap(errors.New("fish: already started"))
 	}
 	t.started = true
 	t.ctx, t.cancel = context.WithCancel(context.WithoutCancel(ctx))
@@ -246,6 +247,9 @@ func (t *TTS) Provider() string { return ProviderName }
 // Model implements tts.TTS.
 func (t *TTS) Model() string { return t.options.Model }
 
+// Voice is the session's voice, or empty when Fish picks one.
+func (t *TTS) Voice() string { return t.options.Voice }
+
 // Streaming reports false: Fish synthesises a whole utterance per request, so a caller
 // must send complete sentences rather than deltas.
 func (t *TTS) Streaming() bool { return false }
@@ -269,15 +273,15 @@ func (t *TTS) accumulate(request tts.Request) (*tts.Synthesis, string, bool, err
 	defer t.mu.Unlock()
 
 	if t.shutdown {
-		return nil, "", false, errors.New("fish: session closed")
+		return nil, "", false, stack.Wrap(errors.New("fish: session closed"))
 	}
 	if !t.started {
-		return nil, "", false, errors.New("fish: not started")
+		return nil, "", false, stack.Wrap(errors.New("fish: not started"))
 	}
 	// A partial with no id could not be matched to its continuation, so it is a caller
 	// error rather than something to silently drop.
 	if !request.Final && request.ID == "" {
-		return nil, "", false, errors.New("fish: a partial request needs an id")
+		return nil, "", false, stack.Wrap(errors.New("fish: a partial request needs an id"))
 	}
 
 	current := t.pending[request.ID]
@@ -294,7 +298,7 @@ func (t *TTS) accumulate(request tts.Request) (*tts.Synthesis, string, bool, err
 	text := strings.TrimSpace(current.text.String())
 	delete(t.pending, request.ID)
 	if text == "" {
-		return nil, "", false, errors.New("fish: nothing to say")
+		return nil, "", false, stack.Wrap(errors.New("fish: nothing to say"))
 	}
 
 	current.tracker.AddText(text)

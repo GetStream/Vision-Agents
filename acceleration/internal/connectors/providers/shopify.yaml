@@ -1,0 +1,66 @@
+# A shop's hosted MCP server, moved from the plugin catalog (internal/plugins/plugins.yaml,
+# entry shopify, «[plugin]» below; T58 in acceleration/docs/connectors/subtasks.md on
+# connectors/planning). The core's fixture testdata/manifests/shopify.yaml is the Admin API's
+# authorization code grant; this is the plugin's MCP endpoint on the shop. Vendor pages,
+# opened October 7, 2026:
+#   [grant] https://shopify.dev/docs/apps/build/authentication-authorization/access-tokens/authorization-code-grant
+#           (as the fixture cites it, for the shop host pattern)
+#   [cam]   https://shopify.dev/docs/apps/build/customer-accounts-mcp.md
+# And one shop's own metadata, fetched on October 7, 2026 («[prm]» and «[as]»):
+#   [prm] GET https://allbirds.myshopify.com/.well-known/oauth-protected-resource/api/mcp at
+#         2026-10-07T14:29:14Z: resource https://allbirds.myshopify.com/api/mcp,
+#         authorization_servers [https://shopify.com/authentication/11037174].
+#   [as]  GET https://allbirds.myshopify.com/.well-known/oauth-authorization-server at
+#         2026-10-07T14:29:15Z: issuer https://shopify.com/authentication/11037174, authorize
+#         and token under it, no registration_endpoint, token_endpoint_auth_methods_supported
+#         [client_secret_basic, client_secret_post], code_challenge_methods_supported [S256].
+# [cam] documents the customer accounts server at /customer/api/mcp, not /api/mcp, and no
+# page opened says which app /api/mcp's authorization server takes. # unverified
+id: shopify
+# A new revision for any change to what this file says; see AGENTS.md.
+revision: 1
+# [plugin]
+name: Shopify
+category: Commerce
+description: Orders, products and inventory on a shop.
+setup:
+  # [plugin] setup_url and setup_steps. None of them is on a page opened above. # unverified
+  url: https://dev.shopify.com/dashboard
+  steps:
+    - title: Create an app
+      description: In the Shopify Dev Dashboard, create an app for the shop the agent should read.
+    - title: Add the redirect URL
+      description: In the app's configuration, add the redirect URI shown on this page to its allowed redirection URLs, and release a version.
+    - title: Install it on the shop
+      description: Install the app on the shop, so that its owner can approve the login.
+    - title: Copy the credentials
+      description: Under Settings, copy the Client ID and Secret into this page, with the shop's address.
+inputs:
+  # The shop host, the plugin's instance ([plugin] instance_hint: «The shop hostname, such as
+  # mystore.myshopify.com»), in the pattern [grant] writes:
+  # /^[a-zA-Z0-9][a-zA-Z0-9\-]*\.myshopify\.com$/. A shop on its own domain is refused, so
+  # what a caller types can only name a host under myshopify.com.
+  - name: shop
+    pattern: ^[a-zA-Z0-9][a-zA-Z0-9\-]*\.myshopify\.com$
+endpoints:
+  # [plugin] url, https://{instance}/api/mcp. [prm]'s resource is exactly it, so oauth2_code
+  # discovers the shop's authorization server through [prm] and [as] (RFC 9728 and 8414).
+  mcp: https://{shop}/api/mcp
+# Authorization code with PKCE S256: [as].
+schemes: [oauth2_code]
+client:
+  # [plugin] is client_required, with an agent's own client before the deployment's
+  # SHOPIFY_MCP_* (envClient in internal/plugins/oauth.go); [as] has no
+  # registration_endpoint. No auth_method: [as] lists client_secret_basic and
+  # client_secret_post, and oauth2_code picks basic.
+  registration: [operator, customer]
+  env: SHOPIFY
+# No scopes: [plugin] asks for none.
+# No identity: the shop is the account (the fixture, stress-test row 4), but the plugin never
+# recorded one, so a moved grant has none either. No refresh policy: no page opened documents
+# this server's tokens. # unverified
+# So refresh.rotating is left unset, which is unknown: router plugins migrate moves a grant
+# with a refresh token here only with --include-rotating (internal/pluginmigrate).
+sources:
+  - kind: mcp
+    endpoint: mcp

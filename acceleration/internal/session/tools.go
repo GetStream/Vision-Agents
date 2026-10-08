@@ -131,7 +131,7 @@ func (b *bridge) Pending() []ToolCall {
 func (b *bridge) Resolve(id, turnID string, parts []llm.ContentPart, failure string) bool {
 	b.mu.Lock()
 	pending, waiting := b.pending[id]
-	if !waiting || pending.resolved || turnID != "" && pending.turnID != turnID {
+	if !waiting || pending.resolved || pending.ctx.Err() != nil || turnID != "" && pending.turnID != turnID {
 		b.mu.Unlock()
 		return false
 	}

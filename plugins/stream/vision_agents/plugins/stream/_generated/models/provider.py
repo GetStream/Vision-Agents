@@ -8,9 +8,12 @@ from attrs import field as _attrs_field
 from typing_extensions import Self
 
 from ..models.tier import Tier
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.provider_benchmark import ProviderBenchmark
     from ..models.provider_health import ProviderHealth
+    from ..models.provider_price import ProviderPrice
 
 
 T = TypeVar("T", bound="Provider")
@@ -20,74 +23,131 @@ T = TypeVar("T", bound="Provider")
 class Provider:
     """
     Attributes:
-        provider (str):  Example: elevenlabs.
-        model (str):  Example: eleven_flash_v2_5.
+        health (ProviderHealth):
         languages (list[str]):
+        model (str):  Example: eleven_flash_v2_5.
+        provider (str):  Example: elevenlabs.
         realtime (bool):
         tier (Tier): What the model optimises for.
-        health (ProviderHealth):
+        benchmark (ProviderBenchmark | Unset): What Artificial Analysis measured for this model, refreshed by hand
+            rather than live. A field is absent when the model was not measured on it.
+        description (str | Unset): What the model is good at, and what that costs in speed or money. Empty if the
+            deployment wrote none.
+        price (ProviderPrice | Unset): What this deployment is billed for the model, in US dollars. A rate is absent
+            when the model is not billed by that unit.
+        usage_share (float | Unset): This model's share of the modality's requests over the last seven days, across
+            every customer, from 0 to 1. It is how popular the model is, and is 0 when nothing was served or the deployment
+            keeps no statistics.
     """
 
-    provider: str
-    model: str
+    health: ProviderHealth
     languages: list[str]
+    model: str
+    provider: str
     realtime: bool
     tier: Tier
-    health: ProviderHealth
+    benchmark: ProviderBenchmark | Unset = UNSET
+    description: str | Unset = UNSET
+    price: ProviderPrice | Unset = UNSET
+    usage_share: float | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        provider = self.provider
+        health = self.health.to_dict()
+
+        languages = self.languages
 
         model = self.model
 
-        languages = self.languages
+        provider = self.provider
 
         realtime = self.realtime
 
         tier = self.tier.value
 
-        health = self.health.to_dict()
+        benchmark: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.benchmark, Unset):
+            benchmark = self.benchmark.to_dict()
+
+        description = self.description
+
+        price: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.price, Unset):
+            price = self.price.to_dict()
+
+        usage_share = self.usage_share
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "provider": provider,
-                "model": model,
+                "health": health,
                 "languages": languages,
+                "model": model,
+                "provider": provider,
                 "realtime": realtime,
                 "tier": tier,
-                "health": health,
             }
         )
+        if benchmark is not UNSET:
+            field_dict["benchmark"] = benchmark
+        if description is not UNSET:
+            field_dict["description"] = description
+        if price is not UNSET:
+            field_dict["price"] = price
+        if usage_share is not UNSET:
+            field_dict["usage_share"] = usage_share
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.provider_benchmark import ProviderBenchmark
         from ..models.provider_health import ProviderHealth
+        from ..models.provider_price import ProviderPrice
 
         d = dict(src_dict)
-        provider = d.pop("provider")
+        health = ProviderHealth.from_dict(d.pop("health"))
+
+        languages = cast(list[str], d.pop("languages"))
 
         model = d.pop("model")
 
-        languages = cast(list[str], d.pop("languages"))
+        provider = d.pop("provider")
 
         realtime = d.pop("realtime")
 
         tier = Tier(d.pop("tier"))
 
-        health = ProviderHealth.from_dict(d.pop("health"))
+        _benchmark = d.pop("benchmark", UNSET)
+        benchmark: ProviderBenchmark | Unset
+        if isinstance(_benchmark, Unset):
+            benchmark = UNSET
+        else:
+            benchmark = ProviderBenchmark.from_dict(_benchmark)
+
+        description = d.pop("description", UNSET)
+
+        _price = d.pop("price", UNSET)
+        price: ProviderPrice | Unset
+        if isinstance(_price, Unset):
+            price = UNSET
+        else:
+            price = ProviderPrice.from_dict(_price)
+
+        usage_share = d.pop("usage_share", UNSET)
 
         provider = cls(
-            provider=provider,
-            model=model,
+            health=health,
             languages=languages,
+            model=model,
+            provider=provider,
             realtime=realtime,
             tier=tier,
-            health=health,
+            benchmark=benchmark,
+            description=description,
+            price=price,
+            usage_share=usage_share,
         )
 
         provider.additional_properties = d

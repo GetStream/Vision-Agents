@@ -1,93 +1,221 @@
+//go:build integration
+
 package api
 
 import (
+	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/stretchr/testify/suite"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// hookSecret is what the suite signs with. Stream signs webhooks with the app secret, so
-// this stands in for one.
-const hookSecret = "not-the-real-secret"
+// dropped is how long a hook that should wake nobody is given to prove it. A hook that
+// dispatches does so before it answers, so this only has to outlast the answer.
+const dropped = 200 * time.Millisecond
 
-// CallHookSuite covers what the inbound hook does with what Stream sends it.
-//
-// There is no store here, so the assertions are about authentication and about a call being
-// let through or not. That an accepted call reaches the right customer's worker needs a
-// database to say whose number was rung, and is covered in the integration suite.
-type CallHookSuite struct {
-	suite.Suite
-	pool    *dispatch.Pool
-	handler http.Handler
+type CallHooksSuite struct {
+	RouterSuite
+
+	// e164 is the number rung in a test, and callID the call it arrives as. Both are
+	// unique, because a number is held by one customer at a time.
+	e164   string
+	callID string
 }
 
-func TestCallHookSuite(t *testing.T) {
-	suite.Run(t, new(CallHookSuite))
+func TestCallHooksSuite(t *testing.T) {
+	runSuite(t, new(CallHooksSuite))
 }
 
-func (s *CallHookSuite) SetupTest() {
-	s.pool = dispatch.NewPool()
-	s.handler = s.serverWith(hookSecret)
+func (s *CallHooksSuite) SetupTest() {
+	s.useApp(s.data.createApp())
+	s.e164 = s.utils.number()
+	s.callID = "phone-" + s.e164
 }
 
-func (s *CallHookSuite) serverWith(secret string) http.Handler {
-	config, err := routing.DefaultConfig()
+func (s *CallHooksSuite) TestAnArrivingCallReachesTheWorkerOfWhoeverHoldsTheNumber() {
+	s.hold("default", s.callID)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+
+	s.Require().Equal(http.StatusOK, s.arrive("default:"+s.callID))
+
+	select {
+	case call := <-worker.Calls():
+		s.Equal(s.callID, call.CallID)
+		s.Equal("default", call.CallType)
+		s.Equal(s.e164, call.CalledNumber, "the worker has to know which line rang")
+		s.Equal("+15550001111", call.CallerNumber)
+		s.Equal("support", call.Custom["line"])
+		s.False(call.At.IsZero())
+	case <-time.After(settleFor):
+		s.Fail("the call never reached the worker")
+	}
+}
+
+func (s *CallHooksSuite) TestACallOnACustomNamedLineStillFindsItsOwner() {
+	// A number attached to a call of its own is the case the stored binding exists for:
+	// nothing about "the-support-line" says which number it belongs to.
+	line := "line-" + s.utils.uuid()
+	s.hold("support", line)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+
+	s.Require().Equal(http.StatusOK, s.arrive("support:"+line))
+
+	select {
+	case call := <-worker.Calls():
+		s.Equal(line, call.CallID)
+		s.Equal("support", call.CallType)
+		s.Equal(s.e164, call.CalledNumber)
+	case <-time.After(settleFor):
+		s.Fail("the call never reached the worker")
+	}
+}
+
+func (s *CallHooksSuite) TestAnotherCustomersWorkerIsNotGivenTheCall() {
+	// Two customers' workers are two rotations, and a call is one customer's.
+	s.hold("default", s.callID)
+	somebodyElse, release := s.dispatch.Register(s.utils.uuid(), dispatch.Registration{Capacity: 1})
+	defer release()
+
+	s.Require().Equal(http.StatusOK, s.arrive("default:"+s.callID))
+
+	s.nothingReaches(somebodyElse.Calls(), "a call was misrouted")
+}
+
+func (s *CallHooksSuite) TestACallOnANumberNobodyHoldsIsAcceptedAndDropped() {
+	// Every video call in the app arrives at this hook too. Retrying would not make one
+	// answerable, so it is accepted and nothing is woken.
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+
+	s.Require().Equal(http.StatusOK, s.arrive("default:standup-"+s.utils.uuid()))
+
+	s.nothingReaches(worker.Calls(), "a video call was answered")
+}
+
+func (s *CallHooksSuite) TestACallOnAReleasedNumberIsNotAnswered() {
+	// The number is gone, so whoever holds it now is not this customer.
+	s.hold("default", s.callID)
+	s.Require().NoError(s.store.ReleaseNumber(
+		context.Background(), s.customerID(), s.e164, time.Now().UTC()))
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+
+	s.Require().Equal(http.StatusOK, s.arrive("default:"+s.callID))
+
+	s.nothingReaches(worker.Calls(), "a released number was answered")
+}
+
+func (s *CallHooksSuite) TestAnUnsignedCallEventIsRefused() {
+	status, _ := s.deliver("/v1/phone/hooks/stream", s.arriving("default:"+s.callID), "")
+
+	s.Equal(http.StatusUnauthorized, status)
+}
+
+func (s *CallHooksSuite) TestACallEventSignedWithTheWrongSecretIsRefused() {
+	body := s.arriving("default:" + s.callID)
+
+	status, _ := s.deliver("/v1/phone/hooks/stream", body, sign(body, "somebody-elses-secret"))
+
+	s.Equal(http.StatusUnauthorized, status)
+}
+
+func (s *CallHooksSuite) TestATamperedCallEventIsRefused() {
+	body := s.arriving("default:" + s.callID)
+	signature := sign(body, suiteStreamSecret)
+	tampered := strings.Replace(body, "+15550001111", "+15559998888", 1)
+
+	status, _ := s.deliver("/v1/phone/hooks/stream", tampered, signature)
+
+	s.Equal(http.StatusUnauthorized, status)
+}
+
+func (s *CallHooksSuite) TestASessionEndedEventIsAccepted() {
+	ended := fmt.Sprintf(`{"type":"call.session_ended","call_cid":"default:%s",`+
+		`"session_id":"session-1","created_at":"2026-08-27T12:05:00Z",`+
+		`"call":{"cid":"default:%s","id":"%s","type":"default","custom":{}}}`,
+		s.callID, s.callID, s.callID)
+
+	s.Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", ended))
+}
+
+func (s *CallHooksSuite) TestAnEventTypeThisVersionHasNeverHeardOfIsAccepted() {
+	unknown := fmt.Sprintf(`{"type":"call.something_new","call_cid":"default:%s"}`, s.callID)
+
+	s.Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", unknown),
+		"a new event type must not look like an outage to Stream")
+}
+
+func (s *CallHooksSuite) TestSomethingThatIsNotACallEventIsRefused() {
+	// Correctly signed, but there is no event in it to act on.
+	s.Equal(http.StatusBadRequest, s.signedly("/v1/phone/hooks/stream", `{"not":"an event"}`))
+}
+
+func (s *CallHooksSuite) TestTheHookIgnoresWhoeverTheCallerClaimsToBe() {
+	// Stream is not a customer, so a credential is neither required nor read. Sending one
+	// changes nothing, which is what stops a caller thinking it scopes the hook.
+	s.hold("default", s.callID)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+
+	body := s.arriving("default:" + s.callID)
+	request := s.request("/v1/phone/hooks/stream", body, sign(body, suiteStreamSecret))
+	request.Header.Set(CustomerHeader, "globex")
+	response, err := s.server.Client().Do(request)
 	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
 
-	speech, err := sttrouter.New(sttrouter.Options{
-		Config:   config[routing.STT],
-		Registry: sttrouter.DefaultRegistry(),
-	})
-	s.Require().NoError(err)
-	s.T().Cleanup(speech.Close)
-
-	server, err := NewServer(Options{
-		Routers:      map[routing.Modality]routing.Inspector{routing.STT: speech},
-		Dispatch:     s.pool,
-		StreamSecret: secret,
-	})
-	s.Require().NoError(err)
-	return server.Handler()
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	select {
+	case call := <-worker.Calls():
+		s.Equal(s.callID, call.CallID, "the number decided whose call it is")
+	case <-time.After(settleFor):
+		s.Fail("the call never reached the worker")
+	}
 }
 
-// deliver posts a body signed the way Stream signs one.
-func (s *CallHookSuite) deliver(handler http.Handler, body string) *httptest.ResponseRecorder {
-	mac := hmac.New(sha256.New, []byte(hookSecret))
-	mac.Write([]byte(body))
-	return s.deliverSigned(handler, body, hex.EncodeToString(mac.Sum(nil)))
+// hold records the number for the suite's app and attaches it to a call.
+func (s *CallHooksSuite) hold(callType, callID string) {
+	ctx := context.Background()
+	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
+		E164:        s.e164,
+		Vendor:      "telnyx",
+		Country:     "US",
+		CustomerID:  s.customerID(),
+		PurchasedAt: time.Now().UTC(),
+	}))
+	s.Require().NoError(s.store.AttachNumber(
+		ctx, s.customerID(), s.e164, store.NumberAttachment{TrunkID: "trunk-" + s.utils.uuid(), CallType: callType, CallID: callID}))
 }
 
-func (s *CallHookSuite) deliverSigned(handler http.Handler, body, signature string) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(
-		http.MethodPost, "/v1/phone/hooks/stream", strings.NewReader(body))
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-Signature", signature)
-	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, request)
-	return recorder
+// arrive delivers a signed call.session_started for one call, as Stream would.
+func (s *CallHooksSuite) arrive(cid string) int {
+	return s.signedly("/v1/phone/hooks/stream", s.arriving(cid))
 }
 
-// sessionStarted is what Stream sends when a caller lands in a call.
-const sessionStarted = `{
+// arriving is what Stream sends when a caller lands in a call.
+func (s *CallHooksSuite) arriving(cid string) string {
+	id := cid[strings.Index(cid, ":")+1:]
+	callType := cid[:strings.Index(cid, ":")]
+	return fmt.Sprintf(`{
   "type": "call.session_started",
-  "call_cid": "default:phone-+15125551234",
+  "call_cid": %q,
   "session_id": "session-1",
   "created_at": "2026-08-27T12:00:00Z",
   "call": {
-    "cid": "default:phone-+15125551234",
-    "id": "phone-+15125551234",
-    "type": "default",
+    "cid": %q,
+    "id": %q,
+    "type": %q,
     "custom": {"line": "support"},
     "session": {
       "id": "session-1",
@@ -97,153 +225,46 @@ const sessionStarted = `{
       ]
     }
   }
-}`
-
-func (s *CallHookSuite) TestAnUnsignedCallEventIsRefused() {
-	recorder := s.deliverSigned(s.handler, sessionStarted, "")
-
-	s.Equal(http.StatusUnauthorized, recorder.Code)
+}`, cid, cid, id, callType)
 }
 
-func (s *CallHookSuite) TestACallEventSignedWithTheWrongSecretIsRefused() {
-	mac := hmac.New(sha256.New, []byte("somebody-elses-secret"))
-	mac.Write([]byte(sessionStarted))
-
-	recorder := s.deliverSigned(s.handler, sessionStarted, hex.EncodeToString(mac.Sum(nil)))
-
-	s.Equal(http.StatusUnauthorized, recorder.Code)
+// nothingReaches fails when a call arrives on a channel that should stay empty.
+func (s *CallHooksSuite) nothingReaches(calls <-chan dispatch.Call, message string) {
+	select {
+	case call := <-calls:
+		s.Failf(message, "%s reached a worker", call.CallID)
+	case <-time.After(dropped):
+	}
 }
 
-func (s *CallHookSuite) TestATamperedCallEventIsRefused() {
-	mac := hmac.New(sha256.New, []byte(hookSecret))
-	mac.Write([]byte(sessionStarted))
-	signature := hex.EncodeToString(mac.Sum(nil))
-
-	tampered := strings.Replace(sessionStarted, "+15125551234", "+15559998888", -1)
-	recorder := s.deliverSigned(s.handler, tampered, signature)
-
-	s.Equal(http.StatusUnauthorized, recorder.Code)
+// signedly delivers a body signed with the app secret, and answers with the status.
+func (s *RouterSuite) signedly(path, body string) int {
+	status, _ := s.deliver(path, body, sign(body, suiteStreamSecret))
+	return status
 }
 
-func (s *CallHookSuite) TestWithoutASecretThereIsNoHookAtAll() {
-	// A hook that cannot check a signature would take a call from anyone who found the
-	// url, and this path starts agents.
-	recorder := s.deliver(s.serverWith(""), sessionStarted)
+// deliver posts a hook body with whatever signature it was given.
+func (s *RouterSuite) deliver(path, body, signature string) (int, string) {
+	response, err := s.server.Client().Do(s.request(path, body, signature))
+	s.Require().NoError(err)
+	defer response.Body.Close()
 
-	s.Equal(http.StatusNotFound, recorder.Code)
+	answered, err := readAll(response)
+	s.Require().NoError(err)
+	return response.StatusCode, string(answered)
 }
 
-func (s *CallHookSuite) TestASignedCallEventIsAccepted() {
-	recorder := s.deliver(s.handler, sessionStarted)
-
-	s.Equal(http.StatusOK, recorder.Code)
+func (s *RouterSuite) request(path, body, signature string) *http.Request {
+	request, err := http.NewRequest(http.MethodPost, s.server.URL+path, bytes.NewReader([]byte(body)))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(signatureHeader, signature)
+	return request
 }
 
-func (s *CallHookSuite) TestACallThatCouldNotBeDispatchedIsStillAccepted() {
-	// Nothing here can say whose call this is, so nobody is woken. Stream retries a
-	// non-2xx, and no retry is going to find a worker that is not there while the caller
-	// waits through every one of them.
-	recorder := s.deliver(s.handler, sessionStarted)
-
-	s.Equal(http.StatusOK, recorder.Code)
-	s.Empty(s.pool.Workers("acme"))
-}
-
-func (s *CallHookSuite) TestAVideoCallIsNotTreatedAsAnArrivingPhoneCall() {
-	video := strings.Replace(sessionStarted,
-		"default:phone-+15125551234", "default:standup-monday", -1)
-
-	recorder := s.deliver(s.handler, video)
-
-	s.Equal(http.StatusOK, recorder.Code)
-}
-
-func (s *CallHookSuite) TestAnEventTheHookDoesNotActOnIsAccepted() {
-	ended := `{"type":"call.session_ended","call_cid":"default:phone-+15125551234",` +
-		`"session_id":"session-1","created_at":"2026-08-27T12:05:00Z",` +
-		`"call":{"cid":"default:phone-+15125551234","id":"phone-+15125551234","type":"default","custom":{}}}`
-
-	recorder := s.deliver(s.handler, ended)
-
-	s.Equal(http.StatusOK, recorder.Code)
-}
-
-func (s *CallHookSuite) TestAnEventTypeThisVersionHasNeverHeardOfIsAccepted() {
-	unknown := `{"type":"call.something_new","call_cid":"default:phone-+15125551234"}`
-
-	recorder := s.deliver(s.handler, unknown)
-
-	s.Equal(http.StatusOK, recorder.Code, "a new event type must not look like an outage to Stream")
-}
-
-func (s *CallHookSuite) TestSomethingThatIsNotACallEventIsRefused() {
-	// Correctly signed, but there is no event in it to act on.
-	recorder := s.deliver(s.handler, `{"not":"an event"}`)
-
-	s.Equal(http.StatusBadRequest, recorder.Code)
-}
-
-func (s *CallHookSuite) TestACallEventWithAnRFC3339TimestampIsStillRead() {
-	// The SDK's Timestamp reads epoch nanoseconds and writes RFC 3339, so decoding a
-	// delivery with its event structs would refuse whichever format it is not expecting.
-	// Nothing here reads a timestamp off the wire, and this is what proves it.
-	recorder := s.deliver(s.handler, sessionStarted)
-
-	s.Equal(http.StatusOK, recorder.Code)
-	s.Contains(sessionStarted, `"created_at": "2026-08-27T12:00:00Z"`)
-}
-
-func (s *CallHookSuite) TestTheHookIsNotReachedWithTheCustomerHeaderMissingOrPresent() {
-	// Stream is not a customer, so the header is neither required nor read. Sending one
-	// changes nothing, which is what stops a caller thinking it scopes the hook.
-	request := httptest.NewRequest(
-		http.MethodPost, "/v1/phone/hooks/stream", strings.NewReader(sessionStarted))
-	mac := hmac.New(sha256.New, []byte(hookSecret))
-	mac.Write([]byte(sessionStarted))
-	request.Header.Set("X-Signature", hex.EncodeToString(mac.Sum(nil)))
-	request.Header.Set(CustomerHeader, "globex")
-	recorder := httptest.NewRecorder()
-
-	s.handler.ServeHTTP(recorder, request)
-
-	s.Equal(http.StatusOK, recorder.Code)
-}
-
-// started parses a delivery the way the hook does, so the assertions below are on what a
-// worker would be told rather than on an intermediate of the test's own making.
-func (s *CallHookSuite) started(body string) callEvent {
-	var event callEvent
-	s.Require().NoError(json.Unmarshal([]byte(body), &event))
-	return event
-}
-
-func (s *CallHookSuite) TestTheCallerNumberIsReadOffTheSipParticipant() {
-	s.Equal("+15550001111", callerOf(s.started(sessionStarted)))
-}
-
-func (s *CallHookSuite) TestACallerWhoHasNotJoinedYetLeavesTheNumberBlank() {
-	// Normal: the call is dispatched the moment it starts, and the agent joining it sees
-	// the participant whether or not this did.
-	withoutSession := strings.Replace(sessionStarted, `"session": {`, `"unused": {`, 1)
-
-	s.Empty(callerOf(s.started(withoutSession)))
-}
-
-func (s *CallHookSuite) TestAParticipantWhoIsNotACallerIsNotReadAsOne() {
-	// The agent is in the call too, and it is not who rang.
-	agentFirst := strings.Replace(sessionStarted,
-		`{"user_session_id": "s1"`,
-		`{"user_session_id": "s0", "role": "user", "joined_at": "2026-08-27T12:00:00Z",
-		  "user": {"id": "agent"}},
-		 {"user_session_id": "s1"`, 1)
-
-	s.Equal("+15550001111", callerOf(s.started(agentFirst)))
-}
-
-func (s *CallHookSuite) TestCustomDataThatIsNotTextIsLeftOut() {
-	// Stream takes arbitrary JSON on a call. Everything this service puts there is a
-	// string, and a field whose type depends on who set it is not one a client can read.
-	narrowed := customOf(map[string]any{"line": "support", "attempt": 3, "tags": []string{"a"}})
-
-	s.Equal(map[string]string{"line": "support"}, narrowed)
+// sign is the HMAC Stream signs a delivery with.
+func sign(body, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(body))
+	return hex.EncodeToString(mac.Sum(nil))
 }

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 WS_BASE_URL = "wss://api.sarvam.ai/text-to-speech/ws"
 
-SUPPORTED_MODELS = {"bulbul:v2", "bulbul:v3-beta", "bulbul:v3"}
+SUPPORTED_MODELS = {"bulbul:v2", "bulbul:v3"}
 
 KEEPALIVE_INTERVAL_S = 20
 
@@ -35,33 +35,6 @@ MODEL_SPEAKER_COMPATIBILITY: dict[str, set[str]] = {
         "abhilash",
         "karun",
         "hitesh",
-    },
-    "bulbul:v3-beta": {
-        "shubh",
-        "ritu",
-        "rahul",
-        "pooja",
-        "simran",
-        "kavya",
-        "amit",
-        "ratan",
-        "rohan",
-        "dev",
-        "ishita",
-        "shreya",
-        "manan",
-        "sumit",
-        "priya",
-        "aditya",
-        "kabir",
-        "neha",
-        "varun",
-        "roopa",
-        "aayan",
-        "ashutosh",
-        "advait",
-        "amelia",
-        "sophia",
     },
     "bulbul:v3": {
         "shubh",
@@ -94,7 +67,7 @@ MODEL_SPEAKER_COMPATIBILITY: dict[str, set[str]] = {
 
 MODELS_SUPPORTING_PITCH = {"bulbul:v2"}
 MODELS_SUPPORTING_LOUDNESS = {"bulbul:v2"}
-MODELS_SUPPORTING_TEMPERATURE = {"bulbul:v3-beta", "bulbul:v3"}
+MODELS_SUPPORTING_TEMPERATURE = {"bulbul:v3"}
 
 
 class SarvamTTSError(Exception):
@@ -134,8 +107,7 @@ class TTS(tts.TTS):
                 (bulbul:v3 supports 0.5-2.0).
             pitch: Speech pitch. Only supported on bulbul:v2.
             loudness: Speech loudness. Only supported on bulbul:v2.
-            temperature: Sampling temperature. Only supported on
-                bulbul:v3 / bulbul:v3-beta.
+            temperature: Sampling temperature. Only supported on bulbul:v3.
             enable_preprocessing: Normalize mixed-language / numeric text.
             idle_timeout: Fallback seconds of server silence before treating
                 synthesis as complete. Normally the server sends an explicit

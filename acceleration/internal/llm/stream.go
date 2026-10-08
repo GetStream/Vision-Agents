@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Puller advances a provider's upstream stream by one chunk.
@@ -40,14 +42,22 @@ type Stream struct {
 	current  Event
 	response Response
 	err      error
-	ended    bool
-	watchers []func(Event)
+	// exhausted is set once the puller has said the upstream is done, which Await can find
+	// out before Next has settled the response.
+	exhausted bool
+	ended     bool
+	watchers  []func(Event)
 
 	// closed is read by the goroutine calling Next and written by whichever one closes
 	// the stream, which is the whole of the concurrency here.
 	closed    atomic.Bool
 	closeOnce sync.Once
 	closeErr  error
+
+	// screened is closed once a screen's verdict has arrived, and refused holds it when
+	// the verdict was an objection. Nil screened means nothing is screening this stream.
+	screened chan struct{}
+	refused  atomic.Pointer[error]
 }
 
 // StreamOptions identifies the response a Stream carries.
@@ -102,8 +112,15 @@ func (s *Stream) Next() bool {
 		if s.ended {
 			return false
 		}
-		if !s.puller.Advance(s.writer) {
+		if s.exhausted || !s.puller.Advance(s.writer) {
 			s.ended = true
+			if s.screened != nil {
+				<-s.screened
+			}
+			if refused := s.refused.Load(); refused != nil {
+				s.writer.settle(*refused)
+				continue
+			}
 			// A stream the caller closed was abandoned rather than finished, however the
 			// provider happened to notice.
 			if s.closed.Load() {
@@ -114,12 +131,35 @@ func (s *Stream) Next() bool {
 	}
 }
 
+// Await blocks until the response has produced something to act on, text or a tool call,
+// and reports whether it did: false means it ended without. Thinking is neither, since it is
+// not part of the answer.
+//
+// It takes nothing off the stream, so Next still returns every event from the first. It is
+// for a caller that has to know a response is alive before committing to it, and it runs
+// before the first Next, on the goroutine that then hands the stream over. Closing the
+// stream from another goroutine is what ends the wait early.
+func (s *Stream) Await() bool {
+	for seen := 0; ; {
+		for ; seen < len(s.writer.pending); seen++ {
+			switch s.writer.pending[seen].(type) {
+			case OutputTextDelta, FunctionCallArgumentsDelta:
+				return true
+			}
+		}
+		if s.ended || s.exhausted {
+			return false
+		}
+		s.exhausted = !s.puller.Advance(s.writer)
+	}
+}
+
 // Current is the event Next advanced to.
 func (s *Stream) Current() Event { return s.current }
 
 // Err is the provider failure that ended the stream, or nil. A stream that was closed
 // part-way through did not fail: it was abandoned.
-func (s *Stream) Err() error { return s.err }
+func (s *Stream) Err() error { return stack.Wrap(s.err) }
 
 // Response is the whole answer. It is settled once Next has returned false, and reports
 // what had arrived so far before then.
@@ -137,7 +177,27 @@ func (s *Stream) Close() error {
 			s.closeErr = s.puller.Close()
 		}
 	})
-	return s.closeErr
+	return stack.Wrap(s.closeErr)
+}
+
+// Screen has a judgement of what the response was asked run beside it. The verdict channel
+// yields exactly once: nil to let the response stand, or the reason to refuse it.
+//
+// The deltas are not held, so the screen costs a caller no time to first token. What is held
+// is the ResponseCompleted, until the verdict arrives, because that is where the tool calls a
+// caller acts on are settled. A refusal that arrives while the model is still answering
+// closes the upstream at once, and either way the response settles as failed with the
+// refusal as its error. It is for a stream a provider produced, not one from Replay.
+func (s *Stream) Screen(verdict <-chan error) *Stream {
+	s.screened = make(chan struct{})
+	go func() {
+		defer close(s.screened)
+		if err := <-verdict; err != nil {
+			s.Close()
+			s.refused.Store(&err)
+		}
+	}()
+	return s
 }
 
 // Observe adds a function that sees every event as the stream is drained, for a caller
@@ -170,11 +230,11 @@ func Collect(stream *Stream) (Response, error) {
 	for stream.Next() {
 	}
 	if err := stream.Err(); err != nil {
-		return stream.Response(), err
+		return stream.Response(), stack.Wrap(err)
 	}
 	response := stream.Response()
 	if response.Status == StatusCancelled {
-		return response, errors.New("llm: the response was abandoned before it finished")
+		return response, stack.Wrap(errors.New("llm: the response was abandoned before it finished"))
 	}
 	return response, nil
 }

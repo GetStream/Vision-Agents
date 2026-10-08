@@ -4,9 +4,6 @@
 # requirement rather than a description: a model that has not said no is not asked.
 name: stt-realtime-fast-private
 
-tags:
-  team: examples
-
 stt:
   # Two models rather than the fast config's four, because these are the two of them that
   # can promise both halves of the policy below on a live call.

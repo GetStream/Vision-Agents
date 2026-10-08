@@ -1,0 +1,6 @@
+# A socket bug would otherwise hang the run rather than fail it.
+timeout: 30s
+
+tags:
+  # Against a running router, and skipped unless VISION_AGENTS_URL is set.
+  live:

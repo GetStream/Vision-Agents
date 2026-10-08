@@ -31,3 +31,19 @@ func TestInworldIntegrationSuite(t *testing.T) {
 		Timeout:            time.Minute,
 	}})
 }
+
+// TestInworldTTS2IntegrationSuite runs the same suite on the full model, which is slower
+// to first byte than Flash but well inside what a live call tolerates.
+func TestInworldTTS2IntegrationSuite(t *testing.T) {
+	suite.Run(t, &InworldIntegrationSuite{Suite: ttssuite.Suite{
+		New: func() ttssuite.Provider {
+			provider, err := New(Options{Model: "inworld-tts-2"})
+			require.NoError(t, err)
+			return provider
+		},
+		Requires:           []string{"INWORLD_API_KEY"},
+		MaxTimeToFirstByte: 2_000,
+		Interruptible:      true,
+		Timeout:            time.Minute,
+	}})
+}

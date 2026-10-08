@@ -1,0 +1,77 @@
+# SMS through the customer's own Telnyx account (T53, AI-881), on the channel bridge: a
+# channel only, no tools. The customer's messaging profile posts its webhooks to the app's own
+# events URL, POST /v1/connectors/events/telnyx/{provider app id}, which the customer chooses
+# and puts, with the account's public key, through PUT /v1/agents/connectors/telnyx/oauth-client;
+# the replies go from the same number with the account's API key. STOP, START and HELP are
+# kept from the agent by the bridge (channelbridge.keywords), which answers only the ones
+# Telnyx did not answer itself (data.payload.autoresponse_type). internal/channels/telnyx.go
+# is where it started. Twilio is a later ticket (wave 3c Q8).
+# Telnyx's pages, opened October 8, 2026:
+#   [webhooks] https://developers.telnyx.com/docs/messaging/messages/receiving-webhooks
+#   [send]     https://developers.telnyx.com/docs/messaging/messages/send-message
+id: telnyx
+# A new revision for any change to what this file says; see AGENTS.md.
+revision: 1
+name: Telnyx
+category: Communication
+description: Answer people over SMS on the customer's own Telnyx number.
+# [send]: «Authorization: Bearer YOUR_API_KEY».
+schemes: [bearer]
+inputs:
+  # The customer's Telnyx number in E.164, as [webhooks] writes data.payload.to[].phone_number
+  # («+17735550002»). It is the connection's account (identity below), which the bridge finds
+  # the connection of an event's number by (store.AppConnectionByAccount). The pattern is the
+  # contact map's (omnichannel.e164Digits) behind a +, as linq.yaml's.
+  - name: phone_number
+    pattern: \+[1-9][0-9]{7,14}
+identity: [phone_number]
+client:
+  # The customer's own Telnyx account is the provider app: its public key ([webhooks], «Keys &
+  # Credentials → Public Key», base64) is the signing secret. Telnyx has no OAuth client, so
+  # the record holds the app alone.
+  registration: [customer]
+channel:
+  verifier:
+    # [webhooks]: «telnyx-signature-ed25519 — Base64-encoded Ed25519 signature»,
+    # «telnyx-timestamp — Unix timestamp of when signed», over «{timestamp}|{json_payload}».
+    kind: ed25519
+    secret: provider_app
+    header: Telnyx-Signature-Ed25519
+    signed: "{timestamp}|{body}"
+    timestamp_header: Telnyx-Timestamp
+    # [webhooks]: «reject webhooks where telnyx-timestamp is more than 5 minutes old».
+    max_age: 5m
+  format: json
+  # [webhooks]: «Webhooks may be delivered more than once. Use the data.id field as an
+  # idempotency key.» It keys a forward to the customer's event destinations.
+  event_id: [$.data.id]
+  messages:
+    # [webhooks]: message.received is a person's message, data.payload.direction inbound in
+    # its example; message.sent and message.finalized are about messages the number sent, the
+    # agent's own replies, which go to the same URL and are not read back.
+    match:
+      $.data.event_type: message.received
+      $.data.payload.direction: inbound
+    # The receiving number, the first of data.payload.to in [webhooks]'s example. # unverified:
+    # a group MMS lists several numbers in to, and whether the customer's is always first.
+    provider_unit_id: $.data.payload.to[0].phone_number
+    thread_key:
+      # [webhooks]: data.payload.from.phone_number. The person's number is the thread
+      # (channels doc, «Other channels», the SMS row: number ↔ number), and the number a reply
+      # goes to.
+      - name: number
+        path: $.data.payload.from.phone_number
+    # The contact map keys the person's episode card by the same number
+    # (channelbridge.episodeSources).
+    author_id: $.data.payload.from.phone_number
+    provider_message_id: $.data.payload.id
+    text: $.data.payload.text
+  reply:
+    # [send]: POST https://api.telnyx.com/v2/messages with from and to in E.164 and text.
+    # Telnyx answers 200 with the message queued, and 400, 401, 403, 422 or 429 when it is not
+    # ([send]).
+    url: https://api.telnyx.com/v2/messages
+    body:
+      from: "{phone_number}"
+      to: "{thread.number}"
+      text: "{text}"

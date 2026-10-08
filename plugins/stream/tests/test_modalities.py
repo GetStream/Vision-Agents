@@ -17,6 +17,10 @@ LLM_TARGET = os.getenv("STREAM_ACCELERATION_LLM", "llm-fast")
 # picture every run: a black dog on wooden planks.
 IMAGE_URL = "https://picsum.photos/id/237/640/480.jpg"
 
+# The message-building tests send nothing, but a client with no URL now goes to the hosted
+# router and wants a credential. A local router takes a customer id instead.
+LOCAL_ROUTER = "http://localhost:8080"
+
 
 def _require_router() -> None:
     if not os.getenv(URL_ENV) or not os.getenv(CUSTOMER_ENV):
@@ -111,7 +115,7 @@ class TestLLM:
 
     @pytest.fixture
     def model(self, conversation: InMemoryConversation) -> stream.LLM:
-        model = stream.LLM(target="vlm", customer_id="test")
+        model = stream.LLM(target="vlm", url=LOCAL_ROUTER, customer_id="test")
         model.set_conversation(conversation)
         return model
 
@@ -166,7 +170,7 @@ class TestLLM:
         assert model._messages("Describe this")[0]["content"] == "Describe this"
 
     def test_ordered_content_preserves_interleaving(self):
-        model = stream.LLM(target="vlm", customer_id="test")
+        model = stream.LLM(target="vlm", url=LOCAL_ROUTER, customer_id="test")
         first = ImageContent(url="https://example.com/first.png")
         second = ImageContent(data=b"second")
         messages = model._messages(

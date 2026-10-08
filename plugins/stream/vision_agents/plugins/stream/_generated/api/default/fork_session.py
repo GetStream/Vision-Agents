@@ -6,7 +6,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...models.fork_session_request import ForkSessionRequest
 from ...models.session import Session
 from ...types import UNSET, Response, Unset
@@ -37,31 +37,36 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | Session | None:
+) -> ErrorResponse | Session | None:
     if response.status_code == 201:
         response_201 = Session.from_dict(response.json())
 
         return response_201
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
 
     if response.status_code == 404:
-        response_404 = Error.from_dict(response.json())
+        response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 500:
+        response_500 = ErrorResponse.from_dict(response.json())
+
+        return response_500
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -71,7 +76,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | Session]:
+) -> Response[ErrorResponse | Session]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -85,7 +90,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ForkSessionRequest | Unset = UNSET,
-) -> Response[Error | Session]:
+) -> Response[ErrorResponse | Session]:
     """Continue a conversation as a new one
 
      Opens a session from another's spec, carrying its history across by default, and records where it
@@ -98,7 +103,7 @@ def sync_detailed(
     were continuing.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (ForkSessionRequest | Unset): Continue a conversation as a new one. Everything the
             parent was opened with is inherited; anything named here is written over it, which is what
             makes a fork useful rather than a copy -- the usual reason to fork is to ask the same
@@ -109,7 +114,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | Session]
+        Response[ErrorResponse | Session]
     """
 
     kwargs = _get_kwargs(
@@ -129,7 +134,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: ForkSessionRequest | Unset = UNSET,
-) -> Error | Session | None:
+) -> ErrorResponse | Session | None:
     """Continue a conversation as a new one
 
      Opens a session from another's spec, carrying its history across by default, and records where it
@@ -142,7 +147,7 @@ def sync(
     were continuing.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (ForkSessionRequest | Unset): Continue a conversation as a new one. Everything the
             parent was opened with is inherited; anything named here is written over it, which is what
             makes a fork useful rather than a copy -- the usual reason to fork is to ask the same
@@ -153,7 +158,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | Session
+        ErrorResponse | Session
     """
 
     return sync_detailed(
@@ -168,7 +173,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ForkSessionRequest | Unset = UNSET,
-) -> Response[Error | Session]:
+) -> Response[ErrorResponse | Session]:
     """Continue a conversation as a new one
 
      Opens a session from another's spec, carrying its history across by default, and records where it
@@ -181,7 +186,7 @@ async def asyncio_detailed(
     were continuing.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (ForkSessionRequest | Unset): Continue a conversation as a new one. Everything the
             parent was opened with is inherited; anything named here is written over it, which is what
             makes a fork useful rather than a copy -- the usual reason to fork is to ask the same
@@ -192,7 +197,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | Session]
+        Response[ErrorResponse | Session]
     """
 
     kwargs = _get_kwargs(
@@ -210,7 +215,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: ForkSessionRequest | Unset = UNSET,
-) -> Error | Session | None:
+) -> ErrorResponse | Session | None:
     """Continue a conversation as a new one
 
      Opens a session from another's spec, carrying its history across by default, and records where it
@@ -223,7 +228,7 @@ async def asyncio(
     were continuing.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (ForkSessionRequest | Unset): Continue a conversation as a new one. Everything the
             parent was opened with is inherited; anything named here is written over it, which is what
             makes a fork useful rather than a copy -- the usual reason to fork is to ask the same
@@ -234,7 +239,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | Session
+        ErrorResponse | Session
     """
 
     return (

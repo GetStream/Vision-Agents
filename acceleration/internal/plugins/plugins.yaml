@@ -1,35 +1,450 @@
 plugins:
+  # https://mcp.slack.com/.well-known/oauth-authorization-server, opened October 5, 2026.
+  # The resource metadata is at the origin, not under /mcp, and the server advertises no
+  # registration_endpoint, so the deployment sets SLACK_MCP_CLIENT_ID and
+  # SLACK_MCP_CLIENT_SECRET from a Slack app of its own (client_secret_post), with
+  # https://<public_url>/v1/agents/plugins/callback as a redirect URL.
   - id: slack
     name: Slack
     category: Communication
     description: Search the workspace, read and send messages, and look people up.
     url: https://mcp.slack.com/mcp
     auth: oauth
+    client_required: true
+    # https://docs.slack.dev/authentication/installing-with-oauth/: a redirect URL must be
+    # https, so a local router needs a tunnel.
+    setup_url: https://api.slack.com/apps
+    setup_steps:
+      - title: Create a Slack app
+        description: Choose Create New App, then From scratch, and pick the workspace the agent should read. Slack lets only an internal app, or one in the Slack Marketplace, use its MCP server.
+      - title: Add the redirect URL
+        description: Under OAuth & Permissions, add the redirect URI shown on this page. Slack accepts only an https one, so a router on localhost needs an https tunnel.
+      - title: Add the user token scopes
+        description: Under User Token Scopes, add channels:history, channels:read, chat:write, search:read.public and users:read, plus any other scope this agent asks for.
+      - title: Copy the credentials
+        description: Under Basic Information, copy the Client ID and Client Secret into this page.
+    logo: slack.svg
+    # scopes_supported in its protected-resource metadata, read October 5, 2026.
+    scopes_supported:
+      - canvases:read
+      - canvases:write
+      - channels:history
+      - channels:read
+      - channels:write
+      - chat:write
+      - emoji:read
+      - files:read
+      - files:write
+      - groups:history
+      - groups:read
+      - groups:write
+      - im:history
+      - im:read
+      - im:write
+      - lists:read
+      - lists:write
+      - mpim:history
+      - mpim:read
+      - mpim:write
+      - reactions:read
+      - reactions:write
+      - search:read.files
+      - search:read.im
+      - search:read.mpim
+      - search:read.private
+      - search:read.public
+      - search:read.users
+      - users:read
+      - users:read.email
+    # Slack grants nothing by default, so the tools need their scopes named. These are user
+    # token scopes; https://docs.slack.dev/ai/slack-mcp-server/ lists which tool needs which.
+    # Search is per kind of conversation: public channels by default, and search:read.private,
+    # .mpim, .im and .files through plugin_options.
+    scopes:
+      - channels:history
+      - channels:read
+      - chat:write
+      - search:read.public
+      - users:read
+  # https://calendly.com/.well-known/oauth-authorization-server, opened October 5, 2026.
+  # OAuth with dynamic client registration; the authorization server is calendly.com and the
+  # resource is mcp.calendly.com.
   - id: calendly
     name: Calendly
     category: Scheduling
     description: Check availability, create scheduling links, and book meetings.
     url: https://mcp.calendly.com
     auth: oauth
+    logo: calendly.svg
+    # scopes_supported in its protected-resource metadata, read October 5, 2026.
+    scopes_supported:
+      - mcp:scheduling:read
+      - mcp:scheduling:write
+    # The two the server advertises. Booking a meeting is a write.
+    scopes:
+      - mcp:scheduling:read
+      - mcp:scheduling:write
+  # https://mcp.cal.com/.well-known/oauth-authorization-server, opened October 5, 2026.
+  # OAuth with dynamic client registration, public client (token_endpoint_auth_method none).
+  # Registration only takes redirect hosts on Cal.com's own list: localhost, claude.ai,
+  # chatgpt.com and cursor.com passed, getstream.io did not. The authorize endpoint ignores
+  # scope and resource and always asks app.cal.com for the same fixed set, so scopes here
+  # would change nothing; toolsets are what narrow it.
   - id: calcom
     name: Cal.com
     category: Scheduling
     description: Manage bookings, event types and schedules.
     url: https://mcp.cal.com/mcp
     auth: oauth
+    logo: calcom.svg
+    # https://cal.com/docs/mcp-server#toolsets, opened October 5, 2026. get_app_link and
+    # search_docs are offered whichever are picked.
+    toolsets:
+      - profile
+      - event-types
+      - bookings
+      - availability
+      - schedules
+      - calendars
+      - teams
+      - organizations
+      - routing-forms
+      - catalog
   - id: shopify
     name: Shopify
     category: Commerce
     description: Orders, products and inventory on a shop.
     url: https://{instance}/api/mcp
     auth: oauth
+    client_required: true
+    setup_url: https://dev.shopify.com/dashboard
+    setup_steps:
+      - title: Create an app
+        description: In the Shopify Dev Dashboard, create an app for the shop the agent should read.
+      - title: Add the redirect URL
+        description: In the app's configuration, add the redirect URI shown on this page to its allowed redirection URLs, and release a version.
+      - title: Install it on the shop
+        description: Install the app on the shop, so that its owner can approve the login.
+      - title: Copy the credentials
+        description: Under Settings, copy the Client ID and Secret into this page, with the shop's address.
+    logo: shopify.svg
     instance_required: true
     instance_hint: The shop hostname, such as mystore.myshopify.com
+  # https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/sobject-reads.html,
+  # opened October 5, 2026. One host for every production org, read-only: sobject-mutations,
+  # sobject-deletes and sobject-all are the servers that write. login.salesforce.com
+  # publishes only OpenID Connect discovery, and its registration endpoint refuses a client
+  # without credentials, so an External Client App's SALESFORCE_MCP_CLIENT_ID and _SECRET
+  # log in. The org must activate sobject-reads under Setup, MCP Servers.
   - id: salesforce
     name: Salesforce
     category: Customers
-    description: Accounts, contacts and opportunities in an org.
-    url: https://{instance}/mcp
+    description: Query accounts, contacts, opportunities and cases in an org.
+    url: https://api.salesforce.com/platform/mcp/v1/platform/sobject-reads
     auth: oauth
-    instance_required: true
-    instance_hint: The org my-domain, such as mycompany.my.salesforce.com
+    client_required: true
+    setup_url: https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/create-external-client-app.html
+    setup_steps:
+      - title: Activate the server
+        description: As an admin, in Setup, open MCP Servers, then Salesforce Servers, and activate sobject-reads.
+      - title: Create an External Client App
+        description: In External Client App Manager, create an app and turn OAuth on.
+      - title: Add the redirect URL and scopes
+        description: Set its callback URL to the redirect URI shown on this page, and give it the mcp_api and refresh_token scopes. Require PKCE, and issue JWT-based access tokens for named users.
+      - title: Copy the credentials
+        description: Under the app's OAuth settings, copy the Consumer Key and Consumer Secret into this page.
+    logo: salesforce.svg
+    scopes: [mcp_api, refresh_token]
+    scopes_supported: [mcp_api, refresh_token]
+    # Its token response has no expires_in, and a token lives as long as the org's session
+    # timeout, 15 minutes at the shortest: access_ttl in
+    # internal/connectors/providers/salesforce.yaml, which cites Salesforce's range.
+    access_ttl: 15m
+  # https://mcp.sentry.dev, opened October 3, 2026. OAuth with dynamic client registration,
+  # advertised at /.well-known/oauth-protected-resource/mcp.
+  - id: sentry
+    name: Sentry
+    category: Engineering
+    description: Search issues and errors, read their events, and triage them.
+    url: https://mcp.sentry.dev/mcp
+    auth: oauth
+    logo: sentry.svg
+    # scopes_supported in its protected-resource metadata, read October 5, 2026.
+    scopes_supported:
+      - org:read
+      - project:write
+      - team:write
+      - event:write
+      - alerts:write
+  # https://mcp.linear.app/.well-known/oauth-authorization-server, opened October 5, 2026.
+  # OAuth with dynamic client registration, advertised at
+  # /.well-known/oauth-protected-resource/mcp. /mcp/readonly is its own resource, offering
+  # no tool that writes, and accepts only the read scope.
+  - id: linear
+    name: Linear
+    category: Engineering
+    description: Search issues and projects, file new issues, and comment on them.
+    url: https://mcp.linear.app/mcp
+    auth: oauth
+    logo: linear.svg
+    # scopes_supported in its protected-resource metadata, read October 5, 2026.
+    scopes_supported:
+      - read
+      - write
+    scopes:
+      - read
+      - write
+    readonly_url: https://mcp.linear.app/mcp/readonly
+    readonly_scopes:
+      - read
+  # https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp, opened
+  # October 5, 2026. The authorization server is github.com/login/oauth, which publishes
+  # only OpenID Connect discovery and no registration_endpoint, so the deployment sets
+  # GITHUB_MCP_CLIENT_ID and GITHUB_MCP_CLIENT_SECRET from a GitHub OAuth app of its own,
+  # with https://<public_url>/v1/agents/plugins/callback as the callback URL.
+  - id: github
+    name: GitHub
+    category: Engineering
+    description: Read repositories, issues and pull requests, and file or comment on them.
+    url: https://api.githubcopilot.com/mcp
+    auth: oauth
+    client_required: true
+    setup_url: https://github.com/settings/applications/new
+    setup_steps:
+      - title: Register an OAuth app
+        description: Under Developer settings, register a new OAuth app, on your account or, for a company, on the organization that owns the repositories.
+      - title: Add the callback URL
+        description: Set the Authorization callback URL to the redirect URI shown on this page. The homepage URL can be your own site.
+      - title: Copy the credentials
+        description: Copy the Client ID, generate a client secret, and paste both into this page.
+    logo: github.svg
+    # scopes_supported in its protected-resource metadata, read October 5, 2026.
+    scopes_supported:
+      - repo
+      - read:org
+      - read:user
+      - user:email
+      - read:packages
+      - write:packages
+      - read:project
+      - project
+      - gist
+      - notifications
+    # The least the issue and pull request tools need. repo covers private repositories.
+    scopes:
+      - repo
+      - read:org
+      - read:user
+  # https://mcp.hubspot.com/.well-known/oauth-authorization-server, opened October 5, 2026.
+  # The MCP endpoint is the origin itself. No registration_endpoint, so the deployment sets
+  # HUBSPOT_MCP_CLIENT_ID and HUBSPOT_MCP_CLIENT_SECRET from a HubSpot app of its own
+  # (client_secret_post).
+  - id: hubspot
+    name: HubSpot
+    category: Customers
+    description: Contacts, companies and deals in the CRM.
+    url: https://mcp.hubspot.com
+    auth: oauth
+    client_required: true
+    setup_url: https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server
+    setup_steps:
+      - title: Create an MCP auth app
+        description: In your HubSpot account, open Development, then MCP Auth Apps, and choose Create MCP auth app.
+      - title: Add the redirect URL
+        description: Give it a name and the redirect URI shown on this page.
+      - title: Copy the credentials
+        description: On the app's details page, copy the Client ID and Client Secret into this page.
+    logo: hubspot.svg
+  # https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server, opened
+  # October 3, 2026. Google registers no client on the fly, so the deployment sets
+  # GOOGLE_CALENDAR_MCP_CLIENT_ID and GOOGLE_CALENDAR_MCP_CLIENT_SECRET from a web client in
+  # its own Cloud project, with calendarmcp.googleapis.com enabled.
+  - id: google_calendar
+    name: Google Calendar
+    category: Scheduling
+    description: Read calendars, events and free time.
+    url: https://calendarmcp.googleapis.com/mcp/v1
+    auth: oauth
+    client_required: true
+    setup_url: https://console.cloud.google.com/auth/clients
+    setup_steps:
+      - title: Enable the API
+        description: In a Google Cloud project of your own, enable calendarmcp.googleapis.com in the API Library.
+      - title: Set up the consent screen
+        description: Under Google Auth Platform, Branding, name the app and give a support email. Choose Internal to let only your Workspace's accounts in, without Google's review.
+      - title: Add the scope
+        description: Under Data Access, add https://www.googleapis.com/auth/calendar.readonly.
+      - title: Create a web client
+        description: Under Clients, create a client of type Web application, with the redirect URI shown on this page as an authorized redirect URI.
+      - title: Copy the credentials
+        description: Copy the Client ID and Client secret into this page. The same client serves Google Drive and Google Docs.
+    logo: google_calendar.svg
+    # scopes_supported in its protected-resource metadata, read October 5, 2026.
+    scopes_supported:
+      - https://www.googleapis.com/auth/calendar
+      - https://www.googleapis.com/auth/calendar.acls
+      - https://www.googleapis.com/auth/calendar.calendarlist
+      - https://www.googleapis.com/auth/calendar.calendarlist.readonly
+      - https://www.googleapis.com/auth/calendar.calendars
+      - https://www.googleapis.com/auth/calendar.calendars.readonly
+      - https://www.googleapis.com/auth/calendar.events
+      - https://www.googleapis.com/auth/calendar.events.freebusy
+      - https://www.googleapis.com/auth/calendar.events.readonly
+      - https://www.googleapis.com/auth/calendar.freebusy
+      - https://www.googleapis.com/auth/calendar.readonly
+      - https://www.googleapis.com/auth/calendar.settings.readonly
+    # Read only: one of the four scopes every Calendar MCP tool accepts.
+    scopes:
+      - https://www.googleapis.com/auth/calendar.readonly
+    # Google returns a refresh token only for offline access, and again only on consent.
+    authorize_params:
+      access_type: offline
+      prompt: consent
+  # https://drivemcp.googleapis.com/.well-known/oauth-protected-resource/mcp/v1, opened
+  # October 5, 2026. Same Cloud-project client as Calendar, under its own env pair:
+  # GOOGLE_DRIVE_MCP_CLIENT_ID and GOOGLE_DRIVE_MCP_CLIENT_SECRET, with
+  # drivemcp.googleapis.com enabled.
+  - id: google_drive
+    name: Google Drive
+    category: Documents
+    description: Search files and folders, and read what is in them.
+    url: https://drivemcp.googleapis.com/mcp/v1
+    auth: oauth
+    client_required: true
+    setup_url: https://console.cloud.google.com/auth/clients
+    setup_steps:
+      - title: Enable the API
+        description: In a Google Cloud project of your own, enable drivemcp.googleapis.com in the API Library.
+      - title: Set up the consent screen
+        description: Under Google Auth Platform, Branding, name the app and give a support email. Choose Internal to let only your Workspace's accounts in, without Google's review.
+      - title: Add the scope
+        description: Under Data Access, add https://www.googleapis.com/auth/drive.readonly.
+      - title: Create a web client
+        description: Under Clients, create a client of type Web application, with the redirect URI shown on this page as an authorized redirect URI.
+      - title: Copy the credentials
+        description: Copy the Client ID and Client secret into this page. The same client serves Google Calendar and Google Docs.
+    logo: google_drive.svg
+    # scopes_supported in its protected-resource metadata, read October 5, 2026.
+    scopes_supported:
+      - https://www.googleapis.com/auth/drive
+      - https://www.googleapis.com/auth/drive.readonly
+      - https://www.googleapis.com/auth/drive.file
+    # Read only by default. create_file and copy_file need drive.file as well, which is
+    # the pair Google's own setup guide asks for; an agent adds it with plugin_options.
+    scopes:
+      - https://www.googleapis.com/auth/drive.readonly
+    authorize_params:
+      access_type: offline
+      prompt: consent
+  # https://docsmcp.googleapis.com/.well-known/oauth-protected-resource/mcp/v1, opened
+  # October 5, 2026. Needs GOOGLE_DOCS_MCP_CLIENT_ID and GOOGLE_DOCS_MCP_CLIENT_SECRET and
+  # docsmcp.googleapis.com enabled. Docs is its own server rather than part of Drive's, and
+  # it asks for Drive read as well, because a document is found before it is read.
+  - id: google_docs
+    name: Google Docs
+    category: Documents
+    description: Read documents and their contents.
+    url: https://docsmcp.googleapis.com/mcp/v1
+    auth: oauth
+    client_required: true
+    setup_url: https://console.cloud.google.com/auth/clients
+    setup_steps:
+      - title: Enable the API
+        description: In a Google Cloud project of your own, enable docsmcp.googleapis.com in the API Library.
+      - title: Set up the consent screen
+        description: Under Google Auth Platform, Branding, name the app and give a support email. Choose Internal to let only your Workspace's accounts in, without Google's review.
+      - title: Add the scopes
+        description: Under Data Access, add https://www.googleapis.com/auth/documents.readonly and https://www.googleapis.com/auth/drive.readonly.
+      - title: Create a web client
+        description: Under Clients, create a client of type Web application, with the redirect URI shown on this page as an authorized redirect URI.
+      - title: Copy the credentials
+        description: Copy the Client ID and Client secret into this page. The same client serves Google Calendar and Google Drive.
+    logo: google_docs.svg
+    # scopes_supported in its protected-resource metadata, read October 5, 2026.
+    scopes_supported:
+      - https://www.googleapis.com/auth/drive.readonly
+      - https://www.googleapis.com/auth/documents.readonly
+      - https://www.googleapis.com/auth/drive
+      - https://www.googleapis.com/auth/documents
+    scopes:
+      - https://www.googleapis.com/auth/documents.readonly
+      - https://www.googleapis.com/auth/drive.readonly
+    authorize_params:
+      access_type: offline
+      prompt: consent
+  # https://gmailmcp.googleapis.com/.well-known/oauth-protected-resource/mcp/v1 and
+  # https://developers.google.com/workspace/gmail/api/guides/configure-mcp-server, opened
+  # October 6, 2026. No DCR: GMAIL_MCP_CLIENT_ID and GMAIL_MCP_CLIENT_SECRET, or a client set
+  # on the agent, with gmail.googleapis.com and gmailmcp.googleapis.com enabled. Its ten tools
+  # search, read and label threads and write drafts; none sends mail. In the Workspace
+  # Developer Preview, so the Cloud project must be enrolled.
+  - id: gmail
+    name: Gmail
+    category: Communication
+    description: Search and read email threads, list labels and drafts.
+    url: https://gmailmcp.googleapis.com/mcp/v1
+    auth: oauth
+    client_required: true
+    setup_url: https://console.cloud.google.com/auth/clients
+    setup_steps:
+      - title: Enable the APIs
+        description: In a Google Cloud project of your own, enable gmail.googleapis.com and gmailmcp.googleapis.com in the API Library. The server is in the Workspace Developer Preview, so enroll the project's number at developers.google.com/workspace/preview.
+      - title: Set up the consent screen
+        description: Under Google Auth Platform, Branding, name the app and give a support email. Choose Internal to let only your Workspace's accounts in, without Google's review.
+      - title: Add the scope
+        description: Under Data Access, add https://www.googleapis.com/auth/gmail.readonly, and https://www.googleapis.com/auth/gmail.compose too if the agent should write drafts.
+      - title: Create a web client
+        description: Under Clients, create a client of type Web application, with the redirect URI shown on this page as an authorized redirect URI.
+      - title: Copy the credentials
+        description: Copy the Client ID and Client secret into this page. The same client serves Google Calendar, Drive and Docs.
+    logo: gmail.svg
+    # scopes_supported in its protected-resource metadata, read October 6, 2026.
+    scopes_supported:
+      - https://mail.google.com/
+      - https://www.googleapis.com/auth/gmail.compose
+      - https://www.googleapis.com/auth/gmail.drafts
+      - https://www.googleapis.com/auth/gmail.drafts.create
+      - https://www.googleapis.com/auth/gmail.drafts.readonly
+      - https://www.googleapis.com/auth/gmail.labels
+      - https://www.googleapis.com/auth/gmail.metadata
+      - https://www.googleapis.com/auth/gmail.modify
+      - https://www.googleapis.com/auth/gmail.readonly
+      - https://www.googleapis.com/auth/gmail.send
+      - https://www.googleapis.com/auth/gmail.settings.basic
+    # Read only by default. create_draft needs gmail.compose, the pair Google's own setup
+    # guide asks for; an agent adds it on its entry.
+    scopes:
+      - https://www.googleapis.com/auth/gmail.readonly
+    authorize_params:
+      access_type: offline
+      prompt: consent
+  # https://mcp.gong.io/.well-known/oauth-protected-resource/mcp and
+  # https://help.gong.io/docs/create-an-integration-to-connect-to-the-mcp-server, opened
+  # October 6, 2026. It advertises a registration_endpoint, but registering only accepts the
+  # redirect URIs Gong has approved (Claude's, ChatGPT's) and refused ours, so a Gong admin
+  # creates a manual integration: GONG_MCP_CLIENT_ID and GONG_MCP_CLIENT_SECRET, or a client
+  # set on the agent (client_secret_post). Querying it spends the company's Gong credits.
+  - id: gong
+    name: Gong
+    category: Customers
+    description: Search calls and read their transcripts, deals and accounts.
+    url: https://mcp.gong.io/mcp
+    auth: oauth
+    client_required: true
+    setup_url: https://app.gong.io
+    setup_steps:
+      - title: Open the MCP settings
+        description: As a Gong tech admin, open Admin center, then Settings, then MCP under Ecosystem, and the MCP servers tab.
+      - title: Create an integration
+        description: Choose New MCP server integration, name it, and paste the redirect URI shown on this page into Redirect URI.
+      - title: Choose manual and personal access
+        description: Set Registration type to Manual and Authorization context to Personal access, so each person sees only their own Gong data. Neither can be changed later. The login asks for mcp:read.
+      - title: Copy the credentials
+        description: Save, then copy the Client ID and Client Secret Gong shows into this page.
+    logo: gong.svg
+    # scopes_supported in its protected-resource metadata, read October 6, 2026.
+    scopes_supported:
+      - mcp:read
+      - mcp:write
+    scopes:
+      - mcp:read

@@ -17,11 +17,10 @@ from ._generated.api.default import (
     update_router_config,
 )
 from ._generated.models import (
-    Error,
+    ErrorResponse,
     LlmOptions,
     RouterConfig,
     RouterConfigRequest,
-    RouterConfigRequestTags,
     SearchOptions,
     StsOptions,
     SttOptions,
@@ -43,9 +42,7 @@ ROUTER_FILE = "router.yaml"
 ROUTER_STAMP = ".router_sync"
 
 # ROUTER_KEYS are the top-level keys a router config file may hold.
-ROUTER_KEYS = frozenset(
-    {"name", "description", "stt", "tts", "llm", "sts", "search", "tags"}
-)
+ROUTER_KEYS = frozenset({"name", "description", "stt", "tts", "llm", "sts", "search"})
 
 
 async def ensure_router(name: str, backend: Backend) -> Optional[RouterConfig]:
@@ -156,8 +153,6 @@ def wanted(name: str, described: dict[str, Any]) -> RouterConfigRequest:
         request.sts = block(StsOptions, described["sts"])
     if described.get("search"):
         request.search = block(SearchOptions, described["search"])
-    if described.get("tags"):
-        request.tags = RouterConfigRequestTags.from_dict(described["tags"])
     return request
 
 
@@ -205,10 +200,10 @@ async def store(
     return answer(await create_router_config.asyncio(client=client, body=request))
 
 
-def answer(sent: Union[T, Error, None]) -> T:
+def answer(sent: Union[T, ErrorResponse, None]) -> T:
     """Return what the router sent, raising what it said went wrong instead."""
-    if isinstance(sent, Error):
-        raise RuntimeError(sent.error)
+    if isinstance(sent, ErrorResponse):
+        raise RuntimeError(sent.error.message)
     if sent is None:
         raise RuntimeError("the router did not answer")
     return sent

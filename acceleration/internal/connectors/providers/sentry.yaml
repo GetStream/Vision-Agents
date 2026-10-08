@@ -1,0 +1,44 @@
+# Sentry's hosted MCP server, moved from the plugin catalog (internal/plugins/plugins.yaml,
+# entry sentry, «[plugin]» below; T58 in acceleration/docs/connectors/subtasks.md on
+# connectors/planning). Vendor page, opened October 7, 2026:
+#   [mcp] https://mcp.sentry.dev/ (where https://docs.sentry.io/product/sentry-mcp/ redirects)
+# And the servers' own metadata, fetched on October 7, 2026 («[prm]» and «[as]»):
+#   [prm] GET https://mcp.sentry.dev/.well-known/oauth-protected-resource/mcp at
+#         2026-10-07T14:28:23Z: resource https://mcp.sentry.dev/mcp, authorization_servers
+#         [https://mcp.sentry.dev], scopes_supported [org:read, project:write, team:write,
+#         event:write, alerts:write].
+#   [as]  GET https://mcp.sentry.dev/.well-known/oauth-authorization-server at
+#         2026-10-07T14:28:23Z: issuer https://mcp.sentry.dev, authorize, token and
+#         registration under https://mcp.sentry.dev/oauth/, revocation_endpoint
+#         https://mcp.sentry.dev/oauth/token, token_endpoint_auth_methods_supported
+#         [client_secret_basic, client_secret_post, none], code_challenge_methods_supported
+#         [S256], authorization_response_iss_parameter_supported true,
+#         client_id_metadata_document_supported true.
+id: sentry
+# A new revision for any change to what this file says; see AGENTS.md.
+revision: 1
+# [plugin]
+name: Sentry
+category: Engineering
+description: Search issues and errors, read their events, and triage them.
+endpoints:
+  # «The base MCP server address is: https://mcp.sentry.dev/mcp»: [mcp]; [plugin] url.
+  # Authorize, token and revoke are not written: oauth2_code discovers them through [prm] and
+  # [as] (RFC 9728 and 8414), which answer for this exact endpoint.
+  mcp: https://mcp.sentry.dev/mcp
+# «All connections use OAuth»: [mcp]. PKCE S256: [as].
+schemes: [oauth2_code]
+client:
+  # Dynamic registration, as the plugin registers its client ([plugin]; register in
+  # internal/plugins/oauth.go). [as] also says client_id_metadata_document_supported; cimd is
+  # left out so a new consent registers the same kind of client a moved grant holds.
+  registration: [dcr]
+# No scopes: [plugin] asks for none (scopes_supported only), and [mcp] names none. A moved
+# grant keeps what it was granted, and a new consent asks for what the plugin asked for.
+# No identity, capture or refresh policy: neither [mcp] nor [as] documents a token response,
+# token lifetimes or rotation. # unverified
+# So refresh.rotating is left unset, which is unknown: router plugins migrate moves a grant
+# with a refresh token here only with --include-rotating (internal/pluginmigrate).
+sources:
+  - kind: mcp
+    endpoint: mcp

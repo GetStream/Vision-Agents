@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 from ._backend import Backend
+from ._errors import RouterError
 from ._generated import AuthenticatedClient
 from ._generated.api.default import (
     get_speech,
@@ -21,7 +22,6 @@ from ._generated.models import (
     RecordingStatus,
     RouterConfig,
     RouterConfigRequest,
-    RouterConfigRequestTags,
     SearchOptions,
     SearchRequest,
     SearchRequestTags,
@@ -78,7 +78,7 @@ class Router:
     are one round trip.
 
     ```python
-    router = Router("healthcare")
+    router = stream.Client().router("healthcare")
 
     async with router.stt.realtime() as stt:
         ...
@@ -87,8 +87,8 @@ class Router:
     hits = await router.search("perioperative antibiotic guidance", results=5)
     ```
 
-    Everything in the named config is a default, and every keyword on a call overrides one
-    field of it.
+    Everything in the named config is a default, the model's `target` included, and every
+    keyword on a call overrides one field of it.
 
     A config that lives on disk as `routers/{name}/router.yaml` is stored on first use, so
     naming one here is all it takes to route through it.
@@ -100,21 +100,26 @@ class Router:
         tags: Optional[dict[str, str]] = None,
         url: Optional[str] = None,
         customer_id: Optional[str] = None,
+        backend: Optional[Backend] = None,
     ):
         """Route through `config`.
+
+        `Client.router` is how one of these is usually had, since that is where the backend
+        was settled.
 
         Args:
             config: A stored router config, by name or by id. Without one every call says
                 what it wants for itself.
-            tags: Cost labels carried onto everything routed here, on top of the config's
-                own.
+            tags: Cost labels carried onto everything routed here.
             url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
             customer_id: Who the work is billed to. Defaults to
                 `STREAM_ACCELERATION_CUSTOMER_ID`.
+            backend: A backend to use as it is, instead of building one from `url` and
+                `customer_id`.
         """
         self.config = config
         self.tags = tags or {}
-        self.backend = Backend(url=url, customer_id=customer_id)
+        self.backend = backend or Backend(url=url, customer_id=customer_id)
 
         self.stt = SpeechToText(self)
         self.tts = TextToSpeech(self)
@@ -170,10 +175,6 @@ class Router:
                 stored.search,
                 stored.sts,
             )
-            if not isinstance(stored.tags, Unset):
-                wanted.tags = RouterConfigRequestTags.from_dict(stored.tags.to_dict())
-        if self.tags:
-            wanted.tags = RouterConfigRequestTags.from_dict(self.tags)
 
         return await store(client, wanted, stored)
 
@@ -189,7 +190,8 @@ class Router:
         ```
 
         Args:
-            **options: Any field of the sts block - `target`, `providers`, `instructions`,
+            **options: Any field of the sts block except `instructions`, which a session
+                sends when it opens - `target`, `providers`,
                 `voice`, `languages`, `turn_detection`, `silence_ms`, `interrupt_response`,
                 `input_transcript`, `output_transcript`, `tools`, `text`, `images`,
                 `data_policy`, `overwrites`.
@@ -220,10 +222,6 @@ class Router:
                 stored.llm,
                 stored.search,
             )
-            if not isinstance(stored.tags, Unset):
-                wanted.tags = RouterConfigRequestTags.from_dict(stored.tags.to_dict())
-        if self.tags:
-            wanted.tags = RouterConfigRequestTags.from_dict(self.tags)
 
         return await store(client, wanted, stored)
 
@@ -272,10 +270,6 @@ class Router:
                 stored.search,
                 stored.sts,
             )
-            if not isinstance(stored.tags, Unset):
-                wanted.tags = RouterConfigRequestTags.from_dict(stored.tags.to_dict())
-        if self.tags:
-            wanted.tags = RouterConfigRequestTags.from_dict(self.tags)
 
         return await store(client, wanted, stored)
 
@@ -284,8 +278,9 @@ class Router:
 
         Args:
             query: The question, in your own words.
-            **options: Any field of the config's search block - `depth`, `results`,
-                `include_domains`, `category`, `max_age_hours`, `location`, `contents`.
+            **options: Any field of the config's search block - `providers`, `depth`,
+                `results`, `include_domains`, `category`, `max_age_hours`, `location`,
+                `contents`.
 
         Returns:
             What was found, and the provider's own answer where it wrote one.
@@ -333,7 +328,10 @@ class Router:
         """Ask the router what kind of model a name is."""
         client = self.client()
         for modality in ORDER:
-            response = resolve_target.sync_detailed(modality, target, client=client)
+            try:
+                response = resolve_target.sync_detailed(modality, target, client=client)
+            except RouterError:
+                continue
             candidates = response.parsed
             if isinstance(candidates, list) and candidates:
                 logger.debug("%s routes as %s", target, modality)
@@ -348,7 +346,6 @@ async def define_router(
     llm: Optional[dict[str, Any]] = None,
     sts: Optional[dict[str, Any]] = None,
     search: Optional[dict[str, Any]] = None,
-    tags: Optional[dict[str, str]] = None,
     url: Optional[str] = None,
     customer_id: Optional[str] = None,
 ) -> RouterConfig:
@@ -365,7 +362,6 @@ async def define_router(
         llm: How it answers.
         sts: How it holds a conversation with one native audio model.
         search: How it looks things up.
-        tags: Cost labels carried onto everything routed under it.
         url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
         customer_id: Who the work is billed to. Defaults to
             `STREAM_ACCELERATION_CUSTOMER_ID`.
@@ -385,7 +381,6 @@ async def define_router(
             "llm": llm,
             "sts": sts,
             "search": search,
-            "tags": tags,
         },
     )
     return await store(client, request, await find(client, name))
@@ -408,8 +403,6 @@ async def sync_routers(
 
     ```yaml
     # routers/healthcare/router.yaml
-    tags:
-      team: clinical
     stt:
       providers: [deepgram, parakeet]
       data_policy:
@@ -468,8 +461,9 @@ class SpeechToText:
         agent own its lifecycle instead.
 
         Args:
-            **options: Any field of the config's stt block - `target`, `languages`,
-                `interim`, `endpointing`, `diarize`, `keyterms`, `format`, `redact`.
+            **options: Any field of the config's stt block - `languages`, `interim`,
+                `endpointing`, `diarize`, `keyterms`, `format`, `redact`. Which model
+                answers (`target`) belongs in the config.
 
         Raises:
             ValueError: if an option is not one transcription takes.
@@ -478,8 +472,7 @@ class SpeechToText:
             config_id=self._router.config,
             options=block(SttOptions, options).to_dict(),
             tags=self._router.tags,
-            url=self._router.backend.url,
-            customer_id=self._router.backend.customer_id,
+            backend=self._router.backend,
         )
 
     async def recording(
@@ -539,11 +532,12 @@ class TextToSpeech:
         """A speaking session, configured and not yet started.
 
         Args:
-            **options: Any field of the config's tts block - `target`, `providers`,
-                `voice`, `languages`, `speed`, `emotion`, `stability`, `format`,
-                `data_policy`, `overwrites`. A voice named `custom:receptionist` is one of
-                your own and nothing else; a bare name is looked for among yours and
-                passed to the provider's library when it is not there.
+            **options: Any field of the config's tts block - `providers`, `voice`,
+                `languages`, `speed`, `emotion`, `stability`, `format`, `data_policy`,
+                `overwrites`. Which model answers (`target`) belongs in the config. A
+                voice named `custom:receptionist` is one of your own and nothing else; a
+                bare name is looked for among yours and passed to the provider's library
+                when it is not there.
 
         Raises:
             ValueError: if an option is not one a voice takes.
@@ -552,8 +546,7 @@ class TextToSpeech:
             config_id=self._router.config,
             options=block(TtsOptions, options).to_dict(),
             tags=self._router.tags,
-            url=self._router.backend.url,
-            customer_id=self._router.backend.customer_id,
+            backend=self._router.backend,
         )
 
     async def recording(
@@ -614,9 +607,10 @@ class SpeechToSpeech:
         the socket does all three.
 
         Args:
-            **options: Any field of the config's sts block - `target`, `instructions`,
-                `voice`, `languages`, `turn_detection`, `silence_ms`, `interrupt_response`,
-                `input_transcript`, `output_transcript`, `tools`, `text`, `images`.
+            **options: Any field of the config's sts block - `instructions`, `voice`,
+                `languages`, `turn_detection`, `silence_ms`, `interrupt_response`,
+                `input_transcript`, `output_transcript`, `tools`, `text`, `images`. Which
+                model answers (`target`) belongs in the config.
 
         Raises:
             ValueError: if an option is not one a speech-to-speech model takes.
@@ -625,8 +619,7 @@ class SpeechToSpeech:
             config_id=self._router.config,
             options=block(StsOptions, options).to_dict(),
             tags=self._router.tags,
-            url=self._router.backend.url,
-            customer_id=self._router.backend.customer_id,
+            backend=self._router.backend,
         )
 
 
@@ -644,9 +637,10 @@ class Completions:
         """An answering session, configured and not yet started.
 
         Args:
-            **options: Any field of the config's llm block - `target`, `instructions`,
+            **options: Any field of the config's llm block - `providers`,
                 `max_output_tokens`, `temperature`, `reasoning_effort`, `format`,
-                `verbosity`, `tool_choice`.
+                `verbosity`, `tool_choice`. Which model answers (`target`) belongs in the
+                config.
 
         Raises:
             ValueError: if an option is not one the model takes.
@@ -655,8 +649,7 @@ class Completions:
             config_id=self._router.config,
             options=block(LlmOptions, options).to_dict(),
             tags=self._router.tags,
-            url=self._router.backend.url,
-            customer_id=self._router.backend.customer_id,
+            backend=self._router.backend,
         )
 
 

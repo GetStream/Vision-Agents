@@ -5,12 +5,17 @@
  */
 
 export {
+  AGENT_FILE,
+  AGENT_STAMP,
   GUARDRAIL_FILE,
   INSTRUCTIONS_FILE,
   KNOWLEDGE_DIR,
   KNOWLEDGE_URLS_FILE,
+  SIMULATIONS_DIR,
   SKILLS_DIR,
   loadFolder,
+  parseDeclaration,
   parsePages,
+  parseSimulations,
   parseSkill,
 } from "./folder.js";

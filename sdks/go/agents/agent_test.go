@@ -1,16 +1,20 @@
 package agents
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
+	"github.com/GetStream/Vision-Agents/sdks/go/tools"
 )
 
 // backend is a stand-in for the acceleration router's configuration paths: enough of them
@@ -18,12 +22,11 @@ import (
 type backend struct {
 	*httptest.Server
 
-	mu        sync.Mutex
-	configs   []acceleration.AgentConfig
-	skills    []acceleration.Skill
-	knowledge []acceleration.IngestKnowledgeRequest
-	pages     []acceleration.KnowledgeUrlRequest
-	updates   []string
+	mu      sync.Mutex
+	configs []acceleration.AgentConfig
+	skills  []acceleration.Skill
+	syncs   []acceleration.SyncAgentRequest
+	updates []string
 }
 
 func newBackend(t *testing.T) *backend {
@@ -46,7 +49,7 @@ func newBackend(t *testing.T) *backend {
 		stored := acceleration.AgentConfig{
 			Id: "config-1", Name: request.Name, Instructions: request.Instructions,
 			KnowledgeNamespace: request.KnowledgeNamespace, Skills: request.Skills,
-			Subagent: request.Subagent, Tags: request.Tags,
+			ThinkingLlm: request.ThinkingLlm, Tags: request.Tags,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
 		router.configs = append(router.configs, stored)
@@ -67,7 +70,7 @@ func newBackend(t *testing.T) *backend {
 			reply(w, http.StatusOK, router.configs[index])
 			return
 		}
-		reply(w, http.StatusNotFound, acceleration.Error{Error: "no such config"})
+		reply(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "no such config"}})
 	})
 
 	mux.HandleFunc("GET /v1/agents/skills", func(w http.ResponseWriter, _ *http.Request) {
@@ -102,31 +105,30 @@ func newBackend(t *testing.T) *backend {
 		})
 	})
 
-	mux.HandleFunc("POST /v1/agents/knowledge", func(w http.ResponseWriter, r *http.Request) {
-		var request acceleration.IngestKnowledgeRequest
+	mux.HandleFunc("POST /v1/agents/sync", func(w http.ResponseWriter, r *http.Request) {
+		var request acceleration.SyncAgentRequest
 		_ = json.NewDecoder(r.Body).Decode(&request)
 
 		router.mu.Lock()
 		defer router.mu.Unlock()
-		router.knowledge = append(router.knowledge, request)
-		reply(w, http.StatusOK, acceleration.IngestedKnowledge{
-			Namespace: request.Namespace, Documents: len(request.Documents),
-			Passages: len(request.Documents),
-		})
-	})
-	mux.HandleFunc("POST /v1/agents/knowledge/urls", func(w http.ResponseWriter, r *http.Request) {
-		var request acceleration.KnowledgeUrlRequest
-		_ = json.NewDecoder(r.Body).Decode(&request)
-
-		router.mu.Lock()
-		defer router.mu.Unlock()
-		router.pages = append(router.pages, request)
-		reply(w, http.StatusCreated, acceleration.KnowledgeUrl{
-			Id: "page-" + request.Url, Namespace: request.Namespace, Url: request.Url,
-			Title: request.Title, Description: request.Description,
-			State: acceleration.KnowledgeUrlStateIndexed, Passages: 1,
+		router.syncs = append(router.syncs, request)
+		stored := acceleration.AgentConfig{
+			Id: "config-" + request.Name, Name: request.Name, Instructions: request.Instructions,
+			ThinkingLlm: request.ThinkingLlm, Llm: request.Llm, Tags: request.Tags,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
-		})
+		}
+		if request.Knowledge != nil || request.KnowledgeUrls != nil {
+			stored.KnowledgeNamespace = &request.Name
+		}
+		if request.Skills != nil {
+			named := []string{}
+			for _, skill := range *request.Skills {
+				named = append(named, skill.Name)
+			}
+			stored.Skills = &named
+		}
+		router.configs = append(router.configs[:0:0], stored)
+		reply(w, http.StatusOK, acceleration.SyncAgentResult{Config: stored})
 	})
 
 	router.Server = httptest.NewServer(mux)
@@ -156,14 +158,48 @@ func agentOn(t *testing.T, router *backend, options Options) *Agent {
 	return agent
 }
 
-func TestAnAgentNeedsAnLLMAndAName(t *testing.T) {
-	if _, err := New(Options{Name: "jean"}); err == nil {
-		t.Error("an agent with nothing answering is not an agent")
-	}
+func TestAnAgentNeedsAName(t *testing.T) {
 	if _, err := New(Options{LLM: stream.Accelerated(stream.Config{})}); err == nil {
 		t.Error("an agent has to be called something")
 	}
 }
+
+func TestANamedAgentRunsItsStoredConfigWithItsTools(t *testing.T) {
+	agent, err := New(Options{Name: "jean", Tools: []tools.Tool{lookupOrder{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if agent.LLM() == nil {
+		t.Fatal("an agent given only a name has nothing answering")
+	}
+	if listed := agent.Tools().List(); len(listed) != 1 || listed[0].Name != "lookup_order" {
+		t.Errorf("the model is offered %+v", listed)
+	}
+}
+
+func TestANamedAgentReadsItsFolderUnderAgents(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "agents/jean/agent.yaml", "name: jean\n")
+	write(t, root, "agents/jean/instructions.md", "You are Jean.\n")
+	t.Chdir(root)
+
+	agent, err := New(Options{Name: "jean"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agent.Folder() == nil || agent.Instructions() != "You are Jean." {
+		t.Errorf("agents/jean was not read: instructions are %q", agent.Instructions())
+	}
+}
+
+type lookupOrder struct {
+	OrderID string `json:"order_id"`
+}
+
+func (lookupOrder) Name() string                     { return "lookup_order" }
+func (lookupOrder) Description() string              { return "Look up an order by its number" }
+func (lookupOrder) Run(context.Context) (any, error) { return "shipped", nil }
 
 func TestAnAgentJoinsUnderAUserIDDerivedFromItsName(t *testing.T) {
 	router := newBackend(t)
@@ -171,6 +207,77 @@ func TestAnAgentJoinsUnderAUserIDDerivedFromItsName(t *testing.T) {
 
 	if agent.options.UserID != "jean-le-bot" {
 		t.Errorf("the agent joins as %q", agent.options.UserID)
+	}
+}
+
+func TestAChatIsAskedThroughItsResponsesLikeASessionOpenedByName(t *testing.T) {
+	router := newWorked(t, nil)
+	agent, err := New(Options{
+		Name: "jean",
+		LLM: stream.Accelerated(stream.Config{
+			Backend: stream.Backend{URL: router.URL, CustomerID: "acme"},
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := agent.Chat(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(context.WithoutCancel(t.Context()))
+
+	answer, err := session.Responses.Create(t.Context(), "Where is order 1042?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer.ID() != "response-1" || answer.Created.SessionId != session.ID() {
+		t.Errorf("the answer is %+v, want response-1 in %s", answer.Created, session.ID())
+	}
+	if asked := router.questions(); len(asked) != 1 || asked[0] != session.ID()+": Where is order 1042?" {
+		t.Errorf("the router was asked %v", asked)
+	}
+}
+
+func TestASessionCanChangeWhatTheAgentWasConfiguredWith(t *testing.T) {
+	router := newWorked(t, nil)
+	agent, err := New(Options{
+		Name:         "jean",
+		Instructions: "You are Jean.",
+		CostTracking: map[string]string{"team": "support", "tier": "free"},
+		LLM: stream.Accelerated(stream.Config{
+			Backend: stream.Backend{URL: router.URL, CustomerID: "acme"},
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := agent.Sessions.Create(t.Context(), SessionOptions{
+		Instructions: "You are Jean, and brief.",
+		CostTracking: map[string]string{"tier": "pro"},
+		Title:        "Order 1042",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(context.WithoutCancel(t.Context()))
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	opened := router.opened[0]
+	if opened.Instructions == nil || *opened.Instructions != "You are Jean, and brief." {
+		t.Errorf("the session was opened with instructions %v", opened.Instructions)
+	}
+	if opened.Tags == nil || (*opened.Tags)["team"] != "support" || (*opened.Tags)["tier"] != "pro" {
+		t.Errorf("the session was labelled %v", opened.Tags)
+	}
+	if opened.Title == nil || *opened.Title != "Order 1042" {
+		t.Errorf("the session was titled %v", opened.Title)
+	}
+	if agent.options.CostTracking["tier"] != "free" {
+		t.Errorf("the session wrote its labels through to the agent: %v", agent.options.CostTracking)
 	}
 }
 
@@ -201,12 +308,45 @@ func TestSyncStoresTheAgentAndEditsItTheSecondTime(t *testing.T) {
 	}
 }
 
+func TestASyncTheRouterRefusesCarriesWhatItSaid(t *testing.T) {
+	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(stream.RequestIDHeader, "request-1")
+		reply(w, http.StatusUnauthorized, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+			Message: "the token has expired", Type: acceleration.ErrorTypeAuthentication,
+			Code: "unauthenticated", DocUrl: "https://getstream.io/agents/docs/api/errors/#unauthenticated",
+		}})
+	}))
+	t.Cleanup(router.Close)
+	agent, err := New(Options{Name: "jean", LLM: stream.Accelerated(stream.Config{
+		Backend: stream.Backend{URL: router.URL, CustomerID: "acme"},
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = agent.Sync(t.Context())
+
+	var refused *stream.RouterError
+	if !errors.As(err, &refused) {
+		t.Fatalf("the refusal came back as %v", err)
+	}
+	if refused.Status != http.StatusUnauthorized || refused.Type != "authentication" ||
+		refused.Code != "unauthenticated" || refused.RequestID != "request-1" ||
+		refused.DocURL != "https://getstream.io/agents/docs/api/errors/#unauthenticated" {
+		t.Errorf("the refusal was read as %+v", *refused)
+	}
+	if err.Error() != "agents: the token has expired" {
+		t.Errorf("the refusal says %q", err)
+	}
+}
+
 func TestSyncPushesADirectorysSkillsAndKnowledge(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "llm: openai/gpt-5.6\ntags:\n  team: support\n")
 	write(t, root, "instructions.md", "You are Jean.\n")
 	write(t, root, "skills/think.md", "---\ndescription: Work it out\n---\nReason it through.\n")
 	write(t, root, "knowledge/pricing.md", "# Pricing\n\nA call costs a penny.\n")
-	write(t, root, "knowledge/urls.yaml", "- url: https://example.com/plans\n  title: Plans\n")
+	write(t, root, "knowledge/urls.yaml", "- url: https://example.com/plans\n  title: Plans\n  refresh_hours: 24\n")
 
 	router := newBackend(t)
 	agent := agentOn(t, router, Options{Dir: root})
@@ -219,51 +359,308 @@ func TestSyncPushesADirectorysSkillsAndKnowledge(t *testing.T) {
 	router.mu.Lock()
 	defer router.mu.Unlock()
 
-	if len(router.skills) != 1 || router.skills[0].Name != "think" {
-		t.Errorf("the skills stored are %+v", router.skills)
+	if len(router.syncs) != 1 {
+		t.Fatalf("the directory was synced in %d requests", len(router.syncs))
 	}
-	if len(router.knowledge) != 1 {
-		t.Fatalf("the knowledge posted is %+v", router.knowledge)
+	synced := router.syncs[0]
+	if synced.Hash != agent.Folder().Hash() {
+		t.Errorf("the directory was sent as %q, but hashes to %q", synced.Hash, agent.Folder().Hash())
 	}
-	if router.knowledge[0].Namespace != "jean" {
-		t.Errorf("the knowledge went to %q", router.knowledge[0].Namespace)
+	if synced.Skills == nil || (*synced.Skills)[0].Name != "think" {
+		t.Errorf("the skills sent are %+v", synced.Skills)
 	}
-	// Files and pages share the namespace, so one lookup covers both.
-	if len(router.pages) != 1 {
-		t.Fatalf("the pages subscribed are %+v", router.pages)
+	if synced.Knowledge == nil || (*synced.Knowledge)[0].Source != "pricing.md" {
+		t.Errorf("the knowledge sent is %+v", synced.Knowledge)
 	}
-	page := router.pages[0]
-	if page.Namespace != "jean" || page.Url != "https://example.com/plans" {
-		t.Errorf("the page subscribed is %+v", page)
+	if synced.KnowledgeUrls == nil || (*synced.KnowledgeUrls)[0].Url != "https://example.com/plans" ||
+		*(*synced.KnowledgeUrls)[0].Title != "Plans" || (*synced.KnowledgeUrls)[0].Description != nil ||
+		*(*synced.KnowledgeUrls)[0].RefreshHours != 24 {
+		t.Errorf("the pages sent are %+v", synced.KnowledgeUrls)
 	}
-	if page.Title == nil || *page.Title != "Plans" || page.Description != nil {
-		t.Errorf("the declaration reached the router as %+v", page)
+	if synced.Llm == nil || *synced.Llm != "openai/gpt-5.6" || (*synced.Tags)["team"] != "support" {
+		t.Errorf("what agent.yaml declares did not go with it: %+v", synced)
+	}
+	if synced.Stt != nil || synced.Mode != nil {
+		t.Errorf("settings the declaration never named were sent: %+v", synced)
 	}
 	if stored.KnowledgeNamespace == nil || *stored.KnowledgeNamespace != "jean" {
 		t.Errorf("the config does not point at the knowledge: %+v", stored)
 	}
-	if stored.Skills == nil || (*stored.Skills)[0] != "think" {
-		t.Errorf("the config does not name the skill: %+v", stored.Skills)
+	if ReadStamp(root) != synced.Hash {
+		t.Errorf("%s records %q", AgentStamp, ReadStamp(root))
+	}
+}
+
+func TestSyncSendsHowTheSandboxIsBuilt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "artist")
+	write(t, root, "agent.yaml", `sandbox: daytona
+sandbox_options:
+  setup: [pip install bpy==5.2.2]
+  timeout: 5m
+  memory_gb: 4
+`)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	options := router.syncs[0].SandboxOptions
+	if options == nil || (*options.Setup)[0] != "pip install bpy==5.2.2" || *options.TimeoutMs != 300000 || *options.MemoryGb != 4 {
+		t.Errorf("how the sandbox is built went as %+v", options)
+	}
+}
+
+func TestSyncSendsTheChannelsTheAgentAnswersOn(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", `channels:
+  whatsapp:
+    number: "+15556325550"
+  sms:
+    number: "+12187021098"
+  identity: link
+`)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	named := router.syncs[0].Channels
+	if named == nil || named.Whatsapp == nil || named.Whatsapp.Number != "+15556325550" ||
+		named.Sms == nil || named.Sms.Number != "+12187021098" || named.Imessage != nil ||
+		named.Identity == nil || *named.Identity != acceleration.ChannelIdentityLink {
+		t.Errorf("the channels went as %+v", named)
+	}
+}
+
+// A file saying nothing about channels leaves the agent reachable in Stream Chat alone.
+func TestSyncSendsNoChannelsWhenTheFileNamesNone(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "llm: llm-fast\n")
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if router.syncs[0].Channels != nil {
+		t.Errorf("the channels went as %+v", router.syncs[0].Channels)
+	}
+}
+
+func TestSyncSendsTheMCPServersNamedByURL(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", `mcp_servers:
+  - name: tablejourney
+    url: https://tablejourney.com/mcp
+    tools: [search_*]
+`)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	servers := router.syncs[0].McpServers
+	if servers == nil || len(*servers) != 1 || (*servers)[0].Name != "tablejourney" || (*servers)[0].Url != "https://tablejourney.com/mcp" ||
+		(*servers)[0].Tools == nil || strings.Join(*(*servers)[0].Tools, ",") != "search_*" {
+		t.Errorf("the MCP servers went as %+v", servers)
+	}
+}
+
+func TestSyncSendsWhetherToolsAreOfferedProgressively(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "progressive_tools: true\n")
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if sent := router.syncs[0].ProgressiveTools; sent == nil || !*sent {
+		t.Errorf("progressive_tools went as %v", sent)
+	}
+}
+
+func TestSyncSendsWhoLogsIntoEachMCPServer(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", `mcp_servers:
+  - name: crm
+    url: https://crm.example.com/mcp
+    scopes: [contacts.read]
+  - name: notes
+    url: https://notes.example.com/mcp
+    user: true
+`)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	servers := router.syncs[0].McpServers
+	if servers == nil || len(*servers) != 2 {
+		t.Fatalf("the MCP servers went as %+v", servers)
+	}
+	crm, notes := (*servers)[0], (*servers)[1]
+	if crm.Scopes == nil || strings.Join(*crm.Scopes, ",") != "contacts.read" || crm.User != nil {
+		t.Errorf("the app's server went as %+v", crm)
+	}
+	if notes.User == nil || !*notes.User || notes.Scopes != nil {
+		t.Errorf("each user's server went as %+v", notes)
+	}
+}
+
+func TestSyncSendsHowEachPluginIsReached(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", `agent_plugins: [sentry]
+user_plugins:
+  - name: linear
+    readonly: true
+    scopes: [read]
+  - name: calcom
+    toolsets: [bookings, availability]
+    tools: [get_bookings, get_availability]
+`)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	app := router.syncs[0].AgentPlugins
+	if app == nil || len(*app) != 1 {
+		t.Fatalf("the app's plugins went as %+v", app)
+	}
+	if sentry, err := (*app)[0].AsPluginEntry0(); err != nil || sentry != "sentry" {
+		t.Errorf("a plugin with nothing said about it went as %q (%v), not its id", sentry, err)
+	}
+	users := router.syncs[0].UserPlugins
+	if users == nil || len(*users) != 2 {
+		t.Fatalf("each user's plugins went as %+v", users)
+	}
+	linear, err := (*users)[0].AsPluginWithOptions()
+	if err != nil || linear.Name != "linear" || linear.Readonly == nil || !*linear.Readonly ||
+		linear.Scopes == nil || strings.Join(*linear.Scopes, ",") != "read" {
+		t.Errorf("linear went as %+v (%v)", linear, err)
+	}
+	calcom, err := (*users)[1].AsPluginWithOptions()
+	if err != nil || calcom.Toolsets == nil || strings.Join(*calcom.Toolsets, ",") != "bookings,availability" ||
+		calcom.Tools == nil || strings.Join(*calcom.Tools, ",") != "get_bookings,get_availability" {
+		t.Errorf("calcom went as %+v (%v)", calcom, err)
+	}
+}
+
+func TestSyncSaysNothingOfTheSandboxWhenTheDeclarationDoesNot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "analyst")
+	write(t, root, "agent.yaml", "sandbox: daytona\n")
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if router.syncs[0].SandboxOptions != nil {
+		t.Errorf("options nobody declared were sent: %+v", router.syncs[0].SandboxOptions)
+	}
+}
+
+func TestAnUnchangedDirectoryIsNotSyncedAgain(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "instructions.md", "You are Jean.\n")
+	router := newBackend(t)
+
+	for range 2 {
+		stored, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stored == nil || stored.Name != "jean" {
+			t.Fatalf("the sync answered %+v", stored)
+		}
+	}
+	write(t, root, "instructions.md", "You are Jean, and brief.\n")
+	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.syncs) != 2 {
+		t.Errorf("three syncs, one of them of an edited directory, sent %d requests", len(router.syncs))
+	}
+}
+
+func TestWhatTheCodeSetsIsPartOfWhatIsSynced(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "instructions.md", "You are Jean.\n")
+	router := newBackend(t)
+
+	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	written := Options{Dir: root, Instructions: "You are somebody else."}
+	if _, err := agentOn(t, router, written).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.syncs) != 2 || *router.syncs[1].Instructions != "You are somebody else." {
+		t.Errorf("instructions written in code were not synced: %+v", router.syncs)
 	}
 }
 
 func TestADirectorysSkillsAreWhatTheAgentJoinsWith(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
 	write(t, root, "skills/think.md", "---\ndescription: Work it out\n---\nReason it through.\n")
 
 	router := newBackend(t)
 	agent := agentOn(t, router, Options{Dir: root})
 
-	var call stream.Call
-	agent.options.Harness.apply(&call)
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 
-	if call.Skills == nil || len(*call.Skills) != 1 || (*call.Skills)[0].Name != "think" {
-		t.Errorf("the session would be created with %+v", call.Skills)
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	skills := router.syncs[0].Skills
+	if skills == nil || len(*skills) != 1 || (*skills)[0].Name != "think" {
+		t.Errorf("the config would be stored with %+v", skills)
 	}
 }
 
 func TestADirectoryDoesNotWriteThroughToAHarnessSharedWithAnotherAgent(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
 	write(t, root, "skills/think.md", "---\ndescription: Work it out\n---\nReason it through.\n")
 
 	router := newBackend(t)
@@ -292,57 +689,54 @@ func TestAMemoryFilterSaysWhoTheMemoriesAreAboutAndWhatNarrowsThem(t *testing.T)
 	}
 }
 
-func TestAHarnessRendersIntoTheCallItConfigures(t *testing.T) {
-	harness := &Harness{
-		UseSkills: true,
+func TestAgentYAMLNamesTheHarnessAndSandboxTheConfigIsStoredWith(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\nharness: default\nsandbox: daytona\n")
+
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root, Harness: &Harness{
 		Subagents: map[string]string{"default": "openai/gpt-5.6-sol"},
-		VM:        Daytona(),
-		Tasks:     3,
-		Skills: []Skill{{
-			Name: "think", Description: "Work it out",
-			Instructions: "Reason it through.", Deadline: 30 * time.Second,
-		}},
+	}})
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 
-	var call stream.Call
-	harness.apply(&call)
-
-	if call.Subagents["default"] != "openai/gpt-5.6-sol" || call.Tasks != 3 || call.Sandbox != "daytona" {
-		t.Errorf("the call was configured as %+v", call)
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	synced := router.syncs[0]
+	if synced.Harness == nil || *synced.Harness != acceleration.Default {
+		t.Errorf("the harness was stored as %v", synced.Harness)
 	}
-	if call.Skills == nil || len(*call.Skills) != 1 {
-		t.Fatalf("the skills are %+v", call.Skills)
+	if synced.Sandbox == nil || *synced.Sandbox != "daytona" {
+		t.Errorf("the sandbox was stored as %v", synced.Sandbox)
 	}
-	skill := (*call.Skills)[0]
-	if skill.Name != "think" || skill.DeadlineMs == nil || *skill.DeadlineMs != 30000 {
-		t.Errorf("the skill went over as %+v", skill)
+	if synced.ThinkingLlm == nil || *synced.ThinkingLlm != "openai/gpt-5.6-sol" {
+		t.Errorf("the thinking llm was stored as %v", synced.ThinkingLlm)
 	}
 }
 
 func TestTheDefaultHarnessLeavesTheBuiltInSkillsAlone(t *testing.T) {
-	var call stream.Call
-	DefaultHarness().apply(&call)
-
-	if call.Skills != nil {
-		t.Errorf("the built-in set was replaced by %+v", call.Skills)
-	}
-}
-
-func TestAHarnessAskingForNoSkillsTurnsDelegationOff(t *testing.T) {
-	var call stream.Call
-	(&Harness{UseSkills: false}).apply(&call)
-
-	if call.Skills == nil || len(*call.Skills) != 0 {
-		t.Errorf("the skills are %+v, want an empty list rather than none at all", call.Skills)
-	}
-}
-
-func TestNamedSubagentsNeedNoDefault(t *testing.T) {
-	h := &Harness{Subagents: map[string]string{"vision": "vlm", "research": "llm-thinking"}}
-	if err := h.Validate(); err != nil {
+	router := newBackend(t)
+	stored, err := agentOn(t, router, Options{Name: "jean", Harness: DefaultHarness()}).Sync(t.Context())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if h.Subagent() != "" {
-		t.Fatal("a named worker became the default")
+
+	if stored.Skills != nil {
+		t.Errorf("the built-in set was replaced by %+v", *stored.Skills)
+	}
+}
+
+func TestAHarnessThatDoesNotExistIsRefused(t *testing.T) {
+	if _, err := New(Options{Name: "jean", Harness: &Harness{Name: "fancy"}}); err == nil {
+		t.Fatal("the backend has only the default harness, so another name means nothing")
+	}
+}
+
+func TestSeveralSubagentsWithNoDefaultIsRefused(t *testing.T) {
+	harness := &Harness{Subagents: map[string]string{"fast": "a", "slow": "b"}}
+
+	if err := harness.Validate(); err == nil {
+		t.Fatal("which one runs skills would be decided by map iteration order")
 	}
 }

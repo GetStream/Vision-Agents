@@ -16,68 +16,68 @@ T = TypeVar("T", bound="PlacedCall")
 class PlacedCall:
     """
     Attributes:
-        vendor_call_id (str):
         status (str): The vendor's own word for where the call is, e.g. "queued".
-        vendor (str | Unset): Who is placing the call.
+        vendor_call_id (str):
         call_id (str | Unset): The Stream call the answered leg is routed into. An agent that is not in it hears nothing
             when the person picks up.
         call_type (str | Unset):
+        vendor (str | Unset): Who is placing the call.
     """
 
-    vendor_call_id: str
     status: str
-    vendor: str | Unset = UNSET
+    vendor_call_id: str
     call_id: str | Unset = UNSET
     call_type: str | Unset = UNSET
+    vendor: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        vendor_call_id = self.vendor_call_id
-
         status = self.status
 
-        vendor = self.vendor
+        vendor_call_id = self.vendor_call_id
 
         call_id = self.call_id
 
         call_type = self.call_type
 
+        vendor = self.vendor
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "vendor_call_id": vendor_call_id,
                 "status": status,
+                "vendor_call_id": vendor_call_id,
             }
         )
-        if vendor is not UNSET:
-            field_dict["vendor"] = vendor
         if call_id is not UNSET:
             field_dict["call_id"] = call_id
         if call_type is not UNSET:
             field_dict["call_type"] = call_type
+        if vendor is not UNSET:
+            field_dict["vendor"] = vendor
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        vendor_call_id = d.pop("vendor_call_id")
-
         status = d.pop("status")
 
-        vendor = d.pop("vendor", UNSET)
+        vendor_call_id = d.pop("vendor_call_id")
 
         call_id = d.pop("call_id", UNSET)
 
         call_type = d.pop("call_type", UNSET)
 
+        vendor = d.pop("vendor", UNSET)
+
         placed_call = cls(
-            vendor_call_id=vendor_call_id,
             status=status,
-            vendor=vendor,
+            vendor_call_id=vendor_call_id,
             call_id=call_id,
             call_type=call_type,
+            vendor=vendor,
         )
 
         placed_call.additional_properties = d

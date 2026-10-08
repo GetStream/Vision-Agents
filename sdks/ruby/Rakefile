@@ -1,0 +1,21 @@
+# frozen_string_literal: true
+
+require "rake/testtask"
+
+Rake::TestTask.new(:test) do |task|
+  task.libs << "test"
+  task.test_files = FileList["test/*_test.rb"]
+  task.warning = true
+end
+
+Rake::TestTask.new(:live) do |task|
+  task.libs << "test"
+  task.test_files = FileList["test/live/*_test.rb"]
+end
+
+desc "Fail if the generated spec table is out of date"
+task :check do
+  ruby "script/generate --check"
+end
+
+task default: %i[check test]

@@ -17,6 +17,9 @@ import (
 	"time"
 
 	"github.com/redis/rueidis"
+	"github.com/redis/rueidis/rueidisotel"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Health is the recent behaviour of one provider and model.
@@ -82,7 +85,7 @@ func New(options Options) (*Client, error) {
 		options.MaxErrorRate = 0.5
 	}
 
-	client, err := rueidis.NewClient(rueidis.ClientOption{
+	client, err := rueidisotel.NewClient(rueidis.ClientOption{
 		InitAddress:  []string{options.Address},
 		Username:     options.Username,
 		Password:     options.Password,
@@ -103,7 +106,7 @@ func (c *Client) Close() { c.redis.Close() }
 
 // Ping verifies the connection is usable.
 func (c *Client) Ping(ctx context.Context) error {
-	return c.redis.Do(ctx, c.redis.B().Ping().Build()).Error()
+	return stack.Wrap(c.redis.Do(ctx, c.redis.B().Ping().Build()).Error())
 }
 
 // Usage is one request's contribution to the live counters.
@@ -120,6 +123,17 @@ type Usage struct {
 	OutputTokens      int64
 	CostMicros        int64
 	Success           bool
+	// Cancelled marks a request its caller gave up on. It says nothing about the provider, so
+	// it is no request or error in the provider's health or the customer's counts, and the
+	// time it ran is not a latency. Whatever it generated before it was cut off was spent all
+	// the same, and is added to what the customer has used.
+	Cancelled bool
+}
+
+// spent reports whether the request used anything at all.
+func (u Usage) spent() bool {
+	return u.AudioMs != 0 || u.Characters != 0 || u.InputTokens != 0 ||
+		u.CachedInputTokens != 0 || u.OutputTokens != 0 || u.CostMicros != 0
 }
 
 // CustomerUsage is what one customer has spent in the current window.
@@ -142,24 +156,35 @@ func (c *Client) RecordRequest(ctx context.Context, usage Usage) error {
 	customerKey := customerKey(usage.Modality, usage.CustomerID)
 	ttl := int64(c.options.Window.Seconds())
 
-	commands := []rueidis.Completed{
-		c.redis.B().Hincrby().Key(healthKey).Field("requests").Increment(1).Build(),
-		c.redis.B().Hincrbyfloat().Key(healthKey).Field("latency_ms_total").Increment(usage.LatencyMs).Build(),
-		c.redis.B().Expire().Key(healthKey).Seconds(ttl).Build(),
-		c.redis.B().Hincrby().Key(customerKey).Field("requests").Increment(1).Build(),
-		c.redis.B().Hincrby().Key(customerKey).Field("audio_ms").Increment(usage.AudioMs).Build(),
-		c.redis.B().Hincrby().Key(customerKey).Field("characters").Increment(usage.Characters).Build(),
-		c.redis.B().Hincrby().Key(customerKey).Field("input_tokens").Increment(usage.InputTokens).Build(),
-		c.redis.B().Hincrby().Key(customerKey).Field("cached_input_tokens").Increment(usage.CachedInputTokens).Build(),
-		c.redis.B().Hincrby().Key(customerKey).Field("output_tokens").Increment(usage.OutputTokens).Build(),
-		c.redis.B().Hincrby().Key(customerKey).Field("cost_micros").Increment(usage.CostMicros).Build(),
-		c.redis.B().Expire().Key(customerKey).Seconds(ttl).Build(),
+	var commands []rueidis.Completed
+	if !usage.Cancelled {
+		commands = append(commands,
+			c.redis.B().Hincrby().Key(healthKey).Field("requests").Increment(1).Build(),
+			c.redis.B().Hincrbyfloat().Key(healthKey).Field("latency_ms_total").Increment(usage.LatencyMs).Build(),
+			c.redis.B().Expire().Key(healthKey).Seconds(ttl).Build(),
+			c.redis.B().Hincrby().Key(customerKey).Field("requests").Increment(1).Build(),
+		)
 	}
-	if !usage.Success {
+	// A cancelled request that generated nothing adds nothing, so it writes nothing.
+	if !usage.Cancelled || usage.spent() {
+		commands = append(commands,
+			c.redis.B().Hincrby().Key(customerKey).Field("audio_ms").Increment(usage.AudioMs).Build(),
+			c.redis.B().Hincrby().Key(customerKey).Field("characters").Increment(usage.Characters).Build(),
+			c.redis.B().Hincrby().Key(customerKey).Field("input_tokens").Increment(usage.InputTokens).Build(),
+			c.redis.B().Hincrby().Key(customerKey).Field("cached_input_tokens").Increment(usage.CachedInputTokens).Build(),
+			c.redis.B().Hincrby().Key(customerKey).Field("output_tokens").Increment(usage.OutputTokens).Build(),
+			c.redis.B().Hincrby().Key(customerKey).Field("cost_micros").Increment(usage.CostMicros).Build(),
+			c.redis.B().Expire().Key(customerKey).Seconds(ttl).Build(),
+		)
+	}
+	if !usage.Success && !usage.Cancelled {
 		commands = append(commands,
 			c.redis.B().Hincrby().Key(healthKey).Field("errors").Increment(1).Build(),
 			c.redis.B().Hincrby().Key(customerKey).Field("errors").Increment(1).Build(),
 		)
+	}
+	if len(commands) == 0 {
+		return nil
 	}
 
 	for _, response := range c.redis.DoMulti(ctx, commands...) {
@@ -175,7 +200,7 @@ func (c *Client) RecordRequest(ctx context.Context, usage Usage) error {
 func (c *Client) Health(ctx context.Context, modality, provider, model string) (Health, error) {
 	entries, err := c.redis.Do(ctx, c.redis.B().Hgetall().Key(healthKey(modality, provider, model)).Build()).AsStrMap()
 	if err != nil {
-		return Health{}, fmt.Errorf("live: read health: %w", err)
+		return Health{}, stack.Wrap(fmt.Errorf("live: read health: %w", err))
 	}
 
 	health := Health{Provider: provider, Model: model, Available: true}

@@ -2,33 +2,42 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net/http"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/video"
+	"github.com/danielgtaylor/huma/v2"
 )
 
-// noStore is what the response paths say where nothing was written down. A turn's items are
+// errNoStore is what the response paths say where nothing was written down. A turn's items are
 // read back from Postgres, so a deployment without one can start a response but has nothing
 // to show afterwards.
-const noStore = "this deployment does not record what sessions said"
+var errNoStore = notConfigured("this deployment does not record what sessions said")
 
-// CreateResponse asks the agent something and names the turn it answers as.
+// maxVideos bounds the clips on one response, so that at video.MaxFrames each a turn stays
+// inside the hundred images the strictest vision provider takes in one request.
+const maxVideos = 2
+
+// createResponse asks the agent something and names the turn it answers as.
 //
 // It is respond with an id back, which is the whole of the difference. Without one a caller
 // following a particular answer has to watch every event on the socket and work out which
 // belong to the turn it asked for; with one it can ask for that turn's items instead.
-func (s *Server) CreateResponse(ctx context.Context, request CreateResponseRequestObject) (CreateResponseResponseObject, error) {
-	// A response is asked of a running session rather than a stored one: a conversation that
-	// ended can be read and forked, but not talked to.
-	found, failure := s.session(ctx, request.Id)
+func (s *Server) createResponse(ctx context.Context, request *createResponseRequest) (*createResponseResponse, error) {
+	// A response is asked of a running session rather than a stored one: a call that ended
+	// can be read and forked, but not talked to. A chat that ended is reopened.
+	found, sent, failure := s.sessionToAnswer(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return CreateResponse401JSONResponse{missingCustomer()}, nil
-		}
-		return CreateResponse404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+		return nil, failure
 	}
+	defer sent()
 	if request.Body == nil || request.Body.Text == "" {
-		return CreateResponse400JSONResponse{badRequest("there is nothing to answer")}, nil
+		return nil, invalidRequest("there is nothing to answer")
 	}
 
 	images := make([]wireImage, 0, len(value(request.Body.Images)))
@@ -37,85 +46,130 @@ func (s *Server) CreateResponse(ctx context.Context, request CreateResponseReque
 	}
 	parts, err := imagesFromWire(images)
 	if err != nil {
-		return CreateResponse400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
+	}
+	videos := value(request.Body.Videos)
+	if len(videos) > maxVideos {
+		return nil, invalidRequest(fmt.Sprintf("at most %d videos go with one response", maxVideos))
+	}
+	if len(videos) > 0 && value(request.Body.CommandId) != "" {
+		return nil, invalidRequest("a command ID carries text only")
+	}
+	for index, sent := range videos {
+		frames, length, err := video.Frames(ctx, sent.Url, value(sent.MaxFrames))
+		if err != nil {
+			return nil, invalidRequest(err.Error())
+		}
+		for _, frame := range frames {
+			frame.Image.Caption = fmt.Sprintf("video %d, %.1fs of %.1fs", index+1, frame.At.Seconds(), length.Seconds())
+			parts = append(parts, frame.Image)
+		}
 	}
 
-	responseID, err := found.Respond(ctx, request.Body.Text, parts)
+	var responseID string
+	if id := value(request.Body.CommandId); id != "" {
+		if len(parts) > 0 {
+			return nil, invalidRequest("a command ID carries text only")
+		}
+		_, responseID, err = found.RespondCommand(ctx, id, request.Body.Text, "")
+		if errors.Is(err, conversation.ErrCommandConflict) {
+			return nil, conflict(err.Error())
+		}
+	} else {
+		responseID, err = found.Respond(ctx, request.Body.Text, parts)
+	}
+	if errors.Is(err, agent.ErrCannotSeeImages) {
+		return nil, notConfigured(agent.ErrCannotSeeImages.Error())
+	}
 	if err != nil {
-		return CreateResponse400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
+	}
+	if len(videos) > 0 {
+		found.SawVideo()
 	}
 	if responseID == "" {
 		// The turn is being answered, it just has no name. A session that records nothing
 		// has no row to hand back, and a native one lets the model decide what a turn is.
 		// Refusing would be wrong -- the agent is answering -- so the id is empty and the
 		// caller reads the socket, which is what it would have done before this existed.
-		return CreateResponse202JSONResponse{
-			SessionId: found.ID(), Status: AgentResponseStatusRunning,
-			CreatedAt: found.CreatedAt(),
-		}, nil
+		return &createResponseResponse{Body: AgentResponse{SessionId: found.ID(), Status: AgentResponseStatusRunning,
+			CreatedAt: found.CreatedAt()}}, nil
 	}
 
 	said := request.Body.Text
-	return CreateResponse202JSONResponse{
-		Id: responseID, SessionId: found.ID(), Said: &said,
-		Status: AgentResponseStatusRunning, CreatedAt: time.Now().UTC(),
-	}, nil
+	return &createResponseResponse{Body: AgentResponse{Id: responseID, SessionId: found.ID(), Said: &said,
+		Status: AgentResponseStatusRunning, CreatedAt: time.Now().UTC()}}, nil
 }
 
-// ListResponses returns a session's turns, oldest first.
-func (s *Server) ListResponses(ctx context.Context, request ListResponsesRequestObject) (ListResponsesResponseObject, error) {
+// listResponses returns a session's turns, oldest first.
+func (s *Server) listResponses(ctx context.Context, request *listResponsesRequest) (*listResponsesResponse, error) {
 	found, failure := s.storedOrLiveSession(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return ListResponses401JSONResponse{missingCustomer()}, nil
-		}
-		return ListResponses404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+		return nil, failure
 	}
 	if s.store == nil {
-		return ListResponses404JSONResponse{NotFoundJSONResponse{Error: noStore}}, nil
+		return nil, errNoStore
 	}
 
-	rows, err := s.store.SessionResponses(ctx, OwnerFrom(ctx).CustomerID, found.ID(),
-		value(request.Params.Limit), value(request.Params.Offset))
+	after, err := decodeCursor[store.ResponsePosition](request.Cursor.ptr())
+	if err != nil {
+		return nil, invalidRequest(err.Error())
+	}
+	limit := store.SessionLimit(value(request.Limit.ptr()))
+	rows, err := s.store.SessionResponses(ctx, OwnerFrom(ctx).CustomerID, found.ID(), limit, after)
 	if err != nil {
 		return nil, err
 	}
 
-	listed := make([]AgentResponse, 0, len(rows))
+	rows, more := page(rows, limit)
+	listed := AgentResponsePage{Items: make([]AgentResponse, 0, len(rows)), HasMore: more}
 	for _, row := range rows {
-		listed = append(listed, responseOf(row))
+		listed.Items = append(listed.Items, responseOf(row))
 	}
-	return ListResponses200JSONResponse(listed), nil
+	if more {
+		last := rows[len(rows)-1]
+		listed.NextCursor = encodeCursor(store.ResponsePosition{CreatedAt: last.CreatedAt, ID: last.ID})
+	}
+	return &listResponsesResponse{Body: listed}, nil
 }
 
-// ListResponseItems returns what the agent did, in the order it happened.
+// listResponseItems returns what the agent did, in the order it happened.
 //
 // Flat across turns rather than a list per turn, because that is how a conversation reads
 // and how it gets rendered: the question, what the agent did about it, what it said, then
 // the next question. Naming a response narrows it to that one turn.
-func (s *Server) ListResponseItems(ctx context.Context, request ListResponseItemsRequestObject) (ListResponseItemsResponseObject, error) {
+func (s *Server) listResponseItems(ctx context.Context, request *listResponseItemsRequest) (*listResponseItemsResponse, error) {
 	found, failure := s.storedOrLiveSession(ctx, request.Id)
 	if failure != nil {
-		if failure.status == unauthorized {
-			return ListResponseItems401JSONResponse{missingCustomer()}, nil
-		}
-		return ListResponseItems404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+		return nil, failure
 	}
 	if s.store == nil {
-		return ListResponseItems404JSONResponse{NotFoundJSONResponse{Error: noStore}}, nil
+		return nil, errNoStore
 	}
 
+	after, err := decodeCursor[store.ItemPosition](request.Cursor.ptr())
+	if err != nil {
+		return nil, invalidRequest(err.Error())
+	}
+	limit := store.ItemLimit(value(request.Limit.ptr()))
 	rows, err := s.store.SessionItems(ctx, OwnerFrom(ctx).CustomerID, found.ID(),
-		value(request.Params.ResponseId), value(request.Params.Limit), value(request.Params.Offset))
+		value(request.ResponseId.ptr()), limit, after)
 	if err != nil {
 		return nil, err
 	}
 
-	listed := make([]AgentResponseItem, 0, len(rows))
+	rows, more := page(rows, limit)
+	listed := AgentResponseItemPage{Items: make([]AgentResponseItem, 0, len(rows)), HasMore: more}
 	for _, row := range rows {
-		listed = append(listed, itemOf(row))
+		listed.Items = append(listed.Items, itemOf(row))
 	}
-	return ListResponseItems200JSONResponse(listed), nil
+	if more {
+		last := rows[len(rows)-1]
+		listed.NextCursor = encodeCursor(store.ItemPosition{
+			At: last.At, ResponseID: last.ResponseID, Ordinal: last.Ordinal,
+		})
+	}
+	return &listResponseItemsResponse{Body: listed}, nil
 }
 
 // responseOf renders one turn.
@@ -155,3 +209,205 @@ func itemOf(row store.AgentResponseItem) AgentResponseItem {
 	}
 	return rendered
 }
+
+// registerResponses declares the operations served in responses.go.
+func (s *Server) registerResponses(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "listResponses",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/sessions/{id}/responses",
+		Summary:     "The turns the agent took in a session",
+		Description: "Oldest first, which read in order are the conversation. This is the shape of it rather " +
+			"than the text: what was asked, whether the turn finished, and how long it took. The " +
+			"items endpoint is what carries what happened inside each one.",
+		Extensions: map[string]any{clientAccessibleExtension: true},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The session's turns, oldest first"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.listResponses)
+	huma.Register(api, huma.Operation{
+		OperationID: "createResponse",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/sessions/{id}/responses",
+		Summary:     "Ask the agent something and get a handle on the answer",
+		Description: "The same thing respond does, with an id back. That is the whole difference and the " +
+			"reason this exists: respond returns nothing, so a caller that wants to follow one " +
+			"particular turn has to watch the socket and guess which events belong to it. With an id " +
+			"it can ask for that turn's items instead.\n" +
+			"It returns as soon as the turn has started, not when it has finished. A model takes " +
+			"seconds and a request that waited them out would time out on anything long enough to be " +
+			"worth asking.",
+		Extensions:    map[string]any{clientAccessibleExtension: true},
+		DefaultStatus: http.StatusAccepted,
+		Responses: map[string]*huma.Response{
+			"202": {Description: "The agent is answering"},
+			"409": errorResponse("The command ID was already accepted with different content"),
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.createResponse)
+	huma.Register(api, huma.Operation{
+		OperationID: "listResponseItems",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/sessions/{id}/responses/items",
+		Summary:     "What the agent did, turn by turn, in the order it happened",
+		Description: "One flat stream across every turn rather than a list per turn, because that is how a " +
+			"conversation reads and how it is rendered: the question, what the agent did about it, " +
+			"what it said, then the next question. Naming a response narrows it to that turn.\n" +
+			"Deltas are not here. A hundred fragments of one sentence are the sentence, and keeping " +
+			"them would make this mostly punctuation; a caller watching a turn happen reads the " +
+			"deltas off the events socket, and a caller reading one back wants the shape of it.\n" +
+			"Nothing is returned for an incognito session, which has no items to return.",
+		Extensions: map[string]any{clientAccessibleExtension: true},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The items, oldest first"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.listResponseItems)
+}
+
+type listResponsesRequest struct {
+	Id     string                `path:"id" doc:"The session, as returned when it was created."`
+	Limit  optionalParam[int]    `query:"limit" doc:"Up to 200. Omitted is 25." minimum:"1" maximum:"200"`
+	Cursor optionalParam[string] "query:\"cursor\" doc:\"The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.\""
+}
+
+type listResponsesResponse struct {
+	Body AgentResponsePage
+}
+
+type createResponseRequest struct {
+	Id   string                 `path:"id" doc:"The session, as returned when it was created."`
+	Body *CreateResponseRequest `required:"true"`
+}
+
+type createResponseResponse struct {
+	Body AgentResponse
+}
+
+type listResponseItemsRequest struct {
+	Id         string                `path:"id" doc:"The session, as returned when it was created."`
+	ResponseId optionalParam[string] `query:"response_id" doc:"Narrow to one turn's items. Omitted is every turn in the session."`
+	Limit      optionalParam[int]    `query:"limit" doc:"Up to 1000. Omitted is 200." minimum:"1" maximum:"1000"`
+	Cursor     optionalParam[string] "query:\"cursor\" doc:\"The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.\""
+}
+
+type listResponseItemsResponse struct {
+	Body AgentResponseItemPage
+}
+
+// AgentResponse is the AgentResponse schema.
+type AgentResponse struct {
+	CreatedAt  time.Time           `json:"created_at"`
+	Error      *string             `json:"error,omitempty"`
+	FinishedAt *time.Time          `json:"finished_at,omitempty"`
+	Id         string              `json:"id"`
+	Said       *string             `json:"said,omitempty" doc:"What the person asked, which is the first item of every response."`
+	SessionId  string              `json:"session_id"`
+	Status     AgentResponseStatus `json:"status" doc:"cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts." enum:"running,completed,failed,cancelled"`
+}
+
+// AgentResponseStatus is the AgentResponseStatus schema.
+type AgentResponseStatus string
+
+// Defines values for AgentResponseStatus.
+const (
+	AgentResponseStatusCancelled AgentResponseStatus = "cancelled"
+	AgentResponseStatusCompleted AgentResponseStatus = "completed"
+	AgentResponseStatusFailed    AgentResponseStatus = "failed"
+	AgentResponseStatusRunning   AgentResponseStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the AgentResponseStatus enum.
+func (e AgentResponseStatus) Valid() bool {
+	switch e {
+	case AgentResponseStatusCancelled:
+		return true
+	case AgentResponseStatusCompleted:
+		return true
+	case AgentResponseStatusFailed:
+		return true
+	case AgentResponseStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// AgentResponseItem is the AgentResponseItem schema.
+type AgentResponseItem struct {
+	At         time.Time               `json:"at"`
+	Kind       AgentResponseItemKind   `json:"kind" enum:"said,thought,tool_call,tool_result,answer,blocked,error"`
+	Ordinal    int                     `json:"ordinal" doc:"The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in."`
+	Payload    *map[string]interface{} `json:"payload,omitempty" doc:"Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result."`
+	ResponseId string                  `json:"response_id"`
+	SessionId  *string                 `json:"session_id,omitempty"`
+	Text       *string                 `json:"text,omitempty"`
+	ToolName   *string                 `json:"tool_name,omitempty"`
+}
+
+func (*AgentResponseItem) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["ordinal"].Format = ""
+	return schema
+}
+
+// AgentResponseItemKind is the AgentResponseItemKind schema.
+type AgentResponseItemKind string
+
+// Defines values for AgentResponseItemKind.
+const (
+	AgentResponseItemKindAnswer     AgentResponseItemKind = "answer"
+	AgentResponseItemKindBlocked    AgentResponseItemKind = "blocked"
+	AgentResponseItemKindError      AgentResponseItemKind = "error"
+	AgentResponseItemKindSaid       AgentResponseItemKind = "said"
+	AgentResponseItemKindThought    AgentResponseItemKind = "thought"
+	AgentResponseItemKindToolCall   AgentResponseItemKind = "tool_call"
+	AgentResponseItemKindToolResult AgentResponseItemKind = "tool_result"
+)
+
+// Valid indicates whether the value is a known member of the AgentResponseItemKind enum.
+func (e AgentResponseItemKind) Valid() bool {
+	switch e {
+	case AgentResponseItemKindAnswer:
+		return true
+	case AgentResponseItemKindBlocked:
+		return true
+	case AgentResponseItemKindError:
+		return true
+	case AgentResponseItemKindSaid:
+		return true
+	case AgentResponseItemKindThought:
+		return true
+	case AgentResponseItemKindToolCall:
+		return true
+	case AgentResponseItemKindToolResult:
+		return true
+	default:
+		return false
+	}
+}
+
+// AgentResponseItemPage is the AgentResponseItemPage schema.
+type AgentResponseItemPage struct {
+	HasMore    bool                `json:"has_more"`
+	Items      []AgentResponseItem `json:"items" nullable:"false"`
+	NextCursor *string             "json:\"next_cursor,omitempty\" doc:\"Pass as `cursor` for the next page. Absent on the last one.\""
+}
+
+// AgentResponsePage is the AgentResponsePage schema.
+type AgentResponsePage struct {
+	HasMore    bool            `json:"has_more"`
+	Items      []AgentResponse `json:"items" nullable:"false"`
+	NextCursor *string         "json:\"next_cursor,omitempty\" doc:\"Pass as `cursor` for the next page. Absent on the last one.\""
+}
+
+// CreateResponseRequest is the CreateResponseRequest schema.
+type CreateResponseRequest struct {
+	CommandId *string        `json:"command_id,omitempty" doc:"Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	Images    *[]ImageSource `json:"images,omitempty"`
+	Text      string         `json:"text" doc:"What to answer, as though it had been said."`
+	Videos    *[]VideoSource `json:"videos,omitempty" doc:"Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole." maxItems:"2"`
+}
+
+// ItemLimit is the ItemLimit schema.
+type ItemLimit = int

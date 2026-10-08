@@ -39,6 +39,10 @@ from opentelemetry import metrics
 # If no provider is configured, metrics will be no-ops
 meter = metrics.get_meter("vision_agents.core")
 
+call_join_ms = meter.create_histogram(
+    "call.join.ms", unit="ms", description="Time to join a call"
+)
+
 # =============================================================================
 # STT Metrics
 # =============================================================================

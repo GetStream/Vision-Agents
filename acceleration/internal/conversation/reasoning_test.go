@@ -6,7 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 )
 
 // watcher applies one reasoning step's windows the way Athena's clients do: it appends
@@ -37,107 +37,111 @@ func (w *watcher) apply(r reasoningWindow) {
 	w.have = r.Length
 }
 
+// ReasoningSuite covers the windows a streaming reasoning step is sent in.
+type ReasoningSuite struct {
+	suite.Suite
+	r     liveReasoning
+	start time.Time
+}
+
+func TestReasoningSuite(t *testing.T) { suite.Run(t, new(ReasoningSuite)) }
+
+func (s *ReasoningSuite) SetupTest() {
+	s.r = liveReasoning{id: "r1"}
+	s.start = time.Now()
+}
+
 // drain sends every pending window, as the live loop would over successive ticks.
-func drain(t *testing.T, r *liveReasoning, now time.Time, w *watcher) []reasoningWindow {
-	t.Helper()
+func (s *ReasoningSuite) drain(now time.Time, w *watcher) []reasoningWindow {
 	var sent []reasoningWindow
-	for r.pending() {
-		window, ok := r.window(now)
-		require.True(t, ok)
-		require.True(t, utf8.ValidString(window.Text), "a window split a character")
-		require.LessOrEqual(t, len(window.Text), maxReasoningWindow)
-		require.Equal(t, window.Offset+utf8.RuneCountInString(window.Text), window.Length)
-		r.delivered(window, now)
+	for s.r.pending() {
+		window, ok := s.r.window(now)
+		s.Require().True(ok)
+		s.Require().True(utf8.ValidString(window.Text), "a window split a character")
+		s.Require().LessOrEqual(len(window.Text), maxReasoningWindow)
+		s.Require().Equal(window.Offset+utf8.RuneCountInString(window.Text), window.Length)
+		s.r.delivered(window, now)
 		w.apply(window)
 		sent = append(sent, window)
-		require.Less(t, len(sent), 100, "windows stopped advancing")
+		s.Require().Less(len(sent), 100, "windows stopped advancing")
 	}
 	return sent
 }
 
-func TestReasoningWindowsCarryOnlyNewThinking(t *testing.T) {
-	r := liveReasoning{id: "r1"}
+func (s *ReasoningSuite) TestWindowsCarryOnlyNewThinking() {
 	var w watcher
-	start := time.Now()
-	_, ok := r.window(start)
-	require.False(t, ok, "nothing thought yet")
+	_, ok := s.r.window(s.start)
+	s.False(ok, "nothing thought yet")
 
-	r.add("Weighing", start)
-	first := drain(t, &r, start, &w)
-	require.Equal(t, []reasoningWindow{{ID: "r1", Offset: 0, Text: "Weighing", Length: 8, key: true}}, first)
+	s.r.add("Weighing", s.start)
+	first := s.drain(s.start, &w)
+	s.Equal([]reasoningWindow{{ID: "r1", Offset: 0, Text: "Weighing", Length: 8, key: true}}, first)
 
-	r.add(" the options.", start.Add(1500*time.Millisecond))
-	next := drain(t, &r, start.Add(1500*time.Millisecond), &w)
-	require.Len(t, next, 1)
-	require.Equal(t, 8, next[0].Offset)
-	require.Equal(t, " the options.", next[0].Text, "an update repeated thinking already sent")
-	require.Equal(t, "Weighing the options.", w.text)
-	require.EqualValues(t, 1500, r.snapshot().durationMS)
+	later := s.start.Add(1500 * time.Millisecond)
+	s.r.add(" the options.", later)
+	next := s.drain(later, &w)
+	s.Require().Len(next, 1)
+	s.Equal(8, next[0].Offset)
+	s.Equal(" the options.", next[0].Text, "an update repeated thinking already sent")
+	s.Equal("Weighing the options.", w.text)
+	s.EqualValues(1500, s.r.snapshot().durationMS)
 
-	_, ok = r.window(start.Add(2 * time.Second))
-	require.False(t, ok, "nothing new and no keyframe due")
+	_, ok = s.r.window(s.start.Add(2 * time.Second))
+	s.False(ok, "nothing new and no keyframe due")
 }
 
-func TestReasoningKeyframeLetsLateWatchersCatchUp(t *testing.T) {
-	r := liveReasoning{id: "r1"}
+func (s *ReasoningSuite) TestAKeyframeLetsLateWatchersCatchUp() {
 	var inSync, late watcher
-	start := time.Now()
 	thinking := strings.Repeat("considering ", 300)
-	r.add(thinking, start)
-	drain(t, &r, start, &inSync)
-	require.Equal(t, thinking, inSync.text)
+	s.r.add(thinking, s.start)
+	s.drain(s.start, &inSync)
+	s.Equal(thinking, inSync.text)
 
-	key, ok := r.window(start.Add(reasoningKeyframeEvery))
-	require.True(t, ok, "a due keyframe rides on the next update")
-	require.True(t, key.key)
-	require.LessOrEqual(t, len(key.Text), reasoningKeyframe)
-	require.Equal(t, r.total, key.Length)
-	require.True(t, strings.HasSuffix(thinking, key.Text))
-	r.delivered(key, start.Add(reasoningKeyframeEvery))
+	key, ok := s.r.window(s.start.Add(reasoningKeyframeEvery))
+	s.Require().True(ok, "a due keyframe rides on the next update")
+	s.True(key.key)
+	s.LessOrEqual(len(key.Text), reasoningKeyframe)
+	s.Equal(s.r.total, key.Length)
+	s.True(strings.HasSuffix(thinking, key.Text))
+	s.r.delivered(key, s.start.Add(reasoningKeyframeEvery))
 
 	inSync.apply(key)
-	require.Equal(t, thinking, inSync.text, "a watcher in step ignores a keyframe")
+	s.Equal(thinking, inSync.text, "a watcher in step ignores a keyframe")
 	late.apply(key)
-	require.Equal(t, "…"+key.Text, late.text)
+	s.Equal("…"+key.Text, late.text)
 
-	_, ok = r.window(start.Add(reasoningKeyframeEvery + time.Second))
-	require.False(t, ok, "the keyframe was only due once")
+	_, ok = s.r.window(s.start.Add(reasoningKeyframeEvery + time.Second))
+	s.False(ok, "the keyframe was only due once")
 }
 
-func TestReasoningBacklogGoesOutInOrder(t *testing.T) {
-	r := liveReasoning{id: "r1"}
+func (s *ReasoningSuite) TestABacklogGoesOutInOrder() {
 	var w watcher
-	now := time.Now()
 	thinking := strings.Repeat("é🙂 naïve ", 400)
-	r.add(thinking, now)
-	windows := drain(t, &r, now, &w)
-	require.Greater(t, len(windows), 1, "a long backlog is split")
-	require.Equal(t, thinking, w.text)
+	s.r.add(thinking, s.start)
+	windows := s.drain(s.start, &w)
+	s.Greater(len(windows), 1, "a long backlog is split")
+	s.Equal(thinking, w.text)
 }
 
-func TestReasoningBacklogBeyondTheBufferSkipsAhead(t *testing.T) {
-	r := liveReasoning{id: "r1"}
+func (s *ReasoningSuite) TestABacklogBeyondTheBufferSkipsAhead() {
 	var w watcher
-	now := time.Now()
-	r.add("start ", now)
-	drain(t, &r, now, &w)
-	r.add(strings.Repeat("x", maxReasoningBuffer+500), now)
-	require.LessOrEqual(t, len(r.buf), maxReasoningBuffer)
-	windows := drain(t, &r, now, &w)
-	require.Greater(t, windows[0].Offset, len("start "), "an unsendable backlog is skipped, not sent")
-	require.True(t, strings.HasPrefix(w.text, "start …xxx"))
-	require.Equal(t, r.total, w.have)
+	s.r.add("start ", s.start)
+	s.drain(s.start, &w)
+	s.r.add(strings.Repeat("x", maxReasoningBuffer+500), s.start)
+	s.LessOrEqual(len(s.r.buf), maxReasoningBuffer)
+	windows := s.drain(s.start, &w)
+	s.Greater(windows[0].Offset, len("start "), "an unsendable backlog is skipped, not sent")
+	s.True(strings.HasPrefix(w.text, "start …xxx"))
+	s.Equal(s.r.total, w.have)
 }
 
-func TestReasoningKeepsOnlyTheOpeningOfARound(t *testing.T) {
-	r := liveReasoning{id: "r1"}
-	now := time.Now()
-	r.add(strings.Repeat("é", maxHead), now)
-	require.LessOrEqual(t, len(r.head), maxHead)
-	require.True(t, utf8.ValidString(r.head), "the opening split a character")
+func (s *ReasoningSuite) TestOnlyTheOpeningOfARoundIsKept() {
+	s.r.add(strings.Repeat("é", maxHead), s.start)
+	s.LessOrEqual(len(s.r.head), maxHead)
+	s.True(utf8.ValidString(s.r.head), "the opening split a character")
 	other := liveReasoning{id: "r2"}
-	other.add("Resumed.", now)
-	old, _ := r.window(now)
-	other.delivered(old, now)
-	require.Zero(t, other.sent, "a window of another step does not count as delivered")
+	other.add("Resumed.", s.start)
+	old, _ := s.r.window(s.start)
+	other.delivered(old, s.start)
+	s.Zero(other.sent, "a window of another step does not count as delivered")
 }

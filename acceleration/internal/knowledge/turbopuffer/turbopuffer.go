@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 const (
@@ -169,7 +170,7 @@ func (s *Store) Search(ctx context.Context, query knowledge.Query) ([]knowledge.
 // namespace on first use, and a passage nobody indexed for BM25 could not be found again.
 func (s *Store) Upsert(ctx context.Context, namespace string, documents []knowledge.Document) error {
 	if strings.TrimSpace(namespace) == "" {
-		return errors.New("turbopuffer: a namespace is required")
+		return stack.Wrap(errors.New("turbopuffer: a namespace is required"))
 	}
 
 	path := "/v2/namespaces/" + url.PathEscape(namespace)
@@ -177,7 +178,7 @@ func (s *Store) Upsert(ctx context.Context, namespace string, documents []knowle
 		rows := make([]upsertRow, 0, len(batch))
 		for _, document := range batch {
 			if document.ID == "" || strings.TrimSpace(document.Text) == "" {
-				return errors.New("turbopuffer: every passage needs an id and something to read")
+				return stack.Wrap(errors.New("turbopuffer: every passage needs an id and something to read"))
 			}
 			rows = append(rows, upsertRow{
 				ID:     document.ID,
@@ -196,10 +197,10 @@ func (s *Store) Upsert(ctx context.Context, namespace string, documents []knowle
 		var response writeResponse
 		found, err := s.call(ctx, path, body, &response)
 		if err != nil {
-			return err
+			return stack.Wrap(err)
 		}
 		if !found {
-			return fmt.Errorf("turbopuffer: %s does not exist and was not created", namespace)
+			return stack.Wrap(fmt.Errorf("turbopuffer: %s does not exist and was not created", namespace))
 		}
 		s.logger.Debug("wrote passages", "namespace", namespace, "rows", response.RowsUpserted)
 	}
@@ -214,7 +215,7 @@ func (s *Store) Upsert(ctx context.Context, namespace string, documents []knowle
 // says it does not know.
 func (s *Store) Delete(ctx context.Context, namespace string, ids []string) error {
 	if strings.TrimSpace(namespace) == "" {
-		return errors.New("turbopuffer: a namespace is required")
+		return stack.Wrap(errors.New("turbopuffer: a namespace is required"))
 	}
 	if len(ids) == 0 {
 		return nil
@@ -225,7 +226,7 @@ func (s *Store) Delete(ctx context.Context, namespace string, ids []string) erro
 		var response writeResponse
 		found, err := s.call(ctx, path, writeRequest{Deletes: batch}, &response)
 		if err != nil {
-			return err
+			return stack.Wrap(err)
 		}
 		// A namespace nobody has written to holds none of these passages, which is the
 		// state the caller asked for.
@@ -235,6 +236,48 @@ func (s *Store) Delete(ctx context.Context, namespace string, ids []string) erro
 		s.logger.Debug("removed passages", "namespace", namespace, "rows", response.RowsDeleted)
 	}
 	return nil
+}
+
+// Fetch reads passages back by id, which is how somebody sees what a document became.
+func (s *Store) Fetch(ctx context.Context, namespace string, ids []string) ([]knowledge.Document, error) {
+	if strings.TrimSpace(namespace) == "" {
+		return nil, stack.Wrap(errors.New("turbopuffer: a namespace is required"))
+	}
+
+	path := "/v2/namespaces/" + url.PathEscape(namespace) + "/query"
+	byID := make(map[string]knowledge.Document, len(ids))
+	for batch := range slices.Chunk(ids, upsertBatch) {
+		body := fetchRequest{
+			Filters:           []any{idField, "In", batch},
+			RankBy:            []any{idField, "asc"},
+			Limit:             len(batch),
+			IncludeAttributes: []string{textAttribute, sourceAttribute},
+		}
+		var response queryResponse
+		found, err := s.call(ctx, path, body, &response)
+		if err != nil {
+			return nil, stack.Wrap(err)
+		}
+		if !found {
+			return nil, nil
+		}
+		for _, row := range response.Rows {
+			id := attribute(row, idField)
+			byID[id] = knowledge.Document{
+				ID:     id,
+				Text:   attribute(row, textAttribute),
+				Source: attribute(row, sourceAttribute),
+			}
+		}
+	}
+
+	documents := make([]knowledge.Document, 0, len(byID))
+	for _, id := range ids {
+		if document, ok := byID[id]; ok {
+			documents = append(documents, document)
+		}
+	}
+	return documents, nil
 }
 
 // Provider is the name this store is recorded under.
@@ -313,6 +356,14 @@ func score(row map[string]json.RawMessage) float64 {
 
 type queryRequest struct {
 	// RankBy is turbopuffer's positional ranking expression: attribute, function, query.
+	RankBy            []any    `json:"rank_by"`
+	Limit             int      `json:"limit"`
+	IncludeAttributes []string `json:"include_attributes"`
+}
+
+// fetchRequest reads rows by id rather than ranking them against a question.
+type fetchRequest struct {
+	Filters           []any    `json:"filters"`
 	RankBy            []any    `json:"rank_by"`
 	Limit             int      `json:"limit"`
 	IncludeAttributes []string `json:"include_attributes"`

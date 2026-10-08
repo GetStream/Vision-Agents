@@ -101,6 +101,7 @@ plugins/*/example/uv.lock
 /acceleration/router
 /acceleration/say
 /acceleration/transcribe
+/examples/voice_agents/swift_demo/backend/backend
 /examples/voice_agents/swift_demo/configure/configure
 
 /benchmark/voicebench
@@ -109,6 +110,7 @@ plugins/*/example/uv.lock
 /benchmark/baselines/
 
 /acceleration/internal/harness/testdata/flowbench-out/
+/acceleration/internal/harness/testdata/replybench-out/
 
 # Artifacts / assets
 *.pt
@@ -125,7 +127,6 @@ profile.html
 
 # pytest json report
 .report.json
-.agents/
 .cursor/
 
 # Code generators fetched on demand, not vendored. See sdks/swift/README.md.
@@ -141,7 +142,9 @@ xcuserdata/
 # churn. The app's, under xcshareddata, is committed.
 /sdks/swift/*/Package.resolved
 *.spec.md
+*.spec.plan
 
 # What an agent or router directory was last synced as. Local to whoever ran it.
 .agent_sync
 .router_sync
+.thoughts/**

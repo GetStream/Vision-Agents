@@ -28,8 +28,8 @@ streaming WebSocket wrapper around the NeMo model, deployed and reachable at
 measured throughput rather than a per-hour-of-audio rate, which is what makes it the cheapest
 candidate at $0.079 an audio hour against Deepgram's $0.276.
 
-[cmd/transcribe](../../acceleration/cmd/transcribe) is step 5: it joins a LiveKit room,
-decodes Opus to 16 kHz mono and prints what it hears.
+[internal/agent/streamedge](../../acceleration/internal/agent/streamedge) is step 5: it
+joins a Stream call and decodes each participant's Opus to 16 kHz mono.
 
 ## What had to be standardised
 

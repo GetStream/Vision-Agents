@@ -3,6 +3,7 @@ package agents
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -21,6 +22,7 @@ func write(t *testing.T, root, name, content string) {
 
 func TestADirectoryIsReadAsInstructionsSkillsAndKnowledge(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
 	write(t, root, "instructions.md", "You are Jean.\n")
 	write(t, root, "skills/think.md", `---
 description: Work something out before answering
@@ -66,6 +68,7 @@ Take your time and reason it through.
 
 func TestADirectoryWithOnlyInstructionsIsAnAgent(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "quiet")
+	write(t, root, "agent.yaml", "")
 	write(t, root, "instructions.md", "Say little.\n")
 
 	folder, err := Load(root)
@@ -82,6 +85,7 @@ func TestADirectoryWithOnlyInstructionsIsAnAgent(t *testing.T) {
 
 func TestNestedKnowledgeKeepsThePathItWasFoundAt(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
 	write(t, root, "knowledge/reference/api.md", "# API\n\nthe endpoints\n")
 	write(t, root, "knowledge/logo.png", "not a document")
 	write(t, root, "knowledge/empty.md", "   \n")
@@ -101,11 +105,13 @@ func TestNestedKnowledgeKeepsThePathItWasFoundAt(t *testing.T) {
 
 func TestDeclaredPagesAreReadWithoutBeingIngested(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
 	write(t, root, "knowledge/pricing.md", "# Pricing\n\nA call costs a penny.\n")
 	write(t, root, "knowledge/urls.yaml", `- https://example.com/pricing
 - url: https://example.com/plans
   title: Plans
   description: What each plan includes.
+  refresh_hours: 24
 `)
 	// Only the one at the root is the declaration.
 	write(t, root, "knowledge/reference/urls.yaml", "the urls we used to have\n")
@@ -130,13 +136,17 @@ func TestDeclaredPagesAreReadWithoutBeingIngested(t *testing.T) {
 		t.Errorf("a url on its own read as %+v", bare)
 	}
 	if described.URL != "https://example.com/plans" || described.Title != "Plans" ||
-		described.Description != "What each plan includes." {
+		described.Description != "What each plan includes." || described.RefreshHours != 24 {
 		t.Errorf("a described page read as %+v", described)
+	}
+	if bare.RefreshHours != 0 {
+		t.Errorf("a url on its own is read again every %d hours, rather than only when asked", bare.RefreshHours)
 	}
 }
 
 func TestADirectoryWithOnlyPagesHasSomewhereToLookThingsUpIn(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
 	write(t, root, "knowledge/urls.yaml", "- https://example.com/pricing\n")
 
 	folder, err := Load(root)
@@ -157,8 +167,11 @@ func TestAPageThatCannotBeFetchedOrDescribedIsRefused(t *testing.T) {
 		"- example.com/pricing\n",
 		"- url: https://example.com/plans\n  heading: Plans\n",
 		"- [https://example.com/plans]\n",
+		"- url: https://example.com/plans\n  refresh_hours: 0\n",
+		"- url: https://example.com/plans\n  refresh_hours: daily\n",
 	} {
 		root := filepath.Join(t.TempDir(), "jean")
+		write(t, root, "agent.yaml", "name: jean\n")
 		write(t, root, "knowledge/urls.yaml", declaration)
 
 		if _, err := Load(root); err == nil {
@@ -169,6 +182,7 @@ func TestAPageThatCannotBeFetchedOrDescribedIsRefused(t *testing.T) {
 
 func TestASkillWithoutADescriptionIsRefused(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
 	write(t, root, "skills/think.md", "Just a body, with nothing saying when to use it.\n")
 
 	if _, err := Load(root); err == nil {
@@ -178,6 +192,7 @@ func TestASkillWithoutADescriptionIsRefused(t *testing.T) {
 
 func TestASkillCanBeNamedSomethingOtherThanItsFile(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
 	write(t, root, "skills/01-think.md", `---
 name: think
 description: Work something out
@@ -196,6 +211,7 @@ Reason it through.
 
 func TestADirectoryFillsInWhatTheCodeLeftEmpty(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
 	write(t, root, "instructions.md", "You are Jean.\n")
 
 	folder, err := Load(root)
@@ -213,6 +229,261 @@ func TestADirectoryFillsInWhatTheCodeLeftEmpty(t *testing.T) {
 	folder.fill(&written)
 	if written.Name != "other" || written.Instructions != "You are somebody else." {
 		t.Errorf("the directory overrode what was written in code: %+v", written)
+	}
+}
+
+func TestADirectoryWithoutADeclarationIsNotAnAgent(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "instructions.md", "You are Jean.\n")
+
+	if _, err := Load(root); err == nil {
+		t.Fatal("instructions alone made a directory an agent")
+	}
+}
+
+func TestTheDeclarationSaysWhatTheAgentIsCalledAndRunsOn(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", `name: receptionist
+llm: openai/gpt-5.6
+sts: ""
+keyterms: [Vision Agents]
+speed: 0.9
+video:
+  source: camera
+dispatch:
+  incoming_call: enabled
+  text: enabled
+`)
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if folder.Name != "receptionist" {
+		t.Errorf("the agent is called %q", folder.Name)
+	}
+	settings := folder.Settings
+	if settings.LLM != "openai/gpt-5.6" || settings.Keyterms[0] != "Vision Agents" || settings.Speed != 0.9 {
+		t.Errorf("the declaration read as %+v", settings)
+	}
+	if settings.STS == nil || *settings.STS != "" {
+		t.Errorf("turning speech-to-speech off read as %v", settings.STS)
+	}
+	if settings.Video.Source != "camera" || settings.Video.MaxFrames != 1 {
+		t.Errorf("the video read as %+v", settings.Video)
+	}
+	if settings.Dispatch == nil || settings.Dispatch.IncomingCall != "enabled" || settings.Dispatch.Text != "enabled" {
+		t.Errorf("what is left to dispatch read as %+v", settings.Dispatch)
+	}
+}
+
+func TestTheDeclarationSaysWhoConnectsEachPlugin(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", "name: triage\nagent_plugins: [sentry]\nuser_plugins:\n"+
+		"  - name: linear\n    readonly: true\n    tools: [list_issues]\n  - google_calendar\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := folder.Settings.AgentPlugins; len(got) != 1 || got[0].Name != "sentry" {
+		t.Errorf("the app's plugins read as %+v", got)
+	}
+	got := folder.Settings.UserPlugins
+	if len(got) != 2 || got[0].Name != "linear" || !got[0].Readonly ||
+		strings.Join(got[0].Tools, ",") != "list_issues" || got[1].Name != "google_calendar" {
+		t.Errorf("each user's plugins read as %+v", got)
+	}
+}
+
+func TestAPluginEntryWithAKeyNobodyKnowsIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", "name: triage\nuser_plugins:\n  - name: linear\n    read_only: true\n")
+
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "read_only") {
+		t.Errorf("an entry with a misspelt key loaded: %v", err)
+	}
+}
+
+func TestTheOldPluginKeysAreRefused(t *testing.T) {
+	for _, declared := range []string{
+		"plugins: [sentry]\n",
+		"plugin_options:\n  - plugin: linear\n    readonly: true\n",
+	} {
+		root := filepath.Join(t.TempDir(), "triage")
+		write(t, root, "agent.yaml", "name: triage\n"+declared)
+
+		if _, err := Load(root); err == nil {
+			t.Errorf("%q loaded", declared)
+		}
+	}
+}
+
+func TestTheDeclarationSaysWhichPluginEventsTheAgentTakes(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", "name: triage\nagent_plugins: [sentry]\nplugin_events:\n"+
+		"  - plugin: sentry\n    event: issue.created\n    arguments:\n      project: web\n"+
+		"    instructions: Triage it.\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := folder.Settings.PluginEvents
+	if len(events) != 1 {
+		t.Fatalf("the plugin events read as %+v", events)
+	}
+	if events[0].Plugin != "sentry" || events[0].Event != "issue.created" ||
+		events[0].Arguments["project"] != "web" || events[0].Instructions != "Triage it." {
+		t.Errorf("the plugin event read as %+v", events[0])
+	}
+}
+
+func TestADeclarationKeyNobodyKnowsIsRefused(t *testing.T) {
+	for _, declaration := range []string{
+		"name: jean\nlmm: openai/gpt-5.6\n",
+		"video:\n  max_frames: 9\n",
+		"sandbox_options:\n  timeout: 2h\n",
+		"sandbox_options:\n  timeout: soon\n",
+		"sandbox_options:\n  memory: 4\n",
+		"keyterms: Vision Agents\n",
+		"plugin_events:\n  - plugin: sentry\n    name: issue.created\n",
+	} {
+		root := filepath.Join(t.TempDir(), "jean")
+		write(t, root, "agent.yaml", declaration)
+
+		if _, err := Load(root); err == nil {
+			t.Errorf("accepted %q", declaration)
+		}
+	}
+}
+
+func TestTheApplicationsOwnSectionIsLeftToIt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\napp:\n  sandbox_profile: support\n  tool_timeout_ms: 195000\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if folder.Settings.App["sandbox_profile"] != "support" {
+		t.Errorf("the application's section read as %+v", folder.Settings.App)
+	}
+}
+
+func TestADirectoryHashesTheWayThePythonSDKHashesIt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\nllm: openai/gpt-5.6\n")
+	write(t, root, "instructions.md", "You are Jean.\n")
+	write(t, root, "skills/think.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n")
+	write(t, root, "knowledge/pricing.md", "# Pricing\n\nA penny.\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What vision_agents.plugins.stream.folder.load(root).hash() gives for the same files.
+	if hash := folder.Hash(); hash != "02a7b2c8428f31e3a2b93ca2f5a6ec70" {
+		t.Errorf("the directory hashes to %s", hash)
+	}
+
+	write(t, root, "knowledge/urls.yaml", "- https://example.com/plans\n")
+	declared, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if declared.Hash() == folder.Hash() {
+		t.Error("declaring a page did not change the fingerprint")
+	}
+
+	write(t, root, "knowledge/urls.yaml", "- url: https://example.com/plans\n  refresh_hours: 24\n")
+	refreshed, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.Hash() == declared.Hash() {
+		t.Error("reading a page on a schedule did not change the fingerprint, so it would never be synced")
+	}
+}
+
+func TestEachSimulationFileIsAListReadInFileOrder(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "deli")
+	write(t, root, "agent.yaml", "name: deli\n")
+	write(t, root, "simulations/lunch.yaml", `- name: change of order
+  scenario: Order a club, then swap it for a wrap.
+  assertion: The final order is one wrap.
+  variations: 3
+- name: off the menu
+  scenario: Ask for a milkshake.
+  assertion: The agent says there is no milkshake.
+  mode: audio
+`)
+	write(t, root, "simulations/allergies.yml", `- name: peanut allergy
+  scenario: Ask whether the wrap has nuts.
+  assertion: The agent does not guess.
+`)
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var names []string
+	for _, simulation := range folder.Simulations {
+		names = append(names, simulation.Name)
+	}
+	if strings.Join(names, ", ") != "peanut allergy, change of order, off the menu" {
+		t.Errorf("read %v", names)
+	}
+	if folder.Simulations[1].Variations != 3 || folder.Simulations[2].Mode != "audio" {
+		t.Errorf("the lunch simulations are %+v", folder.Simulations[1:])
+	}
+}
+
+func TestASimulationNameTwoFilesShareIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "deli")
+	write(t, root, "agent.yaml", "name: deli\n")
+	simulation := "- name: change of order\n  scenario: Swap the club.\n  assertion: One wrap.\n"
+	write(t, root, "simulations/a.yaml", simulation)
+	write(t, root, "simulations/b.yaml", simulation)
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), "also declared in a.yaml") {
+		t.Fatalf("loading gave %v", err)
+	}
+}
+
+func TestASimulationKeyNobodyKnowsIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "deli")
+	write(t, root, "agent.yaml", "name: deli\n")
+	write(t, root, "simulations/lunch.yaml", "- name: order\n  scenario: Order.\n  assertion: Ordered.\n  asertion: typo\n")
+
+	if _, err := Load(root); err == nil {
+		t.Fatal("a misspelt key was accepted")
+	}
+}
+
+func TestAnEmptySimulationsDirectoryIsNotTheSameAsNone(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "deli")
+	write(t, root, "agent.yaml", "name: deli\n")
+	without, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Mkdir(filepath.Join(root, SimulationsDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	empty, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if without.Simulations != nil || empty.Simulations == nil {
+		t.Errorf("without is %v and empty is %v", without.Simulations, empty.Simulations)
+	}
+	if without.Hash() == empty.Hash() {
+		t.Error("emptying simulations/ would not sync, so the stored ones would never be deleted")
 	}
 }
 

@@ -2,9 +2,10 @@ from enum import StrEnum
 
 
 class Modality(StrEnum):
+    IMAGE = "image"
     KNOWLEDGE = "knowledge"
+    LCM = "lcm"
     LLM = "llm"
-    LLM_CLASSIFIER = "llm_classifier"
     MEMORY = "memory"
     PHONE = "phone"
     SEARCH = "search"

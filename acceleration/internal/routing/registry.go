@@ -10,6 +10,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Spec is what the router asks a factory to build. It carries the session-level settings
@@ -60,7 +61,7 @@ func (s Spec) Settings(into any) error {
 	decoder := json.NewDecoder(bytes.NewReader(s.Overwrites))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(into); err != nil {
-		return fmt.Errorf("routing: overwrites for %s: %w", s.Model, err)
+		return stack.Wrap(fmt.Errorf("routing: overwrites for %s: %w", s.Model, err))
 	}
 	return nil
 }
@@ -97,15 +98,15 @@ func (r *Registry[P]) Build(provider string, spec Spec) (P, error) {
 	r.mu.RUnlock()
 
 	if !ok {
-		return zero, fmt.Errorf("routing: no factory registered for provider %q", provider)
+		return zero, stack.Wrap(fmt.Errorf("routing: no factory registered for provider %q", provider))
 	}
 
 	built, err := factory(spec)
 	if err != nil {
-		return zero, err
+		return zero, stack.Wrap(err)
 	}
 	if any(built) == nil {
-		return zero, errors.New("routing: factory returned no provider")
+		return zero, stack.Wrap(errors.New("routing: factory returned no provider"))
 	}
 	return built, nil
 }

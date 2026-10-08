@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/google/uuid"
 	"net/http"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -17,13 +19,13 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 )
 
-// noRecordings is what the recording paths say on a deployment that does not run them.
+// errNoRecordings is what the recording paths say on a deployment that does not run them.
 // They are jobs, so they need somewhere to keep one as well as something to route it to.
-const noRecordings = "this deployment does not run recordings"
+var errNoRecordings = notConfigured("this deployment does not run recordings")
 
-// noRecordingStore is what they say without a database. A job whose result nobody could
+// errNoRecordingStore is what they say without a database. A job whose result nobody could
 // come back for is worse than a refusal.
-const noRecordingStore = "recordings are not available: no database configured"
+var errNoRecordingStore = notConfigured("recordings are not available: no database configured")
 
 // recordingDeadline bounds one job. Transcription runs far faster than real time, but a
 // feature-length recording is still minutes of work, and a job that hangs is a row that
@@ -33,29 +35,29 @@ const recordingDeadline = 45 * time.Minute
 // callbackTimeout bounds telling a caller their job is done.
 const callbackTimeout = 30 * time.Second
 
-// TranscribeRecording accepts a recording and transcribes it off the live path.
-func (s *Server) TranscribeRecording(ctx context.Context, request TranscribeRecordingRequestObject) (TranscribeRecordingResponseObject, error) {
+// transcribeRecording accepts a recording and transcribes it off the live path.
+func (s *Server) transcribeRecording(ctx context.Context, request *transcribeRecordingRequest) (*transcribeRecordingResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return TranscribeRecording401JSONResponse{missingCustomer()}, nil
+		return nil, errMissingCustomer
 	}
 	if s.streams == nil || s.streams.Transcriptions == nil {
-		return TranscribeRecording404JSONResponse{NotFoundJSONResponse{Error: noRecordings}}, nil
+		return nil, errNoRecordings
 	}
 	if s.store == nil && (request.Body == nil || !truthy(request.Body.Inline)) {
-		return TranscribeRecording400JSONResponse{badRequest(noRecordingStore)}, nil
+		return nil, errNoRecordingStore
 	}
 	if request.Body == nil {
-		return TranscribeRecording400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, invalidRequest("a request body is required")
 	}
 
 	config, err := s.routerOptions(ctx, customerID, value(request.Body.ConfigId))
 	if err != nil {
-		return TranscribeRecording400JSONResponse{badRequest(err.Error())}, nil
+		return nil, err
 	}
 	held := config.STT.Merge(sttOptionsOf(request.Body.Options))
 	if err := held.Validate(); err != nil {
-		return TranscribeRecording400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
 	}
 	if held.Target == "" {
 		held.Target = recordedTarget(held.Languages)
@@ -79,15 +81,15 @@ func (s *Server) TranscribeRecording(ctx context.Context, request TranscribeReco
 		FillerWords:     held.Mode == options.ModeVerbatim,
 	}
 	if err := source.Validate(); err != nil {
-		return TranscribeRecording400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
 	}
 	if _, err := stt.Subtitles(stt.Transcription{}, held.Output); err != nil {
-		return TranscribeRecording400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
 	}
 
-	tags := tagsUnder(config, request.Body.Tags)
+	tags := tagsSent(request.Body.Tags)
 	if err := tags.Validate(); err != nil {
-		return TranscribeRecording400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
 	}
 
 	job := store.Recording{
@@ -100,7 +102,7 @@ func (s *Server) TranscribeRecording(ctx context.Context, request TranscribeReco
 	}
 	if truthy(request.Body.Inline) {
 		if job.Callback != "" || len(source.Audio) > 8*1024*1024 || source.URL != "" {
-			return TranscribeRecording400JSONResponse{badRequest("inline transcription requires at most 8 MiB of audio and no URL or callback")}, nil
+			return nil, invalidRequest("inline transcription requires at most 8 MiB of audio and no URL or callback")
 		}
 		ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
@@ -110,7 +112,7 @@ func (s *Server) TranscribeRecording(ctx context.Context, request TranscribeReco
 			failure = subErr
 		}
 		raw, _ := json.Marshal(transcriptResult{Text: transcript.Text, Language: transcript.Language, Words: wordsOf(transcript.Words), Speakers: transcript.Speakers, Subtitles: subtitles, Summary: transcript.Summary, Entities: entitiesOf(transcript.Entities), AudioDurationMs: transcript.AudioDurationMs})
-		return TranscribeRecording202JSONResponse(transcriptionOf(inlineResult(job, provider.Provider, provider.Model, raw, failure))), nil
+		return &transcribeRecordingResponse{Body: transcriptionOf(inlineResult(job, provider.Provider, provider.Model, raw, failure))}, nil
 	}
 	if err := s.store.CreateRecording(ctx, &job); err != nil {
 		return nil, err
@@ -125,57 +127,57 @@ func (s *Server) TranscribeRecording(ctx context.Context, request TranscribeReco
 		Source:     source,
 	})
 
-	return TranscribeRecording202JSONResponse(transcriptionOf(job)), nil
+	return &transcribeRecordingResponse{Body: transcriptionOf(job)}, nil
 }
 
-// GetTranscription returns one transcription job, and its transcript once it has one.
-func (s *Server) GetTranscription(ctx context.Context, request GetTranscriptionRequestObject) (GetTranscriptionResponseObject, error) {
+// getTranscription returns one transcription job, and its transcript once it has one.
+func (s *Server) getTranscription(ctx context.Context, request *getTranscriptionRequest) (*getTranscriptionResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return GetTranscription401JSONResponse{missingCustomer()}, nil
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return GetTranscription400JSONResponse{badRequest(noRecordingStore)}, nil
+		return nil, errNoRecordingStore
 	}
 
 	job, err := s.store.Recording(ctx, customerID, request.Id)
 	if err != nil || job.Modality != string(Stt) {
-		return GetTranscription404JSONResponse{NotFoundJSONResponse{Error: "no such transcription"}}, nil
+		return nil, notFound("no such transcription")
 	}
-	return GetTranscription200JSONResponse(transcriptionOf(job)), nil
+	return &getTranscriptionResponse{Body: transcriptionOf(job)}, nil
 }
 
-// RecordSpeech accepts a text and speaks the whole of it into one file.
-func (s *Server) RecordSpeech(ctx context.Context, request RecordSpeechRequestObject) (RecordSpeechResponseObject, error) {
+// recordSpeech accepts a text and speaks the whole of it into one file.
+func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest) (*recordSpeechResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return RecordSpeech401JSONResponse{missingCustomer()}, nil
+		return nil, errMissingCustomer
 	}
 	if s.streams == nil || s.streams.Speech == nil {
-		return RecordSpeech404JSONResponse{NotFoundJSONResponse{Error: noRecordings}}, nil
+		return nil, errNoRecordings
 	}
 	if s.store == nil && (request.Body == nil || !truthy(request.Body.Inline)) {
-		return RecordSpeech400JSONResponse{badRequest(noRecordingStore)}, nil
+		return nil, errNoRecordingStore
 	}
 	if request.Body == nil {
-		return RecordSpeech400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, invalidRequest("a request body is required")
 	}
 	if strings.TrimSpace(request.Body.Text) == "" {
-		return RecordSpeech400JSONResponse{badRequest("there is nothing to say")}, nil
+		return nil, invalidRequest("there is nothing to say")
 	}
 
 	config, err := s.routerOptions(ctx, customerID, value(request.Body.ConfigId))
 	if err != nil {
-		return RecordSpeech400JSONResponse{badRequest(err.Error())}, nil
+		return nil, err
 	}
 	held := config.TTS.Merge(ttsOptionsOf(request.Body.Options))
 	if held.Target == "" {
 		held.Target = recordedTarget(held.Languages)
 	}
 
-	tags := tagsUnder(config, request.Body.Tags)
+	tags := tagsSent(request.Body.Tags)
 	if err := tags.Validate(); err != nil {
-		return RecordSpeech400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
 	}
 
 	job := store.Recording{
@@ -188,13 +190,13 @@ func (s *Server) RecordSpeech(ctx context.Context, request RecordSpeechRequestOb
 	}
 	if truthy(request.Body.Inline) {
 		if job.Callback != "" || utf8.RuneCountInString(job.Text) > 16000 {
-			return RecordSpeech400JSONResponse{badRequest("inline speech requires at most 16000 characters and no callback")}, nil
+			return nil, invalidRequest("inline speech requires at most 16000 characters and no callback")
 		}
 		ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
 		audio, provider, failure := s.streams.Speech.Record(ctx, ttsrouter.Recording{CustomerID: customerID, Tags: tags, Options: held, Text: job.Text})
 		raw, _ := json.Marshal(speechResult{Audio: audio.Audio, Format: audio.Format, Characters: audio.Characters, AudioDurationMs: audio.AudioDurationMs})
-		return RecordSpeech202JSONResponse(speechOf(inlineResult(job, provider.Provider, provider.Model, raw, failure))), nil
+		return &recordSpeechResponse{Body: speechOf(inlineResult(job, provider.Provider, provider.Model, raw, failure))}, nil
 	}
 	if err := s.store.CreateRecording(ctx, &job); err != nil {
 		return nil, err
@@ -207,24 +209,24 @@ func (s *Server) RecordSpeech(ctx context.Context, request RecordSpeechRequestOb
 		Text:       request.Body.Text,
 	})
 
-	return RecordSpeech202JSONResponse(speechOf(job)), nil
+	return &recordSpeechResponse{Body: speechOf(job)}, nil
 }
 
-// GetSpeech returns one speech job, and its audio once it has some.
-func (s *Server) GetSpeech(ctx context.Context, request GetSpeechRequestObject) (GetSpeechResponseObject, error) {
+// getSpeech returns one speech job, and its audio once it has some.
+func (s *Server) getSpeech(ctx context.Context, request *getSpeechRequest) (*getSpeechResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return GetSpeech401JSONResponse{missingCustomer()}, nil
+		return nil, errMissingCustomer
 	}
 	if s.store == nil {
-		return GetSpeech400JSONResponse{badRequest(noRecordingStore)}, nil
+		return nil, errNoRecordingStore
 	}
 
 	job, err := s.store.Recording(ctx, customerID, request.Id)
 	if err != nil || job.Modality != string(Tts) {
-		return GetSpeech404JSONResponse{NotFoundJSONResponse{Error: "no such speech job"}}, nil
+		return nil, notFound("no such speech job")
 	}
-	return GetSpeech200JSONResponse(speechOf(job)), nil
+	return &getSpeechResponse{Body: speechOf(job)}, nil
 }
 
 // transcribe runs one transcription job to its end and writes down what happened.
@@ -492,4 +494,185 @@ func inlineResult(job store.Recording, provider, model string, result json.RawMe
 		job.Error = failure.Error()
 	}
 	return job
+}
+
+// registerRecordings declares the operations served in recordings.go.
+func (s *Server) registerRecordings(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "transcribeRecording",
+		Method:      http.MethodPost,
+		Path:        "/v1/stt/recordings",
+		Summary:     "Transcribe a recording, off the live path",
+		Description: "The non-realtime half of speech-to-text: a whole recording in, a whole transcript out. " +
+			"It is a job rather than a response because an hour of audio takes minutes to " +
+			"transcribe, so this returns immediately with an id to poll, or calls a callback when it " +
+			"is done.\n" +
+			"Routing works as it does everywhere else, except that the candidates are the providers " +
+			"registered as not realtime - the batch APIs, which are cheaper and more accurate than " +
+			"the same vendor's streaming model.",
+		DefaultStatus: http.StatusAccepted,
+		Responses: map[string]*huma.Response{
+			"202": {Description: "The job was accepted"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.transcribeRecording)
+	huma.Register(api, huma.Operation{
+		OperationID: "getTranscription",
+		Method:      http.MethodGet,
+		Path:        "/v1/stt/recordings/{id}",
+		Summary:     "One transcription job, and its transcript once it has one",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The job as it now stands"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.getTranscription)
+	huma.Register(api, huma.Operation{
+		OperationID: "recordSpeech",
+		Method:      http.MethodPost,
+		Path:        "/v1/tts/recordings",
+		Summary:     "Speak a whole text into one audio file, off the live path",
+		Description: "The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same " +
+			"reason transcription is - an audiobook is not a conversation, and nothing is waiting to " +
+			"hear the first chunk.",
+		DefaultStatus: http.StatusAccepted,
+		Responses: map[string]*huma.Response{
+			"202": {Description: "The job was accepted"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.recordSpeech)
+	huma.Register(api, huma.Operation{
+		OperationID: "getSpeech",
+		Method:      http.MethodGet,
+		Path:        "/v1/tts/recordings/{id}",
+		Summary:     "One speech job, and its audio once it has some",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The job as it now stands"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.getSpeech)
+}
+
+type transcribeRecordingRequest struct {
+	Body *TranscriptionRequest `required:"true"`
+}
+
+type transcribeRecordingResponse struct {
+	Body Transcription
+}
+
+type getTranscriptionRequest struct {
+	Id string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+type getTranscriptionResponse struct {
+	Body Transcription
+}
+
+type recordSpeechRequest struct {
+	Body *SpeechRequest `required:"true"`
+}
+
+type recordSpeechResponse struct {
+	Body Speech
+}
+
+type getSpeechRequest struct {
+	Id string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+type getSpeechResponse struct {
+	Body Speech
+}
+
+// RecordingStatus Where a job has got to. A failed job carries the reason in `error`, and a completed one carries its result.
+type RecordingStatus string
+
+// Defines values for RecordingStatus.
+const (
+	RecordingStatusCompleted RecordingStatus = "completed"
+	RecordingStatusFailed    RecordingStatus = "failed"
+	RecordingStatusQueued    RecordingStatus = "queued"
+	RecordingStatusRunning   RecordingStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the RecordingStatus enum.
+func (e RecordingStatus) Valid() bool {
+	switch e {
+	case RecordingStatusCompleted:
+		return true
+	case RecordingStatusFailed:
+		return true
+	case RecordingStatusQueued:
+		return true
+	case RecordingStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+func (RecordingStatus) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "RecordingStatus", "Where a job has got to. A failed job carries the reason in `error`, and a completed one carries its result.", "queued", "running", "completed", "failed")
+}
+
+// SpeechRequest is the SpeechRequest schema.
+type SpeechRequest struct {
+	Callback *string            `json:"callback,omitempty" doc:"A URL the finished job is POSTed to, so a caller does not have to poll."`
+	ConfigId *string            `json:"config_id,omitempty" doc:"A stored router config to take the options from. Anything named here as well overrides that one field of it."`
+	Inline   *bool              `json:"inline,omitempty" doc:"Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs." default:"false"`
+	Options  *TtsOptions        `json:"options,omitempty"`
+	Tags     *map[string]string `json:"tags,omitempty"`
+	Text     string             `json:"text" doc:"What to say. Whole paragraphs rather than the sentence at a time a socket takes."`
+}
+
+// TranscriptEntity Something the recording named, for the providers that pick them out.
+type TranscriptEntity struct {
+	EndMs   *int64 `json:"end_ms,omitempty"`
+	StartMs *int64 `json:"start_ms,omitempty"`
+	Text    string `json:"text"`
+	Type    string `json:"type" example:"person"`
+}
+
+func (*TranscriptEntity) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "Something the recording named, for the providers that pick them out."
+	return schema
+}
+
+// TranscriptWord is the TranscriptWord schema.
+type TranscriptWord struct {
+	Confidence *float32 `json:"confidence,omitempty"`
+	EndMs      int64    `json:"end_ms"`
+	Speaker    *string  `json:"speaker,omitempty" doc:"Who said it, when diarization was asked for."`
+	StartMs    int64    `json:"start_ms"`
+	Text       string   `json:"text"`
+}
+
+// Transcription is the Transcription schema.
+type Transcription struct {
+	AudioDurationMs *int64              `json:"audio_duration_ms,omitempty" doc:"How long the recording was, which is what it was billed on."`
+	CompletedAt     *time.Time          `json:"completed_at,omitempty"`
+	CreatedAt       time.Time           `json:"created_at"`
+	Entities        *[]TranscriptEntity `json:"entities,omitempty"`
+	Error           *string             `json:"error,omitempty" doc:"Why the job failed, if it did."`
+	Id              string              `json:"id"`
+	Language        *string             `json:"language,omitempty" doc:"What was spoken, whether it was asked for or detected."`
+	Model           *string             `json:"model,omitempty"`
+	Provider        *string             `json:"provider,omitempty"`
+	Speakers        *[]string           `json:"speakers,omitempty" doc:"The speakers diarization found, in the order they first spoke."`
+	Status          RecordingStatus     `json:"status"`
+	Subtitles       *string             `json:"subtitles,omitempty" doc:"The transcript as an SRT or VTT file, when one of those was asked for."`
+	Summary         *string             `json:"summary,omitempty"`
+	Text            *string             `json:"text,omitempty" doc:"The whole transcript as prose."`
+	UpdatedAt       time.Time           `json:"updated_at"`
+	Words           *[]TranscriptWord   `json:"words,omitempty" doc:"Present when word-level timestamps were asked for."`
+}
+
+// TranscriptionRequest is the TranscriptionRequest schema.
+type TranscriptionRequest struct {
+	Callback *string            `json:"callback,omitempty" doc:"A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns."`
+	ConfigId *string            `json:"config_id,omitempty" doc:"A stored router config to take the options from. Anything named here as well overrides that one field of it."`
+	Inline   *bool              `json:"inline,omitempty" doc:"Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs." default:"false"`
+	Options  *SttOptions        `json:"options,omitempty"`
+	Source   RecordingSource    `json:"source"`
+	Tags     *map[string]string `json:"tags,omitempty" doc:"Cost labels for this job."`
 }

@@ -42,7 +42,7 @@ The agent can only answer from what it has read, so read the docs into it first:
 
 ```bash
 cd ../../../acceleration
-go run ./cmd/knowledge -namespace docs ../docs ../README.md ../sdks/python
+go run ./cmd/knowledge -customer examples -namespace docs ../docs ../README.md ../sdks/python
 ```
 
 Markdown is cut at its headings, long sections are cut again at paragraph breaks, and each
@@ -77,7 +77,7 @@ config = await stream.define_agent(
     name="docs-agent",
     instructions=INSTRUCTIONS,
     llm="llm-fast",
-    subagent="llm-smart",
+    thinking_llm="llm-smart",
     skills=SKILLS,
     knowledge="docs",
 )
@@ -91,7 +91,7 @@ the dashboard without any of them repeating the configuration.
 `define_agent` finds the config and its skills by name before writing, so running the
 example twice edits what is stored rather than storing another copy of it.
 
-Without a `subagent` the fast model answers everything itself and the skills mean nothing,
+Without a `thinking_llm` the fast model answers everything itself and the skills mean nothing,
 because there is nobody to hand the work to.
 
 ### Skills are prompts for a slower model

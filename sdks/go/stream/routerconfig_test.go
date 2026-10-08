@@ -90,7 +90,6 @@ func storedFrom(wanted acceleration.RouterConfigRequest, id string) acceleration
 	return acceleration.RouterConfig{
 		Id: id, Name: wanted.Name,
 		Stt: wanted.Stt, Tts: wanted.Tts, Llm: wanted.Llm, Search: wanted.Search,
-		Tags:      wanted.Tags,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 }
@@ -254,8 +253,6 @@ func TestADirectoryOfYamlBecomesOneConfigEach(t *testing.T) {
 	directory := t.TempDir()
 
 	write(t, directory, "healthcare.yaml", `
-tags:
-  team: clinical
 stt:
   providers: [deepgram, parakeet]
   data_policy:
@@ -283,9 +280,6 @@ stt:
 		policy.AllowTraining == nil || *policy.AllowTraining ||
 		policy.Retention == nil || *policy.Retention != "none" {
 		t.Errorf("the data policy came back as %+v", stored[0].Stt.DataPolicy)
-	}
-	if tags := stored[0].Tags; tags == nil || (*tags)["team"] != "clinical" {
-		t.Errorf("the tags came back as %v", stored[0].Tags)
 	}
 }
 

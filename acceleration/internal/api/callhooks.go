@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -10,12 +9,10 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
-
-// callerPrefix is what the inbound routing rule names a SIP caller, so the number they are
-// calling from can be read back off the participant. It has to match the template the rule
-// is created with.
-const callerPrefix = "sip-"
 
 // signatureHeader carries the HMAC Stream signs a delivery with.
 const signatureHeader = "X-Signature"
@@ -56,34 +53,26 @@ type callEvent struct {
 // belonging to nobody — get better on a second delivery, while the caller is on the line for
 // the whole of it.
 func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
-	if s.streamSecret == "" {
+	if !s.hooksConfigured() {
 		// Refusing is the only safe answer: without the secret there is no way to tell
 		// Stream from anyone who found the URL, and this path starts agents.
-		http.Error(w, "call events are not configured", http.StatusNotFound)
+		writeError(w, notFound("call events are not configured"))
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "could not read that call event", http.StatusBadRequest)
+	payload, ok := readHook(w, r, "call event")
+	if !ok {
+		s.logger.Warn("rejected a call event before reading its signature")
 		return
 	}
-	// Deliveries may be compressed, and the signature is over what is inside.
-	payload, err := getstream.GunzipPayload(body)
-	if err != nil {
-		s.logger.Warn("rejected a call event", "error", err)
-		http.Error(w, "that is not a call event from Stream", http.StatusUnauthorized)
-		return
-	}
-	if !getstream.VerifySignature(payload, r.Header.Get(signatureHeader), s.streamSecret) {
-		s.logger.Warn("rejected a call event with a bad signature", "bytes", len(payload))
-		http.Error(w, "that is not a call event from Stream", http.StatusUnauthorized)
+	origin, ok := s.verifyHook(w, r, payload, "call event")
+	if !ok {
 		return
 	}
 
 	eventType := getstream.GetEventType(payload)
 	if eventType == "" {
-		http.Error(w, "could not read that call event", http.StatusBadRequest)
+		writeError(w, invalidRequest("could not read that call event"))
 		return
 	}
 
@@ -91,15 +80,19 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 	case getstream.EventTypeCallSessionStarted:
 		var event callEvent
 		if err := json.Unmarshal(payload, &event); err != nil {
-			http.Error(w, "could not read that call event", http.StatusBadRequest)
+			writeError(w, invalidRequest("could not read that call event"))
 			return
 		}
-		s.dispatchArrivingCall(r, event)
+		s.dispatchArrivingCall(r, origin, event, payload)
 
 	case getstream.EventTypeCallSessionEnded:
-		// Nothing to do: the worker is in the call and finds out from the call itself,
-		// which is sooner and more reliable than a webhook round trip.
-		s.logger.Debug("a call session ended")
+		var event callEvent
+		if err := json.Unmarshal(payload, &event); err != nil {
+			writeError(w, invalidRequest("could not read that call event"))
+			return
+		}
+		s.releaseEndedCall(r, origin, event)
+		s.endCallEpisodes(r, origin, event)
 
 	default:
 		s.logger.Debug("ignoring a call event", "type", eventType)
@@ -108,7 +101,7 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 }
 
 // dispatchArrivingCall works out whose call it is and hands it to one of their workers.
-func (s *Server) dispatchArrivingCall(r *http.Request, event callEvent) {
+func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event callEvent, payload []byte) {
 	callType, callID, split := strings.Cut(event.CallCid, ":")
 	if !split {
 		s.logger.Debug("a call event named no call", "cid", event.CallCid)
@@ -120,10 +113,23 @@ func (s *Server) dispatchArrivingCall(r *http.Request, event callEvent) {
 
 	// Only a call one of the numbers reaches is a phone call. Every video call in the app
 	// arrives here too, and there is nothing to answer on those.
-	number, err := s.store.NumberByCall(r.Context(), callType, callID)
+	// And only a number attached in the app the hook came from: a call of the same name in
+	// another app rings somebody else's phone.
+	number, err := s.store.NumberByCallInApp(r.Context(), origin.scope(), callType, callID)
+	if err == nil && !origin.deployment && number.CustomerID != origin.customer {
+		err = store.ErrAmbiguousHook
+	}
+	if err == nil && !s.mayWrite(r.Context(), origin, number.CustomerID) {
+		err = streamapp.ErrReadOnly
+	}
 	if err != nil {
 		s.logger.Debug("no number reaches an arriving call",
-			"call", event.CallCid, "error", err)
+			"call", event.CallCid, "stream_app", origin.app, "error", err)
+		return
+	}
+	// Only a call that rings a number is worth recording as delivered: every video call in
+	// the app arrives here too.
+	if !s.acting(r.Context(), origin, getstream.EventTypeCallSessionStarted, payload) {
 		return
 	}
 
@@ -145,9 +151,51 @@ func (s *Server) dispatchArrivingCall(r *http.Request, event callEvent) {
 			"number", number.E164, "error", err)
 		return
 	}
+	s.pinHook(origin, number.CustomerID, event.CallCid)
 	s.logger.Info("handed an arriving call to a worker",
 		"call", event.CallCid, "customer", number.CustomerID,
 		"number", number.E164, "caller", call.CallerNumber, "worker", worker.ID)
+}
+
+// releaseEndedCall tears down the per-call SIP trunks a placed call or transfer created,
+// now that the call is over. Everything short of a malformed event is a 200: Stream
+// retries a non-2xx, and nothing here is worth a redelivery: the caller is not waiting on
+// it, and cleanup is best-effort. ReleaseCall removes the record before deleting at Stream,
+// so a failed Stream delete is logged and the trunk leaks; a later delivery finds no record
+// to retry, and there is no sweeper.
+func (s *Server) releaseEndedCall(r *http.Request, origin hookOrigin, event callEvent) {
+	if s.phone == nil {
+		return
+	}
+	callType, callID, split := strings.Cut(event.CallCid, ":")
+	if !split {
+		s.logger.Debug("a call event named no call", "cid", event.CallCid)
+		return
+	}
+	// The event is about a call in the app that signed it, and only what was made there is
+	// released: a call's id is only unique within its app.
+	if err := s.phone.ReleaseCall(r.Context(), origin.scope(), callType, callID); err != nil {
+		s.logger.Error("could not release an ended call's resources", "call", event.CallCid, "error", err)
+	}
+}
+
+// endCallEpisodes closes the episodes of an ended call and has them summarized off the request
+// (omnichannel.Closer.EndCall, T55). Only a call under an agent config with episode_cards on
+// has one; any other call matches no row, so nothing is written and no Stream is reached, and
+// the answer is the 200 it was before. A failure is logged and answered 200 as well: Stream
+// retries a non-2xx, and the episode is read by its last lines until it closes.
+func (s *Server) endCallEpisodes(r *http.Request, origin hookOrigin, event callEvent) {
+	if s.episodes == nil {
+		return
+	}
+	_, callID, split := strings.Cut(event.CallCid, ":")
+	if !split {
+		return
+	}
+	// The call id is unique only in the app that signed the event, as releaseEndedCall's is.
+	if err := s.episodes.EndCall(r.Context(), origin.scope(), callID); err != nil {
+		s.logger.Error("could not close an ended call's episodes", "call", event.CallCid, "error", err)
+	}
 }
 
 // callerOf reads the calling number off the SIP participant the routing rule named.
@@ -160,7 +208,7 @@ func callerOf(event callEvent) string {
 		return ""
 	}
 	for _, participant := range event.Call.Session.Participants {
-		if caller, ok := strings.CutPrefix(participant.User.ID, callerPrefix); ok {
+		if caller, ok := phone.CallerNumber(participant.User.ID); ok {
 			return caller
 		}
 	}

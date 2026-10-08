@@ -11,6 +11,74 @@ from vision_agents.plugins import elevenlabs
 load_dotenv()
 
 
+class TestElevenLabsSTTCallbacks:
+    """Unit coverage for translating provider callbacks into turn events."""
+
+    @pytest.fixture
+    def participant(self) -> Participant:
+        return Participant({}, user_id="test-user", id="test-user")
+
+    @pytest.fixture
+    def stt(self, participant: Participant) -> elevenlabs.STT:
+        stt = elevenlabs.STT(api_key="test-key")
+        stt._current_participant = participant
+        return stt
+
+    def test_duplicate_partials_emit_one_turn_started(
+        self, stt: elevenlabs.STT
+    ) -> None:
+        stt._on_partial_transcript({"text": "Hello"})
+        stt._on_partial_transcript({"text": "Hello world"})
+
+        turn_events = [
+            item for item in stt.output.peek() if isinstance(item, TurnStarted)
+        ]
+        assert len(turn_events) == 1
+
+    def test_multiple_committed_utterances_emit_balanced_ordered_turns(
+        self, stt: elevenlabs.STT
+    ) -> None:
+        stt._on_partial_transcript({"text": "First"})
+        stt._on_committed_transcript({"text": "First utterance"})
+        stt._on_partial_transcript({"text": "Second"})
+        stt._on_committed_transcript({"text": "Second utterance"})
+
+        turn_events = [
+            item
+            for item in stt.output.peek()
+            if isinstance(item, (TurnStarted, TurnEnded))
+        ]
+        assert len(turn_events) == 4
+        assert all(
+            isinstance(turn_events[index], TurnStarted)
+            and isinstance(turn_events[index + 1], TurnEnded)
+            for index in range(0, len(turn_events), 2)
+        )
+
+    def test_empty_commit_ends_active_turn(self, stt: elevenlabs.STT) -> None:
+        stt._on_partial_transcript({"text": "Speech"})
+        stt._on_committed_transcript({"text": ""})
+
+        turn_events = [
+            item
+            for item in stt.output.peek()
+            if isinstance(item, (TurnStarted, TurnEnded))
+        ]
+        assert len(turn_events) == 2
+        assert isinstance(turn_events[0], TurnStarted)
+        assert isinstance(turn_events[1], TurnEnded)
+
+    def test_keepalive_empty_commit_does_not_emit_turn_events(
+        self, stt: elevenlabs.STT
+    ) -> None:
+        stt._on_committed_transcript({"text": ""})
+        stt._on_committed_transcript({"text": "   "})
+
+        assert not any(
+            isinstance(item, (TurnStarted, TurnEnded)) for item in stt.output.peek()
+        )
+
+
 class TestElevenLabsSTT:
     """Integration tests for ElevenLabs Scribe v2 STT"""
 
@@ -87,14 +155,24 @@ class TestElevenLabsSTT:
 
     @pytest.mark.integration
     async def test_turn_events_emitted(self, stt, mia_audio_16khz, participant):
-        """One TurnStarted and exactly one TurnEnded per utterance."""
+        """Every provider-detected utterance has ordered start and end events."""
         await stt.process_audio(mia_audio_16khz, participant=participant)
 
         items = await stt.output.collect(timeout=10.0)
-        turn_started = [i for i in items if isinstance(i, TurnStarted)]
-        turn_ended = [i for i in items if isinstance(i, TurnEnded)]
-        assert len(turn_started) == 1
-        assert len(turn_ended) == 1
+        turn_events = [
+            item for item in items if isinstance(item, (TurnStarted, TurnEnded))
+        ]
+        turn_started = [item for item in turn_events if isinstance(item, TurnStarted)]
+        turn_ended = [item for item in turn_events if isinstance(item, TurnEnded)]
+
+        assert turn_started
+        assert len(turn_started) == len(turn_ended)
+        assert all(
+            isinstance(turn_events[index], TurnStarted)
+            and isinstance(turn_events[index + 1], TurnEnded)
+            for index in range(0, len(turn_events), 2)
+        )
+        assert all(event.participant == participant for event in turn_events)
 
     @pytest.mark.integration
     async def test_multiple_audio_segments(

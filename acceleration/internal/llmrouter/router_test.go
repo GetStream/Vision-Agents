@@ -2,13 +2,19 @@ package llmrouter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/anthropic"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
@@ -22,6 +28,8 @@ type stubLLM struct {
 	scripts []*llmtest.Script
 	// capabilities is what this stub claims to accept.
 	capabilities llm.Capabilities
+	// createDelay is how long Create takes, as a provider takes to answer with its headers.
+	createDelay time.Duration
 }
 
 func newStubLLM() *stubLLM { return &stubLLM{} }
@@ -29,6 +37,9 @@ func newStubLLM() *stubLLM { return &stubLLM{} }
 func (s *stubLLM) Start(context.Context) error { return nil }
 
 func (s *stubLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	if s.createDelay > 0 {
+		time.Sleep(s.createDelay)
+	}
 	s.asked = append(s.asked, params)
 
 	script := llmtest.New(llm.StreamOptions{
@@ -155,7 +166,7 @@ func (s *LLMRouterSuite) TestLLMFastGoesToTheModelItPins() {
 	candidates, err := router.Resolve(s.ctx, "llm-fast", nil)
 	s.Require().NoError(err)
 
-	s.Equal("deepseek/DeepSeek-V4-Flash-0731", candidates[0].Config.Name())
+	s.Equal("gemini/gemini-3.8-flash", candidates[0].Config.Name())
 	s.Greater(len(candidates), 1, "the rest of the tier has to stay behind it as failover")
 }
 
@@ -165,7 +176,7 @@ func (s *LLMRouterSuite) TestLLMThinkingGoesToTheModelItPins() {
 	candidates, err := router.Resolve(s.ctx, "llm-thinking", nil)
 	s.Require().NoError(err)
 
-	s.Equal("deepseek/DeepSeek-V4-Pro-0813", candidates[0].Config.Name())
+	s.Equal("openai/gpt-6.1-sol", candidates[0].Config.Name())
 	s.Greater(len(candidates), 1, "the rest of the tier has to stay behind it as failover")
 }
 
@@ -180,28 +191,6 @@ func (s *LLMRouterSuite) TestLLMThinkingResolvesToAQualityModel() {
 		s.Equal(routing.HighQuality, candidate.Config.Tier,
 			"what the conversation carries on without should never be picked for speed")
 	}
-}
-
-func (s *LLMRouterSuite) TestDirectModelCarriesExplicitThinkingConfiguration() {
-	var received routing.Spec
-	registry := NewRegistry()
-	registry.Register("stub", func(spec routing.Spec) (Provider, error) {
-		received = spec
-		return Started(newStubLLM(), nil)
-	})
-	router, err := New(Options{
-		Registry: registry,
-		Config: routing.ModalityConfig{Providers: []routing.ProviderConfig{{
-			Provider: "stub", Model: "DeepSeek-V4-Pro-0813", Languages: []string{"en"},
-			Thinking: true, ReasoningEffort: "low",
-		}}},
-	})
-	s.Require().NoError(err)
-	s.T().Cleanup(router.Close)
-	_, err = router.Start(s.ctx, Request{CustomerID: "acme", Target: "stub/DeepSeek-V4-Pro-0813", LanguageHints: []string{"en"}})
-	s.Require().NoError(err)
-	s.True(received.Thinking)
-	s.Equal("low", received.ReasoningEffort)
 }
 
 func (s *LLMRouterSuite) TestAnUnknownTargetIsRejected() {
@@ -274,6 +263,27 @@ func (s *LLMRouterSuite) TestSessionForwardsEveryProviderEvent() {
 	s.IsType(llm.ResponseCompleted{}, events[2])
 }
 
+func (s *LLMRouterSuite) TestEachProviderResponseReportsItsOwnTiming() {
+	session, provider := s.newSession()
+	var timings []llm.CallTiming
+	stream, err := session.Create(s.ctx, llm.ResponseParams{
+		ID: "flow-1", Purpose: "flow", TurnID: "turn-1", Input: prompt(),
+		OnTiming: func(timing llm.CallTiming) { timings = append(timings, timing) },
+	})
+	s.Require().NoError(err)
+	provider.script(0).OutputText("continue")
+	provider.script(0).Done()
+	_ = drain(stream)
+
+	s.Require().Len(timings, 1)
+	s.Equal("flow-1", timings[0].OperationID)
+	s.Equal("turn-1", timings[0].TurnID)
+	s.Equal("flow", timings[0].Purpose)
+	s.Equal("stub-model", timings[0].Model)
+	s.True(timings[0].Success)
+	s.Positive(timings[0].DurationMs)
+}
+
 func (s *LLMRouterSuite) TestSessionIdentityComesFromTheRoutingConfig() {
 	// A provider registered under a different name still aggregates under the config's
 	// name, so stats and health stay coherent.
@@ -328,8 +338,8 @@ func (s *LLMRouterSuite) TestClosingTwiceIsSafe() {
 func (s *LLMRouterSuite) TestErrorCodeExplainsTheFailure() {
 	s.Equal("provider_error", errorCode(llm.Response{Status: llm.StatusFailed}))
 	s.Empty(errorCode(llm.Response{Status: llm.StatusCompleted}))
-	s.Empty(errorCode(llm.Response{Status: llm.StatusCancelled}),
-		"a response the caller abandoned is not a provider failure")
+	s.Equal(routing.ErrorCancelled, errorCode(llm.Response{Status: llm.StatusCancelled}),
+		"a response the caller abandoned is recorded as that, not as a provider failure")
 }
 
 func (s *LLMRouterSuite) TestAnAbandonedResponseIsStillBilled() {
@@ -406,6 +416,43 @@ func (s *LLMRouterSuite) TestStartFailsOverToTheNextCandidate() {
 	s.Equal("openai", session.Provider(), "the candidate that could be built served the turn")
 }
 
+func (s *LLMRouterSuite) TestTheBuiltInOpusEntrySeesWhatItDeclares() {
+	sent := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		s.NoError(json.NewDecoder(r.Body).Decode(&body))
+		sent <- body
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"id\":\"r\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a rose\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2}}\n\ndata: [DONE]\n\n")
+	}))
+	s.T().Cleanup(server.Close)
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	registry := NewRegistry()
+	registry.Register(anthropic.ProviderName, func(spec routing.Spec) (Provider, error) {
+		return Started(anthropic.New(anthropic.Options{APIKey: "test", BaseURL: server.URL, Model: spec.Model}))
+	})
+	router, err := New(Options{Config: config[routing.LLM], Registry: registry})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+
+	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "anthropic/claude-opus-5-5", InputModalities: []string{llm.ModalityImage}})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { session.Close() })
+	stream, err := session.Create(s.ctx, llm.ResponseParams{ID: "c1", Input: []llm.Message{{
+		Role:  llm.User,
+		Parts: []llm.ContentPart{{Text: "what flower"}, {Image: &llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8}}}},
+	}}})
+	s.Require().NoError(err)
+	response, err := llm.Collect(stream)
+	s.Require().NoError(err)
+
+	s.Equal("a rose", response.OutputText)
+	body := <-sent
+	s.Equal("claude-opus-5-5", body["model"])
+	s.Contains(fmt.Sprint(body["messages"]), "image_url")
+}
+
 func (s *LLMRouterSuite) TestVisionFailoverRejectsContradictoryAdapterCapabilities() {
 	config := routing.ModalityConfig{
 		Providers: []routing.ProviderConfig{
@@ -428,4 +475,41 @@ func (s *LLMRouterSuite) TestVisionFailoverRejectsContradictoryAdapterCapabiliti
 	s.Require().NoError(err)
 	defer session.Close()
 	s.Equal("vision", session.Provider())
+}
+
+func (s *LLMRouterSuite) TestDirectModelSendsConfiguredReasoningToProvider() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Thinking struct {
+				Type string `json:"type"`
+			} `json:"thinking"`
+			Effort string `json:"reasoning_effort"`
+		}
+		if json.NewDecoder(r.Body).Decode(&request) != nil || request.Thinking.Type != "enabled" || request.Effort != "low" {
+			http.Error(w, "missing configured reasoning", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"id\":\"test\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Configured\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+	s.T().Setenv("BASETEN_API_KEY", "test-key")
+	s.T().Setenv("DEEPSEEK_BASE_URL", server.URL+"/v1")
+	router, err := New(Options{
+		Registry: DefaultRegistry(),
+		Config: routing.ModalityConfig{Providers: []routing.ProviderConfig{{
+			Provider: "deepseek", Model: "DeepSeek-V4-Pro-0813", Languages: []string{"en"},
+			Thinking: true, ReasoningEffort: "low",
+		}}},
+	})
+	s.Require().NoError(err)
+	defer router.Close()
+	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "deepseek/DeepSeek-V4-Pro-0813", LanguageHints: []string{"en"}})
+	s.Require().NoError(err)
+	defer session.Close()
+	stream, err := session.Create(s.T().Context(), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "Hello"}}})
+	s.Require().NoError(err)
+	response, err := llm.Collect(stream)
+	s.Require().NoError(err)
+	s.Equal("Configured", response.OutputText)
 }

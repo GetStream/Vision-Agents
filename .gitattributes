@@ -1,1 +1,3 @@
 plugins/getstream/vision_agents/plugins/getstream/sfu_events.py linguist-generated=true
+# Every PR appends an SDK note at the end of this file; union keeps both sides on a rebase.
+.claude/skills/sdk/SKILL.md merge=union

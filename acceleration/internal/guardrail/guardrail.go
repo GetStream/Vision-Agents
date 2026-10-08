@@ -24,18 +24,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/llmclassifierrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Kind is how a turn is checked.
 type Kind string
 
 const (
-	// KindClassifier asks the llm_classifier router for the probability that a turn
-	// violates the policy.
-	KindClassifier Kind = "llm_classifier"
+	// KindClassifier asks the lcm router for the probability that a turn violates the
+	// policy.
+	KindClassifier Kind = "lcm"
 	// KindWebhook asks the customer's own server.
 	KindWebhook Kind = "webhook"
 	// KindLLM asks a language model to read the policy and judge the turn.
@@ -122,12 +123,16 @@ type Deps struct {
 	// Owner is who a routed check is billed to.
 	Owner routing.Owner
 	// Classifier routes a KindClassifier check.
-	Classifier *llmclassifierrouter.Router
+	Classifier *lcmrouter.Router
 	// LLM routes a KindLLM check.
 	LLM *llmrouter.Router
 	// Secret signs a webhook, so the customer's server can tell our request from anyone
 	// who found the URL.
 	Secret string
+	// APIKey names the key whose secret signed it, sent beside the signature, when the
+	// session acts in the customer's own app: an app with several keys can then tell which
+	// one to check with. Empty sends none.
+	APIKey string
 	// HTTPClient calls a webhook. Nil builds one with the check timeout.
 	HTTPClient *http.Client
 	Logger     *slog.Logger
@@ -151,7 +156,7 @@ func New(ctx context.Context, policy Policy, deps Deps) (Guardrail, error) {
 	case KindLLM:
 		return newJudge(ctx, policy, deps)
 	default:
-		return nil, fmt.Errorf("guardrail: %q is not a way of checking a turn", policy.Kind)
+		return nil, stack.Wrap(fmt.Errorf("guardrail: %q is not a way of checking a turn", policy.Kind))
 	}
 }
 
@@ -218,33 +223,33 @@ func (p Policy) Validate() error {
 	switch p.Kind {
 	case KindClassifier, KindLLM:
 		if strings.TrimSpace(p.Text) == "" {
-			return errors.New("guardrail: there is no policy to judge a turn against")
+			return stack.Wrap(errors.New("guardrail: there is no policy to judge a turn against"))
 		}
 		if p.URL != "" {
-			return fmt.Errorf("guardrail: a %s guardrail calls nothing, so its url would be ignored", p.Kind)
+			return stack.Wrap(fmt.Errorf("guardrail: a %s guardrail calls nothing, so its url would be ignored", p.Kind))
 		}
 		if p.Threshold <= 0 || p.Threshold > 1 {
-			return fmt.Errorf("guardrail: a threshold of %v is not a probability between 0 and 1", p.Threshold)
+			return stack.Wrap(fmt.Errorf("guardrail: a threshold of %v is not a probability between 0 and 1", p.Threshold))
 		}
 	case KindWebhook:
 		if p.URL == "" {
-			return errors.New("guardrail: a webhook guardrail needs a url to ask")
+			return stack.Wrap(errors.New("guardrail: a webhook guardrail needs a url to ask"))
 		}
 		if !strings.HasPrefix(p.URL, "https://") && !strings.HasPrefix(p.URL, "http://") {
-			return fmt.Errorf("guardrail: %q is not a url a webhook can be posted to", p.URL)
+			return stack.Wrap(fmt.Errorf("guardrail: %q is not a url a webhook can be posted to", p.URL))
 		}
 	default:
-		return fmt.Errorf("guardrail: %q is not a way of checking a turn", p.Kind)
+		return stack.Wrap(fmt.Errorf("guardrail: %q is not a way of checking a turn", p.Kind))
 	}
 
 	switch p.Mode {
 	case ModeParallel, ModeBlocking:
 	default:
-		return fmt.Errorf("guardrail: %q is not when a check can run", p.Mode)
+		return stack.Wrap(fmt.Errorf("guardrail: %q is not when a check can run", p.Mode))
 	}
 
 	if strings.TrimSpace(p.Refusal) == "" {
-		return errors.New("guardrail: there is nothing for the agent to say when a turn is refused")
+		return stack.Wrap(errors.New("guardrail: there is nothing for the agent to say when a turn is refused"))
 	}
 	return nil
 }

@@ -44,9 +44,11 @@ type CallResult struct {
 
 // RunManifest identifies the code, inputs, and runtime configuration behind a result.
 type RunManifest struct {
-	GitCommit                string            `json:"git_commit"`
-	GitDirty                 bool              `json:"git_dirty"`
-	ScenarioHash             string            `json:"scenario_hash"`
+	GitCommit    string `json:"git_commit"`
+	GitDirty     bool   `json:"git_dirty"`
+	ScenarioHash string `json:"scenario_hash"`
+	// DatasetHash fingerprints the clip manifest and its audio, for an STT run.
+	DatasetHash              string            `json:"dataset_hash,omitempty"`
 	ContractHash             string            `json:"contract_hash"`
 	Transport                string            `json:"transport"`
 	Target                   string            `json:"target"`
@@ -82,6 +84,8 @@ type Summary struct {
 	K                  int               `json:"k"`
 	Packs              []PackSummary     `json:"packs"`
 	Calls              []CallResult      `json:"calls"`
+	// STT is one row per target, for a run of kind stt.
+	STT []STTSummary `json:"stt,omitempty"`
 }
 
 // PackSummary is one vertical column.
@@ -95,14 +99,68 @@ type PackSummary struct {
 	V2VSamples       int               `json:"v2v_samples"`
 	NonToolSamples   int               `json:"non_tool_samples"`
 	DroppedTurns     int               `json:"dropped_turns"`
-	Spikes           int               `json:"spike_count"`
-	Cutoff           float64           `json:"false_cutoff_rate"`
-	CallDurationP50  int               `json:"call_duration_p50_ms"`
-	ToolCountPerCall float64           `json:"tool_count_per_call"`
-	ToolErrors       int               `json:"tool_errors"`
-	ToolWaitP50      int               `json:"tool_wait_p50_ms"`
-	CallerTurnsP50   int               `json:"caller_turns_p50"`
-	AgentTurnsP50    int               `json:"agent_turns_p50"`
+	FirstResponseP50 int               `json:"first_response_p50_ms"`
+	FirstResponseP95 int               `json:"first_response_p95_ms"`
+	// FirstResponseSamples is one per valid call whose first caller turn drew a reply.
+	FirstResponseSamples int     `json:"first_response_samples"`
+	FirstResponseTool    int     `json:"first_response_tool_samples"`
+	Spikes               int     `json:"spike_count"`
+	Cutoff               float64 `json:"false_cutoff_rate"`
+	CallDurationP50      int     `json:"call_duration_p50_ms"`
+	ToolCountPerCall     float64 `json:"tool_count_per_call"`
+	ToolErrors           int     `json:"tool_errors"`
+	ToolWaitP50          int     `json:"tool_wait_p50_ms"`
+	CallerTurnsP50       int     `json:"caller_turns_p50"`
+	AgentTurnsP50        int     `json:"agent_turns_p50"`
+
+	// Reply time's headline is non-tool turns: a turn that waited on a tool is slower for a
+	// reason the conversation loop does not own, so tool turns are reported on their own.
+	NonToolP95  int `json:"non_tool_p95_ms"`
+	NonToolMean int `json:"non_tool_mean_ms"`
+	V2VMean     int `json:"v2v_mean_ms"`
+	ToolP50     int `json:"tool_p50_ms"`
+	ToolSamples int `json:"tool_samples"`
+
+	// StageP50 is the router's median for each stage of a caller turn, pooled over every turn
+	// it timed, for the targets that run on it. AgentMetricsP50 is the median across calls of
+	// what a Python agent measured about itself. Both are diagnostics, not figures to compare
+	// with LiveKit, which reports neither.
+	StageP50        map[string]int     `json:"stage_p50_ms,omitempty"`
+	StageSamples    int                `json:"stage_samples,omitempty"`
+	AgentMetricsP50 map[string]float64 `json:"agent_metrics_p50,omitempty"`
+}
+
+// stageNames are the router's stages in the order they happen, as summary.json names them.
+var stageNames = []string{"stt_ms", "cadence_ms", "decision_ms", "model_to_first_text_ms", "text_to_tts_ms", "tts_to_audio_ms", "roundtrip_ms"}
+
+func stageValue(stage score.StageTiming, name string) int {
+	switch name {
+	case "stt_ms":
+		return stage.STTMs
+	case "cadence_ms":
+		return stage.CadenceMs
+	case "decision_ms":
+		return stage.DecisionMs
+	case "model_to_first_text_ms":
+		return stage.ModelToTextMs
+	case "text_to_tts_ms":
+		return stage.TextToTTSMs
+	case "tts_to_audio_ms":
+		return stage.TTSToAudioMs
+	case "roundtrip_ms":
+		return stage.RoundtripMs
+	}
+	return 0
+}
+
+// agentMetricNames are the averages a Python agent reports that bear on reply time.
+var agentMetricNames = []struct{ key, label string }{
+	{"stt_latency_ms__avg", "STT"},
+	{"llm_time_to_first_token_ms__avg", "LLM first token"},
+	{"llm_latency_ms__avg", "LLM response"},
+	{"tts_latency_ms__avg", "TTS"},
+	{"llm_tool_latency_ms__avg", "Tool"},
+	{"turn_trailing_silence_ms__avg", "Trailing silence"},
 }
 
 // CategoryCell is pass@k / pass^k for one call type.
@@ -170,10 +228,15 @@ func defaultProviders() map[string]string {
 }
 
 func summarizePack(pack string, calls []CallResult, k int) PackSummary {
+	out := PackSummary{Pack: pack}
 	byScenario := map[string][]CallResult{}
 	var v2v []int
 	var nonTool []int
+	var tool []int
+	var firstResponse []int
 	var durations []int
+	stages := map[string][]int{}
+	agentMetrics := map[string][]float64{}
 	var toolWait []int
 	var callerTurns []int
 	var agentTurns []int
@@ -195,11 +258,28 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 				continue
 			}
 			v2v = append(v2v, timing.V2VMS)
-			if !timing.Tool {
+			if timing.Tool {
+				tool = append(tool, timing.V2VMS)
+			} else {
 				nonTool = append(nonTool, timing.V2VMS)
 			}
 		}
 		dropped += len(call.Metrics.Dropped)
+		for _, stage := range call.Metrics.Stages {
+			out.StageSamples++
+			for _, name := range stageNames {
+				stages[name] = append(stages[name], stageValue(stage, name))
+			}
+		}
+		for name, value := range call.Metrics.AgentMetrics {
+			agentMetrics[name] = append(agentMetrics[name], value)
+		}
+		if first := call.Metrics.FirstResponse; first != nil && first.V2VMS >= 0 {
+			firstResponse = append(firstResponse, first.V2VMS)
+			if first.Tool {
+				out.FirstResponseTool++
+			}
+		}
 		if call.Metrics.CallDurationMS > 0 {
 			durations = append(durations, call.Metrics.CallDurationMS)
 		}
@@ -223,7 +303,6 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 		scenarioIDs = append(scenarioIDs, id)
 	}
 	sort.Strings(scenarioIDs)
-	out := PackSummary{Pack: pack}
 	byCategory := map[string][]ScenarioSummary{}
 	for _, id := range scenarioIDs {
 		scenarioCalls := byScenario[id]
@@ -279,6 +358,32 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 	if len(nonTool) > 0 {
 		sort.Ints(nonTool)
 		out.NonToolP50 = score.Percentile(nonTool, 50)
+		out.NonToolP95 = score.Percentile(nonTool, 95)
+		out.NonToolMean = score.Mean(nonTool)
+	}
+	if len(tool) > 0 {
+		sort.Ints(tool)
+		out.ToolP50 = score.Percentile(tool, 50)
+	}
+	out.V2VMean = score.Mean(v2v)
+	if out.StageSamples > 0 {
+		out.StageP50 = map[string]int{}
+		for name, values := range stages {
+			sort.Ints(values)
+			out.StageP50[name] = score.Percentile(values, 50)
+		}
+	}
+	if len(agentMetrics) > 0 {
+		out.AgentMetricsP50 = map[string]float64{}
+		for name, values := range agentMetrics {
+			sort.Float64s(values)
+			out.AgentMetricsP50[name] = values[(len(values)-1)/2]
+		}
+	}
+	if len(firstResponse) > 0 {
+		sort.Ints(firstResponse)
+		out.FirstResponseP50 = score.Percentile(firstResponse, 50)
+		out.FirstResponseP95 = score.Percentile(firstResponse, 95)
 	}
 	if len(durations) > 0 {
 		sort.Ints(durations)
@@ -298,7 +403,9 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 	}
 	out.V2VSamples = len(v2v)
 	out.NonToolSamples = len(nonTool)
+	out.ToolSamples = len(tool)
 	out.DroppedTurns = dropped
+	out.FirstResponseSamples = len(firstResponse)
 	out.Spikes = spikes
 	out.ToolErrors = toolErrors
 	if validCalls > 0 {
@@ -402,6 +509,24 @@ func Markdown(s Summary) string {
 	for _, p := range s.Packs {
 		fmt.Fprintf(&b, "| %s | %d ms (n=%d) | %d ms | %d ms (n=%d) | %d | %d | %.2f |\n", p.Pack, p.V2VP50, p.V2VSamples, p.V2VP95, p.NonToolP50, p.NonToolSamples, p.Spikes, p.DroppedTurns, p.Cutoff)
 	}
+	b.WriteString("\n## Reply time\n\n")
+	b.WriteString("| Pack | Non-tool P50 | Non-tool P95 | Non-tool mean | Tool turns P50 | All turns P50 | All turns mean |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n")
+	for _, p := range s.Packs {
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s |\n", p.Pack,
+			msCell(p.NonToolP50, p.NonToolSamples), msCell(p.NonToolP95, p.NonToolSamples), msCell(p.NonToolMean, p.NonToolSamples),
+			msCell(p.ToolP50, p.ToolSamples), msCell(p.V2VP50, p.V2VSamples), msCell(p.V2VMean, p.V2VSamples))
+	}
+	writeStages(&b, s.Packs)
+	writeAgentMetrics(&b, s.Packs)
+	b.WriteString("\n## Time to first response\n\n")
+	b.WriteString("| Pack | P50 | P95 | Calls measured | Tool turns |\n| --- | ---: | ---: | ---: | ---: |\n")
+	for _, p := range s.Packs {
+		if p.FirstResponseSamples == 0 {
+			fmt.Fprintf(&b, "| %s | — | — | 0 | 0 |\n", p.Pack)
+			continue
+		}
+		fmt.Fprintf(&b, "| %s | %d ms | %d ms | %d | %d |\n", p.Pack, p.FirstResponseP50, p.FirstResponseP95, p.FirstResponseSamples, p.FirstResponseTool)
+	}
 	b.WriteString("\n## Operations\n\n")
 	b.WriteString("| Pack | Call duration P50 | Tool count / call | Tool errors | Tool wait P50 | Caller turns P50 | Agent turns P50 |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n")
 	for _, p := range s.Packs {
@@ -415,13 +540,98 @@ func Markdown(s Summary) string {
 		}
 	}
 	b.WriteString("\n## Calls\n\n")
-	b.WriteString("| Scenario | Trial | Outcome | Duration | V2V P50 | Non-tool P50 | Tools | Tool wait | Spikes | Gates | Artifacts |\n| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |\n")
+	b.WriteString("| Scenario | Trial | Outcome | Duration | First response | V2V P50 | Non-tool P50 | Tools | Tool wait | Spikes | Gates | Artifacts |\n| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |\n")
 	for _, call := range s.Calls {
-		fmt.Fprintf(&b, "| %s | %d | %s | %d ms | %d ms | %d ms | %d | %d ms | %d | %s | %s |\n", call.ScenarioID, call.Trial, callOutcome(call), call.Metrics.CallDurationMS, call.Metrics.V2VP50, call.Metrics.NonToolP50, call.Metrics.ToolCount, call.Metrics.ToolWaitMS, call.Metrics.SpikeCount, strings.Join(call.Metrics.GateNotes, ","), artifactLinks(call))
+		fmt.Fprintf(&b, "| %s | %d | %s | %d ms | %s | %d ms | %d ms | %d | %d ms | %d | %s | %s |\n", call.ScenarioID, call.Trial, callOutcome(call), call.Metrics.CallDurationMS, firstResponseCell(call.Metrics.FirstResponse), call.Metrics.V2VP50, call.Metrics.NonToolP50, call.Metrics.ToolCount, call.Metrics.ToolWaitMS, call.Metrics.SpikeCount, strings.Join(call.Metrics.GateNotes, ","), artifactLinks(call))
 	}
-	b.WriteString("\nP50s are pooled over every measured turn in the pack, not a median of per-call medians; n is that sample count. Turns dropped are scripted turns with no usable reply gap, listed per call in `metrics.json` under `dropped_turns`.\n")
+	b.WriteString("\nP50s are pooled over every measured turn in the pack, not a median of per-call medians; n is that sample count. Turns dropped are scripted turns with no usable reply gap, listed per call in `metrics.json` under `dropped_turns`. Time to first response is the reply gap of each call's first caller utterance, one sample per call; a call whose first turn drew no reply has none.\n")
 	b.WriteString("\nHard gates are end-state AND successful expected tools/arguments AND policy AND entity fidelity AND tool order AND say-do AND filler AND barge-in stop AND hold/selectivity. Required evaluator failures make a trial invalid rather than failed. V2V latency and spikes are reported, not gated. Human-band % uses non-tool turns only.\n")
 	return b.String()
+}
+
+// writeStages is the router's account of where a caller turn's wait went, for the packs it
+// timed.
+func writeStages(b *strings.Builder, packs []PackSummary) {
+	timed := false
+	for _, p := range packs {
+		timed = timed || p.StageSamples > 0
+	}
+	if !timed {
+		return
+	}
+	b.WriteString("\n## Where the router's time goes\n\n")
+	b.WriteString("Medians over every caller turn the router timed. The stages from cadence to TTS to audio run one after another and make up the roundtrip. A diagnostic for our own targets; LiveKit reports nothing comparable.\n\n")
+	b.WriteString("| Pack | STT | Cadence | Decision | Model to first text | Text to TTS | TTS to audio | Roundtrip | Turns |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
+	for _, p := range packs {
+		if p.StageSamples == 0 {
+			continue
+		}
+		fmt.Fprintf(b, "| %s |", p.Pack)
+		for _, name := range stageNames {
+			fmt.Fprintf(b, " %d ms |", p.StageP50[name])
+		}
+		fmt.Fprintf(b, " %d |\n", p.StageSamples)
+	}
+}
+
+// writeAgentMetrics is what a Python agent measured about itself, for the packs it reported.
+func writeAgentMetrics(b *strings.Builder, packs []PackSummary) {
+	reported := func(p PackSummary) bool {
+		for _, metric := range agentMetricNames {
+			if _, ok := p.AgentMetricsP50[metric.key]; ok {
+				return true
+			}
+		}
+		return false
+	}
+	measured := false
+	for _, p := range packs {
+		measured = measured || reported(p)
+	}
+	// A target whose pipeline runs elsewhere, such as the router, leaves these unmeasured,
+	// and a table of dashes says nothing.
+	if !measured {
+		return
+	}
+	b.WriteString("\n## What the agent measured\n\n")
+	b.WriteString("Each call's averages as the Python agent reports them, then the median across calls. A diagnostic; a dash is a stage the agent did not measure.\n\n")
+	b.WriteString("| Pack |")
+	for _, metric := range agentMetricNames {
+		fmt.Fprintf(b, " %s |", metric.label)
+	}
+	b.WriteString("\n| --- |" + strings.Repeat(" ---: |", len(agentMetricNames)) + "\n")
+	for _, p := range packs {
+		if !reported(p) {
+			continue
+		}
+		fmt.Fprintf(b, "| %s |", p.Pack)
+		for _, metric := range agentMetricNames {
+			if value, ok := p.AgentMetricsP50[metric.key]; ok {
+				fmt.Fprintf(b, " %.0f ms |", value)
+			} else {
+				b.WriteString(" — |")
+			}
+		}
+		b.WriteString("\n")
+	}
+}
+
+// msCell is a millisecond figure with its sample count, or a dash when nothing was measured.
+func msCell(ms, samples int) string {
+	if samples == 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%d ms (n=%d)", ms, samples)
+}
+
+func firstResponseCell(first *score.Timing) string {
+	if first == nil {
+		return "—"
+	}
+	if first.Tool {
+		return fmt.Sprintf("%d ms (tool)", first.V2VMS)
+	}
+	return fmt.Sprintf("%d ms", first.V2VMS)
 }
 
 func (s Summary) kind() string {

@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 const (
@@ -77,7 +78,7 @@ func New(options Options) (*Provider, error) {
 		options.AuthToken = os.Getenv(authTokenEnvVar)
 	}
 	if options.AuthID == "" || options.AuthToken == "" {
-		return nil, errors.New("plivo: " + authIDEnvVar + " and " + authTokenEnvVar + " are required")
+		return nil, stack.Wrap(errors.New("plivo: " + authIDEnvVar + " and " + authTokenEnvVar + " are required"))
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
@@ -100,7 +101,7 @@ func New(options Options) (*Provider, error) {
 // SearchNumbers returns numbers Plivo is offering in a country.
 func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
 	if search.Country == "" {
-		return nil, errors.New("plivo: a country is required to search for numbers")
+		return nil, stack.Wrap(errors.New("plivo: a country is required to search for numbers"))
 	}
 
 	query := url.Values{"country_iso": {strings.ToUpper(search.Country)}}
@@ -115,7 +116,7 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 	if search.Type != "" {
 		kind, ok := kinds[search.Type]
 		if !ok {
-			return nil, fmt.Errorf("plivo: does not sell %s numbers", search.Type)
+			return nil, stack.Wrap(fmt.Errorf("plivo: does not sell %s numbers", search.Type))
 		}
 		query.Set("type", kind)
 	}
@@ -150,7 +151,7 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 // BuyNumber rents a number. Plivo rents by number, so the order's country is not needed.
 func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Number, error) {
 	if order.E164 == "" {
-		return phone.Number{}, errors.New("plivo: a number is required")
+		return phone.Number{}, stack.Wrap(errors.New("plivo: a number is required"))
 	}
 
 	var response rented
@@ -173,7 +174,7 @@ func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Numb
 // number a Number rather than a PhoneNumber, which is a different path from buying it.
 func (p *Provider) ReleaseNumber(ctx context.Context, e164 string) error {
 	if e164 == "" {
-		return errors.New("plivo: a number is required")
+		return stack.Wrap(errors.New("plivo: a number is required"))
 	}
 	return p.do(ctx, http.MethodDelete, p.path("Number", digits(e164)), nil, nil, nil)
 }
@@ -184,7 +185,7 @@ func (p *Provider) ReleaseNumber(ctx context.Context, e164 string) error {
 // pointing a number at a Stream trunk means hosting that XML. Buying the number does not, so
 // this says what is missing rather than half-doing it.
 func (p *Provider) ConfigureInbound(context.Context, phone.Inbound) error {
-	return fmt.Errorf("%w: plivo numbers are bought here but bridged elsewhere", phone.ErrNotImplemented)
+	return stack.Wrap(fmt.Errorf("%w: plivo numbers are bought here but bridged elsewhere", phone.ErrNotImplemented))
 }
 
 // Dial calls a person and has Plivo fetch, on answer, the XML that bridges them to the trunk.
@@ -195,11 +196,11 @@ func (p *Provider) ConfigureInbound(context.Context, phone.Inbound) error {
 // trunk needs no address allowlist.
 func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dialed, error) {
 	if err := outbound.Validate(); err != nil {
-		return phone.Dialed{}, fmt.Errorf("plivo: %w", err)
+		return phone.Dialed{}, stack.Wrap(fmt.Errorf("plivo: %w", err))
 	}
 	if outbound.AnswerURL == "" {
-		return phone.Dialed{}, errors.New(
-			"plivo: fetches its call plan when the person answers, so it needs somewhere to fetch it from")
+		return phone.Dialed{}, stack.Wrap(errors.New(
+			"plivo: fetches its call plan when the person answers, so it needs somewhere to fetch it from"))
 	}
 
 	request := callRequest{
@@ -250,7 +251,7 @@ func (p *Provider) Answer(bridge phone.Bridge, _ string) (phone.Plan, error) {
 
 // SendDigits is not wrapped for Plivo, since nothing here places a Plivo call to press on.
 func (p *Provider) SendDigits(context.Context, string, string) error {
-	return fmt.Errorf("%w: plivo", phone.ErrNotImplemented)
+	return stack.Wrap(fmt.Errorf("%w: plivo", phone.ErrNotImplemented))
 }
 
 // Supports is a country, an anchored prefix, a city and a number type.
@@ -303,14 +304,14 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("plivo: encode %s: %w", path, err)
+			return stack.Wrap(fmt.Errorf("plivo: encode %s: %w", path, err))
 		}
 		payload = bytes.NewReader(encoded)
 	}
 
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, payload)
 	if err != nil {
-		return fmt.Errorf("plivo: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("plivo: %s: %w", path, err))
 	}
 	request.SetBasicAuth(p.authID, p.authToken)
 	request.Header.Set("Accept", "application/json")
@@ -320,20 +321,20 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("plivo: %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("plivo: %s: %w", path, err))
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return fmt.Errorf("plivo: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail)))
+		return stack.Wrap(fmt.Errorf("plivo: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return fmt.Errorf("plivo: decode %s: %w", path, err)
+		return stack.Wrap(fmt.Errorf("plivo: decode %s: %w", path, err))
 	}
 	return nil
 }

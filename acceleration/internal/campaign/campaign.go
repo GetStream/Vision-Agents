@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -88,10 +89,10 @@ func (r *Runner) Start(ctx context.Context, customerID, id string) error {
 		return err
 	}
 	if campaign.ConfigID == "" {
-		return errors.New("campaign: a campaign needs an agent config to make its calls with")
+		return stack.Wrap(errors.New("campaign: a campaign needs an agent config to make its calls with"))
 	}
 	if campaign.FromNumber == "" {
-		return errors.New("campaign: a campaign needs one of your numbers to call from")
+		return stack.Wrap(errors.New("campaign: a campaign needs one of your numbers to call from"))
 	}
 	// The config is read once, here, rather than per call: a campaign is one agent
 	// ringing many people, and editing it halfway through should not change who they
@@ -104,7 +105,7 @@ func (r *Runner) Start(ctx context.Context, customerID, id string) error {
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
-		return errors.New("campaign: the runner is shut down")
+		return stack.Wrap(errors.New("campaign: the runner is shut down"))
 	}
 	if _, already := r.running[campaign.ID]; already {
 		r.mu.Unlock()
@@ -213,12 +214,9 @@ func (r *Runner) ring(
 	contact store.Contact,
 ) {
 	finished := store.Contact{ID: contact.ID, State: store.Done}
+	spec := session.FromConfig(config)
 
-	placed, err := r.phone.Call(ctx, phone.CallRequest{
-		Owner: routing.Owner{CustomerID: campaign.CustomerID, Tags: campaign.Tags},
-		From:  campaign.FromNumber,
-		To:    contact.ToNumber,
-	})
+	placed, err := r.phone.Call(ctx, placing(campaign, contact, spec.CallType))
 	if err != nil {
 		finished.State = store.Failed
 		finished.Error = err.Error()
@@ -227,8 +225,7 @@ func (r *Runner) ring(
 	}
 	finished.VendorCallID = placed.VendorCallID
 
-	spec := session.FromConfig(config)
-	spec.CallID = "campaign-" + contact.ID
+	meet(&spec, placed)
 	spec.CampaignID = campaign.ID
 	spec.ContactID = contact.ID
 	// The agent placed this call, so it is told how to get past whatever answers before
@@ -253,6 +250,25 @@ func (r *Runner) ring(
 
 	r.hold(ctx, created)
 	r.finish(ctx, finished)
+}
+
+// placing is the call one contact is rung on. The answered leg is routed into the Stream
+// call this names, and the agent has to be in that same call: without naming it, the route
+// sends the person into a fresh call of its own while the agent waits in another.
+func placing(campaign store.Campaign, contact store.Contact, callType string) phone.CallRequest {
+	return phone.CallRequest{
+		Owner:    routing.Owner{CustomerID: campaign.CustomerID, Tags: campaign.Tags},
+		From:     campaign.FromNumber,
+		To:       contact.ToNumber,
+		CallID:   "campaign-" + contact.ID,
+		CallType: callType,
+	}
+}
+
+// meet puts the agent in the call the person was routed into.
+func meet(spec *session.Spec, placed phone.Placed) {
+	spec.CallID = placed.CallID
+	spec.CallType = placed.CallType
 }
 
 // hold waits for the conversation to end, and ends it if nothing else does.

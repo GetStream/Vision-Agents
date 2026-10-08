@@ -62,8 +62,12 @@ func (s *MetaRouterIntegrationSuite) TearDownTest() {
 func (s *MetaRouterIntegrationSuite) ask(params llm.ResponseParams) (llm.Response, int) {
 	ctx, cancel := context.WithTimeout(s.T().Context(), 90*time.Second)
 	defer cancel()
-	params.MaxOutputTokens = 1024
-	params.Reasoning.Effort = "minimal"
+	if params.MaxOutputTokens == 0 {
+		params.MaxOutputTokens = 1024
+	}
+	if params.Reasoning.Effort == "" {
+		params.Reasoning.Effort = "minimal"
+	}
 	stream, err := s.session.Create(ctx, params)
 	s.Require().NoError(err)
 	defer stream.Close()
@@ -87,6 +91,16 @@ func (s *MetaRouterIntegrationSuite) TestStreamsAnAnswerAndUsageThroughTheRouter
 	s.Positive(deltas)
 	s.Positive(response.Usage.InputTokens)
 	s.Positive(response.Usage.OutputTokens)
+	s.Equal(llm.StatusCompleted, response.Status)
+}
+
+func (s *MetaRouterIntegrationSuite) TestMaxEffortAnswersThroughTheRouter() {
+	response, _ := s.ask(llm.ResponseParams{
+		Input:           []llm.Message{{Role: llm.User, Content: "What is 17 times 23? Answer with the number only."}},
+		Reasoning:       llm.ReasoningParams{Effort: "max"},
+		MaxOutputTokens: 16384,
+	})
+	s.Contains(response.OutputText, "391")
 	s.Equal(llm.StatusCompleted, response.Status)
 }
 

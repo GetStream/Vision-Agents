@@ -14,6 +14,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"maps"
+	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -22,7 +26,9 @@ import (
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/driver/pgdriver"
+	"github.com/uptrace/bun/extra/bunotel"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/migrations"
 )
 
@@ -30,6 +36,13 @@ import (
 type Store struct {
 	db       *bun.DB
 	LogDrops atomic.Int64
+	// shapes is what each table an export carries looks like, read from the catalogue
+	// once rather than kept in a list here that a migration could leave behind.
+	shapes tableShapes
+	// pins says how Stream app pins cross between deployments, once the router has said.
+	pins pinsHolder
+	// deliveriesPruned is when hook deliveries were last forgotten, in Unix nanoseconds.
+	deliveriesPruned atomic.Int64
 }
 
 // Open connects to Postgres using a pgdriver DSN, for example
@@ -40,7 +53,11 @@ func Open(dsn string) (*Store, error) {
 	}
 
 	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
-	return &Store{db: bun.NewDB(sqldb, pgdialect.New())}, nil
+	db := bun.NewDB(sqldb, pgdialect.New())
+	// A span per query, so a request's trace says which reads it waited on. Queries are
+	// recorded unformatted: the arguments of these are customer ids and api keys.
+	db.AddQueryHook(bunotel.NewQueryHook(bunotel.WithDBName("router")))
+	return &Store{db: db}, nil
 }
 
 // DB exposes the bun handle so callers can run queries this store does not wrap.
@@ -50,7 +67,7 @@ func (s *Store) DB() *bun.DB { return s.db }
 func (s *Store) Close() error { return s.db.Close() }
 
 // Ping verifies the connection is usable.
-func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
+func (s *Store) Ping(ctx context.Context) error { return stack.Wrap(s.db.PingContext(ctx)) }
 
 // Migrate applies every pending migration.
 func (s *Store) Migrate(ctx context.Context) error {
@@ -61,7 +78,67 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := goose.UpContext(ctx, s.db.DB, "."); err != nil {
 		return fmt.Errorf("store: migrate: %w", err)
 	}
-	return nil
+	// Attached here rather than in a migration of their own, so that a table added later
+	// is covered by the deployment reaching it rather than by somebody remembering.
+	return s.WatchDataChanges(ctx)
+}
+
+// MigrationDrift compares the migrations this binary carries with the ones the database applied,
+// and writes nothing: unlike goose, which creates its version table when it is missing, it only
+// reads. pending are the carried versions not applied, oldest first; a database goose never
+// touched has every version pending. unknown are the applied versions this binary does not
+// carry, oldest first: a newer build migrated the database. Version 0 is goose's own first row,
+// not a migration. An applied version is the newest goose_db_version row of that version with
+// is_applied set, as goose reads its own table (Provider.ListMigrations, v3).
+func (s *Store) MigrationDrift(ctx context.Context) (pending, unknown []int64, err error) {
+	carried, err := fs.Glob(migrations.FS, "*.sql")
+	if err != nil {
+		return nil, nil, stack.Wrap(err)
+	}
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, "SELECT to_regclass('goose_db_version') IS NOT NULL").Scan(&exists); err != nil {
+		return nil, nil, stack.Wrap(fmt.Errorf("store: migration drift: %w", err))
+	}
+	applied := map[int64]bool{}
+	if exists {
+		rows, err := s.db.QueryContext(ctx, "SELECT version_id, is_applied FROM goose_db_version ORDER BY id DESC")
+		if err != nil {
+			return nil, nil, stack.Wrap(fmt.Errorf("store: migration drift: %w", err))
+		}
+		defer rows.Close()
+		seen := map[int64]bool{}
+		for rows.Next() {
+			var version int64
+			var isApplied bool
+			if err := rows.Scan(&version, &isApplied); err != nil {
+				return nil, nil, stack.Wrap(fmt.Errorf("store: migration drift: %w", err))
+			}
+			if !seen[version] {
+				seen[version], applied[version] = true, isApplied
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, nil, stack.Wrap(fmt.Errorf("store: migration drift: %w", err))
+		}
+	}
+	carries := map[int64]bool{}
+	for _, name := range carried {
+		prefix, _, _ := strings.Cut(name, "_")
+		version, err := strconv.ParseInt(prefix, 10, 64)
+		if err != nil {
+			return nil, nil, stack.Wrap(fmt.Errorf("store: migration %s has no version: %w", name, err))
+		}
+		carries[version] = true
+		if !applied[version] {
+			pending = append(pending, version)
+		}
+	}
+	for _, version := range slices.Sorted(maps.Keys(applied)) {
+		if applied[version] && version != 0 && !carries[version] {
+			unknown = append(unknown, version)
+		}
+	}
+	return pending, unknown, nil
 }
 
 // RecordRequest stores one request. Latency is optional because a request that failed
@@ -84,6 +161,18 @@ func (s *Store) RecordRequest(ctx context.Context, request *Request) error {
 	return nil
 }
 
+// ErrorCancelled is the error code of a request its caller gave up on, whether before the
+// provider answered or by closing the stream it had opened. It is not a success, but it is no
+// failure either, so the rollups count it as a request and for what it cost and leave it out
+// of errors, uptime and latency.
+const ErrorCancelled = "cancelled"
+
+// notCancelled is the SQL condition that a request was not cancelled, on the request row the
+// prefix names.
+func notCancelled(prefix string) string {
+	return prefix + "error_code IS DISTINCT FROM '" + ErrorCancelled + "'"
+}
+
 // Rollup aggregates the requests in [from, to) into the rollup tables for the given
 // granularity, both the provider breakdown and the cost-tag breakdown, and returns how
 // many buckets were written across the two. It is idempotent: re-running it recomputes
@@ -91,10 +180,10 @@ func (s *Store) RecordRequest(ctx context.Context, request *Request) error {
 // window.
 func (s *Store) Rollup(ctx context.Context, granularity Granularity, from, to time.Time) (int64, error) {
 	if !granularity.Valid() {
-		return 0, fmt.Errorf("store: unknown granularity %q", granularity)
+		return 0, stack.Wrap(fmt.Errorf("store: unknown granularity %q", granularity))
 	}
 	if !to.After(from) {
-		return 0, fmt.Errorf("store: rollup window must be non-empty, got %s to %s", from, to)
+		return 0, stack.Wrap(fmt.Errorf("store: rollup window must be non-empty, got %s to %s", from, to))
 	}
 
 	providers, err := s.rollupProviders(ctx, granularity, from, to)
@@ -114,10 +203,11 @@ func (s *Store) Rollup(ctx context.Context, granularity Granularity, from, to ti
 
 func (s *Store) rollupProviders(ctx context.Context, granularity Granularity, from, to time.Time) (int64, error) {
 	query := fmt.Sprintf(`
-INSERT INTO %s (
+INSERT INTO %[1]s (
     modality, customer_id, provider, model, bucket,
     audio_ms_total, characters_total,
     input_tokens_total, cached_input_tokens_total, output_tokens_total,
+    images_total,
     cost_micros_total,
     request_count, error_count,
     latency_p50_ms, latency_p95_ms
@@ -127,17 +217,18 @@ SELECT
     customer_id,
     provider,
     model,
-    date_trunc('%s', started_at) AS bucket,
+    date_trunc('%[2]s', started_at) AS bucket,
     COALESCE(SUM(audio_ms), 0),
     COALESCE(SUM(characters), 0),
     COALESCE(SUM(input_tokens), 0),
     COALESCE(SUM(cached_input_tokens), 0),
     COALESCE(SUM(output_tokens), 0),
+    COALESCE(SUM(images), 0),
     COALESCE(SUM(cost_micros), 0),
     COUNT(*),
-    COUNT(*) FILTER (WHERE NOT success),
-    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms),
-    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)
+    COUNT(*) FILTER (WHERE NOT success AND %[3]s),
+    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE %[3]s),
+    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE %[3]s)
 FROM requests
 WHERE started_at >= ? AND started_at < ?
 GROUP BY modality, customer_id, provider, model, bucket
@@ -147,21 +238,22 @@ ON CONFLICT (modality, customer_id, provider, model, bucket) DO UPDATE SET
     input_tokens_total = EXCLUDED.input_tokens_total,
     cached_input_tokens_total = EXCLUDED.cached_input_tokens_total,
     output_tokens_total = EXCLUDED.output_tokens_total,
+    images_total = EXCLUDED.images_total,
     cost_micros_total = EXCLUDED.cost_micros_total,
     request_count = EXCLUDED.request_count,
     error_count = EXCLUDED.error_count,
     latency_p50_ms = EXCLUDED.latency_p50_ms,
     latency_p95_ms = EXCLUDED.latency_p95_ms`,
-		granularity.table(), granularity.truncateUnit())
+		granularity.table(), granularity.truncateUnit(), notCancelled(""))
 
 	result, err := s.db.ExecContext(ctx, query, from, to)
 	if err != nil {
-		return 0, fmt.Errorf("store: rollup %s: %w", granularity, err)
+		return 0, stack.Wrap(fmt.Errorf("store: rollup %s: %w", granularity, err))
 	}
 
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return 0, fmt.Errorf("store: rollup %s: %w", granularity, err)
+		return 0, stack.Wrap(fmt.Errorf("store: rollup %s: %w", granularity, err))
 	}
 	return affected, nil
 }
@@ -171,10 +263,11 @@ ON CONFLICT (modality, customer_id, provider, model, bucket) DO UPDATE SET
 // towards both breakdowns.
 func (s *Store) rollupTags(ctx context.Context, granularity Granularity, from, to time.Time) (int64, error) {
 	query := fmt.Sprintf(`
-INSERT INTO %s (
+INSERT INTO %[1]s (
     modality, customer_id, tag_key, tag_value, bucket,
     audio_ms_total, characters_total,
     input_tokens_total, cached_input_tokens_total, output_tokens_total,
+    images_total,
     cost_micros_total,
     request_count, error_count,
     latency_p50_ms, latency_p95_ms
@@ -184,17 +277,18 @@ SELECT
     r.customer_id,
     tag.key,
     tag.value,
-    date_trunc('%s', r.started_at) AS bucket,
+    date_trunc('%[2]s', r.started_at) AS bucket,
     COALESCE(SUM(r.audio_ms), 0),
     COALESCE(SUM(r.characters), 0),
     COALESCE(SUM(r.input_tokens), 0),
     COALESCE(SUM(r.cached_input_tokens), 0),
     COALESCE(SUM(r.output_tokens), 0),
+    COALESCE(SUM(r.images), 0),
     COALESCE(SUM(r.cost_micros), 0),
     COUNT(*),
-    COUNT(*) FILTER (WHERE NOT r.success),
-    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY r.latency_ms),
-    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY r.latency_ms)
+    COUNT(*) FILTER (WHERE NOT r.success AND %[3]s),
+    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY r.latency_ms) FILTER (WHERE %[3]s),
+    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY r.latency_ms) FILTER (WHERE %[3]s)
 FROM requests AS r
 CROSS JOIN LATERAL jsonb_each_text(r.tags) AS tag(key, value)
 WHERE r.started_at >= ? AND r.started_at < ?
@@ -205,21 +299,22 @@ ON CONFLICT (modality, customer_id, tag_key, tag_value, bucket) DO UPDATE SET
     input_tokens_total = EXCLUDED.input_tokens_total,
     cached_input_tokens_total = EXCLUDED.cached_input_tokens_total,
     output_tokens_total = EXCLUDED.output_tokens_total,
+    images_total = EXCLUDED.images_total,
     cost_micros_total = EXCLUDED.cost_micros_total,
     request_count = EXCLUDED.request_count,
     error_count = EXCLUDED.error_count,
     latency_p50_ms = EXCLUDED.latency_p50_ms,
     latency_p95_ms = EXCLUDED.latency_p95_ms`,
-		granularity.tagTable(), granularity.truncateUnit())
+		granularity.tagTable(), granularity.truncateUnit(), notCancelled("r."))
 
 	result, err := s.db.ExecContext(ctx, query, from, to)
 	if err != nil {
-		return 0, fmt.Errorf("store: rollup %s tags: %w", granularity, err)
+		return 0, stack.Wrap(fmt.Errorf("store: rollup %s tags: %w", granularity, err))
 	}
 
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return 0, fmt.Errorf("store: rollup %s tags: %w", granularity, err)
+		return 0, stack.Wrap(fmt.Errorf("store: rollup %s tags: %w", granularity, err))
 	}
 	return affected, nil
 }
@@ -298,12 +393,12 @@ ON CONFLICT (customer_id, agent_id, bucket) DO UPDATE SET
 
 	result, err := s.db.ExecContext(ctx, query, from, to)
 	if err != nil {
-		return 0, fmt.Errorf("store: rollup %s turns: %w", granularity, err)
+		return 0, stack.Wrap(fmt.Errorf("store: rollup %s turns: %w", granularity, err))
 	}
 
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return 0, fmt.Errorf("store: rollup %s turns: %w", granularity, err)
+		return 0, stack.Wrap(fmt.Errorf("store: rollup %s turns: %w", granularity, err))
 	}
 	return affected, nil
 }
@@ -317,10 +412,10 @@ func (s *Store) CustomerTurnStats(
 	from, to time.Time,
 ) ([]TurnBucket, error) {
 	if !granularity.Valid() {
-		return nil, fmt.Errorf("store: unknown granularity %q", granularity)
+		return nil, stack.Wrap(fmt.Errorf("store: unknown granularity %q", granularity))
 	}
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
 	query := s.db.NewSelect().
@@ -334,7 +429,7 @@ func (s *Store) CustomerTurnStats(
 
 	var buckets []TurnBucket
 	if err := query.Order("bucket ASC", "agent_id ASC").Scan(ctx, &buckets); err != nil {
-		return nil, fmt.Errorf("store: customer turn stats: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer turn stats: %w", err))
 	}
 	return buckets, nil
 }
@@ -351,13 +446,13 @@ func (s *Store) CustomerStats(
 	tags map[string]string,
 ) ([]Bucket, error) {
 	if !granularity.Valid() {
-		return nil, fmt.Errorf("store: unknown granularity %q", granularity)
+		return nil, stack.Wrap(fmt.Errorf("store: unknown granularity %q", granularity))
 	}
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 	if modality == "" {
-		return nil, errors.New("store: modality is required")
+		return nil, stack.Wrap(errors.New("store: modality is required"))
 	}
 
 	if tags == nil {
@@ -376,7 +471,7 @@ func (s *Store) taggedStats(
 ) ([]Bucket, error) {
 	filter, err := json.Marshal(tags)
 	if err != nil {
-		return nil, fmt.Errorf("store: customer stats: encode tag filter: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer stats: encode tag filter: %w", err))
 	}
 
 	query := fmt.Sprintf(`
@@ -385,29 +480,30 @@ SELECT
     customer_id,
     provider,
     model,
-    date_trunc('%s', started_at) AS bucket,
+    date_trunc('%[1]s', started_at) AS bucket,
     COALESCE(SUM(audio_ms), 0) AS audio_ms_total,
     COALESCE(SUM(characters), 0) AS characters_total,
     COALESCE(SUM(input_tokens), 0) AS input_tokens_total,
     COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens_total,
     COALESCE(SUM(output_tokens), 0) AS output_tokens_total,
+    COALESCE(SUM(images), 0) AS images_total,
     COALESCE(SUM(cost_micros), 0) AS cost_micros_total,
     COUNT(*) AS request_count,
-    COUNT(*) FILTER (WHERE NOT success) AS error_count,
-    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms) AS latency_p50_ms,
-    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms) AS latency_p95_ms,
-    (COUNT(*) - COUNT(*) FILTER (WHERE NOT success))::double precision
+    COUNT(*) FILTER (WHERE NOT success AND %[2]s) AS error_count,
+    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE %[2]s) AS latency_p50_ms,
+    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE %[2]s) AS latency_p95_ms,
+    (COUNT(*) - COUNT(*) FILTER (WHERE NOT success AND %[2]s))::double precision
         / NULLIF(COUNT(*), 0) AS uptime
 FROM requests
 WHERE modality = ? AND customer_id = ?
   AND started_at >= ? AND started_at < ?
   AND tags @> ?::jsonb
 GROUP BY modality, customer_id, provider, model, bucket
-ORDER BY bucket ASC, provider ASC, model ASC`, granularity.truncateUnit())
+ORDER BY bucket ASC, provider ASC, model ASC`, granularity.truncateUnit(), notCancelled(""))
 
 	var buckets []Bucket
 	if err := s.db.NewRaw(query, modality, customerID, from, to, string(filter)).Scan(ctx, &buckets); err != nil {
-		return nil, fmt.Errorf("store: customer stats by tag: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer stats by tag: %w", err))
 	}
 	return buckets, nil
 }
@@ -422,16 +518,16 @@ func (s *Store) CustomerTagStats(
 	from, to time.Time,
 ) ([]TagBucket, error) {
 	if !granularity.Valid() {
-		return nil, fmt.Errorf("store: unknown granularity %q", granularity)
+		return nil, stack.Wrap(fmt.Errorf("store: unknown granularity %q", granularity))
 	}
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 	if modality == "" {
-		return nil, errors.New("store: modality is required")
+		return nil, stack.Wrap(errors.New("store: modality is required"))
 	}
 	if tagKey == "" {
-		return nil, errors.New("store: tag key is required")
+		return nil, stack.Wrap(errors.New("store: tag key is required"))
 	}
 
 	var buckets []TagBucket
@@ -445,21 +541,401 @@ func (s *Store) CustomerTagStats(
 		Order("bucket ASC", "tag_value ASC").
 		Scan(ctx, &buckets)
 	if err != nil {
-		return nil, fmt.Errorf("store: customer tag stats: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer tag stats: %w", err))
 	}
 	return buckets, nil
+}
+
+// spendGroupByModality is the group_by that means "where the money went" rather than
+// "what it was spent on", and the only one that is not a cost label key.
+const spendGroupByModality = "modality"
+
+// spendOther is the value every group outside the biggest few is summed into.
+const spendOther = "other"
+
+// CustomerSpend returns what one customer spent per bucket and group, oldest bucket first.
+// It is the whole bill rather than one modality's share of it, which is what a spend trend
+// is read as.
+//
+// groupBy is either "modality" or a cost label key. Only the limit biggest values over the
+// whole window keep a group of their own: a label such as customer_id has as many values as
+// the customer has customers, and a chart of all of them says nothing. The rest are summed
+// into "other", and requests carrying no such label into the empty value, so the rows still
+// add up to the total.
+//
+// Reads the request rows rather than the rollups, so today's spend is there before a
+// rollup has run.
+func (s *Store) CustomerSpend(
+	ctx context.Context,
+	customerID, groupBy string,
+	granularity Granularity,
+	from, to time.Time,
+	limit int,
+	tags map[string]string,
+) ([]SpendBucket, error) {
+	if !granularity.Valid() {
+		return nil, stack.Wrap(fmt.Errorf("store: unknown granularity %q", granularity))
+	}
+	if customerID == "" {
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
+	}
+	if limit < 1 {
+		return nil, stack.Wrap(errors.New("store: limit must be at least 1"))
+	}
+	if tags == nil {
+		tags = map[string]string{}
+	}
+	filter, err := json.Marshal(tags)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: customer spend: encode tag filter: %w", err))
+	}
+
+	valueExpr := "modality"
+	args := []any{}
+	if groupBy != spendGroupByModality {
+		valueExpr = "COALESCE(tags->>?, '')"
+		args = append(args, groupBy)
+	}
+	args = append(args, customerID, from, to, string(filter), limit)
+
+	query := fmt.Sprintf(`
+WITH grouped AS (
+    SELECT
+        date_trunc('%s', started_at) AS bucket,
+        %s AS value,
+        cost_micros
+    FROM requests
+    WHERE customer_id = ?
+      AND started_at >= ? AND started_at < ?
+      AND tags @> ?::jsonb
+),
+biggest AS (
+    SELECT
+        value,
+        ROW_NUMBER() OVER (
+            ORDER BY SUM(cost_micros) DESC, COUNT(*) DESC, value ASC
+        ) AS rank
+    FROM grouped
+    WHERE value <> ''
+    GROUP BY value
+),
+folded AS (
+    SELECT
+        g.bucket AS bucket,
+        CASE
+            WHEN g.value = '' THEN ''
+            WHEN b.rank > ? THEN '%s'
+            ELSE g.value
+        END AS value,
+        g.cost_micros AS cost_micros
+    FROM grouped AS g
+    LEFT JOIN biggest AS b ON b.value = g.value
+)
+SELECT
+    bucket,
+    value,
+    COALESCE(SUM(cost_micros), 0) AS cost_micros_total,
+    COUNT(*) AS request_count
+FROM folded
+GROUP BY bucket, value
+ORDER BY bucket ASC, cost_micros_total DESC, value ASC`,
+		granularity.truncateUnit(), valueExpr, spendOther)
+
+	var buckets []SpendBucket
+	if err := s.db.NewRaw(query, args...).Scan(ctx, &buckets); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: customer spend: %w", err))
+	}
+	return buckets, nil
+}
+
+// tagKeyRow is one cost label key paired with one of its largest values, which is how the
+// two levels come back from a single query.
+type tagKeyRow struct {
+	Key             string `bun:"key"`
+	ValueCount      int64  `bun:"value_count"`
+	CostMicrosTotal int64  `bun:"cost_micros_total"`
+	RequestCount    int64  `bun:"request_count"`
+	Value           string `bun:"value"`
+	ValueCost       int64  `bun:"value_cost_micros_total"`
+	ValueRequests   int64  `bun:"value_request_count"`
+}
+
+// topTagValues is how many values of a key come back with it. Enough to see what drives the
+// key's spend, few enough that a key naming an end customer does not return a database.
+const topTagValues = 10
+
+// CustomerTagKeys returns which cost label keys one customer's spend carries, biggest spend
+// first, each with its ten largest values.
+//
+// Cost labels are the customer's own, so nothing here knows in advance whether spend is
+// broken down by product, by environment or by the end customer it was incurred for. What
+// tells them apart is how many values a key was used with and how much of the traffic
+// carries it, which is what this reports.
+func (s *Store) CustomerTagKeys(
+	ctx context.Context,
+	customerID string,
+	from, to time.Time,
+	tags map[string]string,
+) ([]TagKeySummary, error) {
+	if customerID == "" {
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
+	}
+	if tags == nil {
+		tags = map[string]string{}
+	}
+	filter, err := json.Marshal(tags)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: customer tag keys: encode tag filter: %w", err))
+	}
+
+	// Coverage is measured against every request in the window, labelled or not, because a
+	// key on half the traffic breaks down half the bill and reading it as the whole of it
+	// is the mistake this number exists to prevent.
+	var total int64
+	err = s.db.NewSelect().
+		Table("requests").
+		ColumnExpr("COUNT(*)").
+		Where("customer_id = ?", customerID).
+		Where("started_at >= ?", from).
+		Where("started_at < ?", to).
+		Where("tags @> ?::jsonb", string(filter)).
+		Scan(ctx, &total)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: customer tag keys: %w", err))
+	}
+	if total == 0 {
+		return nil, nil
+	}
+
+	query := `
+WITH labelled AS (
+    SELECT tag.key AS key, tag.value AS value, r.cost_micros AS cost_micros
+    FROM requests AS r
+    CROSS JOIN LATERAL jsonb_each_text(r.tags) AS tag(key, value)
+    WHERE r.customer_id = ?
+      AND r.started_at >= ? AND r.started_at < ?
+      AND r.tags @> ?::jsonb
+),
+per_value AS (
+    SELECT
+        key,
+        value,
+        SUM(cost_micros) AS cost_micros_total,
+        COUNT(*) AS request_count
+    FROM labelled
+    GROUP BY key, value
+),
+ranked AS (
+    SELECT
+        key, value, cost_micros_total, request_count,
+        ROW_NUMBER() OVER (
+            PARTITION BY key
+            ORDER BY cost_micros_total DESC, request_count DESC, value ASC
+        ) AS rank
+    FROM per_value
+),
+per_key AS (
+    SELECT
+        key,
+        COUNT(*) AS value_count,
+        SUM(cost_micros_total) AS cost_micros_total,
+        SUM(request_count) AS request_count
+    FROM per_value
+    GROUP BY key
+)
+SELECT
+    k.key AS key,
+    k.value_count AS value_count,
+    k.cost_micros_total AS cost_micros_total,
+    k.request_count AS request_count,
+    r.value AS value,
+    r.cost_micros_total AS value_cost_micros_total,
+    r.request_count AS value_request_count
+FROM per_key AS k
+JOIN ranked AS r ON r.key = k.key AND r.rank <= ?
+ORDER BY k.cost_micros_total DESC, k.request_count DESC, k.key ASC, r.rank ASC`
+
+	var rows []tagKeyRow
+	err = s.db.NewRaw(query, customerID, from, to, string(filter), topTagValues).Scan(ctx, &rows)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: customer tag keys: %w", err))
+	}
+
+	var keys []TagKeySummary
+	for _, row := range rows {
+		if len(keys) == 0 || keys[len(keys)-1].Key != row.Key {
+			keys = append(keys, TagKeySummary{
+				Key:             row.Key,
+				ValueCount:      row.ValueCount,
+				CostMicrosTotal: row.CostMicrosTotal,
+				RequestCount:    row.RequestCount,
+				Coverage:        float64(row.RequestCount) / float64(total),
+			})
+		}
+		key := &keys[len(keys)-1]
+		// A deployment with no prices configured records every row at zero, so a share of
+		// spend would be a division by nothing. Requests are what is left to rank by.
+		share := float64(row.ValueRequests) / float64(key.RequestCount)
+		if key.CostMicrosTotal > 0 {
+			share = float64(row.ValueCost) / float64(key.CostMicrosTotal)
+		}
+		key.TopValues = append(key.TopValues, TagValueSummary{
+			Value:           row.Value,
+			CostMicrosTotal: row.ValueCost,
+			RequestCount:    row.ValueRequests,
+			Share:           share,
+		})
+	}
+	return keys, nil
+}
+
+// CustomerActivity returns how much one customer's agents were used per bucket, oldest
+// first, and by how many distinct people.
+//
+// A bucket with nothing in it is left out rather than returned as zeroes, the same way the
+// stats paths leave out a bucket nobody used.
+func (s *Store) CustomerActivity(
+	ctx context.Context,
+	customerID string,
+	granularity ActivityGranularity,
+	from, to time.Time,
+) ([]ActivityBucket, error) {
+	if !granularity.Valid() {
+		return nil, stack.Wrap(fmt.Errorf("store: unknown activity granularity %q", granularity))
+	}
+	if customerID == "" {
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
+	}
+
+	unit := granularity.truncateUnit()
+	query := fmt.Sprintf(`
+WITH seen AS (
+    SELECT
+        date_trunc('%[1]s', s.created_at) AS bucket,
+        COALESCE(NULLIF(g.claimed_by, ''), s.user_id) AS user_id,
+        s.caller_kind AS caller_kind
+    FROM agent_sessions AS s
+    LEFT JOIN users AS g ON g.id = s.user_id AND g.customer_id = s.customer_id
+        AND g.kind = 'guest'
+    WHERE s.customer_id = ? AND s.created_at >= ? AND s.created_at < ?
+    UNION ALL
+    SELECT
+        date_trunc('%[1]s', a.created_at) AS bucket,
+        COALESCE(NULLIF(g.claimed_by, ''), s.user_id) AS user_id,
+        s.caller_kind AS caller_kind
+    FROM agent_responses AS a
+    JOIN agent_sessions AS s ON s.id = a.session_id
+    LEFT JOIN users AS g ON g.id = s.user_id AND g.customer_id = s.customer_id
+        AND g.kind = 'guest'
+    WHERE a.customer_id = ? AND a.created_at >= ? AND a.created_at < ?
+),
+user_counts AS (
+    SELECT bucket, COUNT(*) AS n
+    FROM (SELECT DISTINCT bucket, user_id FROM seen WHERE user_id <> '' AND caller_kind <> 'anonymous') AS people
+    GROUP BY bucket
+),
+session_counts AS (
+    SELECT date_trunc('%[1]s', created_at) AS bucket, COUNT(*) AS n
+    FROM agent_sessions
+    WHERE customer_id = ? AND created_at >= ? AND created_at < ?
+    GROUP BY bucket
+),
+message_counts AS (
+    SELECT date_trunc('%[1]s', created_at) AS bucket, COUNT(*) AS n
+    FROM agent_responses
+    WHERE customer_id = ? AND created_at >= ? AND created_at < ?
+    GROUP BY bucket
+),
+call_counts AS (
+    SELECT
+        date_trunc('%[1]s', started_at) AS bucket,
+        COUNT(*) AS n,
+        SUM(EXTRACT(EPOCH FROM (COALESCE(ended_at, now()) - started_at)))::double precision / 60
+            AS voice_minutes,
+        COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(ended_at, now()) - started_at)))
+            FILTER (WHERE from_number IS NOT NULL OR to_number IS NOT NULL), 0)::double precision / 60
+            AS phone_minutes
+    FROM calls
+    WHERE customer_id = ? AND started_at >= ? AND started_at < ?
+    GROUP BY bucket
+),
+buckets AS (
+    SELECT bucket FROM user_counts
+    UNION SELECT bucket FROM session_counts
+    UNION SELECT bucket FROM message_counts
+    UNION SELECT bucket FROM call_counts
+)
+SELECT
+    b.bucket AS bucket,
+    COALESCE(u.n, 0) AS active_users,
+    COALESCE(s.n, 0) AS sessions,
+    COALESCE(m.n, 0) AS messages,
+    COALESCE(c.n, 0) AS calls,
+    COALESCE(c.voice_minutes, 0) AS voice_minutes,
+    COALESCE(c.phone_minutes, 0) AS phone_minutes
+FROM buckets AS b
+LEFT JOIN user_counts AS u ON u.bucket = b.bucket
+LEFT JOIN session_counts AS s ON s.bucket = b.bucket
+LEFT JOIN message_counts AS m ON m.bucket = b.bucket
+LEFT JOIN call_counts AS c ON c.bucket = b.bucket
+ORDER BY b.bucket ASC`, unit)
+
+	var buckets []ActivityBucket
+	err := s.db.NewRaw(query,
+		customerID, from, to,
+		customerID, from, to,
+		customerID, from, to,
+		customerID, from, to,
+		customerID, from, to,
+	).Scan(ctx, &buckets)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: customer activity: %w", err))
+	}
+	return buckets, nil
+}
+
+// ModelRequests returns how many requests each "provider/model" served for a modality
+// since a time, across every customer. It is what makes a model popular, so it counts
+// calls rather than spend, and is read from the raw requests so it needs no rollup.
+func (s *Store) ModelRequests(ctx context.Context, modality string, since time.Time) (map[string]int64, error) {
+	if modality == "" {
+		return nil, stack.Wrap(errors.New("store: modality is required"))
+	}
+
+	var rows []struct {
+		Provider string `bun:"provider"`
+		Model    string `bun:"model"`
+		Requests int64  `bun:"requests"`
+	}
+	err := s.db.NewSelect().
+		Table("requests").
+		Column("provider", "model").
+		ColumnExpr("COUNT(*) AS requests").
+		Where("modality = ?", modality).
+		Where("started_at >= ?", since).
+		Group("provider", "model").
+		Scan(ctx, &rows)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: model requests: %w", err))
+	}
+
+	counts := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		counts[row.Provider+"/"+row.Model] = row.Requests
+	}
+	return counts, nil
 }
 
 // RecordNumber stores a number a customer now holds.
 func (s *Store) RecordNumber(ctx context.Context, number *PhoneNumber) error {
 	if number.E164 == "" {
-		return errors.New("store: a number is required")
+		return stack.Wrap(errors.New("store: a number is required"))
 	}
 	if number.Vendor == "" {
-		return errors.New("store: vendor is required")
+		return stack.Wrap(errors.New("store: vendor is required"))
 	}
 	if number.CustomerID == "" {
-		return errors.New("store: customer id is required")
+		return stack.Wrap(errors.New("store: customer id is required"))
 	}
 	if number.PurchasedAt.IsZero() {
 		number.PurchasedAt = time.Now().UTC()
@@ -471,7 +947,7 @@ func (s *Store) RecordNumber(ctx context.Context, number *PhoneNumber) error {
 	}
 
 	if _, err := s.db.NewInsert().Model(number).Exec(ctx); err != nil {
-		return fmt.Errorf("store: record number: %w", err)
+		return stack.Wrap(fmt.Errorf("store: record number: %w", err))
 	}
 	return nil
 }
@@ -480,7 +956,7 @@ func (s *Store) RecordNumber(ctx context.Context, number *PhoneNumber) error {
 // it was held is still part of that month's bill.
 func (s *Store) ReleaseNumber(ctx context.Context, customerID, e164 string, at time.Time) error {
 	if customerID == "" || e164 == "" {
-		return errors.New("store: a customer and a number are required")
+		return stack.Wrap(errors.New("store: a customer and a number are required"))
 	}
 	if at.IsZero() {
 		at = time.Now().UTC()
@@ -488,19 +964,20 @@ func (s *Store) ReleaseNumber(ctx context.Context, customerID, e164 string, at t
 
 	result, err := s.db.NewUpdate().Model((*PhoneNumber)(nil)).
 		Set("released_at = ?", at).
+		Set("sip_trunk_id = NULL").
 		Where("customer_id = ?", customerID).
 		Where("e164 = ?", e164).
 		Where("released_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: release number: %w", err)
+		return stack.Wrap(fmt.Errorf("store: release number: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: release number: %w", err)
+		return stack.Wrap(fmt.Errorf("store: release number: %w", err))
 	}
 	if affected == 0 {
-		return fmt.Errorf("store: %s is not a number %s holds", e164, customerID)
+		return stack.Wrap(fmt.Errorf("store: %s is not a number %s holds", e164, customerID))
 	}
 	return nil
 }
@@ -510,40 +987,61 @@ func (s *Store) ReleaseNumber(ctx context.Context, customerID, e164 string, at t
 //
 // The call is recorded as well as the trunk because an inbound call arrives over a webhook
 // that names the call, so without it there is nothing to attribute the call to.
-func (s *Store) AttachNumber(ctx context.Context, customerID, e164, trunkID, callType, callID string) error {
+func (s *Store) AttachNumber(ctx context.Context, customerID, e164 string, attached NumberAttachment) error {
 	if customerID == "" || e164 == "" {
-		return errors.New("store: a customer and a number are required")
+		return stack.Wrap(errors.New("store: a customer and a number are required"))
 	}
-	if trunkID == "" {
-		return errors.New("store: a trunk id is required")
+	if attached.TrunkID == "" {
+		return stack.Wrap(errors.New("store: a trunk id is required"))
 	}
 
 	result, err := s.db.NewUpdate().Model((*PhoneNumber)(nil)).
-		Set("stream_trunk_id = ?", trunkID).
-		Set("stream_call_id = ?", callID).
-		Set("stream_call_type = ?", callType).
+		Set("stream_trunk_id = ?", attached.TrunkID).
+		Set("stream_route_id = ?", nullable(attached.RouteID)).
+		Set("stream_app_pk = ?", nullablePin(attached.StreamAppPK)).
+		Set("stream_call_id = ?", attached.CallID).
+		Set("stream_call_type = ?", attached.CallType).
 		Where("customer_id = ?", customerID).
 		Where("e164 = ?", e164).
 		Where("released_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: attach number: %w", err)
+		return stack.Wrap(fmt.Errorf("store: attach number: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: attach number: %w", err)
+		return stack.Wrap(fmt.Errorf("store: attach number: %w", err))
 	}
 	if affected == 0 {
-		return fmt.Errorf("store: %s is not a number %s holds", e164, customerID)
+		return stack.Wrap(fmt.Errorf("store: %s is not a number %s holds", e164, customerID))
 	}
 	return nil
+}
+
+// NumberAttachment is what attaching a number made in Stream, and where its calls go.
+type NumberAttachment struct {
+	TrunkID string
+	RouteID string
+	// StreamAppPK is the app the trunk and route were made in, zero for the deployment's.
+	StreamAppPK int64
+	CallType    string
+	CallID      string
+}
+
+// nullablePin stores the deployment's own app as NULL, as every pin written before apps
+// had identities reads.
+func nullablePin(app int64) any {
+	if app == 0 {
+		return nil
+	}
+	return app
 }
 
 // CustomerNumbers returns the numbers a customer holds, newest first. Released numbers
 // are left out unless asked for, since what is normally wanted is what can be called.
 func (s *Store) CustomerNumbers(ctx context.Context, customerID string, includeReleased bool) ([]PhoneNumber, error) {
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
 	query := s.db.NewSelect().Model((*PhoneNumber)(nil)).
@@ -555,7 +1053,7 @@ func (s *Store) CustomerNumbers(ctx context.Context, customerID string, includeR
 
 	var numbers []PhoneNumber
 	if err := query.Scan(ctx, &numbers); err != nil {
-		return nil, fmt.Errorf("store: customer numbers: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer numbers: %w", err))
 	}
 	return numbers, nil
 }
@@ -563,7 +1061,7 @@ func (s *Store) CustomerNumbers(ctx context.Context, customerID string, includeR
 // Number returns one number a customer holds.
 func (s *Store) Number(ctx context.Context, customerID, e164 string) (PhoneNumber, error) {
 	if customerID == "" || e164 == "" {
-		return PhoneNumber{}, errors.New("store: a customer and a number are required")
+		return PhoneNumber{}, stack.Wrap(errors.New("store: a customer and a number are required"))
 	}
 
 	var number PhoneNumber
@@ -574,59 +1072,10 @@ func (s *Store) Number(ctx context.Context, customerID, e164 string) (PhoneNumbe
 		Limit(1).
 		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return PhoneNumber{}, fmt.Errorf("store: %s is not a number %s holds", e164, customerID)
+		return PhoneNumber{}, stack.Wrap(numberNotHeld{fmt.Sprintf("store: %s is not a number %s holds", e164, customerID)})
 	}
 	if err != nil {
-		return PhoneNumber{}, fmt.Errorf("store: number: %w", err)
-	}
-	return number, nil
-}
-
-// NumberByCall returns the number whose callers land in a Stream call.
-//
-// This is the way back from an arriving call to the customer whose call it is: the webhook
-// that reports one is app-wide and names the call rather than the number or the customer.
-//
-// A number attached before the call was recorded is found by the "phone-<e164>" the default
-// routing rule names, which is derivable rather than stored. Without that fallback every
-// number already in service would have to be attached again to answer a call.
-func (s *Store) NumberByCall(ctx context.Context, callType, callID string) (PhoneNumber, error) {
-	if callID == "" {
-		return PhoneNumber{}, errors.New("store: a call id is required")
-	}
-	if callType == "" {
-		callType = "agent"
-	}
-
-	var number PhoneNumber
-	err := s.db.NewSelect().Model(&number).
-		Where("stream_call_id = ?", callID).
-		Where("stream_call_type = ?", callType).
-		Where("released_at IS NULL").
-		Limit(1).
-		Scan(ctx)
-	if err == nil {
-		return number, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return PhoneNumber{}, fmt.Errorf("store: number by call: %w", err)
-	}
-
-	e164, named := strings.CutPrefix(callID, "phone-")
-	if !named {
-		return PhoneNumber{}, fmt.Errorf("store: no number reaches call %s:%s", callType, callID)
-	}
-	err = s.db.NewSelect().Model(&number).
-		Where("e164 = ?", e164).
-		Where("stream_trunk_id IS NOT NULL").
-		Where("released_at IS NULL").
-		Limit(1).
-		Scan(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
-		return PhoneNumber{}, fmt.Errorf("store: no number reaches call %s:%s", callType, callID)
-	}
-	if err != nil {
-		return PhoneNumber{}, fmt.Errorf("store: number by call: %w", err)
+		return PhoneNumber{}, stack.Wrap(fmt.Errorf("store: number: %w", err))
 	}
 	return number, nil
 }

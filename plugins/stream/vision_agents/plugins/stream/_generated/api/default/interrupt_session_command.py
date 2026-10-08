@@ -7,7 +7,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.command_receipt import CommandReceipt
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...types import Response
 
 
@@ -29,24 +29,34 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> CommandReceipt | Error | None:
+) -> CommandReceipt | ErrorResponse | None:
     if response.status_code == 200:
         response_200 = CommandReceipt.from_dict(response.json())
 
         return response_200
 
+    if response.status_code == 400:
+        response_400 = ErrorResponse.from_dict(response.json())
+
+        return response_400
+
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 404:
-        response_404 = Error.from_dict(response.json())
+        response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
 
+    if response.status_code == 500:
+        response_500 = ErrorResponse.from_dict(response.json())
+
+        return response_500
+
     if response.status_code == 503:
-        response_503 = Error.from_dict(response.json())
+        response_503 = ErrorResponse.from_dict(response.json())
 
         return response_503
 
@@ -58,7 +68,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[CommandReceipt | Error]:
+) -> Response[CommandReceipt | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -72,7 +82,7 @@ def sync_detailed(
     command_id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[CommandReceipt | Error]:
+) -> Response[CommandReceipt | ErrorResponse]:
     """Stop one named command, and nothing else
 
      Abandons the reply that command is generating. Unlike interrupting the session, a stop that arrives
@@ -84,15 +94,15 @@ def sync_detailed(
     Interrupting model work claims nothing about a tool whose external side effect already happened.
 
     Args:
-        id (str):
-        command_id (str):
+        id (str): The session, as returned when it was created.
+        command_id (str): The client's own command id, as sent when the command was submitted.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[CommandReceipt | Error]
+        Response[CommandReceipt | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -112,7 +122,7 @@ def sync(
     command_id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> CommandReceipt | Error | None:
+) -> CommandReceipt | ErrorResponse | None:
     """Stop one named command, and nothing else
 
      Abandons the reply that command is generating. Unlike interrupting the session, a stop that arrives
@@ -124,15 +134,15 @@ def sync(
     Interrupting model work claims nothing about a tool whose external side effect already happened.
 
     Args:
-        id (str):
-        command_id (str):
+        id (str): The session, as returned when it was created.
+        command_id (str): The client's own command id, as sent when the command was submitted.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        CommandReceipt | Error
+        CommandReceipt | ErrorResponse
     """
 
     return sync_detailed(
@@ -147,7 +157,7 @@ async def asyncio_detailed(
     command_id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[CommandReceipt | Error]:
+) -> Response[CommandReceipt | ErrorResponse]:
     """Stop one named command, and nothing else
 
      Abandons the reply that command is generating. Unlike interrupting the session, a stop that arrives
@@ -159,15 +169,15 @@ async def asyncio_detailed(
     Interrupting model work claims nothing about a tool whose external side effect already happened.
 
     Args:
-        id (str):
-        command_id (str):
+        id (str): The session, as returned when it was created.
+        command_id (str): The client's own command id, as sent when the command was submitted.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[CommandReceipt | Error]
+        Response[CommandReceipt | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -185,7 +195,7 @@ async def asyncio(
     command_id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> CommandReceipt | Error | None:
+) -> CommandReceipt | ErrorResponse | None:
     """Stop one named command, and nothing else
 
      Abandons the reply that command is generating. Unlike interrupting the session, a stop that arrives
@@ -197,15 +207,15 @@ async def asyncio(
     Interrupting model work claims nothing about a tool whose external side effect already happened.
 
     Args:
-        id (str):
-        command_id (str):
+        id (str): The session, as returned when it was created.
+        command_id (str): The client's own command id, as sent when the command was submitted.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        CommandReceipt | Error
+        CommandReceipt | ErrorResponse
     """
 
     return (

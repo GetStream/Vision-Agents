@@ -44,8 +44,14 @@ type Owner struct {
 // cannot record a row that disagrees with the routing decision it came from.
 type Stat struct {
 	Owner
-	StartedAt time.Time
+	StartedAt   time.Time
+	OperationID string
+	Purpose     string
+	TurnID      string
+	DurationMs  float64
 	Usage
+	// InputParts is what an LLM's prompt was made of. Zero for every other modality.
+	InputParts store.InputParts
 	// LatencyMs is how long the customer waited for the work to be useful.
 	LatencyMs float64
 	// CostMicros overrides the priced amount for work that is not billed by the units in
@@ -57,15 +63,24 @@ type Stat struct {
 	ErrorMessage string
 }
 
+// ErrorCancelled is the ErrorCode of work its caller gave up on, whether before the provider
+// answered or by closing the stream it had opened: a reply superseded by newer words, the
+// slower of two hedged requests, or one cut off by the caller speaking. It is not successful,
+// but the provider did nothing wrong, so it is kept out of its health. What it generated
+// before it was cut off is still billed.
+const ErrorCancelled = store.ErrorCancelled
+
 // Recorder writes stats to Postgres and Redis off the request path. A conversation must
 // never wait on a database, so recording is asynchronous and stats are the thing that
 // gets dropped when the backend cannot keep up.
 type Recorder struct {
-	modality         Modality
-	store            *store.Store
-	live             *live.Client
-	logger           *slog.Logger
-	customerPolicies map[string]CustomerPolicy
+	modality Modality
+	store    *store.Store
+	live     *live.Client
+	logger   *slog.Logger
+	// gate is where the tags a customer's policies lay over every row come from. Nil lays
+	// none.
+	gate Gate
 
 	queue chan store.Request
 	done  chan struct{}
@@ -77,11 +92,16 @@ type Recorder struct {
 
 // NewRecorder starts the background writer.
 func NewRecorder(modality Modality, pgStore *store.Store, liveClient *live.Client, logger *slog.Logger) *Recorder {
+	return newRecorder(modality, pgStore, liveClient, nil, logger)
+}
+
+func newRecorder(modality Modality, pgStore *store.Store, liveClient *live.Client, gate Gate, logger *slog.Logger) *Recorder {
 	r := &Recorder{
 		modality: modality,
 		store:    pgStore,
 		live:     liveClient,
 		logger:   logger,
+		gate:     gate,
 		queue:    make(chan store.Request, statQueueSize),
 		done:     make(chan struct{}),
 	}
@@ -100,22 +120,29 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 	if entry.CostMicros != 0 {
 		cost = entry.CostMicros
 	}
+	outputCost := min(config.Price.CostMicros(Usage{OutputTokens: entry.OutputTokens}), cost)
 
 	request := store.Request{
 		Modality:          string(r.modality),
 		CustomerID:        entry.CustomerID,
 		AgentID:           entry.AgentID,
 		CallID:            entry.CallID,
-		Tags:              r.customerPolicies[entry.CustomerID].attributed(entry.Tags),
+		Tags:              entry.Tags,
 		Provider:          config.Provider,
 		Model:             config.Model,
 		StartedAt:         entry.StartedAt,
+		OperationID:       entry.OperationID,
+		Purpose:           entry.Purpose,
+		TurnID:            entry.TurnID,
 		AudioMs:           entry.AudioMs,
 		Characters:        entry.Characters,
 		InputTokens:       entry.InputTokens,
 		CachedInputTokens: entry.CachedInputTokens,
 		OutputTokens:      entry.OutputTokens,
+		InputParts:        entry.InputParts,
+		Images:            entry.Images,
 		CostMicros:        cost,
+		OutputCostMicros:  outputCost,
 		Success:           entry.Success,
 		ErrorCode:         entry.ErrorCode,
 		ErrorMessage:      store.SafeLogText(entry.ErrorMessage),
@@ -123,6 +150,10 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 	if entry.LatencyMs > 0 {
 		latency := entry.LatencyMs
 		request.LatencyMs = &latency
+	}
+	if entry.DurationMs > 0 {
+		duration := entry.DurationMs
+		request.DurationMs = &duration
 	}
 
 	select {
@@ -155,6 +186,12 @@ func (r *Recorder) run() {
 }
 
 func (r *Recorder) write(ctx context.Context, request store.Request) {
+	if r.gate != nil {
+		// Only the tags are wanted here. A refusal is the budget, which the work being
+		// recorded has already got past.
+		admission, _ := r.gate.Admit(ctx, request.CustomerID)
+		request.Tags = admission.Labelled(request.Tags)
+	}
 	if r.store != nil {
 		if err := r.store.RecordRequest(ctx, &request); err != nil {
 			r.logger.Error("could not record request", "error", err)
@@ -162,26 +199,41 @@ func (r *Recorder) write(ctx context.Context, request store.Request) {
 	}
 
 	if r.live != nil {
-		var latencyMs float64
-		if request.LatencyMs != nil {
-			latencyMs = *request.LatencyMs
-		}
-		err := r.live.RecordRequest(ctx, live.Usage{
-			Modality:          request.Modality,
-			CustomerID:        request.CustomerID,
-			Provider:          request.Provider,
-			Model:             request.Model,
-			LatencyMs:         latencyMs,
-			AudioMs:           request.AudioMs,
-			Characters:        request.Characters,
-			InputTokens:       request.InputTokens,
-			CachedInputTokens: request.CachedInputTokens,
-			OutputTokens:      request.OutputTokens,
-			CostMicros:        request.CostMicros,
-			Success:           request.Success,
-		})
-		if err != nil {
+		if err := r.live.RecordRequest(ctx, liveUsage(request)); err != nil {
 			r.logger.Error("could not update live counters", "error", err)
 		}
 	}
+}
+
+// liveUsage is what a request adds to the live counters. A cancelled one is marked so, and the
+// counters keep it out of provider health while still counting what it generated.
+func liveUsage(request store.Request) live.Usage {
+	var latencyMs float64
+	if request.LatencyMs != nil {
+		latencyMs = *request.LatencyMs
+	}
+	return live.Usage{
+		Modality:          request.Modality,
+		CustomerID:        request.CustomerID,
+		Provider:          request.Provider,
+		Model:             request.Model,
+		LatencyMs:         latencyMs,
+		AudioMs:           request.AudioMs,
+		Characters:        request.Characters,
+		InputTokens:       request.InputTokens,
+		CachedInputTokens: request.CachedInputTokens,
+		OutputTokens:      request.OutputTokens,
+		CostMicros:        request.CostMicros,
+		Success:           request.Success,
+		Cancelled:         !measuresProvider(request),
+	}
+}
+
+// measuresProvider reports whether a request says anything about its provider's health.
+// One its caller cancelled does not: it neither failed nor was served, and how long it ran
+// is how long it was left to, not how long the provider took. It is still billed for what
+// it generated before it was cut off, so it is kept in the customer's spend and the request
+// log.
+func measuresProvider(request store.Request) bool {
+	return request.ErrorCode != ErrorCancelled
 }

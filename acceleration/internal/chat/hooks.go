@@ -9,15 +9,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	getstream "github.com/GetStream/getstream-go/v5"
-)
-
-const (
-	apiKeyEnvVar    = "STREAM_API_KEY"
-	apiSecretEnvVar = "STREAM_API_SECRET"
 )
 
 // MessageHookPath is where the router receives the message events Stream sends. It is here
@@ -37,9 +31,7 @@ const webhookHookType = "webhook"
 // StreamOptions configures the client. The credentials fall back to the environment, the
 // way the rest of the service reads them.
 type StreamOptions struct {
-	// APIKey defaults to STREAM_API_KEY.
-	APIKey string
-	// APISecret defaults to STREAM_API_SECRET.
+	APIKey    string
 	APISecret string
 }
 
@@ -50,14 +42,8 @@ type Stream struct {
 
 // NewStream validates the credentials and returns a Stream.
 func NewStream(options StreamOptions) (*Stream, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APISecret == "" {
-		options.APISecret = os.Getenv(apiSecretEnvVar)
-	}
 	if options.APIKey == "" || options.APISecret == "" {
-		return nil, errors.New("chat: " + apiKeyEnvVar + " and " + apiSecretEnvVar + " are required")
+		return nil, errors.New("chat: a stream api key and secret are required")
 	}
 
 	client, err := getstream.NewClient(options.APIKey, options.APISecret)
@@ -66,6 +52,10 @@ func NewStream(options StreamOptions) (*Stream, error) {
 	}
 	return &Stream{client: client}, nil
 }
+
+// StreamOf configures the hooks of the app a client already acts in, such as a customer's
+// own app the router resolved, rather than the app the environment names.
+func StreamOf(client *getstream.Stream) *Stream { return &Stream{client: client} }
 
 // PointMessageHook makes the app deliver new messages to a url, leaving every other hook
 // alone.

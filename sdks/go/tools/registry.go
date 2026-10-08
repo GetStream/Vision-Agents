@@ -21,6 +21,30 @@ type Function struct {
 	run func(ctx context.Context, arguments []byte) (string, error)
 }
 
+// Tool is one of the caller's functions, declared as a type.
+//
+// Its exported fields are the arguments the model fills in, described by their `json` and
+// `schema` tags. Unexported fields are the caller's own, for whatever Run needs to reach:
+//
+//	type LookupOrder struct {
+//	    OrderID string `json:"order_id" schema:"the order number, e.g. 1042"`
+//	    orders  *Orders
+//	}
+//
+//	func (LookupOrder) Name() string        { return "lookup_order" }
+//	func (LookupOrder) Description() string { return "Look up an order by its number" }
+//	func (l LookupOrder) Run(ctx context.Context) (any, error) {
+//	    return l.orders.Find(ctx, l.OrderID)
+//	}
+type Tool interface {
+	// Name is how the model asks for it.
+	Name() string
+	// Description is what the model is told it does.
+	Description() string
+	// Run does the work, with the model's arguments already in the fields.
+	Run(ctx context.Context) (any, error)
+}
+
 // Registry holds the functions a session offers, in the order they were registered.
 type Registry struct {
 	mu        sync.RWMutex
@@ -76,6 +100,58 @@ func Register[In any](registry *Registry, name, description string, run func(con
 				}
 			}
 			output, err := run(ctx, in)
+			if err != nil {
+				return "", err
+			}
+			return Render(output), nil
+		},
+	})
+}
+
+// Add offers a tool to the model.
+//
+// Every call runs on a copy of the value added, with the model's arguments decoded into it,
+// so calls running at once never share their arguments.
+func (r *Registry) Add(tool Tool) error {
+	if r == nil {
+		return fmt.Errorf("tools: there is no registry to add to")
+	}
+	value := reflect.ValueOf(tool)
+	if tool == nil || (value.Kind() == reflect.Pointer && value.IsNil()) {
+		return fmt.Errorf("tools: a nil tool cannot be added")
+	}
+	name, description := tool.Name(), tool.Description()
+	if name == "" {
+		return fmt.Errorf("tools: %T needs a name", tool)
+	}
+	if description == "" {
+		return fmt.Errorf("tools: %s needs a description, since it is all the model has to choose by", name)
+	}
+
+	if value.Kind() == reflect.Pointer {
+		value = value.Elem()
+	}
+	if value.Kind() != reflect.Struct {
+		return fmt.Errorf("tools: %s is a %s, and a tool's arguments are the fields of a struct", name, value.Kind())
+	}
+	parameters, err := Schema(value.Type())
+	if err != nil {
+		return fmt.Errorf("tools: %s: %w", name, err)
+	}
+
+	return r.add(&Function{
+		Name:        name,
+		Description: description,
+		Parameters:  parameters,
+		run: func(ctx context.Context, arguments []byte) (string, error) {
+			call := reflect.New(value.Type())
+			call.Elem().Set(value)
+			if len(arguments) > 0 {
+				if err := json.Unmarshal(arguments, call.Interface()); err != nil {
+					return "", fmt.Errorf("tools: %s was asked for with arguments it cannot take: %w", name, err)
+				}
+			}
+			output, err := call.Interface().(Tool).Run(ctx)
 			if err != nil {
 				return "", err
 			}

@@ -1,0 +1,95 @@
+# Stress-test row 1 (Salesforce) of «Stress test: 12 awkward providers» in
+# acceleration/docs/connectors/architecture.md on connectors/planning, written from that
+# doc's «A manifest, for scale». No Salesforce page is in the doc's «Sources and evidence»,
+# so hosts, paths and scopes come from the prototype branch codex/connector-support at
+# cf62af0d, cited per field as "prototype <path>:<line>".
+id: salesforce
+revision: 1
+name: Salesforce
+inputs:
+  # Production vs sandbox: row 1; the prototype took the same two (prototype
+  # internal/mcp/catalog.go:111-120).
+  - name: environment
+    enum: [production, sandbox]
+    default: production
+vars:
+  login_host:
+    from: environment
+    values:
+      # prototype internal/mcp/connectors.yaml:102-103
+      production: login.salesforce.com
+      # prototype internal/mcp/oauth.go:826-827
+      sandbox: test.salesforce.com
+  mcp_path:
+    from: environment
+    values:
+      # prototype internal/mcp/catalog.go:114
+      production: platform/mcp/v1/platform/sobject-all
+      # prototype internal/mcp/catalog.go:116
+      sandbox: platform/mcp/v1/sandbox/platform/sobject-all
+endpoints:
+  # /services/oauth2/authorize and /token: prototype internal/mcp/connectors.yaml:102-103
+  authorize: https://{login_host}/services/oauth2/authorize
+  token: https://{login_host}/services/oauth2/token
+  # /services/oauth2/revoke: only in the doc's «A manifest, for scale»; not checked against
+  # a Salesforce page. # unverified
+  revoke: https://{login_host}/services/oauth2/revoke
+  # api.salesforce.com: prototype internal/mcp/catalog.go:114-116
+  mcp: https://api.salesforce.com/{mcp_path}
+  # instance_url from the token response is the org's API host: row 1.
+  api_base: "{metadata.instance_url}"
+# The three schemes row 1 lists.
+schemes:
+  - oauth2_code
+  - oauth2_client_credentials
+  - oauth2_jwt_bearer
+client:
+  # Operator or customer app: the doc's «A manifest, for scale». Our policy, not a vendor
+  # fact.
+  registration: [operator, customer]
+  # prototype internal/mcp/connectors.yaml:104-105
+  auth_method: client_secret_post
+  env: SALESFORCE
+scopes:
+  # prototype internal/mcp/connectors.yaml:106-108
+  list: [mcp_api, refresh_token]
+  separator: " "
+capture:
+  # Both from the token response: row 1 («instance_url in the token response», «identity
+  # URL id»).
+  - name: instance_url
+    from: token_response
+    path: $.instance_url
+    # api_base is this value whole, so it must stay a Salesforce host. My Domain hosts, the
+    # sandbox ones included, end in .my.salesforce.com; no Salesforce page is in the doc's
+    # sources and Salesforce's help renders client-side, so the suffix is not checked
+    # against a vendor page. # unverified
+    host_suffixes: [.my.salesforce.com]
+  - name: identity_url
+    from: token_response
+    path: $.id
+    # The account id, and a URL a later request may fetch, so it stays a Salesforce host.
+    # The prototype required its host to equal the token endpoint's (internal/mcp/oauth.go:
+    # 874-879), login.salesforce.com or test.salesforce.com (connectors.yaml:102-103), both
+    # under .salesforce.com. My Domain hosts are under it too; no Salesforce page confirms
+    # which host issues the id URL. # unverified
+    host_suffixes: [.salesforce.com]
+    keep_path: true
+# The doc's manifest writes identity as salesforce:{org}:{user}, split out of the identity
+# URL. Splitting a URL is more than a JSON path, so the account id is the identity URL
+# whole; it already carries the org and the user (prototype internal/mcp/oauth.go:874-887
+# read them from its path).
+identity: [identity_url]
+refresh:
+  # Not rotating, one-minute margin: the doc's «A manifest, for scale»; the margin is the
+  # prototype's (row 15 of «Axes where providers differ»).
+  rotating: false
+  margin: 60s
+rate_limit:
+  # Per org: the doc's «A manifest, for scale» (per: org), here the tenant.
+  per: tenant
+sources:
+  - kind: mcp
+    endpoint: mcp
+  - kind: http
+    endpoint: api_base

@@ -4,9 +4,6 @@
 # rather than for the provider list.
 name: stt-realtime-accurate-private
 
-tags:
-  team: examples
-
 stt:
   # None of the four models the accurate config names survives the policy below. Muse
   # declares unknown on both questions, Scribe and Ink 2 train unless the account has

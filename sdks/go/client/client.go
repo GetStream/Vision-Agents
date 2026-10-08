@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"sync"
 
@@ -92,7 +93,7 @@ func (c *Client) ServerSide() bool { return c.backend.UserID == "" }
 // No request is made: this is the name in a wrapper, and a name that matches nothing
 // configured is refused when a conversation is opened rather than here.
 func (c *Client) Agent(name string) *Agent {
-	agent := &Agent{client: c, name: name, functions: tools.NewRegistry()}
+	agent := &Agent{client: c, name: name, tools: tools.NewRegistry()}
 	agent.Sessions = &Sessions{client: c, agent: agent}
 	return agent
 }
@@ -145,21 +146,21 @@ type Agent struct {
 
 	client *Client
 	name   string
-	// functions are the caller's own, offered by every conversation this agent opens. Held
-	// on the agent rather than per session because a function registered once should not
-	// have to be registered again for the next conversation.
-	functions *tools.Registry
+	// tools are the caller's own, offered by every conversation this agent opens. Held on
+	// the agent rather than per session because a tool added once should not have to be
+	// added again for the next conversation.
+	tools *tools.Registry
 }
 
 // Name is what the agent is called, which is what a caller knows it as.
 func (a *Agent) Name() string { return a.name }
 
-// Functions are the ones this agent's conversations offer the model, to register into.
+// Tools are the ones this agent's conversations offer the model, to add to, and what a
+// dispatch worker runs for every session of this agent once it hosts them with
+// dispatch.Host(agent, timeout):
 //
-// It satisfies the target agents.Register takes, so the same registration works here:
-//
-//	agents.Register(agent, "get_weather", "Get current weather", func(...) {...})
-func (a *Agent) Functions() *tools.Registry { return a.functions }
+//	agent.Tools().Add(GetWeather{})
+func (a *Agent) Tools() *tools.Registry { return a.tools }
 
 // Config is how the agent is configured, as the backend has it, or nil for a name nothing is
 // stored under.
@@ -177,8 +178,7 @@ func (a *Agent) Config(ctx context.Context) (*acceleration.AgentConfig, error) {
 		return nil, fmt.Errorf("client: looking up the agent %s: %w", a.name, err)
 	}
 	if listed.JSON200 == nil {
-		return nil, failure("looking up the agent "+a.name, listed.Status(),
-			listed.JSON400, listed.JSON401)
+		return nil, failure("looking up the agent "+a.name, listed.HTTPResponse, listed.Body)
 	}
 	for _, config := range *listed.JSON200 {
 		if config.Name == a.name {
@@ -188,15 +188,38 @@ func (a *Agent) Config(ctx context.Context) (*acceleration.AgentConfig, error) {
 	return nil, nil
 }
 
-// failure turns whichever error body arrived into one error, or reports the status when none
-// did. Every refusal in the spec is the same shape, so this is the whole of it.
-func failure(what, status string, bodies ...*acceleration.Error) error {
-	for _, body := range bodies {
-		if body != nil {
-			return fmt.Errorf("client: %s: %s", what, body.Error)
-		}
+// UpdateConfig changes some of how the agent is configured and returns the config as it now
+// is. A field left out of the patch keeps what is stored, so setting a guardrail leaves the
+// instructions, skills and models alone.
+//
+// Server side only: how an agent is configured is not a device's to change.
+func (a *Agent) UpdateConfig(ctx context.Context, patch acceleration.AgentConfigPatch) (*acceleration.AgentConfig, error) {
+	config, err := a.Config(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return fmt.Errorf("client: %s: %s", what, status)
+	if config == nil {
+		return nil, fmt.Errorf("client: there is no agent called %s to update", a.name)
+	}
+
+	api, err := a.client.api()
+	if err != nil {
+		return nil, err
+	}
+	patched, err := api.PatchAgentConfigWithResponse(ctx, config.Id, patch)
+	if err != nil {
+		return nil, fmt.Errorf("client: updating the agent %s: %w", a.name, err)
+	}
+	if patched.JSON200 == nil {
+		return nil, failure("updating the agent "+a.name, patched.HTTPResponse, patched.Body)
+	}
+	return patched.JSON200, nil
+}
+
+// failure is what the router said went wrong with what was being done, read off the answer
+// it gave instead, or the status when it said nothing.
+func failure(what string, response *http.Response, body []byte) error {
+	return stream.NewRouterError(response, body, "client", what, response.Status)
 }
 
 // pointer is a value the generated types want as an optional, for the ones a caller set. A

@@ -26,11 +26,13 @@ const memoryModel = "v3"
 
 // memoryWriter hands finished exchanges to the memory store off the conversation's path.
 type memoryWriter struct {
-	store    memory.Store
-	scope    memory.Scope
-	owner    routing.Owner
-	recorder *routing.Recorder
-	logger   *slog.Logger
+	store memory.Store
+	scope memory.Scope
+	// incognito recalls but never writes, so nothing said in the session is kept.
+	incognito bool
+	owner     routing.Owner
+	recorder  *routing.Recorder
+	logger    *slog.Logger
 
 	queue chan []llm.Message
 	done  chan struct{}
@@ -42,18 +44,20 @@ type memoryWriter struct {
 func newMemoryWriter(
 	store memory.Store,
 	scope memory.Scope,
+	incognito bool,
 	owner routing.Owner,
 	recorder *routing.Recorder,
 	logger *slog.Logger,
 ) *memoryWriter {
 	w := &memoryWriter{
-		store:    store,
-		scope:    scope,
-		owner:    owner,
-		recorder: recorder,
-		logger:   logger,
-		queue:    make(chan []llm.Message, memoryQueueSize),
-		done:     make(chan struct{}),
+		store:     store,
+		scope:     scope,
+		incognito: incognito,
+		owner:     owner,
+		recorder:  recorder,
+		logger:    logger,
+		queue:     make(chan []llm.Message, memoryQueueSize),
+		done:      make(chan struct{}),
 	}
 	go w.run()
 	return w
@@ -61,7 +65,7 @@ func newMemoryWriter(
 
 // Remember queues an exchange, dropping it if the writer is too far behind.
 func (w *memoryWriter) Remember(messages []llm.Message) {
-	if len(messages) == 0 {
+	if w.incognito || len(messages) == 0 {
 		return
 	}
 

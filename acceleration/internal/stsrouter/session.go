@@ -120,6 +120,14 @@ func (s *Session) Provider() string { return s.config.Provider }
 // Model is the model serving this session.
 func (s *Session) Model() string { return s.config.Model }
 
+// Voice is the voice speaking. Empty when the vendor picked it and cannot say which.
+func (s *Session) Voice() string {
+	if voiced, ok := s.provider.(sts.Voiced); ok {
+		return voiced.Voice()
+	}
+	return ""
+}
+
 // SampleRate is the rate the model speaks at.
 func (s *Session) SampleRate() int { return s.provider.SampleRate() }
 

@@ -8,7 +8,7 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.agent_response import AgentResponse
 from ...models.create_response_request import CreateResponseRequest
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...types import Response
 
 
@@ -36,31 +36,41 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> AgentResponse | Error | None:
+) -> AgentResponse | ErrorResponse | None:
     if response.status_code == 202:
         response_202 = AgentResponse.from_dict(response.json())
 
         return response_202
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
 
     if response.status_code == 404:
-        response_404 = Error.from_dict(response.json())
+        response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 409:
+        response_409 = ErrorResponse.from_dict(response.json())
+
+        return response_409
+
+    if response.status_code == 500:
+        response_500 = ErrorResponse.from_dict(response.json())
+
+        return response_500
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -70,7 +80,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[AgentResponse | Error]:
+) -> Response[AgentResponse | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -84,7 +94,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CreateResponseRequest,
-) -> Response[AgentResponse | Error]:
+) -> Response[AgentResponse | ErrorResponse]:
     """Ask the agent something and get a handle on the answer
 
      The same thing respond does, with an id back. That is the whole difference and the reason this
@@ -94,7 +104,7 @@ def sync_detailed(
     request that waited them out would time out on anything long enough to be worth asking.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (CreateResponseRequest):
 
     Raises:
@@ -102,7 +112,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[AgentResponse | Error]
+        Response[AgentResponse | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -122,7 +132,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: CreateResponseRequest,
-) -> AgentResponse | Error | None:
+) -> AgentResponse | ErrorResponse | None:
     """Ask the agent something and get a handle on the answer
 
      The same thing respond does, with an id back. That is the whole difference and the reason this
@@ -132,7 +142,7 @@ def sync(
     request that waited them out would time out on anything long enough to be worth asking.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (CreateResponseRequest):
 
     Raises:
@@ -140,7 +150,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        AgentResponse | Error
+        AgentResponse | ErrorResponse
     """
 
     return sync_detailed(
@@ -155,7 +165,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CreateResponseRequest,
-) -> Response[AgentResponse | Error]:
+) -> Response[AgentResponse | ErrorResponse]:
     """Ask the agent something and get a handle on the answer
 
      The same thing respond does, with an id back. That is the whole difference and the reason this
@@ -165,7 +175,7 @@ async def asyncio_detailed(
     request that waited them out would time out on anything long enough to be worth asking.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (CreateResponseRequest):
 
     Raises:
@@ -173,7 +183,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[AgentResponse | Error]
+        Response[AgentResponse | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -191,7 +201,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: CreateResponseRequest,
-) -> AgentResponse | Error | None:
+) -> AgentResponse | ErrorResponse | None:
     """Ask the agent something and get a handle on the answer
 
      The same thing respond does, with an id back. That is the whole difference and the reason this
@@ -201,7 +211,7 @@ async def asyncio(
     request that waited them out would time out on anything long enough to be worth asking.
 
     Args:
-        id (str):
+        id (str): The session, as returned when it was created.
         body (CreateResponseRequest):
 
     Raises:
@@ -209,7 +219,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        AgentResponse | Error
+        AgentResponse | ErrorResponse
     """
 
     return (

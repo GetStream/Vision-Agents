@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // defaultCallLimit caps a call list that did not ask for one.
@@ -76,6 +78,30 @@ func (s *Store) FinishCall(ctx context.Context, id string, at time.Time) error {
 	return nil
 }
 
+// ChangeCallModels rewrites the targets and voice a running call is on, after it was moved
+// onto other models mid-call.
+func (s *Store) ChangeCallModels(ctx context.Context, call *Call) error {
+	if call.ID == "" {
+		return errors.New("store: a call id is required")
+	}
+
+	// Set rather than Column: the fields are nullzero, and a target a call no longer runs
+	// is the empty string these columns hold, never NULL.
+	_, err := s.db.NewUpdate().Model((*Call)(nil)).
+		Set("stt = ?", call.STT).
+		Set("tts = ?", call.TTS).
+		Set("llm = ?", call.LLM).
+		Set("subagent = ?", call.Subagent).
+		Set("sts = ?", call.STS).
+		Set("voice = ?", call.Voice).
+		Where("id = ?", call.ID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: change call models: %w", err)
+	}
+	return nil
+}
+
 // ReviewCall writes what a model made of the call once it was over.
 func (s *Store) ReviewCall(ctx context.Context, customerID, id, summary string, score *int, notes string) error {
 	if customerID == "" || id == "" {
@@ -105,7 +131,7 @@ func (s *Store) ReviewCall(ctx context.Context, customerID, id, summary string, 
 // Call returns one call a customer ran.
 func (s *Store) Call(ctx context.Context, customerID, id string) (Call, error) {
 	if customerID == "" || id == "" {
-		return Call{}, errors.New("store: a customer and a call id are required")
+		return Call{}, stack.Wrap(errors.New("store: a customer and a call id are required"))
 	}
 
 	var call Call
@@ -118,34 +144,7 @@ func (s *Store) Call(ctx context.Context, customerID, id string) (Call, error) {
 		return Call{}, unknownCall(id)
 	}
 	if err != nil {
-		return Call{}, fmt.Errorf("store: call: %w", err)
-	}
-	return call, nil
-}
-
-// CallByAgent returns the most recent call that wrote to an agent id, whoever ran it.
-//
-// No customer is asked for, unlike Call, because the caller that needs this has none to ask
-// with: a message arriving on a channel names the agent and nothing else, and this row is
-// what says whose channel it is and what the agent was configured as. Most recent, because
-// an agent id outlives the call that made it and the last conversation there is the one
-// somebody writing to it is continuing.
-func (s *Store) CallByAgent(ctx context.Context, agentID string) (Call, error) {
-	if agentID == "" {
-		return Call{}, errors.New("store: an agent id is required")
-	}
-
-	var call Call
-	err := s.db.NewSelect().Model(&call).
-		Where("agent_id = ?", agentID).
-		Order("started_at DESC").
-		Limit(1).
-		Scan(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Call{}, unknownCall(agentID)
-	}
-	if err != nil {
-		return Call{}, fmt.Errorf("store: call by agent: %w", err)
+		return Call{}, stack.Wrap(fmt.Errorf("store: call: %w", err))
 	}
 	return call, nil
 }
@@ -153,7 +152,7 @@ func (s *Store) CallByAgent(ctx context.Context, agentID string) (Call, error) {
 // CustomerCalls returns a customer's calls, newest first.
 func (s *Store) CustomerCalls(ctx context.Context, customerID string, filter CallFilter) ([]Call, error) {
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
 	limit := filter.Limit
@@ -186,7 +185,7 @@ func (s *Store) CustomerCalls(ctx context.Context, customerID string, filter Cal
 
 	var calls []Call
 	if err := query.Scan(ctx, &calls); err != nil {
-		return nil, fmt.Errorf("store: customer calls: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer calls: %w", err))
 	}
 	return calls, nil
 }
@@ -196,7 +195,7 @@ func (s *Store) CustomerCalls(ctx context.Context, customerID string, filter Cal
 // it was on for.
 func (s *Store) CallTurns(ctx context.Context, customerID, agentID string, from time.Time, to *time.Time) ([]Turn, error) {
 	if customerID == "" || agentID == "" {
-		return nil, errors.New("store: a customer and an agent id are required")
+		return nil, stack.Wrap(errors.New("store: a customer and an agent id are required"))
 	}
 
 	query := s.db.NewSelect().Model((*Turn)(nil)).
@@ -210,9 +209,34 @@ func (s *Store) CallTurns(ctx context.Context, customerID, agentID string, from 
 
 	var turns []Turn
 	if err := query.Scan(ctx, &turns); err != nil {
-		return nil, fmt.Errorf("store: call turns: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: call turns: %w", err))
 	}
 	return turns, nil
+}
+
+// CallModelCalls returns every model response in one call, including flow and delegated
+// requests, in the order they were sent. TurnID relates each request to its exchange.
+func (s *Store) CallModelCalls(ctx context.Context, customerID, agentID, callID string, from time.Time, to *time.Time) ([]Request, error) {
+	if customerID == "" || agentID == "" {
+		return nil, stack.Wrap(errors.New("store: a customer and an agent id are required"))
+	}
+	query := s.db.NewSelect().Model((*Request)(nil)).
+		Where("customer_id = ?", customerID).
+		Where("agent_id = ?", agentID).
+		Where("modality = ?", "llm").
+		Where("started_at >= ?", from).
+		Order("started_at ASC", "id ASC")
+	if callID != "" {
+		query = query.Where("call_id = ?", callID)
+	}
+	if to != nil {
+		query = query.Where("started_at <= ?", *to)
+	}
+	var requests []Request
+	if err := query.Scan(ctx, &requests); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: call model calls: %w", err))
+	}
+	return requests, nil
 }
 
 // UsedModel is a provider/model that successfully served a call.
@@ -227,7 +251,7 @@ type UsedModel struct {
 // request row carries the Stream call rather than the session that recorded it.
 func (s *Store) CallUsedModels(ctx context.Context, customerID, agentID string, from time.Time, to *time.Time) ([]UsedModel, error) {
 	if customerID == "" || agentID == "" {
-		return nil, errors.New("store: a customer and an agent id are required")
+		return nil, stack.Wrap(errors.New("store: a customer and an agent id are required"))
 	}
 
 	query := s.db.NewSelect().
@@ -245,7 +269,102 @@ func (s *Store) CallUsedModels(ctx context.Context, customerID, agentID string, 
 
 	var used []UsedModel
 	if err := query.Scan(ctx, &used); err != nil {
-		return nil, fmt.Errorf("store: call used models: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: call used models: %w", err))
+	}
+	return used, nil
+}
+
+// CallUsage is what a call spent, summed over every request it made.
+type CallUsage struct {
+	InputTokens       int64 `bun:"input_tokens"`
+	CachedInputTokens int64 `bun:"cached_input_tokens"`
+	OutputTokens      int64 `bun:"output_tokens"`
+	CostMicros        int64 `bun:"cost_micros"`
+	Requests          int64 `bun:"requests"`
+}
+
+// CallUsage totals the work one call paid for. Like the models it used, it is keyed by
+// agent and window rather than by call, because a request row carries the Stream call
+// rather than the session that recorded it.
+//
+// Failed requests are counted: a model that read the prompt and then fell over is still
+// billed for having read it.
+func (s *Store) CallUsage(ctx context.Context, customerID, agentID string, from time.Time, to *time.Time) (CallUsage, error) {
+	if customerID == "" || agentID == "" {
+		return CallUsage{}, stack.Wrap(errors.New("store: a customer and an agent id are required"))
+	}
+
+	query := s.db.NewSelect().
+		TableExpr("requests").
+		ColumnExpr("COALESCE(SUM(input_tokens), 0) AS input_tokens").
+		ColumnExpr("COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens").
+		ColumnExpr("COALESCE(SUM(output_tokens), 0) AS output_tokens").
+		ColumnExpr("COALESCE(SUM(cost_micros), 0) AS cost_micros").
+		ColumnExpr("COUNT(*) AS requests").
+		Where("customer_id = ?", customerID).
+		Where("agent_id = ?", agentID).
+		Where("started_at >= ?", from)
+	if to != nil {
+		query = query.Where("started_at <= ?", *to)
+	}
+
+	var spent CallUsage
+	if err := query.Scan(ctx, &spent); err != nil {
+		return CallUsage{}, stack.Wrap(fmt.Errorf("store: call usage: %w", err))
+	}
+	return spent, nil
+}
+
+// ModelTokens is what one model read and wrote over a call.
+type ModelTokens struct {
+	Modality          string     `bun:"modality"`
+	Provider          string     `bun:"provider"`
+	Model             string     `bun:"model"`
+	InputTokens       int64      `bun:"input_tokens"`
+	CachedInputTokens int64      `bun:"cached_input_tokens"`
+	OutputTokens      int64      `bun:"output_tokens"`
+	CostMicros        int64      `bun:"cost_micros"`
+	OutputCostMicros  int64      `bun:"output_cost_micros"`
+	Requests          int64      `bun:"requests"`
+	InputParts        InputParts `bun:"embed:input_"`
+}
+
+// CallTokens is what each model a call used read, wrote and cost, the busiest first. Models
+// that bill by audio or characters rather than tokens read zero tokens. Keyed by agent and
+// window like CallUsage, and read while the call is still going as well as after: to is nil
+// for one that has not ended.
+func (s *Store) CallTokens(ctx context.Context, customerID, agentID string, from time.Time, to *time.Time) ([]ModelTokens, error) {
+	if customerID == "" || agentID == "" {
+		return nil, stack.Wrap(errors.New("store: a customer and an agent id are required"))
+	}
+
+	query := s.db.NewSelect().
+		TableExpr("requests").
+		ColumnExpr("modality, provider, model").
+		ColumnExpr("COALESCE(SUM(input_tokens), 0) AS input_tokens").
+		ColumnExpr("COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens").
+		ColumnExpr("COALESCE(SUM(output_tokens), 0) AS output_tokens").
+		ColumnExpr("COALESCE(SUM(cost_micros), 0) AS cost_micros").
+		ColumnExpr("COALESCE(SUM(output_cost_micros), 0) AS output_cost_micros").
+		ColumnExpr("COUNT(*) AS requests").
+		ColumnExpr("COALESCE(SUM(input_instruction_tokens), 0) AS input_instruction_tokens").
+		ColumnExpr("COALESCE(SUM(input_message_tokens), 0) AS input_message_tokens").
+		ColumnExpr("COALESCE(SUM(input_tool_definition_tokens), 0) AS input_tool_definition_tokens").
+		ColumnExpr("COALESCE(SUM(input_tool_use_tokens), 0) AS input_tool_use_tokens").
+		ColumnExpr("COALESCE(SUM(input_image_tokens), 0) AS input_image_tokens").
+		ColumnExpr("COALESCE(SUM(input_video_tokens), 0) AS input_video_tokens").
+		Where("customer_id = ?", customerID).
+		Where("agent_id = ?", agentID).
+		Where("started_at >= ?", from).
+		Group("modality", "provider", "model").
+		OrderExpr("SUM(input_tokens + output_tokens) DESC, provider, model")
+	if to != nil {
+		query = query.Where("started_at <= ?", *to)
+	}
+
+	var used []ModelTokens
+	if err := query.Scan(ctx, &used); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: call tokens: %w", err))
 	}
 	return used, nil
 }
@@ -278,7 +397,7 @@ func (s *Store) RecordCallEvents(ctx context.Context, events []CallEvent) error 
 // on for.
 func (s *Store) CallEvents(ctx context.Context, customerID, callID string, from time.Time, to *time.Time, limit int) ([]CallEvent, error) {
 	if customerID == "" || callID == "" {
-		return nil, errors.New("store: a customer and a call id are required")
+		return nil, stack.Wrap(errors.New("store: a customer and a call id are required"))
 	}
 	if limit <= 0 {
 		limit = defaultCallEventLimit
@@ -299,11 +418,11 @@ func (s *Store) CallEvents(ctx context.Context, customerID, callID string, from 
 
 	var events []CallEvent
 	if err := query.Scan(ctx, &events); err != nil {
-		return nil, fmt.Errorf("store: call events: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: call events: %w", err))
 	}
 	return events, nil
 }
 
 func unknownCall(id string) error {
-	return fmt.Errorf("store: there is no call %s", id)
+	return stack.Wrap(fmt.Errorf("store: there is no call %s", id))
 }

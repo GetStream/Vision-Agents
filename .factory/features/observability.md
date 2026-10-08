@@ -23,6 +23,9 @@ serves the rollups in `turn_stats_hourly` and `turn_stats_daily`, with per-leg p
 | `tts_ttfb_ms`          | Wait for the first audio                                          |
 | `roundtrip_ms`         | Finishing a sentence to hearing the answer start                  |
 | `speech_end_to_audio_ms` | Voice in to voice out                                           |
+| `first_frame_queued_ms` | Finishing a sentence to the first frame of the answer being queued for the outgoing track |
+| `first_audible_frame_ms` | Finishing a sentence to the track taking the first frame that was not silence |
+| `speech_end_to_audible_ms` | Voice in to the track taking that frame                         |
 | `audio_out_ms`         | How much speech the turn produced                                 |
 | `interrupted`          | Whether the caller talked over it                                 |
 

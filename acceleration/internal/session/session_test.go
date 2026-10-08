@@ -3,11 +3,15 @@ package session
 import (
 	"context"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -19,7 +23,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
@@ -209,8 +216,9 @@ func (s *stubTTS) spoken() []tts.Request {
 // stubMemory records the scope it was asked under, which is what a memory filter has to
 // reach for it to mean anything.
 type stubMemory struct {
-	mu    sync.Mutex
-	scope memory.Scope
+	mu      sync.Mutex
+	scope   memory.Scope
+	learned [][]llm.Message
 }
 
 func (m *stubMemory) Recall(_ context.Context, query memory.Query) ([]memory.Memory, error) {
@@ -220,9 +228,23 @@ func (m *stubMemory) Recall(_ context.Context, query memory.Query) ([]memory.Mem
 	return nil, nil
 }
 
-func (m *stubMemory) Remember(context.Context, memory.Scope, []llm.Message) error { return nil }
-func (m *stubMemory) Provider() string                                            { return "stub" }
-func (m *stubMemory) Close() error                                                { return nil }
+func (m *stubMemory) Remember(_ context.Context, _ memory.Scope, messages []llm.Message) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.learned = append(m.learned, messages)
+	return nil
+}
+
+func (m *stubMemory) Truncate(context.Context, string, string) error  { return nil }
+func (m *stubMemory) ForgetRun(context.Context, string, string) error { return nil }
+func (m *stubMemory) Provider() string                                { return "stub" }
+func (m *stubMemory) Close() error                                    { return nil }
+
+func (m *stubMemory) remembered() [][]llm.Message {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([][]llm.Message(nil), m.learned...)
+}
 
 func (m *stubMemory) scopedTo() memory.Scope {
 	m.mu.Lock()
@@ -295,10 +317,18 @@ type SessionSuite struct {
 	// gated answers the conversation model instead of stubLLM, for a test that needs a
 	// reply it can hold open while something else happens to the session.
 	gated *gatedLLM
-	// conversations persists text commands, for a test that submits one, and outbox is
-	// where it writes them.
+	// conversations persists text commands, for a test that submits one.
 	conversations *persistent.Service
-	outbox        string
+	// grace is how long a persistent text session outlives its last watcher. Zero is the
+	// manager's default, which no test waits out.
+	grace time.Duration
+	// apps is the Stream apps sessions act in, when a test names them; edgeApps is the
+	// identity each edge was built with.
+	apps     *streamapp.Clients
+	edgeApps []streamapp.Identity
+	// plugins is what the manager reaches plugins and MCP servers with, for a test whose
+	// server listens on loopback. Nil is the manager's default, as before.
+	plugins *plugins.Auth
 }
 
 func TestSessionSuite(t *testing.T) {
@@ -313,6 +343,9 @@ func (s *SessionSuite) SetupTest() {
 	s.thinks = false
 	s.gated = nil
 	s.conversations = nil
+	s.apps = nil
+	s.edgeApps = nil
+	s.plugins = nil
 }
 
 // thinking is what the LLM router routes. A deployment that routes no high-quality model
@@ -381,7 +414,7 @@ func (s *SessionSuite) manages() {
 
 	var storing TranscriptFactory
 	if s.records != nil {
-		storing = func(Spec, *slog.Logger) (Transcript, error) { return s.records, nil }
+		storing = func(context.Context, Spec, streamapp.Bound, *slog.Logger) (Transcript, error) { return s.records, nil }
 	}
 
 	manager, err := NewManager(ManagerOptions{
@@ -391,8 +424,12 @@ func (s *SessionSuite) manages() {
 		Memory:        remembering,
 		Transcript:    storing,
 		Conversations: s.conversations,
+		Stream:        s.apps,
+		DetachedGrace: s.grace,
+		PluginAuth:    s.plugins,
 		Logger:        logger,
-		Edge: func(Spec, *slog.Logger) (agent.Edge, error) {
+		Edge: func(_ context.Context, _ Spec, stream streamapp.Bound, _ *slog.Logger) (agent.Edge, error) {
+			s.edgeApps = append(s.edgeApps, stream.Identity)
 			edge := newQuietEdge()
 			s.edges = append(s.edges, edge)
 			return edge, nil
@@ -716,6 +753,46 @@ func (s *SessionSuite) TestAWrittenAnswerIsStoredInTheConversation() {
 	s.Equal([]string{"Hello."}, s.records.replies())
 }
 
+// TestACallBarredFromAThreadChannelWritesNoTranscriptThere: a device that named a thread
+// channel's agent id (persistent.BarThread) keeps no transcript in that channel.
+func (s *SessionSuite) TestACallBarredFromAThreadChannelWritesNoTranscriptThere() {
+	s.records = &stubTranscript{}
+	s.manages()
+	channel := persistent.ThreadChannelPrefix + "0b6a2f3e-7d4c-4e1a-9f58-2c3d4e5f6a7b"
+	s.ctx = persistent.BarThread(s.ctx, "agent:"+channel)
+	created := s.joins(Spec{CallID: "call-1", AgentID: channel})
+
+	_, err := created.Ask(s.ctx, "is my invoice reissuable?")
+
+	s.Require().NoError(err)
+	s.Empty(s.records.replies())
+}
+
+// TestACallBarredFromAnotherChannelWritesItsTranscript: the bar is for the one channel it
+// names.
+func (s *SessionSuite) TestACallBarredFromAnotherChannelWritesItsTranscript() {
+	s.records = &stubTranscript{}
+	s.manages()
+	s.ctx = persistent.BarThread(s.ctx, "agent:"+persistent.ThreadChannelPrefix+"0b6a2f3e-7d4c-4e1a-9f58-2c3d4e5f6a7b")
+	created := s.joins(Spec{CallID: "call-1", AgentID: persistent.ThreadChannelPrefix + "5e8d1c2b-3a4f-4b6c-8d7e-9f0a1b2c3d4e"})
+
+	_, err := created.Ask(s.ctx, "is my invoice reissuable?")
+
+	s.Require().NoError(err)
+	s.Equal([]string{"Hello."}, s.records.replies())
+}
+
+func (s *SessionSuite) TestAnIncognitoCallWritesNothingIntoChat() {
+	s.records = &stubTranscript{}
+	s.manages()
+	created := s.joins(Spec{CallID: "call-1", Incognito: true})
+
+	_, err := created.Ask(s.ctx, "is my invoice reissuable?")
+
+	s.Require().NoError(err)
+	s.Empty(s.records.replies(), "a channel in Stream Chat is a record")
+}
+
 func (s *SessionSuite) TestWhatWasAskedInWritingIsRememberedForTheRestOfTheCall() {
 	// Otherwise the caller cannot refer to it out loud, and the agent answers as though it
 	// had never been asked.
@@ -788,7 +865,7 @@ func (s *SessionSuite) TestTheRecordedCallSaysWhatItWasRunWith() {
 			AgentID:        "call-9",
 			LLMTarget:      "gemini/gemini-3.5-flash-lite",
 			STTTarget:      "gemini/gemini-3.5-transcribe-live",
-			TTSTarget:      "elevenlabs/eleven_v3_conversational",
+			TTSTarget:      "elevenlabs/eleven_v4_turbo",
 			SubagentTarget: "openai/gpt-5.6-sol",
 			Instructions:   "Keep it short.",
 		},
@@ -801,7 +878,7 @@ func (s *SessionSuite) TestTheRecordedCallSaysWhatItWasRunWith() {
 
 	s.Equal("gemini/gemini-3.5-flash-lite", recorded.LLM)
 	s.Equal("gemini/gemini-3.5-transcribe-live", recorded.STT)
-	s.Equal("elevenlabs/eleven_v3_conversational", recorded.TTS)
+	s.Equal("elevenlabs/eleven_v4_turbo", recorded.TTS)
 	s.Equal("openai/gpt-5.6-sol", recorded.Subagent)
 	s.Equal("Keep it short.", recorded.Instructions)
 	s.Equal([]string{"think"}, recorded.Skills,
@@ -904,6 +981,135 @@ func (s *SessionSuite) TestATextSessionCannotAlsoJoinACall() {
 	_, err := s.manager.Create(s.ctx, Spec{Text: true, CallID: "call-1", CustomerID: "acme"})
 
 	s.ErrorContains(err, "holds no call")
+}
+
+// recordedTurns is a conversation's recorded turns held in memory, the way the store holds
+// them for a rewind to read back and cut.
+type recordedTurns struct {
+	exchanges []store.Exchange
+}
+
+func (r *recordedTurns) Exchanges(_ context.Context, _, _, upTo string) ([]store.Exchange, error) {
+	if upTo == "" {
+		return r.exchanges, nil
+	}
+	for i, exchange := range r.exchanges {
+		if exchange.ResponseID == upTo {
+			return r.exchanges[:i+1], nil
+		}
+	}
+	return nil, store.ErrUnknownResponse
+}
+
+func (r *recordedTurns) RewindResponses(_ context.Context, _, _, kept string, _ time.Time) error {
+	for i, exchange := range r.exchanges {
+		if exchange.ResponseID == kept {
+			r.exchanges = r.exchanges[:i+1]
+		}
+	}
+	return nil
+}
+
+func (s *SessionSuite) TestARewoundSessionCarriesOnFromTheKeptResponse() {
+	s.manages()
+	created := s.writes(Spec{})
+	created.records = &heldRecorder{}
+	recorded := &recordedTurns{exchanges: []store.Exchange{
+		{ResponseID: "first", Said: "Is Stream better than Sendbird?", Answer: "Yes."},
+		{ResponseID: "second", Said: "And cheaper?", Answer: "Also yes."},
+	}}
+
+	s.Require().NoError(created.Rewind(s.ctx, recorded, "first"))
+
+	s.Equal([]llm.Message{
+		{Role: llm.User, Content: "Is Stream better than Sendbird?"},
+		{Role: llm.Assistant, Content: "Yes."},
+	}, created.voiceAgent.History())
+	s.Len(recorded.exchanges, 1, "the later turn is no longer part of the conversation")
+}
+
+func (s *SessionSuite) TestARenamedSessionKeepsWhatItWasNotAskedToChange() {
+	s.manages()
+	created := s.writes(Spec{Title: "First ask", Description: "About pricing", Custom: map[string]any{"tab": "docs"}})
+	renamed := "Pricing, again"
+
+	created.Describe(s.ctx, Labels{Title: &renamed})
+
+	spec := created.Spec()
+	s.Equal("Pricing, again", spec.Title)
+	s.Equal("About pricing", spec.Description, "a field left out is left as it is")
+	s.Equal(map[string]any{"tab": "docs"}, spec.Custom)
+}
+
+func (s *SessionSuite) TestRewindingToAResponseTheSessionNeverHadIsUnknown() {
+	s.manages()
+	created := s.writes(Spec{})
+	created.records = &heldRecorder{}
+
+	err := created.Rewind(s.ctx, &recordedTurns{}, "somebody-elses")
+
+	s.ErrorIs(err, store.ErrUnknownResponse)
+}
+
+func (s *SessionSuite) TestAForkReadFromRecordsStartsFromThatHistory() {
+	s.manages()
+	recalled := []llm.Message{
+		{Role: llm.User, Content: "Is Stream better than Sendbird?"},
+		{Role: llm.Assistant, Content: "Yes."},
+	}
+
+	created := s.writes(Spec{ForkedFrom: "parent", Recall: &Recall{Messages: recalled}})
+
+	s.Equal(recalled, created.voiceAgent.History())
+}
+
+func (s *SessionSuite) TestATextSessionAsksTheModelWithTheHistoryTheCallerKept() {
+	s.manages()
+	created := s.writes(Spec{Incognito: true, History: []persistent.HistoryLine{
+		{Role: "user", Text: "Where is order 4471?"},
+		{Role: "assistant", Text: "It ships on Friday."},
+		{Role: "user", Text: "Thanks."},
+	}})
+
+	s.says(created, "When does it ship?")
+
+	s.eventually(func() bool { return len(s.model.requests()) > 0 }, "the model was never asked")
+	s.Equal([]string{
+		"user: Where is order 4471?",
+		"assistant: It ships on Friday.",
+		"user: Thanks.",
+		"user: When does it ship?",
+	}, handed(s.model.requests()[0]))
+}
+
+// A call takes history from the caller too: a thread that moves from writing to a phone
+// call carries on from what was written, and the call's transcript keeps only the call.
+func (s *SessionSuite) TestACallAnswersFromTheHistoryTheCallerKeptAndRecordsOnlyItself() {
+	s.records = &stubTranscript{}
+	s.manages()
+	created := s.joins(Spec{CallID: "call-1", History: []persistent.HistoryLine{
+		{Role: "user", Text: "Where is order 4471?"},
+		{Role: "assistant", Text: "It ships on Friday."},
+	}})
+
+	_, err := created.Ask(s.ctx, "and to another address?")
+
+	s.Require().NoError(err)
+	s.Equal([]string{
+		"user: Where is order 4471?",
+		"assistant: It ships on Friday.",
+		"user: and to another address?",
+	}, handed(s.model.requests()[0]))
+	s.Equal([]string{"Hello."}, s.records.replies(), "the history is context, not something said on this call")
+}
+
+func (s *SessionSuite) TestASessionThatRecordedNothingCannotBeRewound() {
+	s.manages()
+	created := s.writes(Spec{})
+
+	err := created.Rewind(s.ctx, &recordedTurns{}, "first")
+
+	s.ErrorIs(err, ErrCannotRewind)
 }
 
 func (s *SessionSuite) TestATextSessionAnswersInWriting() {
@@ -1107,7 +1313,8 @@ func (s *SessionSuite) TestReconnectedVoiceToolHostReceivesOnlyPendingRequests()
 	replayed := awaitToolCall(reconnected)
 	s.Require().NotNil(replayed)
 	s.Equal(*request, *replayed)
-	s.True(created.ResolveTool(replayed.ID, "saved result", ""))
+	s.False(created.ResolveTurnTool(replayed.ID, "wrong-turn", llm.TextParts("wrong result"), ""))
+	s.True(created.ResolveTurnTool(replayed.ID, replayed.TurnID, llm.TextParts("saved result"), ""))
 	s.NoError(<-finished)
 	s.Empty(created.tools.Pending(), "resolved operations must not replay")
 	late, stopLate := created.WatchPendingVoiceTools()
@@ -1215,7 +1422,7 @@ func (s *SessionSuite) TestTheCallersMemoryFilterScopesWhatIsRecalled() {
 	s.remembers = &stubMemory{}
 	s.manages()
 
-	s.joins(Spec{Memory: MemorySpec{
+	created := s.joins(Spec{ConfigID: "support", Memory: MemorySpec{
 		UserID: "222",
 		AppID:  "router",
 		Filter: map[string]string{"company_id": "12312"},
@@ -1223,8 +1430,40 @@ func (s *SessionSuite) TestTheCallersMemoryFilterScopesWhatIsRecalled() {
 
 	scope := s.remembers.scopedTo()
 	s.Equal("222", scope.UserID, "the customer was recalled instead of the caller's user")
-	s.Equal("router", scope.AppID)
-	s.Equal(map[string]string{"company_id": "12312"}, scope.Extra)
+	s.Equal("acme", scope.AppID, "the app id is always the customer")
+	s.Equal("support", scope.AgentID, "the agent is the config the session was opened from")
+	s.Equal(created.ID(), scope.RunID)
+	s.Equal(map[string]string{"company_id": "12312", "app_id": "router"}, scope.Extra,
+		"the caller's app id narrows recall like any other label")
+}
+
+func (s *SessionSuite) TestAnIncognitoSessionWritesNothingToMemory() {
+	s.remembers = &stubMemory{}
+	s.manages()
+	created := s.joins(Spec{Incognito: true, Memory: MemorySpec{UserID: "222"}})
+	events, detach := created.Watch()
+	defer detach()
+
+	s.says(created, "I moved to Austin")
+	s.Require().NotEmpty(awaitReply(events), "the turn never finished")
+	s.Require().NoError(created.Close())
+
+	s.Equal("222", s.remembers.scopedTo().UserID, "an incognito session may still recall")
+	s.Empty(s.remembers.remembered(), "an incognito session is not kept, in memory or anywhere else")
+}
+
+func (s *SessionSuite) TestARecordedSessionWritesToMemory() {
+	s.remembers = &stubMemory{}
+	s.manages()
+	created := s.joins(Spec{Memory: MemorySpec{UserID: "222"}})
+	events, detach := created.Watch()
+	defer detach()
+
+	s.says(created, "I moved to Austin")
+	s.Require().NotEmpty(awaitReply(events), "the turn never finished")
+	s.Require().NoError(created.Close())
+
+	s.NotEmpty(s.remembers.remembered(), "a finished turn is handed to memory")
 }
 
 func (s *SessionSuite) TestChangingTheInstructionsAppliesToTheNextTurn() {
@@ -1313,6 +1552,23 @@ func (s *SessionSuite) TestNamingNoSkillsTakesTheBuiltInSet() {
 
 	s.Require().NoError(err)
 	s.Greater(len(skills.Skills), 1)
+	_, offered := skills.Lookup("vision")
+	s.False(offered, "the built-in set runs on a subagent that may not see")
+}
+
+func (s *SessionSuite) TestNamingVisionOffersIt() {
+	s.manages()
+
+	skills, err := s.manager.skills(s.ctx, Spec{
+		CustomerID:     "acme",
+		SubagentTarget: "vlm",
+		SkillNames:     []string{"vision"},
+	})
+
+	s.Require().NoError(err)
+	vision, offered := skills.Lookup("vision")
+	s.Require().True(offered)
+	s.True(vision.CaptureVideo)
 }
 
 func (s *SessionSuite) TestSkillsMeanNothingWithoutASubagentToRunThem() {
@@ -1325,25 +1581,6 @@ func (s *SessionSuite) TestSkillsMeanNothingWithoutASubagentToRunThem() {
 
 	s.Require().NoError(err)
 	s.Empty(skills.Skills)
-}
-
-func (s *SessionSuite) TestASkillSpelledOutWithoutADeadlineGetsOne() {
-	// A zero deadline would abandon the work the instant it started.
-	s.manages()
-
-	skills, err := s.manager.skills(s.ctx, Spec{
-		CustomerID:     "acme",
-		SubagentTarget: "en-low-latency",
-		Skills: &harness.Skills{Skills: []harness.Skill{{
-			Name:         "refund",
-			Description:  "work out what a caller is owed",
-			Instructions: "read the order and the policy",
-		}}},
-	})
-
-	s.Require().NoError(err)
-	s.Require().Len(skills.Skills, 1)
-	s.Positive(skills.Skills[0].Deadline)
 }
 
 func (s *SessionSuite) TestWhatWasSaidIsKeptSoTheCallCanBeReviewed() {
@@ -1405,15 +1642,68 @@ func (s *SessionSuite) TestImageToolWithoutVisionReportsFailure() {
 	}, "the failed vision delegation was not reported to the model")
 }
 
-func (s *SessionSuite) TestImagesRequireAVisionSkill() {
+func (s *SessionSuite) TestImagesAreRefusedWhenNeitherASkillNorTheModelCanSeeThem() {
 	s.manages()
 	created := s.joins(Spec{})
 	_, err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{1, 2, 3}}})
-	s.ErrorContains(err, "vision")
+	s.ErrorIs(err, agent.ErrCannotSeeImages)
+}
+
+func (s *SessionSuite) TestAConversationModelThatSeesIsShownImagesWhenThereIsNoVisionSkill() {
+	s.manages()
+	s.model.sees = true
+	created := s.joins(Spec{})
+
+	_, err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool {
+		for _, request := range s.model.requests() {
+			if request.HasImage() {
+				return true
+			}
+		}
+		return false
+	}, "the conversation model was never shown the picture")
+}
+
+func (s *SessionSuite) TestAPictureIsShownOnlyToTheReplyItCameWith() {
+	s.manages()
+	s.model.sees = true
+	created := s.joins(Spec{})
+	events, detach := created.Watch()
+	defer detach()
+
+	_, err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}})
+	s.Require().NoError(err)
+	s.Require().NotEmpty(awaitReply(events), "the picture was never answered")
+	s.says(created, "and what should I do")
+
+	var next llm.ResponseParams
+	s.eventually(func() bool {
+		for _, request := range s.model.requests() {
+			if slices.Contains(handed(request), "user: and what should I do") {
+				next = request
+				return true
+			}
+		}
+		return false
+	}, "the next turn was never asked")
+	s.False(next.HasImage(), "the picture was sent again with a later turn")
+	s.Contains(handed(next), "user: what is this", "the words that came with the picture were forgotten")
 }
 
 // awaitToolCall waits for the model to ask for a tool, skipping the conversation events
 // that arrive alongside it.
+// handed is what a model request handed the model, one "role: content" line per message.
+func handed(request llm.ResponseParams) []string {
+	lines := make([]string, 0, len(request.Input))
+	for _, message := range request.Input {
+		lines = append(lines, string(message.Role)+": "+message.Content)
+	}
+	return lines
+}
+
 // awaitReply returns the text of the first finished reply a watcher sees, or empty if the
 // session said nothing before the deadline.
 func awaitReply(events <-chan Event) string {
@@ -1431,6 +1721,51 @@ func awaitReply(events <-chan Event) string {
 			return ""
 		}
 	}
+}
+
+// TestAnMCPServersToolRunsAsBeforeWhenTheConfigBindsNoConnector: a session with a plugin and
+// no connector binding. Its tools are the plugin's, its call goes through the plugin's
+// runner and its answer reaches the model, and nothing connector-shaped is said on its
+// events. Every connector hook is a no-op without a binding (AI-851).
+func (s *SessionSuite) TestAnMCPServersToolRunsAsBeforeWhenTheConfigBindsNoConnector() {
+	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "notes", Version: "1"}, nil)
+	server.AddTool(&mcpsdk.Tool{Name: "search", Description: "Finds a note.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}}},
+		func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the note"}}}, nil
+		})
+	provider := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return server },
+		&mcpsdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true}))
+	defer provider.Close()
+	s.plugins = &plugins.Auth{HTTP: provider.Client()}
+	s.manages()
+	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "notes__search", Arguments: "{}"}}
+	needsLogin := false
+	created := s.joins(Spec{MCPServers: []store.MCPServer{{Name: "notes", URL: provider.URL, NeedsLogin: &needsLogin}}})
+
+	events, detach := created.Watch()
+	defer detach()
+	s.says(created, "find my note")
+
+	var ran *agent.ToolRan
+	deadline := time.After(settleFor)
+	for ran == nil {
+		select {
+		case event := <-events:
+			if _, connector := event.(ConnectorUnavailable); connector {
+				s.Fail("a session with no binding says nothing about connectors")
+			}
+			if finished, ok := event.(agent.ToolRan); ok {
+				ran = &finished
+			}
+		case <-deadline:
+			s.Require().FailNow("the plugin's tool never ran")
+		}
+	}
+	s.Equal("notes__search", ran.Tool)
+	s.Equal("the note", ran.Result)
+	s.NoError(ran.Err)
+	s.Contains(created.voiceAgent.Tools(), "notes__search")
 }
 
 func awaitToolCall(events <-chan Event) *ToolCall {
@@ -1463,10 +1798,11 @@ func (s *SessionSuite) TestRequestedMemoryRequiresAConfiguredProvider() {
 	s.Require().ErrorContains(err, "memory is unavailable")
 }
 
-func (s *SessionSuite) TestTextSessionDoesNotAcquireAnImplicitSubagent() {
+func (s *SessionSuite) TestTextSessionThinksOnItsOwnModel() {
 	s.thinks = true
 	s.manages()
-	created := s.writes(Spec{})
-	s.Empty(created.Spec().SubagentTarget)
-	s.Empty(row(created).Subagent)
+	created := s.writes(Spec{SubagentTarget: defaultSubagentTarget})
+	s.Equal(created.Spec().LLMTarget, created.Spec().SubagentTarget)
+	s.NotEqual(defaultSubagentTarget, row(created).Subagent)
+	s.Equal(created.Spec().LLMTarget, row(created).Subagent)
 }

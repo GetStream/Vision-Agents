@@ -874,6 +874,17 @@ class TestAgent:
             wait_for_end=False,
         ):
             assert agent._call_type == "support"
+            assert agent.call_type == "support"
+
+    def test_call_type_defaults_to_agent(self):
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+
+        assert agent.call_type == "agent"
 
     async def test_answering_a_call_that_names_no_call_is_refused(self):
         agent = Agent(
@@ -1268,6 +1279,45 @@ class TestAgent:
         ]
         assert seen[-1].text == "It retries on the next one."
 
+    async def test_a_reply_that_called_a_tool_is_followed_until_the_tool_answers(self):
+        # The model says it is starting and calls a tool in the same turn. The answer is
+        # the turn after the tool returns, so the first reply is not the end of it.
+        llm = DummyRemotePipeline()
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+
+        async with agent.chat():
+            written = await asking(agent, llm, "render a teapot")
+            await llm.report(
+                RemoteEvent(
+                    type="agent_speech", text="Rendering it now.", pending_work=True
+                )
+            )
+            await llm.report(
+                RemoteEvent(type="agent_speech", text="Saved to renders/teapot.png.")
+            )
+            seen = await asyncio.wait_for(written, timeout=5)
+
+        assert [event.text for event in seen] == [
+            "Rendering it now.",
+            "Saved to renders/teapot.png.",
+        ]
+
+    async def test_a_reply_that_runs_tools_is_followed_until_it_answers(self):
+        # A model that calls a tool first replies with nothing but the call. Ending there
+        # would close the conversation before the tool's answer came back.
+        llm = DummyRemotePipeline()
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+
+        async with agent.chat():
+            written = await asking(agent, llm, "what is broken")
+            await llm.report(RemoteEvent(type="agent_speech", pending_work=True))
+            await llm.report(
+                RemoteEvent(type="agent_speech", text="Two issues are new.")
+            )
+            seen = await asyncio.wait_for(written, timeout=5)
+
+        assert [event.text for event in seen] == ["", "Two issues are new."]
+
     async def test_a_conversation_that_ends_stops_whoever_is_reading_it(self):
         # A session closed underneath the reader must not leave it waiting for an answer
         # that is never coming.
@@ -1326,7 +1376,7 @@ class TestAgent:
             edge=DummyEdge(),
             agent_user=User(name="test"),
         )
-        with pytest.raises(ValueError, match="vision worker"):
+        with pytest.raises(ValueError, match="vision skill"):
             await agent.responses.create(
                 "describe", images=[ImageContent(data=b"image")]
             )

@@ -20,36 +20,36 @@ T = TypeVar("T", bound="GuestUserRequest")
 class GuestUserRequest:
     """
     Attributes:
+        custom (GuestUserRequestCustom | Unset):
         id (str | Unset): A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that
             is already a guest of this customer returns that guest with a fresh token rather than failing, because coming
             back is the same person.
         name (str | Unset): What to call them, for a transcript a person reads later.
-        custom (GuestUserRequestCustom | Unset):
     """
 
+    custom: GuestUserRequestCustom | Unset = UNSET
     id: str | Unset = UNSET
     name: str | Unset = UNSET
-    custom: GuestUserRequestCustom | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        id = self.id
-
-        name = self.name
-
         custom: dict[str, Any] | Unset = UNSET
         if not isinstance(self.custom, Unset):
             custom = self.custom.to_dict()
 
+        id = self.id
+
+        name = self.name
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if custom is not UNSET:
+            field_dict["custom"] = custom
         if id is not UNSET:
             field_dict["id"] = id
         if name is not UNSET:
             field_dict["name"] = name
-        if custom is not UNSET:
-            field_dict["custom"] = custom
 
         return field_dict
 
@@ -60,10 +60,6 @@ class GuestUserRequest:
         )
 
         d = dict(src_dict)
-        id = d.pop("id", UNSET)
-
-        name = d.pop("name", UNSET)
-
         _custom = d.pop("custom", UNSET)
         custom: GuestUserRequestCustom | Unset
         if isinstance(_custom, Unset):
@@ -71,10 +67,14 @@ class GuestUserRequest:
         else:
             custom = GuestUserRequestCustom.from_dict(_custom)
 
+        id = d.pop("id", UNSET)
+
+        name = d.pop("name", UNSET)
+
         guest_user_request = cls(
+            custom=custom,
             id=id,
             name=name,
-            custom=custom,
         )
 
         guest_user_request.additional_properties = d

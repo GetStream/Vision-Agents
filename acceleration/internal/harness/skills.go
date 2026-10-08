@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"context"
 	"embed"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // defaultSkillsFS carries the built-in skill set so the harness works without an external
@@ -30,7 +33,6 @@ type Skill struct {
 	VideoSource  string `yaml:"-"`
 	VideoFrames  int    `yaml:"-"`
 	Revision     int64  `yaml:"-"`
-	Subagent     string `yaml:"subagent"`
 	CaptureVideo bool   `yaml:"capture_video"`
 	// Name is how the fast model asks for it.
 	Name string `yaml:"name"`
@@ -46,6 +48,11 @@ type Skill struct {
 // Skills is the set a harness was configured with.
 type Skills struct {
 	Skills []Skill `yaml:"skills"`
+	// Load reads a skill's instructions at the moment the subagent runs it, for a skill
+	// held by its name and description alone. The fast model only ever sees the index, so
+	// nothing more is read until a skill is used, and a skill edited mid-conversation is
+	// used as it now is. Nil means every skill carries its own instructions.
+	Load func(ctx context.Context, name string) (string, error) `yaml:"-"`
 }
 
 // Lookup returns a skill by name.
@@ -103,17 +110,17 @@ func (s Skills) Validate() error {
 	seen := map[string]struct{}{}
 	for _, skill := range s.Skills {
 		if skill.Name == "" {
-			return errors.New("harness: every skill needs a name")
+			return stack.Wrap(errors.New("harness: every skill needs a name"))
 		}
 		if skill.Description == "" {
-			return fmt.Errorf("harness: skill %s has no description, so the model "+
-				"would never know when to ask for it", skill.Name)
+			return stack.Wrap(fmt.Errorf("harness: skill %s has no description, so the model "+
+				"would never know when to ask for it", skill.Name))
 		}
-		if skill.Instructions == "" {
-			return fmt.Errorf("harness: skill %s has no instructions", skill.Name)
+		if skill.Instructions == "" && s.Load == nil {
+			return stack.Wrap(fmt.Errorf("harness: skill %s has no instructions", skill.Name))
 		}
 		if _, duplicate := seen[skill.Name]; duplicate {
-			return fmt.Errorf("harness: skill %s is declared twice", skill.Name)
+			return stack.Wrap(fmt.Errorf("harness: skill %s is declared twice", skill.Name))
 		}
 		seen[skill.Name] = struct{}{}
 	}
@@ -124,7 +131,7 @@ func (s Skills) Validate() error {
 func DefaultSkills() (Skills, error) {
 	raw, err := defaultSkillsFS.ReadFile("skills.yaml")
 	if err != nil {
-		return Skills{}, fmt.Errorf("harness: read default skills: %w", err)
+		return Skills{}, stack.Wrap(fmt.Errorf("harness: read default skills: %w", err))
 	}
 	return parseSkills(raw)
 }
@@ -145,7 +152,7 @@ func LoadSkills(path string) (Skills, error) {
 func parseSkills(raw []byte) (Skills, error) {
 	var skills Skills
 	if err := yaml.Unmarshal(raw, &skills); err != nil {
-		return Skills{}, fmt.Errorf("harness: parse skills: %w", err)
+		return Skills{}, stack.Wrap(fmt.Errorf("harness: parse skills: %w", err))
 	}
 	if err := skills.Validate(); err != nil {
 		return Skills{}, err

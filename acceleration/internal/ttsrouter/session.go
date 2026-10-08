@@ -43,6 +43,11 @@ func newSession(
 	owner routing.Owner,
 	recorder *routing.Recorder,
 ) *Session {
+	// A voice that takes each sentence as its own request works on them side by side, and
+	// heard as it arrives their audio is spliced together.
+	if !provider.Streaming() {
+		provider = tts.InOrder(provider)
+	}
 	session := &Session{
 		provider: provider,
 		config:   config,
@@ -71,6 +76,15 @@ func (s *Session) Provider() string { return s.config.Provider }
 
 // Model is the model serving this session.
 func (s *Session) Model() string { return s.config.Model }
+
+// Voice is the voice speaking, the provider's default included. Empty when the provider
+// cannot say.
+func (s *Session) Voice() string {
+	if voiced, ok := s.provider.(tts.Voiced); ok {
+		return voiced.Voice()
+	}
+	return ""
+}
 
 // Streaming reports whether the provider accepts partial text deltas.
 func (s *Session) Streaming() bool { return s.provider.Streaming() }
@@ -117,8 +131,11 @@ func (s *Session) observe(event tts.Event) {
 		// speech-to-text. An interrupted one still produced audio and still cost money.
 		settled := s.settle(typed.SynthesisID)
 		s.recorder.Record(s.config, routing.Stat{
-			Owner:     s.owner,
-			StartedAt: settled.startedAt,
+			Owner:       s.owner,
+			StartedAt:   settled.startedAt,
+			OperationID: typed.SynthesisID,
+			Purpose:     "speech",
+			DurationMs:  float64(time.Since(settled.startedAt).Microseconds()) / 1000,
 			Usage: routing.Usage{
 				Characters: typed.Characters,
 				AudioMs:    int64(typed.AudioDurationMs),

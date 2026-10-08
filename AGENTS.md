@@ -2,6 +2,8 @@
 
 When running an agent using @acceleration/ or an example using @acceleration/ refer to the skill acceleration/development_skills/dashboard_skill.md to setup the dashboard and launch the example. Make sure you restart any routers or binaries to avoid running old builds.
 
+Work happens on the `accelerate` branch here, and the agents docs live in getstream.io's `content/docs` (see the `docs` skill).
+
 ## What is here
 
 | Path              | What it is                                                              |
@@ -14,31 +16,37 @@ When running an agent using @acceleration/ or an example using @acceleration/ re
 | `sdks/swift/`     | Three iOS packages: `core` (state and API), `ui` (SwiftUI), `rtc` (voice over Stream Video) |
 | `examples/voice_agents/` | Runnable agents. `simple_voice_ai` is the smallest one                  |
 | `tui/`            | Go terminal UI for a conversation with an agent: the terminal counterpart of `dashboard/` |
+| `sdks/kotlin/`, `sdks/dart/` | Client-side SDKs for Android and Flutter, each a core, ui and rtc package like Swift's |
+| `sdks/dotnet/`, `sdks/ruby/`, `sdks/rust/`, `sdks/php/` | Server-side SDKs: agents, dispatch, folder sync and the router. Built and tested in Docker; each has an `sdk-<lang>` skill |
 | `sdks/go/`, `benchmark/` | The Go SDK and the voice benchmark. `go.work` ties the Go modules together |
+
+## SDK changes
+
+When you need to make an SDK change start by only changing Go
+Leave a note in the sdk skill at the bottom that other SDKs also need to udpate.
+We run this periodically, you don't need to change all SDKs at once.
+Go goes first, and later on we update the others.
 
 ## Local dev
 
 Everything reads the repo-root `.env` for provider credentials.
 
-The backend and dashboard together:
+Run the router in Docker, with the Volt dashboard's override (see the `dashboard` skill):
 
 ```bash
-docker compose up --build
+docker compose -f compose.yaml -f ../volt-dashboard/docs/local-agents/compose.volt.yaml up -d --build router
 ```
 
-That serves the router on `:8080` and the dashboard on `:3000`, with Postgres on
-`:55432` and Redis on `:56379`. Those two ports are also what the standalone `va-pg`
-and `va-redis` containers use, so stop those first if they are running.
+That serves the router on `:8080`, with Postgres on `:55432` and Redis on `:56379`, its data
+in the `vision-agents_pgdata` volume. Rerun it after router changes so you never test an old
+build. Those two ports are also what the standalone `va-pg` and `va-redis` containers use, so
+stop those first if they are running.
 
-The router build fetches the private `getstream-go-webrtc` module over the host's SSH
-agent, so `ssh-add -l` must show a key with access to it.
+`.env` must set `ROUTER_AUTH_KEK` (single-quoted: compose expands a `$` in it) and
+`ROUTER_PUBLIC_URL=http://localhost:8080`. Without the KEK no plugin client secret can be
+saved, and changing it leaves the stored ones unreadable.
 
-Without Docker, against the same Postgres and Redis:
-
-```bash
-go run ./cmd/router            # in acceleration/
-npm run dev                    # in dashboard/, needs node >= 20.9
-```
+Logs: `docker compose logs -f router`.
 
 An agent, once the router is up:
 
@@ -62,8 +70,37 @@ uv run --no-sync mypy
 
 `--no-sync` avoids a uv panic in sandboxed environments.
 
-`acceleration/api/openapi.yaml` is the source of truth for the HTTP layer. After editing it,
-regenerate every client — see [acceleration/README.md](acceleration/README.md).
+## HTTP API
+
+The router serves its API with [chi](https://github.com/go-chi/chi) and [Huma](https://huma.rocks).
+The Go structs are the source of truth: `acceleration/api/openapi.yaml` is rendered from them and
+is never edited by hand.
+
+- Declare an operation with `huma.Register` in the file for its resource, with its request and
+  response bodies as Go structs beside it. `internal/api/policies.go` is the example to copy.
+- Describe fields with `doc:` tags and constrain them with `minimum:`, `enum:`, `readOnly:` and
+  the rest, so what validates a request is also what documents it. A type's own description goes
+  in a `TransformSchema` method, and a named string enum in a `Schema` method using `namedEnum`.
+- Fail with an `APIError` (`internal/api/apierror.go`): `invalidRequest(...)`, `notFound(...)`
+  and their siblings, whose type decides the status. A failure answered from several places is
+  an `APIError` value of its own, named `errX` (`errUnknownConfig`, `errNoSessions`, built with
+  `notConfigured(...)` for a feature the deployment lacks), returned as is: one code, one status,
+  everywhere. Every failure is the `{"error": {"message", "type", "code",
+  "doc_url"}}` envelope; any other error an operation returns is a 500 saying only "something went
+  wrong", logged with its stack. A request that fails validation is a 400 `validation_failed`.
+- An operation is server-side only unless it sets `Extensions: {"x-client-accessible": true}`.
+- List endpoints page by cursor. Read the `pagination` skill
+  (`.claude/skills/pagination/SKILL.md`) before adding one or a `limit` parameter.
+- After changing an operation, run `go run ./cmd/openapi` in `acceleration/`, then regenerate the
+  clients (see [acceleration/README.md](acceleration/README.md)). A test fails if the committed
+  `openapi.yaml` is out of date.
+
+- A query parameter a request may leave out is an `optionalParam[T]`; `ptr()` is nil when it was
+  left out. Huma takes no pointer for one.
+- A route served by hand (a socket, a stream) is still declared, in `internal/api/handwritten.go`,
+  so readers and client generators see it and the server-side check reads its marks.
+
+There is no hand-written spec any more: every operation, socket included, is declared in Go.
 
 The JavaScript SDK is its own npm package, checked with node 22 and no runtime dependencies:
 
@@ -75,6 +112,13 @@ npm test        # typecheck, then the suite against a real http and ws server
 ```
 
 ## Testing
+
+For Go tests, read the `go-testing` skill (`.claude/skills/go-testing/SKILL.md`) first: testify
+suites, the shared `RouterSuite` for integration tests, and how to wait for async writes.
+
+Before you run more than one coding agent at once (parallel PRs, reviewers, fixers), read the
+`parallel-agents` skill (`.claude/skills/parallel-agents/SKILL.md`): test databases, migration
+slots, merge order and how not to burn tokens.
 
 - Framework: pytest. Never mock.
 - `@pytest.mark.asyncio` is not needed (asyncio_mode = auto).

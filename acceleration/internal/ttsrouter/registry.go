@@ -7,8 +7,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/fish"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/gemini"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/inworld"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/s2pro"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/speechify"
 )
 
 // NewRegistry returns an empty registry.
@@ -29,6 +31,7 @@ func DefaultRegistry() *Registry {
 			Model:    spec.Model,
 			VoiceID:  voiceOr(settings.VoiceID, spec.Voice),
 			Language: firstLanguage(spec.LanguageHints),
+			Speed:    number(spec.TTS.Speed),
 			Logger:   spec.Logger,
 		}
 		// The v3 models are served on a different socket, so which endpoint to open is
@@ -52,12 +55,25 @@ func DefaultRegistry() *Registry {
 		return fish.New(fish.Options{Model: spec.Model, Voice: spec.Voice, Logger: spec.Logger})
 	})
 
+	registry.Register(speechify.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
+		return speechify.New(speechify.Options{Model: spec.Model, VoiceID: spec.Voice, Logger: spec.Logger})
+	})
+
 	registry.Register(s2pro.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
 		return s2pro.New(s2pro.Options{Model: spec.Model, Voice: spec.Voice, Logger: spec.Logger})
 	})
 
 	registry.Register(breeze.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
 		return breeze.New(breeze.Options{Model: spec.Model, Voice: spec.Voice, Logger: spec.Logger})
+	})
+
+	registry.Register(gemini.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
+		return gemini.New(gemini.Options{
+			Model:    spec.Model,
+			Voice:    spec.Voice,
+			Language: firstLanguage(spec.LanguageHints),
+			Logger:   spec.Logger,
+		})
 	})
 
 	registry.Register(inworld.ProviderName, func(spec routing.Spec) (tts.TTS, error) {

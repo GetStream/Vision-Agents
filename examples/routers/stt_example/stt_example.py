@@ -31,7 +31,7 @@ CALLER = Participant(original=None, user_id="caller", id="caller")
 
 
 async def main() -> None:
-    router = acceleration.Router("clinic")
+    router = acceleration.Client().router("clinic")
     async with router.stt.realtime() as stt:
         async with recorded_call(AUDIO) as chunks:
             async for chunk in chunks:

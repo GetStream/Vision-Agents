@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.model_call_timing import ModelCallTiming
+
 
 T = TypeVar("T", bound="TimelineEntry")
 
@@ -17,85 +21,309 @@ T = TypeVar("T", bound="TimelineEntry")
 class TimelineEntry:
     """
     Attributes:
-        turn_id (str):
         started_at (datetime.datetime):
-        heard (str | Unset): What the caller said, when it can be matched to this exchange.
-        said (str | Unset): What the agent answered.
-        roundtrip_ms (float | Unset): How long the caller waited between finishing and being answered.
+        turn_id (str):
         audio_out_ms (float | Unset): How much the agent spoke.
+        cadence_ms (float | Unset): Last transcript revision to a stable turn ready for the flow controller.
+        decision_ms (float | Unset): Stable turn to the main model request, including flow and queueing.
+        first_audible_frame_ms (float | None | Unset): Last transcript revision to the outgoing track taking the first
+            frame of the reply that was not silence, which is when it could first be heard. Unlike roundtrip_ms it does not
+            include the wait for a long first chunk to be queued. Absent where the edge does not report it.
+        first_frame_queued_ms (float | None | Unset): Last transcript revision to the first frame of the reply being
+            queued for the outgoing track. Absent where the edge does not report it.
+        heard (str | Unset): What the caller said, when it can be matched to this exchange.
         interrupted (bool | Unset): Whether the caller talked over the answer.
+        llm_ttft_ms (float | None | Unset): The wait between asking the model and its first token.
+        model_calls (list[ModelCallTiming] | Unset): Individual model requests for this turn, including flow and
+            delegated work.
+        model_to_first_text_ms (float | Unset): Main model request to the first text delta admitted to the voice
+            pipeline.
+        roundtrip_ms (float | Unset): Last transcript revision to first audio published; includes cadence settling.
+        said (str | Unset): What the agent answered.
+        speech_end_to_audible_ms (float | None | Unset): Last input audio to the outgoing track taking the first frame
+            of the reply that was not silence, estimated like speech_end_to_audio_ms. It excludes network transport and
+            playback.
+        speech_end_to_audio_ms (float | None | Unset): Last input audio to first output audio, estimated using provider
+            STT processing time plus roundtrip. It excludes network transport and playback.
+        stt_latency_ms (float | None | Unset): The provider's decode time for the transcript that settled the turn.
+        text_to_tts_ms (float | Unset): First text delta to the first TTS request.
+        tts_to_audio_ms (float | Unset): First TTS request to the first audio chunk published to the edge.
+        tts_ttfb_ms (float | None | Unset): The wait between sending the first sentence and the first audio.
     """
 
-    turn_id: str
     started_at: datetime.datetime
-    heard: str | Unset = UNSET
-    said: str | Unset = UNSET
-    roundtrip_ms: float | Unset = UNSET
+    turn_id: str
     audio_out_ms: float | Unset = UNSET
+    cadence_ms: float | Unset = UNSET
+    decision_ms: float | Unset = UNSET
+    first_audible_frame_ms: float | None | Unset = UNSET
+    first_frame_queued_ms: float | None | Unset = UNSET
+    heard: str | Unset = UNSET
     interrupted: bool | Unset = UNSET
+    llm_ttft_ms: float | None | Unset = UNSET
+    model_calls: list[ModelCallTiming] | Unset = UNSET
+    model_to_first_text_ms: float | Unset = UNSET
+    roundtrip_ms: float | Unset = UNSET
+    said: str | Unset = UNSET
+    speech_end_to_audible_ms: float | None | Unset = UNSET
+    speech_end_to_audio_ms: float | None | Unset = UNSET
+    stt_latency_ms: float | None | Unset = UNSET
+    text_to_tts_ms: float | Unset = UNSET
+    tts_to_audio_ms: float | Unset = UNSET
+    tts_ttfb_ms: float | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        turn_id = self.turn_id
-
         started_at = self.started_at.isoformat()
 
-        heard = self.heard
-
-        said = self.said
-
-        roundtrip_ms = self.roundtrip_ms
+        turn_id = self.turn_id
 
         audio_out_ms = self.audio_out_ms
 
+        cadence_ms = self.cadence_ms
+
+        decision_ms = self.decision_ms
+
+        first_audible_frame_ms: float | None | Unset
+        if isinstance(self.first_audible_frame_ms, Unset):
+            first_audible_frame_ms = UNSET
+        else:
+            first_audible_frame_ms = self.first_audible_frame_ms
+
+        first_frame_queued_ms: float | None | Unset
+        if isinstance(self.first_frame_queued_ms, Unset):
+            first_frame_queued_ms = UNSET
+        else:
+            first_frame_queued_ms = self.first_frame_queued_ms
+
+        heard = self.heard
+
         interrupted = self.interrupted
+
+        llm_ttft_ms: float | None | Unset
+        if isinstance(self.llm_ttft_ms, Unset):
+            llm_ttft_ms = UNSET
+        else:
+            llm_ttft_ms = self.llm_ttft_ms
+
+        model_calls: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.model_calls, Unset):
+            model_calls = []
+            for model_calls_item_data in self.model_calls:
+                model_calls_item = model_calls_item_data.to_dict()
+                model_calls.append(model_calls_item)
+
+        model_to_first_text_ms = self.model_to_first_text_ms
+
+        roundtrip_ms = self.roundtrip_ms
+
+        said = self.said
+
+        speech_end_to_audible_ms: float | None | Unset
+        if isinstance(self.speech_end_to_audible_ms, Unset):
+            speech_end_to_audible_ms = UNSET
+        else:
+            speech_end_to_audible_ms = self.speech_end_to_audible_ms
+
+        speech_end_to_audio_ms: float | None | Unset
+        if isinstance(self.speech_end_to_audio_ms, Unset):
+            speech_end_to_audio_ms = UNSET
+        else:
+            speech_end_to_audio_ms = self.speech_end_to_audio_ms
+
+        stt_latency_ms: float | None | Unset
+        if isinstance(self.stt_latency_ms, Unset):
+            stt_latency_ms = UNSET
+        else:
+            stt_latency_ms = self.stt_latency_ms
+
+        text_to_tts_ms = self.text_to_tts_ms
+
+        tts_to_audio_ms = self.tts_to_audio_ms
+
+        tts_ttfb_ms: float | None | Unset
+        if isinstance(self.tts_ttfb_ms, Unset):
+            tts_ttfb_ms = UNSET
+        else:
+            tts_ttfb_ms = self.tts_ttfb_ms
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "turn_id": turn_id,
                 "started_at": started_at,
+                "turn_id": turn_id,
             }
         )
-        if heard is not UNSET:
-            field_dict["heard"] = heard
-        if said is not UNSET:
-            field_dict["said"] = said
-        if roundtrip_ms is not UNSET:
-            field_dict["roundtrip_ms"] = roundtrip_ms
         if audio_out_ms is not UNSET:
             field_dict["audio_out_ms"] = audio_out_ms
+        if cadence_ms is not UNSET:
+            field_dict["cadence_ms"] = cadence_ms
+        if decision_ms is not UNSET:
+            field_dict["decision_ms"] = decision_ms
+        if first_audible_frame_ms is not UNSET:
+            field_dict["first_audible_frame_ms"] = first_audible_frame_ms
+        if first_frame_queued_ms is not UNSET:
+            field_dict["first_frame_queued_ms"] = first_frame_queued_ms
+        if heard is not UNSET:
+            field_dict["heard"] = heard
         if interrupted is not UNSET:
             field_dict["interrupted"] = interrupted
+        if llm_ttft_ms is not UNSET:
+            field_dict["llm_ttft_ms"] = llm_ttft_ms
+        if model_calls is not UNSET:
+            field_dict["model_calls"] = model_calls
+        if model_to_first_text_ms is not UNSET:
+            field_dict["model_to_first_text_ms"] = model_to_first_text_ms
+        if roundtrip_ms is not UNSET:
+            field_dict["roundtrip_ms"] = roundtrip_ms
+        if said is not UNSET:
+            field_dict["said"] = said
+        if speech_end_to_audible_ms is not UNSET:
+            field_dict["speech_end_to_audible_ms"] = speech_end_to_audible_ms
+        if speech_end_to_audio_ms is not UNSET:
+            field_dict["speech_end_to_audio_ms"] = speech_end_to_audio_ms
+        if stt_latency_ms is not UNSET:
+            field_dict["stt_latency_ms"] = stt_latency_ms
+        if text_to_tts_ms is not UNSET:
+            field_dict["text_to_tts_ms"] = text_to_tts_ms
+        if tts_to_audio_ms is not UNSET:
+            field_dict["tts_to_audio_ms"] = tts_to_audio_ms
+        if tts_ttfb_ms is not UNSET:
+            field_dict["tts_ttfb_ms"] = tts_ttfb_ms
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        d = dict(src_dict)
-        turn_id = d.pop("turn_id")
+        from ..models.model_call_timing import ModelCallTiming
 
+        d = dict(src_dict)
         started_at = datetime.datetime.fromisoformat(d.pop("started_at"))
 
-        heard = d.pop("heard", UNSET)
-
-        said = d.pop("said", UNSET)
-
-        roundtrip_ms = d.pop("roundtrip_ms", UNSET)
+        turn_id = d.pop("turn_id")
 
         audio_out_ms = d.pop("audio_out_ms", UNSET)
 
+        cadence_ms = d.pop("cadence_ms", UNSET)
+
+        decision_ms = d.pop("decision_ms", UNSET)
+
+        def _parse_first_audible_frame_ms(data: object) -> float | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(float | None | Unset, data)
+
+        first_audible_frame_ms = _parse_first_audible_frame_ms(
+            d.pop("first_audible_frame_ms", UNSET)
+        )
+
+        def _parse_first_frame_queued_ms(data: object) -> float | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(float | None | Unset, data)
+
+        first_frame_queued_ms = _parse_first_frame_queued_ms(
+            d.pop("first_frame_queued_ms", UNSET)
+        )
+
+        heard = d.pop("heard", UNSET)
+
         interrupted = d.pop("interrupted", UNSET)
 
+        def _parse_llm_ttft_ms(data: object) -> float | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(float | None | Unset, data)
+
+        llm_ttft_ms = _parse_llm_ttft_ms(d.pop("llm_ttft_ms", UNSET))
+
+        _model_calls = d.pop("model_calls", UNSET)
+        model_calls: list[ModelCallTiming] | Unset = UNSET
+        if _model_calls is not UNSET:
+            model_calls = []
+            for model_calls_item_data in _model_calls:
+                model_calls_item = ModelCallTiming.from_dict(model_calls_item_data)
+
+                model_calls.append(model_calls_item)
+
+        model_to_first_text_ms = d.pop("model_to_first_text_ms", UNSET)
+
+        roundtrip_ms = d.pop("roundtrip_ms", UNSET)
+
+        said = d.pop("said", UNSET)
+
+        def _parse_speech_end_to_audible_ms(data: object) -> float | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(float | None | Unset, data)
+
+        speech_end_to_audible_ms = _parse_speech_end_to_audible_ms(
+            d.pop("speech_end_to_audible_ms", UNSET)
+        )
+
+        def _parse_speech_end_to_audio_ms(data: object) -> float | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(float | None | Unset, data)
+
+        speech_end_to_audio_ms = _parse_speech_end_to_audio_ms(
+            d.pop("speech_end_to_audio_ms", UNSET)
+        )
+
+        def _parse_stt_latency_ms(data: object) -> float | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(float | None | Unset, data)
+
+        stt_latency_ms = _parse_stt_latency_ms(d.pop("stt_latency_ms", UNSET))
+
+        text_to_tts_ms = d.pop("text_to_tts_ms", UNSET)
+
+        tts_to_audio_ms = d.pop("tts_to_audio_ms", UNSET)
+
+        def _parse_tts_ttfb_ms(data: object) -> float | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(float | None | Unset, data)
+
+        tts_ttfb_ms = _parse_tts_ttfb_ms(d.pop("tts_ttfb_ms", UNSET))
+
         timeline_entry = cls(
-            turn_id=turn_id,
             started_at=started_at,
-            heard=heard,
-            said=said,
-            roundtrip_ms=roundtrip_ms,
+            turn_id=turn_id,
             audio_out_ms=audio_out_ms,
+            cadence_ms=cadence_ms,
+            decision_ms=decision_ms,
+            first_audible_frame_ms=first_audible_frame_ms,
+            first_frame_queued_ms=first_frame_queued_ms,
+            heard=heard,
             interrupted=interrupted,
+            llm_ttft_ms=llm_ttft_ms,
+            model_calls=model_calls,
+            model_to_first_text_ms=model_to_first_text_ms,
+            roundtrip_ms=roundtrip_ms,
+            said=said,
+            speech_end_to_audible_ms=speech_end_to_audible_ms,
+            speech_end_to_audio_ms=speech_end_to_audio_ms,
+            stt_latency_ms=stt_latency_ms,
+            text_to_tts_ms=text_to_tts_ms,
+            tts_to_audio_ms=tts_to_audio_ms,
+            tts_ttfb_ms=tts_ttfb_ms,
         )
 
         timeline_entry.additional_properties = d

@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/emit"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -99,6 +101,9 @@ type Responding struct {
 	Participant stt.Participant
 	// Prompt is what the agent is replying to.
 	Prompt string
+	// Continues is the turn whose tools or delegated work this reply delivers, empty on a
+	// reply to something somebody said.
+	Continues string
 }
 
 func (Responding) isAgentEvent() {}
@@ -131,6 +136,11 @@ type Responded struct {
 }
 
 func (Responded) isAgentEvent() {}
+
+// ModelCall reports one provider attempt, including flow and delegated work.
+type ModelCall struct{ llm.CallTiming }
+
+func (ModelCall) isAgentEvent() {}
 
 // Blocked means the guardrail refused a turn, so what the caller hears is the policy's
 // refusal rather than the model's reply.
@@ -176,19 +186,35 @@ func (Spoke) isAgentEvent() {}
 type Turn struct {
 	TurnID      string
 	Participant stt.Participant
-	// StartedAt is when the settled transcript arrived, which is when the wait begins.
+	// StartedAt is when the last transcript revision arrived, before cadence settling.
 	StartedAt time.Time
+	// These consecutive legs run from transcript arrival to the first audio published.
+	CadenceMs          float64
+	DecisionMs         float64
+	ModelToFirstTextMs float64
+	TextToTTSMs        float64
+	TTSToAudioMs       float64
 	// STTLatencyMs is what the transcriber spent settling the turn.
 	STTLatencyMs float64
 	// LLMTTFTMs is the wait between asking the model and its first token.
 	LLMTTFTMs float64
 	// TTSTTFBMs is the wait between sending the first sentence and the first audio.
 	TTSTTFBMs float64
-	// RoundtripMs is the whole delay: settled transcript to first audio published.
+	// RoundtripMs is the whole delay: last transcript revision to first audio published.
 	RoundtripMs float64
 	// SpeechEndToAudioMs is voice in to voice out: the roundtrip plus the time the
 	// transcriber spent deciding the participant had stopped.
 	SpeechEndToAudioMs float64
+	// FirstFrameQueuedMs and FirstAudibleFrameMs run from the last transcript revision, like
+	// RoundtripMs, to the two moments publishing returning stands in for: the edge queueing the
+	// first frame of the reply for its outgoing track, and the track taking the first frame
+	// that was not silence, which is when the reply could first be heard. Publishing returns
+	// once no more than the queue is left of the chunk, so for a chunk longer than the queue it
+	// returns later than both. Zero where the edge does not report them.
+	FirstFrameQueuedMs  float64
+	FirstAudibleFrameMs float64
+	// SpeechEndToAudibleMs is SpeechEndToAudioMs measured to FirstAudibleFrameMs instead.
+	SpeechEndToAudibleMs float64
 	// AudioOutMs is how much speech the agent published for the turn.
 	AudioOutMs float64
 	// AudioDroppedMs is speech that was synthesised for the turn but never published,
@@ -217,7 +243,6 @@ func (Delegated) isAgentEvent() {}
 // owed, the agent has started a turn to say so.
 type TaskSettled struct {
 	Evidence []string
-	Worker   string
 	TaskID   string
 	Skill    string
 	// Text is the answer, when there is one.
@@ -227,6 +252,8 @@ type TaskSettled struct {
 	// ElapsedMs is how long the caller was kept company for.
 	ElapsedMs float64
 	Err       error
+	// Files are what the work's code handed back, published where the caller can see them.
+	Files []sandbox.Attachment
 }
 
 func (TaskSettled) isAgentEvent() {}
@@ -253,9 +280,24 @@ type ToolStarted struct {
 	// Arguments are the model's, as JSON. Only a tool a person's device runs shows them.
 	Arguments string
 	StartedAt time.Time
+	// PreSpeech is what the tool's connector binding asks to be said while it runs
+	// (ToolPolicy.PreSpeech), so a client can show it. Empty for none.
+	PreSpeech string
 }
 
 func (ToolStarted) isAgentEvent() {}
+
+// ToolApprovalDecided is a person's answer to a call that waited for their approval. It
+// changes how the call is shown; the call itself is still answered by its result.
+type ToolApprovalDecided struct {
+	ID      string
+	TurnID  string
+	Allowed bool
+	// Summary is shown on a declined call, such as "Location not shared".
+	Summary string
+}
+
+func (ToolApprovalDecided) isAgentEvent() {}
 
 type ToolRan struct {
 	ID     string
@@ -371,6 +413,22 @@ type Left struct {
 }
 
 func (Left) isAgentEvent() {}
+
+// ModelsChanged means the session moved onto other models mid-call. Each model is the
+// provider/model serving it, empty for the ones the pipeline does not run. Speech
+// recognition is the target, since a transcriber opens per participant on first hearing.
+type ModelsChanged struct {
+	At       time.Time
+	Native   bool
+	LLM      string
+	STT      string
+	TTS      string
+	STS      string
+	Subagent string
+	Voice    string
+}
+
+func (ModelsChanged) isAgentEvent() {}
 
 // Emitter fans agent events out to a single consumer channel.
 type Emitter = emit.Emitter[Event]

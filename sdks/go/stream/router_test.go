@@ -419,3 +419,57 @@ func TestInlineAudioCompletesWithoutPolling(t *testing.T) {
 		t.Fatal("missing audio")
 	}
 }
+
+func TestAPromptComesBackAsPicturesOrSaysWhyNot(t *testing.T) {
+	var asked []acceleration.GenerateImageJSONRequestBody
+	failing := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/image/generations" {
+			http.NotFound(w, r)
+			return
+		}
+		var body acceleration.GenerateImageJSONRequestBody
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		asked = append(asked, body)
+		if failing {
+			reply(w, http.StatusOK, map[string]any{
+				"id": "img_2", "status": "failed", "provider": "fal", "images": []any{}, "cost_micros": 0,
+				"error_code": "content_filtered", "error": "fal: the safety checker flagged the picture",
+			})
+			return
+		}
+		reply(w, http.StatusOK, map[string]any{
+			"id": "img_1", "status": "completed", "provider": "fal", "model": "alibaba/qwen-image-3/text-to-image",
+			"images": []map[string]any{{
+				"media_type": "image/png", "width": 1024, "height": 1024, "data": []byte{0x89, 0x50, 0x4e, 0x47},
+			}},
+			"cost_micros": 40000, "error_code": nil, "error": nil,
+		})
+	}))
+	defer server.Close()
+	router := Router{Tags: map[string]string{"employee": "e1"}, Backend: Backend{URL: server.URL, CustomerID: "acme"}}
+	size := "1024x1024"
+
+	drawn, err := router.Image().Generate(t.Context(), "A yellow watering can", &acceleration.ImageOptions{Size: &size})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drawn.Images) != 1 || string(drawn.Images[0].Data) != "\x89PNG" || drawn.CostMicros != 40000 {
+		t.Errorf("the pictures came back as %+v", drawn)
+	}
+	if asked[0].Prompt != "A yellow watering can" || *asked[0].Options.Size != size || (*asked[0].Tags)["employee"] != "e1" {
+		t.Errorf("the prompt was sent as %+v", asked[0])
+	}
+
+	failing = true
+	refused, err := router.Image().Generate(t.Context(), "something else", nil)
+	if err == nil {
+		t.Fatal("a generation that drew nothing was handed back as pictures")
+	}
+	if refused == nil || *refused.ErrorCode != acceleration.ImageErrorCodeContentFiltered {
+		t.Errorf("the refusal came back as %+v", refused)
+	}
+}

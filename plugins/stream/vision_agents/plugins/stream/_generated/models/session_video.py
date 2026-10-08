@@ -16,39 +16,39 @@ T = TypeVar("T", bound="SessionVideo")
 class SessionVideo:
     """
     Attributes:
-        source (str | Unset): Track or processor source. Omitted requires one unambiguous available source.
         max_frames (int | Unset): Number of recent frames captured for a visual task. Default one.
+        source (str | Unset): Track or processor source. Omitted requires one unambiguous available source.
     """
 
-    source: str | Unset = UNSET
     max_frames: int | Unset = UNSET
+    source: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        source = self.source
-
         max_frames = self.max_frames
+
+        source = self.source
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
-        if source is not UNSET:
-            field_dict["source"] = source
         if max_frames is not UNSET:
             field_dict["max_frames"] = max_frames
+        if source is not UNSET:
+            field_dict["source"] = source
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        source = d.pop("source", UNSET)
-
         max_frames = d.pop("max_frames", UNSET)
 
+        source = d.pop("source", UNSET)
+
         session_video = cls(
-            source=source,
             max_frames=max_frames,
+            source=source,
         )
 
         session_video.additional_properties = d

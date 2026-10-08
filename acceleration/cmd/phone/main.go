@@ -12,6 +12,7 @@
 //	phone list
 //	phone hooks
 //	phone hooks -url https://example.ngrok.app
+//	phone hooks -url https://example.ngrok.app -app 1234
 //	phone release -number +15125551234
 //
 // Stream's SIP is inbound only today, so dialling out is the vendor placing the call and
@@ -41,6 +42,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 const (
@@ -500,15 +502,24 @@ func hooks(ctx context.Context, arguments []string) error {
 		"public base url of the router, e.g. https://example.ngrok.app; empty only shows what is set")
 	remove := flags.String("remove", "",
 		"public base url to stop delivering to, for a tunnel that is gone")
+	app := flags.String("app", "",
+		"this Stream app's id, for a router in app mode: its hooks are delivered to a path of its own and checked with its keys")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
+	var segment string
+	if *app != "" {
+		if _, ok := streamapp.ParseAppID(*app); !ok {
+			return fmt.Errorf("-app is a Stream app id, not %q", *app)
+		}
+		segment = "/" + *app
+	}
 
-	stream, err := phone.NewStream(phone.StreamOptions{})
+	stream, err := phone.NewStream(phone.StreamOptions{APIKey: streamKey(), APISecret: streamSecret()})
 	if err != nil {
 		return err
 	}
-	messages, err := chat.NewStream(chat.StreamOptions{})
+	messages, err := chat.NewStream(chat.StreamOptions{APIKey: streamKey(), APISecret: streamSecret()})
 	if err != nil {
 		return err
 	}
@@ -516,7 +527,7 @@ func hooks(ctx context.Context, arguments []string) error {
 	if *remove != "" {
 		base := strings.TrimSuffix(*remove, "/")
 
-		hookURL := base + phone.CallHookPath
+		hookURL := base + phone.CallHookPath + segment
 		removed, err := stream.RemoveCallHook(ctx, hookURL)
 		if err != nil {
 			return err
@@ -527,7 +538,7 @@ func hooks(ctx context.Context, arguments []string) error {
 			fmt.Printf("nothing was delivering to %s\n", hookURL)
 		}
 
-		messageURL := base + chat.MessageHookPath
+		messageURL := base + chat.MessageHookPath + segment
 		removed, err = messages.RemoveMessageHook(ctx, messageURL)
 		if err != nil {
 			return err
@@ -542,7 +553,7 @@ func hooks(ctx context.Context, arguments []string) error {
 	if *url != "" {
 		base := strings.TrimSuffix(*url, "/")
 
-		hookURL := base + phone.CallHookPath
+		hookURL := base + phone.CallHookPath + segment
 		updated, err := stream.PointCallHook(ctx, hookURL)
 		if err != nil {
 			return err
@@ -553,7 +564,7 @@ func hooks(ctx context.Context, arguments []string) error {
 			fmt.Printf("call events now go to %s\n", hookURL)
 		}
 
-		messageURL := base + chat.MessageHookPath
+		messageURL := base + chat.MessageHookPath + segment
 		updated, err = messages.PointMessageHook(ctx, messageURL)
 		if err != nil {
 			return err
@@ -660,7 +671,7 @@ func build(ctx context.Context) (*phone.Service, func(), error) {
 	// Stream is only needed to attach a number, so a missing key is not fatal here: the
 	// operations that need it say so themselves.
 	var stream *phone.Stream
-	if streaming, err := phone.NewStream(phone.StreamOptions{}); err == nil {
+	if streaming, err := phone.NewStream(phone.StreamOptions{APIKey: streamKey(), APISecret: streamSecret()}); err == nil {
 		stream = streaming
 	}
 
@@ -723,3 +734,8 @@ func split(list string) []string {
 	}
 	return trimmed
 }
+
+// streamKey and streamSecret are the Stream app this command configures, which is the one
+// its environment names.
+func streamKey() string    { return os.Getenv("STREAM_API_KEY") }
+func streamSecret() string { return os.Getenv("STREAM_API_SECRET") }

@@ -37,10 +37,18 @@ GENERATED = TARGET / "Generated"
 # the app's own backend to ask for and to hand down. Holding the conversation is driven over
 # the session socket, which is hand-written rather than generated.
 OPERATIONS = [
-    "closeSession",
+    "createResponse",
     "createSession",
-    "listSessions",
+    "deleteSession",
+    "forkSession",
+    "getSession",
+    "listResponseItems",
+    "listResponses",
+    "querySessions",
+    "rewindSession",
     "search",
+    "stopSession",
+    "updateSession",
 ]
 
 CONFIG = {

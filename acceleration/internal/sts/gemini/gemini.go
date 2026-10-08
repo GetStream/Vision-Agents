@@ -9,7 +9,8 @@
 // a resume loop that the other must not have.
 //
 // The Live API has no response ids and no event for the caller falling silent. A reply is
-// whatever the model says between one turnComplete and the next, numbered here; the caller
+// whatever the model says between one turnComplete and the next, numbered here, except that
+// a turnComplete sent while the interaction is still in progress does not end it; the caller
 // is taken to have stopped at the last piece of transcript before the model began.
 package gemini
 
@@ -31,6 +32,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -64,6 +66,16 @@ const maxDuration = 15 * time.Minute
 // conversation is given up on.
 const resumeAttempts = 3
 
+// requiredThinking is the level a model that refuses a setup without one is given when
+// nobody asked: its floor, since thinking spends the latency budget before the first word.
+// 3.8 Live Extended Thinking takes LOW, MEDIUM or HIGH and closes the socket otherwise.
+var requiredThinking = map[string]string{"gemini-3.8-live-extended-thinking": "LOW"}
+
+// interactionInProgress is what a model that reasons or runs tools in the background sends
+// with a turnComplete that is not the end of its answer: it spoke a filler, and more of the
+// same reply is coming.
+const interactionInProgress = "IN_PROGRESS"
+
 // Options configures the provider. APIKey falls back to GOOGLE_API_KEY.
 type Options struct {
 	APIKey string
@@ -86,7 +98,8 @@ type Options struct {
 	// as START_SENSITIVITY_HIGH, which is how this vendor spells a threshold.
 	StartSensitivity string
 	EndSensitivity   string
-	// ThinkingLevel is how long a 3.1 model may think before speaking. Empty leaves it.
+	// ThinkingLevel is how long a 3.1 model may think before speaking. Empty leaves it,
+	// or takes the floor for a model that will not open without one.
 	ThinkingLevel string
 	// ProactiveAudio and AffectiveDialog are the 2.5 models' extras.
 	ProactiveAudio  *bool
@@ -235,6 +248,7 @@ type serverContent struct {
 	TurnComplete        bool           `json:"turnComplete"`
 	GenerationComplete  bool           `json:"generationComplete"`
 	Interrupted         bool           `json:"interrupted"`
+	InteractionStatus   string         `json:"interactionStatus"`
 }
 
 type transcription struct {
@@ -300,10 +314,12 @@ type STS struct {
 	lastHeardAt time.Time
 	heardAt     time.Time
 	// turn is the reply in flight, generation counts them, and usage is what the server
-	// has reported for the turn so far.
+	// has reported for the turn so far. carried is what the earlier turns of a reply that
+	// spans several cost, since the server reports each turn on its own.
 	turn       *sts.Turn
 	generation int
 	usage      sts.Usage
+	carried    sts.Usage
 	// muted drops the rest of a reply the caller cut off from this side, since the API
 	// has no way to tell the model to stop.
 	muted bool
@@ -322,16 +338,19 @@ func New(settings Options) (*STS, error) {
 		settings.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if settings.APIKey == "" {
-		return nil, fmt.Errorf("gemini: api key is required (set %s)", apiKeyEnvVar)
+		return nil, stack.Wrap(fmt.Errorf("gemini: api key is required (set %s)", apiKeyEnvVar))
 	}
 	if settings.Model == "" {
 		settings.Model = DefaultModel
+	}
+	if settings.ThinkingLevel == "" {
+		settings.ThinkingLevel = requiredThinking[settings.Model]
 	}
 	if settings.URL == "" {
 		settings.URL = DefaultURL
 	}
 	if !strings.HasPrefix(settings.URL, "ws://") && !strings.HasPrefix(settings.URL, "wss://") {
-		return nil, fmt.Errorf("gemini: url must be ws:// or wss://, got %s", settings.URL)
+		return nil, stack.Wrap(fmt.Errorf("gemini: url must be ws:// or wss://, got %s", settings.URL))
 	}
 	if settings.HandshakeTimeout == 0 {
 		settings.HandshakeTimeout = 30 * time.Second
@@ -371,7 +390,7 @@ func (s *STS) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
-		return errors.New("gemini: already started")
+		return stack.Wrap(errors.New("gemini: already started"))
 	}
 	s.started = true
 	s.mu.Unlock()
@@ -396,9 +415,9 @@ func (s *STS) connect(ctx context.Context, handle string) (*websocket.Conn, erro
 	conn, response, err := dialer.DialContext(ctx, s.endpoint(), nil)
 	if err != nil {
 		if response != nil {
-			return nil, fmt.Errorf("gemini: dial: %w (http %d)", err, response.StatusCode)
+			return nil, stack.Wrap(fmt.Errorf("gemini: dial: %w (http %d)", err, response.StatusCode))
 		}
-		return nil, fmt.Errorf("gemini: dial: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("gemini: dial: %w", err))
 	}
 	if err := s.handshake(conn, handle); err != nil {
 		conn.Close()
@@ -445,7 +464,7 @@ func (s *STS) SendFrame(frame llm.ImagePart) error {
 // SetInstructions is refused: the Live API takes its system instruction at setup and
 // nowhere else, and pretending otherwise would leave the caller believing the model had
 // been told something it had not.
-func (s *STS) SetInstructions(string) error { return sts.ErrInstructionsFixed }
+func (s *STS) SetInstructions(string) error { return stack.Wrap(sts.ErrInstructionsFixed) }
 
 // SetTools is refused for the same reason as SetInstructions.
 func (s *STS) SetTools([]llm.Tool) error { return sts.ErrToolsFixed }
@@ -516,6 +535,9 @@ func (s *STS) Provider() string { return ProviderName }
 // Model implements sts.STS.
 func (s *STS) Model() string { return s.options.Model }
 
+// Voice is the prebuilt voice asked for, or empty when the vendor picks it.
+func (s *STS) Voice() string { return s.options.Voice }
+
 // SampleRate is the rate the model speaks at.
 func (s *STS) SampleRate() int { return OutputSampleRate }
 
@@ -535,29 +557,29 @@ func (s *STS) endpoint() string {
 func (s *STS) handshake(conn *websocket.Conn, handle string) error {
 	payload, err := json.Marshal(clientMessage{Setup: s.setup(handle)})
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
-		return fmt.Errorf("gemini: send setup: %w", err)
+		return stack.Wrap(fmt.Errorf("gemini: send setup: %w", err))
 	}
 
 	if err := conn.SetReadDeadline(time.Now().Add(s.options.HandshakeTimeout)); err != nil {
-		return fmt.Errorf("gemini: read setup: %w", err)
+		return stack.Wrap(fmt.Errorf("gemini: read setup: %w", err))
 	}
 	_, raw, err := conn.ReadMessage()
 	if err != nil {
-		return fmt.Errorf("gemini: read setup: %w", err)
+		return stack.Wrap(fmt.Errorf("gemini: read setup: %w", err))
 	}
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
-		return fmt.Errorf("gemini: read setup: %w", err)
+		return stack.Wrap(fmt.Errorf("gemini: read setup: %w", err))
 	}
 
 	var message serverMessage
 	if err := json.Unmarshal(raw, &message); err != nil {
-		return fmt.Errorf("gemini: decode setup: %w", err)
+		return stack.Wrap(fmt.Errorf("gemini: decode setup: %w", err))
 	}
 	if message.SetupComplete == nil {
-		return fmt.Errorf("gemini: setup rejected: %s", strings.TrimSpace(string(raw)))
+		return stack.Wrap(fmt.Errorf("gemini: setup rejected: %s", strings.TrimSpace(string(raw))))
 	}
 	return nil
 }
@@ -632,20 +654,20 @@ func (s *STS) send(frame clientMessage) error {
 	conn, started, closed := s.conn, s.started, s.closed
 	s.mu.Unlock()
 	if closed {
-		return errors.New("gemini: session closed")
+		return stack.Wrap(errors.New("gemini: session closed"))
 	}
 	if !started || conn == nil {
-		return errors.New("gemini: not started")
+		return stack.Wrap(errors.New("gemini: not started"))
 	}
 
 	payload, err := json.Marshal(frame)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
-		return fmt.Errorf("gemini: write: %w", err)
+		return stack.Wrap(fmt.Errorf("gemini: write: %w", err))
 	}
 	return nil
 }
@@ -779,11 +801,27 @@ func (s *STS) handleContent(server serverContent) {
 		s.settleTurn(true)
 		s.unmute()
 	}
-	if server.TurnComplete {
+	// A turn that ends with the interaction still in progress is a filler spoken while
+	// the model reasons or waits on a tool, so the reply stays open and a local interrupt
+	// in the pause still has something to cut off.
+	if server.TurnComplete && server.InteractionStatus == interactionInProgress {
+		s.finishHearing()
+		s.carryUsage()
+	} else if server.TurnComplete {
 		s.finishHearing()
 		s.settleTurn(false)
 		s.unmute()
 	}
+}
+
+// carryUsage keeps what the turn that just ended cost for the reply it belongs to.
+func (s *STS) carryUsage() {
+	s.mu.Lock()
+	if s.turn != nil {
+		s.carried = sumUsage(s.carried, s.usage)
+	}
+	s.usage = sts.Usage{}
+	s.mu.Unlock()
 }
 
 func (s *STS) unmute() {
@@ -901,9 +939,10 @@ func (s *STS) currentTurn() *sts.Turn {
 func (s *STS) settleTurn(interrupted bool) {
 	s.mu.Lock()
 	turn := s.turn
-	usage := s.usage
+	usage := sumUsage(s.carried, s.usage)
 	s.turn = nil
 	s.usage = sts.Usage{}
+	s.carried = sts.Usage{}
 	s.mu.Unlock()
 	if turn == nil {
 		return
@@ -929,4 +968,14 @@ func usageOf(reported usageMetadata) sts.Usage {
 		}
 	}
 	return cost
+}
+
+func sumUsage(a, b sts.Usage) sts.Usage {
+	return sts.Usage{
+		InputTokens:       a.InputTokens + b.InputTokens,
+		CachedInputTokens: a.CachedInputTokens + b.CachedInputTokens,
+		OutputTokens:      a.OutputTokens + b.OutputTokens,
+		InputAudioTokens:  a.InputAudioTokens + b.InputAudioTokens,
+		OutputAudioTokens: a.OutputAudioTokens + b.OutputAudioTokens,
+	}
 }

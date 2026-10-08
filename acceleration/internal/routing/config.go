@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // defaultConfigFS carries the built-in capability config so the router works without an
@@ -34,21 +35,25 @@ const (
 	// question, they differ in what they cost and how long they take, and which one is
 	// worth asking changes with their health.
 	Search Modality = "search"
-	// LLMClassifier answers a question about a piece of text with a typed value and the
-	// probability behind it, rather than with prose. It is routed rather than called
-	// directly for the same reasons the others are: it is on the live path, so which
-	// provider is worth asking changes with their health, and what each judgement cost is
-	// worth reporting beside what the conversation cost.
+	// LCM is a large classifier model: it answers a question about a piece of text with a
+	// typed value and the probability behind it, rather than with prose. It is routed
+	// rather than called directly for the same reasons the others are: it is on the live
+	// path, so which provider is worth asking changes with their health, and what each
+	// judgement cost is worth reporting beside what the conversation cost.
 	//
 	// It is its own modality rather than a mode of LLM because nothing about it is a
 	// language model's shape: there is no stream, no generated text and no token budget,
 	// and a caller asks for named questions instead of a prompt.
-	LLMClassifier Modality = "llm_classifier"
+	LCM Modality = "lcm"
 	// STS is speech-to-speech: one native audio model that hears the caller and speaks
 	// back, in place of the three above. It is its own modality rather than a flag on a
 	// language model because it is served over a different protocol, billed in different
 	// units and asked for different things.
 	STS Modality = "sts"
+	// Image is a picture drawn from a prompt. It is routed like search: several providers
+	// will draw the same prompt, they differ in price and in how long a picture takes, and
+	// one call is one unit of work with nothing arriving in pieces.
+	Image Modality = "image"
 	// Memory, Knowledge and Phone are recorded but not routed: there is one memory store,
 	// one knowledge base and one vendor per number, so there is nothing to choose
 	// between. They are modalities so what they cost shows up in the same reporting as
@@ -69,6 +74,29 @@ const (
 	HighQuality Tier = "high-quality"
 )
 
+// Benchmark holds the Artificial Analysis numbers for a model. A field the model was
+// not measured on is zero.
+type Benchmark struct {
+	// Elo is the speech arena rating of a voice model.
+	Elo int `yaml:"elo"`
+	// CharactersPerSecond is how fast a voice model synthesises on the vendor's API.
+	CharactersPerSecond float64 `yaml:"characters_per_second"`
+	// WordErrorRate is the streaming AA-WER of a transcriber, from 0 to 1.
+	WordErrorRate float64 `yaml:"word_error_rate"`
+	// LatencyMs is how long a transcriber takes to its final transcript after speech ends.
+	LatencyMs int `yaml:"latency_ms"`
+	// SearchIndex is the Artificial Analysis Search Index of a search provider, 0 to 100.
+	SearchIndex int `yaml:"search_index"`
+	// CostPerTask is what one task of that benchmark cost in US dollars, the searches and
+	// the answering model's tokens together.
+	CostPerTask float64 `yaml:"cost_per_task"`
+	// IntelligenceIndex is the Artificial Analysis Intelligence Index of a text model at
+	// the reasoning effort the router asks for.
+	IntelligenceIndex int `yaml:"intelligence_index"`
+	// OutputTokensPerSecond is how fast a text model writes on the host the router calls.
+	OutputTokensPerSecond float64 `yaml:"output_tokens_per_second"`
+}
+
 // Price is what a provider charges, in US dollars. Providers bill by different units, so
 // a model sets whichever rates apply to it and leaves the rest at zero.
 type Price struct {
@@ -88,6 +116,11 @@ type Price struct {
 	// because nothing in Usage counts calls: a caller billed this way sets Stat.CostMicros
 	// from it, the way a phone number's monthly charge is set outright.
 	PerThousandRequests float64 `yaml:"per_thousand_requests"`
+	// PerImage prices each picture a model drew.
+	PerImage float64 `yaml:"per_image"`
+	// PerMegapixel prices the pixels a model drew, a million to the megapixel, for a
+	// vendor whose bill grows with the size of the picture rather than the count.
+	PerMegapixel float64 `yaml:"per_megapixel"`
 }
 
 // RequestMicros is what one call to a provider billed by the call costs, in millionths of
@@ -98,7 +131,7 @@ func (p Price) RequestMicros() int64 {
 
 // Usage is what one unit of work consumed. A modality fills in the units it bills by and
 // leaves the rest at zero: audio for speech-to-text, characters for text-to-speech,
-// tokens for an LLM.
+// tokens for an LLM, pictures for image generation.
 type Usage struct {
 	// AudioMs is billable audio, transcribed or produced.
 	AudioMs int64
@@ -111,6 +144,12 @@ type Usage struct {
 	CachedInputTokens int64
 	// OutputTokens is everything generated, reasoning included.
 	OutputTokens int64
+	// Images is how many pictures were drawn.
+	Images int64
+	// Pixels is how many pixels those pictures hold between them, counted on what came
+	// back rather than what was asked for. It prices a model billed by the megapixel and
+	// is not stored: the picture count is what a customer reads.
+	Pixels int64
 }
 
 // CostMicros returns what one request cost in millionths of a dollar. Micros keep the
@@ -127,7 +166,9 @@ func (p Price) CostMicros(usage Usage) int64 {
 		p.PerAudioHour*float64(usage.AudioMs)/3_600_000 +
 		p.PerMillionInputTokens*float64(freshInputTokens)/1_000_000 +
 		p.PerMillionCachedInputTokens*float64(usage.CachedInputTokens)/1_000_000 +
-		p.PerMillionOutputTokens*float64(usage.OutputTokens)/1_000_000
+		p.PerMillionOutputTokens*float64(usage.OutputTokens)/1_000_000 +
+		p.PerImage*float64(usage.Images) +
+		p.PerMegapixel*float64(usage.Pixels)/1_000_000
 	return int64(dollars * 1_000_000)
 }
 
@@ -150,15 +191,15 @@ type Tags map[string]string
 // Validate reports the first label the rollups could not carry.
 func (t Tags) Validate() error {
 	if len(t) > tagLimit {
-		return fmt.Errorf("routing: at most %d tags are allowed, got %d", tagLimit, len(t))
+		return stack.Wrap(fmt.Errorf("routing: at most %d tags are allowed, got %d", tagLimit, len(t)))
 	}
 	// Sorted so a request with two bad labels always reports the same one.
 	for _, key := range slices.Sorted(maps.Keys(t)) {
 		if !tagKeyPattern.MatchString(key) {
-			return fmt.Errorf("routing: tag key %q must match %s", key, tagKeyPattern)
+			return stack.Wrap(fmt.Errorf("routing: tag key %q must match %s", key, tagKeyPattern))
 		}
 		if len(t[key]) > tagValueLimit {
-			return fmt.Errorf("routing: tag %q is longer than %d characters", key, tagValueLimit)
+			return stack.Wrap(fmt.Errorf("routing: tag %q is longer than %d characters", key, tagValueLimit))
 		}
 	}
 	return nil
@@ -170,8 +211,11 @@ type ProviderConfig struct {
 	Model    string `yaml:"model"`
 	// Thinking enables provider-specific reasoning for this concrete model.
 	Thinking bool `yaml:"thinking"`
-	// ReasoningEffort is the provider-specific reasoning budget, when thinking is enabled.
+	// ReasoningEffort selects the provider-specific reasoning budget.
 	ReasoningEffort string `yaml:"reasoning_effort"`
+	// Description is one sentence for someone choosing a model: what it is good at, and
+	// what it costs them in speed or money to get it.
+	Description string `yaml:"description"`
 	// Languages are the ISO codes the model handles.
 	Languages []string `yaml:"languages"`
 	// Realtime is false for models that only make sense off the live path.
@@ -191,9 +235,15 @@ type ProviderConfig struct {
 	// a model that meets it.
 	DataPolicy options.DataHandling `yaml:"data_policy"`
 	Price      Price                `yaml:"price"`
+	// Benchmark is what Artificial Analysis measured, for someone choosing a model.
+	// Routing never reads it.
+	Benchmark Benchmark `yaml:"benchmark"`
 	// InputModalities are extra input kinds this model accepts, e.g. "image". Empty
 	// means text only, and a request carrying anything else is not routed here.
 	InputModalities []string `yaml:"input_modalities"`
+	// ContextWindow is how many tokens of prompt this host serves the model with, which
+	// can be less than its maker's. Compaction reads it; routing does not.
+	ContextWindow int64 `yaml:"context_window"`
 }
 
 // Supports reports whether this model can express every term a request named.
@@ -249,6 +299,12 @@ func (p ProviderConfig) tier() Tier {
 // provider must meet, so the candidate list follows from the config rather than from a
 // hand-maintained list of names.
 type Alias struct {
+	// Title is what the shortcut is called where someone picks one, and Description says
+	// what it is for. A shortcut with no title is plumbing, such as the one the flow
+	// controller runs on, and is not offered as a choice.
+	Title       string `yaml:"title"`
+	Description string `yaml:"description"`
+
 	RequireInputModalities []string `yaml:"require_input_modalities"`
 	// Only names the candidates outright, for the shortcut whose members have nothing
 	// declarable in common. It is the exception to everything above: a name here is a
@@ -298,25 +354,43 @@ func (a Alias) matches(provider ProviderConfig) bool {
 type ModalityConfig struct {
 	Providers []ProviderConfig `yaml:"providers"`
 	Aliases   map[string]Alias `yaml:"aliases"`
-	// CustomerPolicies restrict concrete models and reserve usage labels for an app.
-	// Missing apps retain the deployment's default routing; an empty allowlist denies all.
-	CustomerPolicies map[string]CustomerPolicy `yaml:"customer_policies"`
+	// aliasOrder is the order the aliases were written in, which a map forgets.
+	aliasOrder []string
 }
 
-type CustomerPolicy struct {
-	AllowedModels []string `yaml:"allowed_models"`
-	Tags          Tags     `yaml:"tags"`
+// UnmarshalYAML decodes the section and keeps the order its aliases were written in.
+func (c *ModalityConfig) UnmarshalYAML(node *yaml.Node) error {
+	type plain ModalityConfig
+	if err := node.Decode((*plain)(c)); err != nil {
+		return err
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value != "aliases" {
+			continue
+		}
+		aliases := node.Content[i+1].Content
+		for j := 0; j < len(aliases); j += 2 {
+			c.aliasOrder = append(c.aliasOrder, aliases[j].Value)
+		}
+	}
+	return nil
 }
 
-func (p CustomerPolicy) attributed(tags Tags) Tags {
-	result := maps.Clone(tags)
-	if result == nil && len(p.Tags) > 0 {
-		result = Tags{}
+// Offered returns the shortcuts that carry a title, in the order the config wrote them.
+// Those are the ones someone picking a model is shown.
+func (c ModalityConfig) Offered() []string {
+	order := c.aliasOrder
+	// A config built in code has no written order, so it is offered alphabetically.
+	if len(order) == 0 {
+		order = slices.Sorted(maps.Keys(c.Aliases))
 	}
-	for key, value := range p.Tags {
-		result[key] = value
+	var offered []string
+	for _, name := range order {
+		if c.Aliases[name].Title != "" {
+			offered = append(offered, name)
+		}
 	}
-	return result
+	return offered
 }
 
 // Provider returns the declaration for a "provider/model" name.
@@ -404,20 +478,6 @@ func (c ModalityConfig) validate() error {
 			return fmt.Errorf("%s is declared twice", provider.Name())
 		}
 		seen[provider.Name()] = struct{}{}
-	}
-	for _, customer := range slices.Sorted(maps.Keys(c.CustomerPolicies)) {
-		if strings.TrimSpace(customer) == "" {
-			return errors.New("customer policy requires an app ID")
-		}
-		policy := c.CustomerPolicies[customer]
-		if err := policy.Tags.Validate(); err != nil {
-			return fmt.Errorf("customer %s attribution: %w", customer, err)
-		}
-		for _, model := range policy.AllowedModels {
-			if _, declared := seen[model]; !declared {
-				return fmt.Errorf("customer %s permits undeclared model %s", customer, model)
-			}
-		}
 	}
 
 	for _, name := range slices.Sorted(maps.Keys(c.Aliases)) {

@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -176,6 +177,10 @@ type stubLLM struct {
 	// is returned, so a test can interrupt while Create has not come back.
 	holdCreate <-chan struct{}
 
+	// refuses, if set, is returned instead of a response: the model a session opens onto
+	// happily but that answers nothing, which is what a rejected key looks like.
+	refuses error
+
 	// scripts are the responses handed out, keyed by the id the caller correlates on, so
 	// a test can write one as it goes and see which were abandoned.
 	scripts map[string]*llmtest.Script
@@ -189,8 +194,12 @@ func (s *stubLLM) Start(context.Context) error { return nil }
 func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	s.mu.Lock()
 	s.asked = append(s.asked, params)
-	hold := s.holdCreate
+	hold, refuses := s.holdCreate, s.refuses
 	s.mu.Unlock()
+
+	if refuses != nil {
+		return nil, refuses
+	}
 
 	if hold != nil {
 		select {
@@ -279,6 +288,18 @@ func (s *stubLLM) requests() []llm.ResponseParams {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]llm.ResponseParams(nil), s.asked...)
+}
+
+// turns is what the model was asked on behalf of the caller, leaving out the one-word
+// request a swap makes to prove the model can answer at all.
+func (s *stubLLM) turns() []llm.ResponseParams {
+	var asked []llm.ResponseParams
+	for _, request := range s.requests() {
+		if request.ID != "" {
+			asked = append(asked, request)
+		}
+	}
+	return asked
 }
 
 // interrupted is how many responses the agent closed part-way through.
@@ -381,6 +402,7 @@ type stubMemory struct {
 	mu        sync.Mutex
 	knows     []memory.Memory
 	scope     memory.Scope
+	learnedAs memory.Scope
 	learned   [][]llm.Message
 	recallErr error
 }
@@ -395,15 +417,24 @@ func (m *stubMemory) Recall(_ context.Context, query memory.Query) ([]memory.Mem
 	return m.knows, nil
 }
 
-func (m *stubMemory) Remember(_ context.Context, _ memory.Scope, messages []llm.Message) error {
+func (m *stubMemory) Remember(_ context.Context, scope memory.Scope, messages []llm.Message) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.learnedAs = scope
 	m.learned = append(m.learned, messages)
 	return nil
 }
 
-func (m *stubMemory) Provider() string { return "stub" }
-func (m *stubMemory) Close() error     { return nil }
+func (m *stubMemory) writtenAs() memory.Scope {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.learnedAs
+}
+
+func (m *stubMemory) Truncate(context.Context, string, string) error  { return nil }
+func (m *stubMemory) ForgetRun(context.Context, string, string) error { return nil }
+func (m *stubMemory) Provider() string                                { return "stub" }
+func (m *stubMemory) Close() error                                    { return nil }
 
 func (m *stubMemory) remembered() [][]llm.Message {
 	m.mu.Lock()
@@ -425,6 +456,7 @@ func stubConfig() routing.ModalityConfig {
 			Model:     "stub-model",
 			Languages: []string{"en"},
 			Realtime:  true,
+			Terms:     []options.Term{options.Speed},
 		}},
 		Aliases: map[string]routing.Alias{
 			"en-low-latency": {Languages: []string{"en"}, RequireRealtime: true},
@@ -463,11 +495,14 @@ type AgentSuite struct {
 	suite.Suite
 	ctx context.Context
 
-	edge  *loopbackEdge
-	voice *stubTTS
-	model *stubLLM
-	flow  *stubLLM
-	ears  *stubSTT
+	edge *loopbackEdge
+	// edgeFactory wraps the loopback in an edge with more to it, for a test of what only such
+	// an edge does. Without it the agent joins the loopback itself.
+	edgeFactory func(*loopbackEdge) Edge
+	voice       *stubTTS
+	model       *stubLLM
+	flow        *stubLLM
+	ears        *stubSTT
 	// opened counts the transcription sessions the agent asked for, which is how a test
 	// tells a transcriber that was replaced from one that was never reopened.
 	opened atomic.Int64
@@ -483,11 +518,18 @@ type AgentSuite struct {
 	// runner carries out the tools this package does not own, present only when a test
 	// gives the agent one.
 	runner *stubToolRunner
+	// toolPolicy is what a test's tools ask of the agent (Options.ToolPolicy).
+	toolPolicy func(tool string) ToolPolicy
 	// duplex is how the agent listens and talks at the same time, off unless a test says
 	// otherwise.
 	duplex DuplexOptions
+	// speculates starts replies before the flow controller has ruled, off unless a test
+	// says otherwise.
+	speculates bool
 	// remembers is the memory store the agent joins with, when a test gives it one.
 	remembers *stubMemory
+	// incognito holds the session off the record.
+	incognito bool
 	// knows is what the agent may look things up in, when a test gives it a knowledge
 	// base, and namespace is which one it reads.
 	knows     *stubKnowledge
@@ -504,6 +546,10 @@ type AgentSuite struct {
 	records *store.Store
 	// agentID names the agent, so a test writing turns can find its own rows.
 	agentID string
+	// speed is the voice's rate of delivery the agent joins with, and voiceAsked is what
+	// the voice was opened with.
+	speed      float64
+	voiceAsked routing.Spec
 
 	agent  *Agent
 	events *collector
@@ -515,7 +561,9 @@ func TestAgentSuite(t *testing.T) {
 
 func (s *AgentSuite) SetupTest() {
 	s.ctx = context.Background()
+	s.edgeFactory = nil
 	s.remembers = nil
+	s.incognito = false
 	s.knows = nil
 	s.namespace = ""
 	s.finds = nil
@@ -525,7 +573,9 @@ func (s *AgentSuite) SetupTest() {
 	s.line = nil
 	s.tools = harness.Tools{}
 	s.runner = nil
+	s.toolPolicy = nil
 	s.duplex = DuplexOptions{}
+	s.speculates = false
 	s.performing = ""
 	if s.agentID == "" {
 		s.agentID = "agent-1"
@@ -649,7 +699,10 @@ func (s *AgentSuite) join(streamingVoice bool) {
 	}
 
 	speech := ttsrouter.NewRegistry()
-	speech.Register("stub", func(routing.Spec) (tts.TTS, error) { return s.voice, nil })
+	speech.Register("stub", func(spec routing.Spec) (tts.TTS, error) {
+		s.voiceAsked = spec
+		return s.voice, nil
+	})
 	speaker, err := ttsrouter.New(ttsrouter.Options{
 		Config: stubConfig(), Registry: speech, Logger: logger,
 	})
@@ -682,25 +735,35 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		searchTarget = "stub/now"
 	}
 
+	var edge Edge = s.edge
+	if s.edgeFactory != nil {
+		edge = s.edgeFactory(s.edge)
+	}
+
 	agent, err := New(Options{
-		Edge:               s.edge,
+		Edge:               edge,
 		Instructions:       "be brief",
 		CustomerID:         "acme",
 		AgentID:            s.agentID,
 		AppID:              "router",
+		SessionID:          "session-1",
+		Incognito:          s.incognito,
 		Store:              s.records,
 		SubagentTarget:     subagentTarget,
 		Skills:             s.skills,
 		Telephony:          calling,
 		ToolRunner:         running,
+		ToolPolicy:         s.toolPolicy,
 		Tools:              s.tools,
 		Duplex:             s.duplex,
+		SpeculativeReplies: s.speculates,
 		LLM:                reasoner,
 		LLMTarget:          "en-low-latency",
 		STT:                transcriber,
 		STTTarget:          "en-low-latency",
 		TTS:                speaker,
 		TTSTarget:          "en-low-latency",
+		Speed:              s.speed,
 		Memory:             remembering,
 		Knowledge:          reading,
 		KnowledgeNamespace: s.namespace,
@@ -860,6 +923,20 @@ func (s *AgentSuite) TestJoiningEntersTheCall() {
 	s.True(s.edge.joined)
 }
 
+func (s *AgentSuite) TestTheVoiceIsOpenedAtTheSpeedTheAgentWasGiven() {
+	s.speed = 0.9
+	s.join(true)
+
+	s.Require().NotNil(s.voiceAsked.TTS.Speed)
+	s.Equal(0.9, *s.voiceAsked.TTS.Speed)
+}
+
+func (s *AgentSuite) TestAVoiceWithNoSpeedIsNotAskedForOne() {
+	s.join(true)
+
+	s.Nil(s.voiceAsked.TTS.Speed, "naming a speed narrows the voices that may answer")
+}
+
 func (s *AgentSuite) TestJoiningTwiceIsRejected() {
 	s.join(true)
 
@@ -922,6 +999,91 @@ func (s *AgentSuite) TestASettledTurnIsAnsweredAndSpoken() {
 
 	s.eventually(func() bool { return len(s.edge.heard()) > 0 },
 		"the reply was never published to the call")
+}
+
+func (s *AgentSuite) TestASpeculativeReplyStartsBeforeTheRulingAndIsSpokenOnlyAfterIt() {
+	s.speculates = true
+	s.join(true)
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 },
+		"the reply should be asked for while the flow controller is still deciding")
+	s.Len(s.flow.requests(), 1)
+	s.Never(func() bool { return len(s.edge.heard()) > 0 }, 150*time.Millisecond, 10*time.Millisecond,
+		"nothing may be spoken before the ruling says to answer")
+	s.Empty(s.agent.History(), "the words are not the conversation's until they are answered")
+
+	close(ruling)
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 },
+		"a ruling to answer should release the reply already started")
+	s.Len(s.model.requests(), 1, "the reply started early is the one spoken, not a second one")
+	s.eventually(func() bool { return len(s.agent.History()) == 2 }, "the exchange was never kept")
+	s.Equal("hello", s.agent.History()[0].Content)
+}
+
+func (s *AgentSuite) TestASpeculativeReplyIsDroppedWhenTheRulingDoesNotAnswer() {
+	s.speculates = true
+	s.join(true)
+	s.flow.reply = []string{`{"disposition":"ignore","floor":"continue"}`}
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "child", Name: "Child"}
+	s.speak(participant)
+
+	s.says(participant, "mom where is my backpack")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 },
+		"the reply should be asked for while the flow controller is still deciding")
+
+	close(ruling)
+
+	s.Never(func() bool { return len(s.edge.heard()) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
+		"a reply to speech the agent was not meant to answer must never be heard")
+	s.Empty(s.agent.History())
+	s.Zero(countOf[Responding](s.reported()))
+}
+
+func (s *AgentSuite) TestAClarifyingRulingStartsAgainRatherThanUsingTheEarlyReply() {
+	// The early reply was written without the note that says the words were ambiguous, so
+	// speaking it would answer a question the caller may not have asked.
+	s.speculates = true
+	s.join(true)
+	s.flow.reply = []string{`{"disposition":"clarify","floor":"continue"}`}
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "do it like last time")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the early reply never started")
+
+	close(ruling)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"a clarifying ruling should ask for a reply of its own")
+	s.Contains(s.model.requests()[1].Instructions, "ambiguous")
+	s.NotContains(s.model.requests()[0].Instructions, "ambiguous")
+}
+
+func (s *AgentSuite) TestWithoutSpeculationTheReplyWaitsForTheRuling() {
+	s.join(true)
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+	s.eventually(func() bool { return len(s.flow.requests()) == 1 }, "the flow controller was never asked")
+
+	s.Never(func() bool { return len(s.model.requests()) > 0 }, 150*time.Millisecond, 10*time.Millisecond,
+		"without speculation the reply is only asked for once the ruling is in")
+	close(ruling)
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the reply never started")
 }
 
 func (s *AgentSuite) TestARevisionReplacesTheWordsBeforeCadenceActs() {
@@ -1342,7 +1504,37 @@ func (s *AgentSuite) TestMemoriesBelongToTheCustomerAndTheApp() {
 	s.remembers = &stubMemory{}
 	s.join(true)
 
-	s.Equal(memory.Scope{AppID: "router", UserID: "acme"}, s.remembers.scopedTo())
+	s.Equal(memory.Scope{
+		AppID: "acme", UserID: "acme", AgentID: "agent-1", RunID: "session-1",
+		Extra: map[string]string{"app_id": "router"},
+	}, s.remembers.scopedTo(), "the app id is always the customer, and a caller's own only narrows it")
+}
+
+func (s *AgentSuite) TestAnAgentWithMemoryButNoSessionIsRefused() {
+	_, err := New(Options{
+		Text:       true,
+		CustomerID: "acme",
+		AgentID:    "agent-1",
+		LLM:        s.reasoner(slog.New(slog.DiscardHandler)),
+		Memory:     &stubMemory{},
+	})
+
+	s.ErrorContains(err, "run id", "a memory written without its session could never be traced back to it")
+}
+
+func (s *AgentSuite) TestAnIncognitoSessionRecallsButRemembersNothing() {
+	s.remembers = &stubMemory{knows: []memory.Memory{{Text: "Prefers to be called Al"}}}
+	s.incognito = true
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "I moved to Austin")
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+	s.Require().NoError(s.agent.Close())
+	s.Contains(s.model.requests()[0].Instructions, "Prefers to be called Al")
+	s.Empty(s.remembers.remembered(), "an incognito session is not kept, in memory or anywhere else")
 }
 
 func (s *AgentSuite) TestAnAgentThatCannotRecallStillTakesTheCall() {
@@ -1367,6 +1559,10 @@ func (s *AgentSuite) TestAFinishedExchangeIsRemembered() {
 	s.says(participant, "I moved to Austin")
 
 	s.eventually(func() bool { return len(s.remembers.remembered()) == 1 }, "nothing was remembered")
+	s.Equal(memory.Scope{
+		AppID: "acme", UserID: "acme", AgentID: "agent-1", RunID: "session-1",
+		Extra: map[string]string{"app_id": "router"},
+	}, s.remembers.writtenAs())
 	exchange := s.remembers.remembered()[0]
 	s.Require().Len(exchange, 2, "what was asked and what was answered")
 	s.Equal(llm.Message{Role: llm.User, Content: "I moved to Austin"}, exchange[0])
@@ -2007,6 +2203,33 @@ func (s *AgentSuite) TestASecondToolDoesNotStartACompetingReply() {
 	s.Len(s.model.requests(), 2, "a second tool must not start a competing generate")
 }
 
+func (s *AgentSuite) TestTheReplyToAToolResultContinuesTheTurnThatAskedForIt() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 2 },
+		"the tool result was never answered")
+	var asked, followed Responding
+	for _, event := range s.reported() {
+		if responding, ok := event.(Responding); ok {
+			if asked.TurnID == "" {
+				asked = responding
+			} else {
+				followed = responding
+			}
+		}
+	}
+	s.Empty(asked.Continues, "a question somebody asked continues nothing")
+	s.Equal(asked.TurnID, followed.Continues)
+}
+
 func (s *AgentSuite) TestAToolResultDoesNotCutOffTheReplyAlreadyBeingSpoken() {
 	// Only a caller talking over the agent abandons a turn. The agent starting one for
 	// itself, to say what a tool came back with, does not: the reply that promised to go
@@ -2231,6 +2454,29 @@ func (s *AgentSuite) TestAnAnswerInWritingIsReportedRatherThanSpoken() {
 	s.Equal("Hello there. How are you?", responded.Text)
 	s.Positive(countOf[ResponseDelta](s.reported()), "the reply should stream as it is written")
 	s.Zero(countOf[Spoke](s.reported()), "there is no voice in a conversation held in writing")
+}
+
+// TestAnAnswerInWritingKeepsItsBrackets guards the reader against the voice's stripper.
+//
+// Square brackets are a stage direction only to a voice. To a reader they are a markdown
+// link or an array literal, and a documentation agent writes both in almost every answer:
+// stripped, every citation it gives becomes a bare URL in parentheses and every code
+// sample loses its destructuring.
+func (s *AgentSuite) TestAnAnswerInWritingKeepsItsBrackets() {
+	s.joinText()
+	s.model.reply = []string{
+		"See [the channel guide](https://getstream.io/chat/docs/) ",
+		"and hold them with useState([]).",
+	}
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I list channels"))
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+	responded, _ := firstOf[Responded](s.reported())
+	s.Equal(
+		"See [the channel guide](https://getstream.io/chat/docs/) and hold them with useState([]).",
+		responded.Text,
+	)
 }
 
 func (s *AgentSuite) TestAGreetingInWritingIsReportedAsSaid() {

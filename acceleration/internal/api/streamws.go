@@ -13,6 +13,8 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
@@ -27,9 +29,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 )
 
-// noStreams is what the modality socket says on a deployment that inspects routing without
+// errNoStreams is what the modality socket says on a deployment that inspects routing without
 // serving it.
-const noStreams = "this deployment does not stream this modality"
+var errNoStreams = notConfigured("this deployment does not stream")
 
 // startWait bounds how long a socket waits to be told what it is for. A caller that
 // upgraded and then said nothing is holding a connection and a goroutine for no reason.
@@ -40,8 +42,8 @@ const startWait = 30 * time.Second
 //
 // It is the same routers a session uses. What differs is only who holds the conversation:
 // here the caller does, and the router is one piece of their pipeline rather than the
-// whole of it. Four of them are sockets, and search and the two recording jobs are plain
-// requests, because nothing about them arrives in pieces.
+// whole of it. Four of them are sockets, and search, image generation and the two
+// recording jobs are plain requests, because nothing about them arrives in pieces.
 type Streams struct {
 	STT *sttrouter.Router
 	TTS *ttsrouter.Router
@@ -51,10 +53,14 @@ type Streams struct {
 	STS *stsrouter.Router
 	// Search answers a question at /v1/search.
 	Search *searchrouter.Router
+	// LCM answers typed questions about a piece of text at /v1/classify.
+	LCM *lcmrouter.Router
 	// Transcriptions and Speech run the non-realtime jobs, against the batch half of each
 	// vendor rather than the streaming one.
 	Transcriptions *sttrouter.Recordings
 	Speech         *ttsrouter.Recordings
+	// Image draws pictures at /v1/image/generations.
+	Image *imagerouter.Router
 }
 
 // start is the first frame on every modality socket. It says what to route to and what to
@@ -132,12 +138,16 @@ func (s start) options(config store.RouterConfig) (options.STT, options.TTS, opt
 func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 	customerID, ok := CustomerFrom(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "the "+CustomerHeader+" header is required")
+		writeError(w, errMissingCustomer)
 		return
 	}
 	modality := routing.Modality(r.PathValue("modality"))
-	if s.streams == nil || !s.serves(modality) {
-		writeError(w, http.StatusNotFound, noStreams)
+	if s.streams == nil {
+		writeError(w, errNoStreams)
+		return
+	}
+	if !s.serves(modality) {
+		writeError(w, unknownModality(Modality(modality)))
 		return
 	}
 
@@ -150,7 +160,7 @@ func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 	connection.SetReadLimit(maxSocketMessage)
 	out := &socket{connection: connection}
 
-	opening, err := readStart(connection)
+	opening, err := readStart(connection, modality)
 	if err != nil {
 		out.failed(err)
 		return
@@ -173,7 +183,7 @@ func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 		Caller:     CallerFrom(r.Context()),
 		AgentID:    opening.AgentID,
 		CallID:     opening.CallID,
-		Tags:       tagsUnder(config, &opening.Tags),
+		Tags:       tagsSent(&opening.Tags),
 	}
 	if err := request.Tags.Validate(); err != nil {
 		out.failed(err)
@@ -199,7 +209,7 @@ func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 		}
 		err = s.streamSTS(ctx, out, request, conversation, opening.Tools, opening.SampleRate)
 	default:
-		err = errors.New(noStreams)
+		err = unknownModality(Modality(modality))
 	}
 	if err != nil {
 		out.failed(err)
@@ -402,6 +412,7 @@ func (s *Server) streamLLM(
 		CallID:        request.CallID,
 		Tags:          request.Tags,
 		Target:        held.Target,
+		Providers:     held.Providers,
 		LanguageHints: nil,
 	})
 	if err != nil {
@@ -760,13 +771,6 @@ func writeSTS(out *socket, event sts.Event) error {
 	}
 }
 
-// respond is a frame on the language-model socket: either one response to generate or a
-// list of responses to abandon.
-//
-// It carries the whole of what a response can be asked for rather than a corner of it,
-// because a routed completion should be able to call a tool or cache a prompt prefix the
-// way a session's can. Anything it leaves out falls back to the socket's options, which
-// fall back to its config.
 type wireToolCall struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
@@ -774,6 +778,13 @@ type wireToolCall struct {
 	Signature string `json:"signature,omitempty"`
 }
 
+// respond is a frame on the language-model socket: either one response to generate or a
+// list of responses to abandon.
+//
+// It carries the whole of what a response can be asked for rather than a corner of it,
+// because a routed completion should be able to call a tool or cache a prompt prefix the
+// way a session's can. Anything it leaves out falls back to the socket's options, which
+// fall back to its config.
 type respond struct {
 	Type string `json:"type"`
 	ID   string `json:"id"`
@@ -894,7 +905,7 @@ const defaultSampleRate = 16000
 //
 // A frame naming a config need not name a target, because the config it names may hold
 // one. A frame naming neither is refused: nothing about it says what to route to.
-func readStart(connection *websocket.Conn) (start, error) {
+func readStart(connection *websocket.Conn, modality routing.Modality) (start, error) {
 	connection.SetReadDeadline(time.Now().Add(startWait))
 	defer connection.SetReadDeadline(time.Time{})
 
@@ -905,10 +916,31 @@ func readStart(connection *websocket.Conn) (start, error) {
 	if opening.Type != "" && opening.Type != "start" {
 		return start{}, errors.New("the first frame must be a start frame")
 	}
-	if opening.Target == "" && opening.ConfigID == "" {
+	if !opening.names(modality) && opening.ConfigID == "" {
 		return start{}, errors.New("routing needs a target, either sent or held in a config")
 	}
 	return opening, nil
+}
+
+// names reports whether the frame names what to route to: at its top, or in the option
+// block of the socket's own modality, which is where the SDKs send it. A target in another
+// modality's block says nothing about this socket.
+func (s start) names(modality routing.Modality) bool {
+	if s.Target != "" {
+		return true
+	}
+	switch modality {
+	case routing.STT:
+		return s.STT.Target != ""
+	case routing.TTS:
+		return s.TTS.Target != ""
+	case routing.LLM:
+		return s.LLM.Target != ""
+	case routing.STS:
+		return s.STS.Target != ""
+	default:
+		return false
+	}
 }
 
 // sttFrame renders a transcription event.

@@ -1,12 +1,13 @@
 import asyncio
+import contextlib
 import json
 import logging
 from typing import Any, AsyncIterator, Optional
+from uuid import uuid4
 
 import aiortc
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.harness import Harness
 from vision_agents.core.llm.llm import (
     LLMResponseDelta,
     LLMResponseFinal,
@@ -16,26 +17,25 @@ from vision_agents.core.llm.llm import (
 from vision_agents.core.llm.remote import (
     RemoteCall,
     RemoteEvent,
+    RemoteFile,
     RemotePipelineError,
 )
 from vision_agents.core.utils.utils import cancel_and_wait
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 from ._backend import Backend
-from ._generated.api.default import close_session, create_session, list_agent_configs
+from ._errors import RouterError
+from ._latency import render_turn
+from ._generated.api.default import create_session, list_agent_configs, stop_session
 from ._generated.models import (
     CreateSessionRequest,
     CreateSessionRequestTags,
-    Error,
-    Sandbox,
     Session,
     SessionMemory,
     SessionMemoryFilter,
-    SessionSkill,
     SessionTool,
     SessionToolParameters,
     SessionVideo,
-    CreateSessionRequestSubagents,
 )
 from ._socket import Socket
 from .config import ensure_agent
@@ -46,6 +46,10 @@ logger = logging.getLogger(__name__)
 # USER_KEY is the memory filter key naming who the memories are about. Everything else in
 # the filter narrows recall; this one is what recall is keyed by.
 USER_KEY = "user_id"
+
+# AUTHORIZATION_REQUIRED is what a user plugin's tool answers while the end user has not
+# connected their account; its attachment is the button a chat client shows.
+AUTHORIZATION_REQUIRED = "authorization_required"
 
 
 class Accelerated(OmniLLM):
@@ -72,7 +76,6 @@ class Accelerated(OmniLLM):
         model: str = "",
         stt: str = "",
         tts: str = "",
-        subagent: str = "",
         voice: str = "",
         config: str = "",
         language: Optional[str] = None,
@@ -83,9 +86,10 @@ class Accelerated(OmniLLM):
         url: Optional[str] = None,
         customer_id: Optional[str] = None,
         keyterms: Optional[list[str]] = None,
-        subagents: Optional[dict[str, str]] = None,
         video_source: str = "",
         video_max_frames: int = 0,
+        log_latency: bool = False,
+        user_id: str = "",
     ):
         """Configure a pipeline to run remotely.
 
@@ -96,8 +100,6 @@ class Accelerated(OmniLLM):
             model: The model that answers.
             stt: The model that transcribes.
             tts: The model that speaks.
-            subagent: The model that does the thinking a harness delegates. Overridden by
-                the agent's harness when it names one.
             voice: A provider-specific voice id.
             config: The name of a stored agent config to start from, as passed to
                 `define_agent`. Everything else here overrides what it says. The name is
@@ -114,16 +116,19 @@ class Accelerated(OmniLLM):
                 `STREAM_ACCELERATION_CUSTOMER_ID`.
             keyterms: Words the transcriber would otherwise get wrong, such as names and
                 member IDs. Empty leaves whatever the stored config named.
-            subagents: Named worker targets, selected by skill bindings.
             video_source: Camera or processor source for delegated capture.
             video_max_frames: Recent frames per task (1–8); zero uses configuration.
+            log_latency: Print per-model timing and a turn DAG to agent stdout.
+                Disabled by default; metrics are still recorded by the router.
+            user_id: The end user the conversation is for. The plugins an agent names
+                as `user_plugins` sign in as them, so a session without one is offered
+                none of those.
         """
         super().__init__()
         self.provider_name = "stream"
         self.model = model
         self.stt = stt
         self.tts = tts
-        self.subagent = subagent
         self.voice = voice
         self.config = config
         self.language = language
@@ -132,11 +137,11 @@ class Accelerated(OmniLLM):
         self.max_tokens = max_tokens
         self.tool_timeout = tool_timeout
         self.keyterms = keyterms or []
-        self.subagents = subagents or {}
         self.video_source = video_source
         self.video_max_frames = video_max_frames
+        self.log_latency = log_latency
 
-        self.backend = Backend(url=url, customer_id=customer_id)
+        self.backend = Backend(url=url, customer_id=customer_id, acting_for=user_id)
         # A knowledge base belongs to the stored config that reads it, so an agent
         # configured here rather than by name has none to fill.
         self.knowledge = Knowledge(config, self.backend)
@@ -147,6 +152,7 @@ class Accelerated(OmniLLM):
         self._running: set[asyncio.Task] = set()
         self._tool_tasks: dict[str, asyncio.Task] = {}
         self._events: asyncio.Queue[Optional[RemoteEvent]] = asyncio.Queue()
+        self._pending_model_calls: dict[str, list[dict[str, Any]]] = {}
 
     @property
     def uses_video_observations(self) -> bool:
@@ -175,12 +181,13 @@ class Accelerated(OmniLLM):
             )
             request.config_id = await self._config_id(self.config)
 
-        created = await create_session.asyncio(
-            client=self.backend.client(), body=request
-        )
-        if isinstance(created, Error):
-            raise RemotePipelineError(created.error)
-        if created is None:
+        try:
+            created = await create_session.asyncio(
+                client=self.backend.client(), body=request
+            )
+        except RouterError as refused:
+            raise RemotePipelineError(str(refused)) from refused
+        if not isinstance(created, Session):
             raise RemotePipelineError("the router did not answer with a session")
 
         self.session = created
@@ -226,6 +233,9 @@ class Accelerated(OmniLLM):
         command: dict[str, Any] = {"type": "respond", "text": text}
         if images:
             command["images"] = [image.as_image_dict() for image in images]
+        elif self.backend.acting_for and self._persisted():
+            # A conversation kept for an end user takes each message once, by its id.
+            command["command_id"] = uuid4().hex
         await self._command(command)
 
     async def simple_response(
@@ -253,9 +263,10 @@ class Accelerated(OmniLLM):
         if self._socket is not None and self._socket.open:
             await self._socket.send({"type": "close"})
         else:
-            await close_session.asyncio_detailed(
-                session.id, client=self.backend.client()
-            )
+            with contextlib.suppress(RouterError):
+                await stop_session.asyncio_detailed(
+                    session.id, client=self.backend.client()
+                )
         await self._stop_watching()
 
     async def interrupt(self) -> None:
@@ -279,16 +290,21 @@ class Accelerated(OmniLLM):
     async def stop_watching_video_track(self) -> None:
         """Nothing was being watched."""
 
+    def _persisted(self) -> bool:
+        """Whether the router keeps this conversation, which it names when it does."""
+        return self.session is not None and bool(self.session.conversation_id)
+
     async def _config_id(self, name: str) -> str:
         """Find the id of the stored config called `name`.
 
         A config is named when it is defined and identified by id everywhere after, so the
         lookup happens here rather than making the caller carry an id around.
         """
-        listed = await list_agent_configs.asyncio(client=self.backend.client())
-        if isinstance(listed, Error):
-            raise RemotePipelineError(listed.error)
-        if listed is None:
+        try:
+            listed = await list_agent_configs.asyncio(client=self.backend.client())
+        except RouterError as refused:
+            raise RemotePipelineError(str(refused)) from refused
+        if not isinstance(listed, list):
             raise RemotePipelineError(
                 "the router did not answer with any agent configs"
             )
@@ -353,8 +369,6 @@ class Accelerated(OmniLLM):
 
         if call.memory_filter:
             request.memory = self._memory(call.memory_filter)
-
-        self._apply_harness(request, call.harness)
         return request
 
     def _tools(self) -> list[SessionTool]:
@@ -386,41 +400,6 @@ class Accelerated(OmniLLM):
             memory.filter_ = extra
         return memory
 
-    def _apply_harness(
-        self, request: CreateSessionRequest, harness: Optional[Harness]
-    ) -> None:
-        """Fold the agent's harness into the session it is configuring."""
-        if self.subagent:
-            request.subagent = self.subagent
-        if self.subagents:
-            request.subagents = CreateSessionRequestSubagents.from_dict(self.subagents)
-        if harness is None:
-            if self.subagent:
-                request.subagent = self.subagent
-            return
-
-        spec = harness.spec()
-        if "subagents" in spec:
-            request.subagents = CreateSessionRequestSubagents.from_dict(
-                {**self.subagents, **spec["subagents"]}
-            )
-        if spec["tasks"]:
-            request.tasks = spec["tasks"]
-        if "sandbox" in spec:
-            request.sandbox = Sandbox(spec["sandbox"])
-        if "skills" in spec:
-            request.skills = [
-                SessionSkill(
-                    name=skill["name"],
-                    subagent=skill["subagent"],
-                    capture_video=skill["capture_video"],
-                    description=skill["description"],
-                    instructions=skill["instructions"],
-                    deadline_ms=skill["deadline_ms"],
-                )
-                for skill in spec["skills"]
-            ]
-
     async def _command(self, frame: dict[str, Any]) -> None:
         """Act on the session over the socket it is being watched on."""
         if self._socket is None or not self._socket.open:
@@ -443,6 +422,32 @@ class Accelerated(OmniLLM):
     async def _received(self, frame: dict[str, Any]) -> None:
         """Turn one session frame into an event, or into a tool call to run."""
         kind = frame.get("type", "")
+
+        if kind == "model_call":
+            if not self.log_latency:
+                return
+            turn_id = str(frame.get("turn_id", ""))
+            if turn_id:
+                if (
+                    turn_id not in self._pending_model_calls
+                    and len(self._pending_model_calls) >= 32
+                ):
+                    self._pending_model_calls.pop(next(iter(self._pending_model_calls)))
+                self._pending_model_calls.setdefault(turn_id, []).append(frame)
+            logger.info(
+                "model call timing call=%s turn=%s operation=%s purpose=%s provider=%s model=%s "
+                "ttft_ms=%s duration_ms=%s success=%s",
+                self.session.call_id if self.session else "",
+                frame.get("turn_id", ""),
+                frame.get("operation_id", ""),
+                frame.get("purpose", ""),
+                frame.get("provider", ""),
+                frame.get("model", ""),
+                frame.get("ttft_ms", 0),
+                frame.get("duration_ms", 0),
+                frame.get("success", False),
+            )
+            return
 
         if kind == "tool_cancel":
             running = self._tool_tasks.get(str(frame.get("id", "")))
@@ -469,6 +474,13 @@ class Accelerated(OmniLLM):
 
         event = _event_of(frame)
         if event is not None:
+            if kind == "turn" and self.log_latency:
+                calls = self._pending_model_calls.pop(str(frame.get("turn_id", "")), [])
+                logger.info(
+                    "call=%s\n%s",
+                    self.session.call_id if self.session else "",
+                    render_turn(frame, calls),
+                )
             await self._events.put(event)
 
     async def _run_tool(self, frame: dict[str, Any]) -> None:
@@ -481,6 +493,10 @@ class Accelerated(OmniLLM):
         call_id = frame.get("id", "")
         name = frame.get("name", "")
         result: dict[str, Any] = {"type": "tool_result", "tool_call_id": call_id}
+        # A durable command's result is only accepted back with the command and turn it names.
+        for key in ("command_id", "turn_id"):
+            if frame.get(key):
+                result[key] = frame[key]
 
         try:
             arguments = json.loads(frame.get("arguments") or "{}")
@@ -598,7 +614,11 @@ def _event_of(frame: dict[str, Any]) -> Optional[RemoteEvent]:
     if kind == "response_delta":
         return RemoteEvent(type="agent_speech_delta", text=frame.get("text", ""))
     if kind == "responded":
-        return RemoteEvent(type="agent_speech", text=frame.get("text", ""))
+        return RemoteEvent(
+            type="agent_speech",
+            text=frame.get("text", ""),
+            pending_work=bool(frame.get("pending_work")),
+        )
     if kind == "looked_up":
         return RemoteEvent(
             type="looked_up",
@@ -617,6 +637,16 @@ def _event_of(frame: dict[str, Any]) -> Optional[RemoteEvent]:
             skill=frame.get("skill", ""),
             text=frame.get("text", ""),
             error=frame.get("error", ""),
+            files=[
+                RemoteFile(
+                    name=str(file.get("name", "")),
+                    url=str(file.get("url", "")),
+                    mime_type=str(file.get("mime_type", "")),
+                    size=int(file.get("size") or 0),
+                )
+                for file in frame.get("files") or []
+                if isinstance(file, dict) and file.get("url")
+            ],
         )
     if kind == "turn":
         return RemoteEvent(
@@ -625,6 +655,8 @@ def _event_of(frame: dict[str, Any]) -> Optional[RemoteEvent]:
             user_id=participant.get("user_id", ""),
             participant_id=participant.get("id", ""),
         )
+    if kind == "tool_ran":
+        return _authorization_of(frame.get("result", ""))
     if kind == "error":
         return RemoteEvent(type="error", error=frame.get("error", ""))
     if kind == "left":
@@ -632,6 +664,30 @@ def _event_of(frame: dict[str, Any]) -> Optional[RemoteEvent]:
 
     logger.debug("no agent event for a %s frame", kind)
     return None
+
+
+def _authorization_of(result: object) -> Optional[RemoteEvent]:
+    """The login a user plugin's tool asked the end user to make, if it asked for one."""
+    if not isinstance(result, str):
+        return None
+    try:
+        answered = json.loads(result)
+    except json.JSONDecodeError:
+        return None
+    if (
+        not isinstance(answered, dict)
+        or answered.get("status") != AUTHORIZATION_REQUIRED
+    ):
+        return None
+    attachment = answered.get("attachment")
+    if not isinstance(attachment, dict) or not attachment.get("authorize_url"):
+        return None
+    return RemoteEvent(
+        type="authorization_required",
+        text=str(attachment.get("title", "")),
+        url=str(attachment["authorize_url"]),
+        image_url=str(attachment.get("thumb_url", "")),
+    )
 
 
 def _rendered(output: Any) -> str:

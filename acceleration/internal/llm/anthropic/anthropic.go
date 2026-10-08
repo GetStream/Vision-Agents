@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
 )
 
@@ -25,5 +26,9 @@ func New(options Options) (*openaicompat.LLM, error) {
 	if options.BaseURL == "" {
 		options.BaseURL = "https://api.anthropic.com/v1/"
 	}
-	return openaicompat.New(openaicompat.Options{Provider: ProviderName, Model: options.Model, APIKey: options.APIKey, BaseURL: options.BaseURL, Logger: options.Logger})
+	// Every current Claude model reads images, and the compatibility endpoint takes them as
+	// image_url parts. It ignores reasoning_effort, so no effort is declared and a request
+	// naming one is refused rather than answered at the model's default.
+	capabilities := llm.Capabilities{InputModalities: []string{llm.ModalityImage}}
+	return openaicompat.New(openaicompat.Options{Provider: ProviderName, Model: options.Model, APIKey: options.APIKey, BaseURL: options.BaseURL, Capabilities: capabilities, Logger: options.Logger})
 }

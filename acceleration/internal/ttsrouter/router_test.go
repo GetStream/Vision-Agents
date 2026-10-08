@@ -25,6 +25,8 @@ type stubTTS struct {
 	// performs and prompt are what a voice that acts stage directions reports.
 	performs bool
 	prompt   string
+	// perSentence is a voice that takes each sentence as its own request.
+	perSentence bool
 }
 
 func newStubTTS() *stubTTS {
@@ -50,7 +52,7 @@ func (s *stubTTS) Close() error {
 
 func (s *stubTTS) Provider() string { return "stub" }
 func (s *stubTTS) Model() string    { return "stub-model" }
-func (s *stubTTS) Streaming() bool  { return true }
+func (s *stubTTS) Streaming() bool  { return !s.perSentence }
 func (s *stubTTS) Performs() bool   { return s.performs }
 func (s *stubTTS) Prompt() string   { return s.prompt }
 
@@ -113,7 +115,10 @@ func (s *TTSRouterSuite) newSession() (*Session, *stubTTS) {
 }
 
 func (s *TTSRouterSuite) sessionFor(config routing.ProviderConfig) (*Session, *stubTTS) {
-	provider := newStubTTS()
+	return s.sessionOver(newStubTTS(), config)
+}
+
+func (s *TTSRouterSuite) sessionOver(provider *stubTTS, config routing.ProviderConfig) (*Session, *stubTTS) {
 	recorder := routing.NewRecorder(routing.TTS, nil, nil, slog.Default())
 	session := newSession(provider, config, routing.Owner{CustomerID: "acme"}, recorder)
 
@@ -220,7 +225,7 @@ func (s *TTSRouterSuite) TestAVendorNamedForALiveCallGetsTheirStreamingModel() {
 	var built []routing.Spec
 	router := s.newStubbedRouter(&built)
 
-	// ElevenLabs has four models here, and eleven_v3 is the one that returns a file
+	// ElevenLabs has six models here, and eleven_v3 is the one that returns a file
 	// rather than streaming. A socket asking for the vendor by name must not get it.
 	session, err := router.Start(s.ctx, Request{
 		CustomerID: "acme",
@@ -266,6 +271,55 @@ func (s *TTSRouterSuite) TestAPolicyNoVoiceMeetsIsRefusedRatherThanServedAnyway(
 
 	s.Error(err, "speaking somewhere the caller ruled out is worse than not speaking")
 	s.Empty(built, "nothing should have been built for a request nobody may serve")
+}
+
+func (s *TTSRouterSuite) TestASpeedIsOnlyAskedOfAVoiceThatCanChangeIt() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+	speed := 0.9
+
+	// The dialogue models are listed first, and none of them can be sped up.
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Options: options.TTS{
+			Providers: []string{"elevenlabs/eleven_v3_conversational", "elevenlabs/eleven_flash_v2_5"},
+			Speed:     &speed,
+		},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("eleven_flash_v2_5", session.Model())
+	s.Require().Len(built, 1)
+	s.Equal(&speed, built[0].TTS.Speed)
+}
+
+func (s *TTSRouterSuite) TestASpeedNoVoiceCanChangeIsRefused() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+	speed := 0.9
+
+	_, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Options: options.TTS{
+			Providers: []string{"elevenlabs/eleven_v3_conversational"},
+			Speed:     &speed,
+		},
+	})
+
+	s.Error(err, "a voice that ignores the speed asked of it is worse than one that says it cannot")
+	s.Empty(built)
+}
+
+func (s *TTSRouterSuite) TestRegistryRefusesASpeedOutsideTheVendorsRange() {
+	s.T().Setenv("ELEVENLABS_API_KEY", "test-key")
+	speed := 1.5
+
+	_, err := DefaultRegistry().Build("elevenlabs", routing.Spec{
+		Model: "eleven_flash_v2_5",
+		TTS:   options.TTS{Speed: &speed},
+	})
+	s.ErrorContains(err, "outside 0.7 to 1.2")
 }
 
 func (s *TTSRouterSuite) TestAnOverwriteReachesTheVendorItNames() {
@@ -364,6 +418,33 @@ func (s *TTSRouterSuite) TestSessionForwardsProviderEventsUntouched() {
 	chunk, ok := events[1].(tts.AudioChunk)
 	s.Require().True(ok)
 	s.Equal(2400, len(chunk.Audio.Samples), "audio should reach the caller unchanged")
+}
+
+func (s *TTSRouterSuite) TestAVoiceThatTakesOneSentenceAtATimeIsHeardInOrder() {
+	provider := newStubTTS()
+	provider.perSentence = true
+	session, _ := s.sessionOver(provider, routing.ProviderConfig{Provider: "stub", Model: "stub-model"})
+	s.Require().NoError(session.Synthesize(tts.Request{ID: "first", Text: "Take your time.", Final: true}))
+	s.Require().NoError(session.Synthesize(tts.Request{ID: "second", Text: "I'm right here.", Final: true}))
+
+	pcm := audio.PcmData{Samples: make([]int16, 2400), SampleRate: 24_000, Channels: 1}
+	provider.emitter.Send(tts.AudioChunk{SynthesisID: "second", Index: 0, Audio: pcm})
+	provider.emitter.Send(tts.AudioChunk{SynthesisID: "first", Index: 0, Audio: pcm})
+	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "second"})
+	provider.emitter.Send(tts.AudioChunk{SynthesisID: "first", Index: 1, Audio: pcm})
+	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "first"})
+	s.Require().NoError(session.Close())
+
+	var heard []string
+	for _, event := range s.drain(session) {
+		switch typed := event.(type) {
+		case tts.AudioChunk:
+			heard = append(heard, typed.SynthesisID)
+		case tts.SynthesisComplete:
+			heard = append(heard, typed.SynthesisID+" done")
+		}
+	}
+	s.Equal([]string{"first", "first", "first done", "second", "second done"}, heard)
 }
 
 func (s *TTSRouterSuite) TestSessionClosesItsEventChannelWithTheProvider() {

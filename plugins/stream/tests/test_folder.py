@@ -1,7 +1,15 @@
 from pathlib import Path
 
 import pytest
-from vision_agents.plugins.stream.folder import find, load, resolve
+from vision_agents.plugins.stream.folder import (
+    ChannelSettings,
+    MCPServerSettings,
+    PluginSettings,
+    SandboxSettings,
+    find,
+    load,
+    resolve,
+)
 
 
 def write(root: Path, name: str, content: str) -> None:
@@ -11,21 +19,26 @@ def write(root: Path, name: str, content: str) -> None:
 
 
 class TestFolder:
-    def test_named_workers_and_skill_binding_round_trip(self, tmp_path):
-        write(
-            tmp_path,
-            "agent.yaml",
-            "name: vision\nsubagents:\n  default: llm-thinking\n  vision: vlm\n",
-        )
+    def test_a_skill_that_captures_video_round_trips(self, tmp_path):
+        write(tmp_path, "agent.yaml", "name: vision\nthinking_llm: vlm\n")
         write(
             tmp_path,
             "skills/vision.md",
-            "---\nname: vision\nsubagent: vision\ncapture_video: true\ndescription: inspect images\n---\nDescribe the evidence.",
+            "---\nname: vision\ncapture_video: true\ndescription: inspect images\n---\nDescribe the evidence.",
         )
         folder = load(tmp_path)
-        assert folder.settings.subagents == {"default": "llm-thinking", "vision": "vlm"}
-        assert folder.skills[0].subagent == "vision"
+        assert folder.settings.thinking_llm == "vlm"
         assert folder.skills[0].capture_video
+
+    def test_named_subagents_are_refused(self, tmp_path):
+        write(tmp_path, "agent.yaml", "name: vision\nsubagents:\n  vision: vlm\n")
+        with pytest.raises(ValueError, match="subagents"):
+            load(tmp_path)
+
+    def test_the_old_subagent_key_is_refused(self, tmp_path):
+        write(tmp_path, "agent.yaml", "name: vision\nsubagent: vlm\n")
+        with pytest.raises(ValueError, match="subagent"):
+            load(tmp_path)
 
     def test_a_directory_is_read_as_instructions_skills_and_knowledge(
         self, tmp_path: Path
@@ -87,9 +100,9 @@ class TestFolder:
             root,
             "agent.yaml",
             "name: jean\n"
-            "mode: text\n"
+            "mode: voice\n"
             "llm: llm-fast\n"
-            "subagent: llm-thinking\n"
+            "thinking_llm: llm-thinking\n"
             "sandbox: daytona\n"
             "greeting: Hello.\n"
             "keyterms:\n  - Vision Agents\n  - ''\n"
@@ -98,13 +111,136 @@ class TestFolder:
 
         settings = load(root).settings
 
-        assert settings.mode == "text"
+        assert settings.mode == "voice"
         assert settings.llm == "llm-fast"
-        assert settings.subagent == "llm-thinking"
+        assert settings.thinking_llm == "llm-thinking"
         assert settings.sandbox == "daytona"
         assert settings.greeting == "Hello."
         assert settings.keyterms == ["Vision Agents"]
         assert settings.tags == {"team": "support"}
+
+    def test_the_declaration_says_who_connects_each_plugin(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nagent_plugins:\n  - sentry\nuser_plugins:\n  - google_calendar\n",
+        )
+
+        settings = load(root).settings
+
+        assert settings.agent_plugins == [PluginSettings(name="sentry")]
+        assert settings.user_plugins == [PluginSettings(name="google_calendar")]
+
+    def test_the_declaration_says_how_each_plugin_is_reached(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nuser_plugins:\n"
+            "  - name: linear\n    readonly: true\n    scopes: [read]\n"
+            "  - google_drive\n"
+            "  - name: calcom\n    toolsets: [bookings, availability]\n"
+            "    tools: [get_bookings]\n",
+        )
+
+        settings = load(root).settings
+
+        assert settings.user_plugins == [
+            PluginSettings(name="linear", readonly=True, scopes=["read"]),
+            PluginSettings(name="google_drive"),
+            PluginSettings(
+                name="calcom",
+                toolsets=["bookings", "availability"],
+                tools=["get_bookings"],
+            ),
+        ]
+
+    def test_a_plugin_setting_nobody_knows_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nuser_plugins:\n  - name: linear\n    read_only: true\n",
+        )
+
+        with pytest.raises(ValueError, match="read_only"):
+            load(root)
+
+    def test_a_plugin_that_is_neither_an_id_nor_a_mapping_is_refused(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nagent_plugins:\n  - [sentry]\n")
+
+        with pytest.raises(ValueError, match="agent_plugins"):
+            load(root)
+
+    @pytest.mark.parametrize(
+        "declared",
+        [
+            "plugins: [sentry]\n",
+            "plugin_options:\n  - plugin: linear\n    readonly: true\n",
+        ],
+    )
+    def test_the_old_plugin_keys_are_refused(self, tmp_path: Path, declared: str):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\n" + declared)
+
+        with pytest.raises(ValueError, match="not something an agent has"):
+            load(root)
+
+    def test_the_declaration_says_who_logs_into_each_mcp_server(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nmcp_servers:\n"
+            "  - name: crm\n    url: https://crm.example.com/mcp\n    scopes: [contacts.read]\n"
+            "  - name: notes\n    url: https://notes.example.com/mcp\n    user: true\n"
+            "  - name: tablejourney\n    url: https://tablejourney.com/mcp\n",
+        )
+
+        settings = load(root).settings
+
+        assert settings.mcp_servers == [
+            MCPServerSettings(
+                name="crm", url="https://crm.example.com/mcp", scopes=["contacts.read"]
+            ),
+            MCPServerSettings(
+                name="notes", url="https://notes.example.com/mcp", user=True
+            ),
+            MCPServerSettings(name="tablejourney", url="https://tablejourney.com/mcp"),
+        ]
+
+    def test_an_mcp_server_user_that_is_not_true_or_false_is_refused(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nmcp_servers:\n"
+            "  - name: notes\n    url: https://notes.example.com/mcp\n    user: alice\n",
+        )
+
+        with pytest.raises(ValueError, match="user"):
+            load(root)
+
+    def test_progressive_tools_is_read(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nprogressive_tools: true\n")
+
+        assert load(root).settings.progressive_tools is True
+
+    def test_progressive_tools_that_is_not_true_or_false_is_refused(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nprogressive_tools: sometimes\n")
+
+        with pytest.raises(ValueError, match="progressive_tools"):
+            load(root)
 
     def test_a_declaration_that_names_no_model_decides_nothing(self, tmp_path: Path):
         root = tmp_path / "jean"
@@ -114,7 +250,8 @@ class TestFolder:
 
         assert settings.llm == ""
         assert settings.sandbox == ""
-        assert settings.plugins == []
+        assert settings.agent_plugins == []
+        assert settings.user_plugins == []
         assert settings.tags == {}
 
     def test_a_key_nobody_knows_is_refused(self, tmp_path: Path):
@@ -126,6 +263,12 @@ class TestFolder:
         with pytest.raises(ValueError, match="lmm"):
             load(root)
 
+    def test_the_applications_own_section_is_left_to_it(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\napp:\n  sandbox_profile: support\n")
+
+        assert load(root).settings.app == {"sandbox_profile": "support"}
+
     def test_video_selection_is_read_from_a_nested_block(self, tmp_path: Path):
         root = tmp_path / "jean"
         write(
@@ -136,6 +279,116 @@ class TestFolder:
 
         assert load(root).settings.video_source == "roboflow"
         assert load(root).settings.video_max_frames == 2
+
+    def test_dispatch_is_read_from_a_nested_block(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\ndispatch:\n  text: enabled\n")
+
+        assert load(root).settings.dispatch == {"text": "enabled"}
+
+    def test_an_unknown_dispatch_setting_is_refused(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\ndispatch:\n  txet: enabled\n")
+
+        with pytest.raises(ValueError, match="txet"):
+            load(root)
+
+    def test_how_the_sandbox_is_built_is_read_from_a_nested_block(self, tmp_path: Path):
+        root = tmp_path / "artist"
+        write(
+            root,
+            "agent.yaml",
+            "name: artist\nsandbox: daytona\nsandbox_options:\n"
+            "  image: python:3.13-slim-bookworm\n"
+            "  setup:\n    - pip install bpy==5.2.2\n"
+            "  timeout: 5m\n  cpu: 2\n  memory_gb: 4\n",
+        )
+
+        options = load(root).settings.sandbox_options
+
+        assert options == SandboxSettings(
+            image="python:3.13-slim-bookworm",
+            setup=["pip install bpy==5.2.2"],
+            timeout_seconds=300,
+            cpu=2,
+            memory_gb=4,
+        )
+
+    def test_a_declaration_without_sandbox_options_has_none(self, tmp_path: Path):
+        root = tmp_path / "analyst"
+        write(root, "agent.yaml", "name: analyst\nsandbox: daytona\n")
+
+        assert load(root).settings.sandbox_options is None
+
+    @pytest.mark.parametrize(
+        "options",
+        ["  timeout: 2h\n", "  timeout: soon\n", "  memory: 4\n", "  cpu: two\n"],
+    )
+    def test_sandbox_options_nobody_can_honour_are_refused(
+        self, tmp_path: Path, options: str
+    ):
+        root = tmp_path / "artist"
+        write(root, "agent.yaml", "name: artist\nsandbox_options:\n" + options)
+
+        with pytest.raises(ValueError, match="sandbox_options"):
+            load(root)
+
+    def test_the_channels_an_agent_answers_on_round_trip(self, tmp_path: Path):
+        root = tmp_path / "support"
+        write(
+            root,
+            "agent.yaml",
+            "name: support\nchannels:\n"
+            '  whatsapp:\n    number: "+15556325550"\n'
+            "  identity: link\n",
+        )
+
+        channels = load(root).settings.channels
+
+        assert channels is not None
+        assert channels.whatsapp == ChannelSettings(number="+15556325550")
+        assert channels.sms is None
+        assert channels.identity == "link"
+
+    def test_a_file_saying_nothing_about_channels_names_none(self, tmp_path: Path):
+        root = tmp_path / "support"
+        write(root, "agent.yaml", "name: support\nllm: llm-fast\n")
+
+        assert load(root).settings.channels is None
+
+    def test_a_channel_nobody_carries_is_refused(self, tmp_path: Path):
+        root = tmp_path / "support"
+        write(
+            root,
+            "agent.yaml",
+            'name: support\nchannels:\n  telegram:\n    number: "+1555"\n',
+        )
+
+        with pytest.raises(ValueError, match="unknown channels setting: telegram"):
+            load(root)
+
+    def test_identifying_a_sender_any_other_way_is_refused(self, tmp_path: Path):
+        root = tmp_path / "support"
+        write(
+            root,
+            "agent.yaml",
+            'name: support\nchannels:\n  whatsapp:\n    number: "+1555"\n'
+            "  identity: whoever\n",
+        )
+
+        with pytest.raises(ValueError, match="channels.identity is phone or link"):
+            load(root)
+
+    def test_a_channel_with_no_number_is_refused(self, tmp_path: Path):
+        root = tmp_path / "support"
+        write(
+            root,
+            "agent.yaml",
+            'name: support\nchannels:\n  whatsapp:\n    number: ""\n',
+        )
+
+        with pytest.raises(ValueError, match="channels.whatsapp needs a number"):
+            load(root)
 
     def test_a_list_setting_given_as_one_word_is_refused(self, tmp_path: Path):
         root = tmp_path / "jean"
@@ -152,6 +405,7 @@ class TestFolder:
 
     def test_a_skill_without_a_description_is_refused(self, tmp_path: Path):
         root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
         write(
             root,
             "skills/think.md",
@@ -163,6 +417,7 @@ class TestFolder:
 
     def test_nested_knowledge_keeps_the_path_it_was_found_at(self, tmp_path: Path):
         root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
         write(root, "knowledge/reference/api.md", "# API\n\nthe endpoints\n")
         write(root, "knowledge/logo.png", "not a document")
         write(root, "knowledge/empty.md", "   \n")
@@ -172,6 +427,211 @@ class TestFolder:
         assert [document.source for document in folder.knowledge] == [
             "reference/api.md"
         ]
+
+    def test_declared_pages_are_read_without_being_ingested(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(
+            root,
+            "knowledge/urls.yaml",
+            "- https://example.com/pricing\n"
+            "- url: https://example.com/plans\n"
+            "  title: Plans\n"
+            "  description: What each plan includes.\n",
+        )
+        write(root, "knowledge/reference/urls.yaml", "the urls we used to have\n")
+
+        folder = load(root)
+
+        assert [document.source for document in folder.knowledge] == [
+            "reference/urls.yaml"
+        ]
+        assert [(page.url, page.title) for page in folder.knowledge_urls] == [
+            ("https://example.com/pricing", ""),
+            ("https://example.com/plans", "Plans"),
+        ]
+        assert folder.knowledge_urls[1].description == "What each plan includes."
+        assert folder.knowledge_namespace() == "jean"
+
+    @pytest.mark.parametrize(
+        "declaration",
+        [
+            "- example.com/pricing\n",
+            "- url: https://example.com/plans\n  heading: Plans\n",
+            "- [https://example.com/plans]\n",
+        ],
+    )
+    def test_a_page_that_cannot_be_fetched_or_described_is_refused(
+        self, tmp_path: Path, declaration: str
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(root, "knowledge/urls.yaml", declaration)
+
+        with pytest.raises(ValueError):
+            load(root)
+
+    def test_declaring_a_page_changes_the_hash(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        before = load(root).hash()
+
+        write(root, "knowledge/urls.yaml", "- https://example.com/plans\n")
+
+        assert load(root).hash() != before
+
+    def test_speed_and_harness_are_read_from_the_declaration(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\nspeed: 1.1\nharness: default\n")
+
+        settings = load(root).settings
+
+        assert settings.speed == 1.1
+        assert settings.harness == "default"
+
+    def test_a_speed_that_is_not_a_number_is_refused(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\nspeed: fast\n")
+
+        with pytest.raises(ValueError, match="speed"):
+            load(root)
+
+    def test_a_page_may_be_read_again_on_a_schedule(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(
+            root,
+            "knowledge/urls.yaml",
+            "- url: https://example.com/plans\n  refresh_hours: 24\n"
+            "- https://example.com/pricing\n",
+        )
+
+        pages = load(root).knowledge_urls
+
+        assert [page.refresh_hours for page in pages] == [24, 0]
+
+    @pytest.mark.parametrize("hours", ["0", "1.5", "daily"])
+    def test_a_schedule_that_is_not_a_whole_number_of_hours_is_refused(
+        self, tmp_path: Path, hours: str
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(
+            root,
+            "knowledge/urls.yaml",
+            f"- url: https://example.com/plans\n  refresh_hours: {hours}\n",
+        )
+
+        with pytest.raises(ValueError, match="refresh_hours"):
+            load(root)
+
+    def test_simulations_are_read_from_every_file_in_name_order(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(
+            root,
+            "simulations/b.yml",
+            "- name: refund\n  scenario: Ask for a refund.\n  assertion: None is promised.\n"
+            "  mode: audio\n  variations: 3\n  tags:\n    team: support\n",
+        )
+        write(
+            root,
+            "simulations/a.yaml",
+            "- name: lunch\n  scenario: Order lunch.\n  assertion: One wrap.\n",
+        )
+        write(root, "simulations/notes.md", "not a simulation\n")
+
+        simulations = load(root).simulations
+
+        assert simulations is not None
+        assert [simulation.name for simulation in simulations] == ["lunch", "refund"]
+        assert simulations[1].mode == "audio"
+        assert simulations[1].variations == 3
+        assert simulations[1].tags == {"team": "support"}
+
+    def test_no_simulations_directory_is_none_and_an_empty_one_is_empty(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        assert load(root).simulations is None
+
+        (root / "simulations").mkdir()
+        assert load(root).simulations == []
+
+    @pytest.mark.parametrize(
+        "declaration, refused",
+        [
+            ("- name: a\n  scenario: s\n  assertion: x\n  judge: me\n", "judge"),
+            ("- name: a\n  assertion: x\n", "scenario"),
+            ("- name: a\n  scenario: s\n", "assertion"),
+            ("- name: a\n  scenario: s\n  assertion: x\n  mode: video\n", "video"),
+            (
+                "- name: a\n  scenario: s\n  assertion: x\n  variations: many\n",
+                "variations",
+            ),
+            ("name: a\n", "list"),
+        ],
+    )
+    def test_a_simulation_that_cannot_be_run_is_refused(
+        self, tmp_path: Path, declaration: str, refused: str
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(root, "simulations/a.yaml", declaration)
+
+        with pytest.raises(ValueError, match=refused):
+            load(root)
+
+    def test_two_simulations_cannot_share_a_name(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        simulation = "- name: lunch\n  scenario: s\n  assertion: a\n"
+        write(root, "simulations/a.yaml", simulation)
+        write(root, "simulations/b.yaml", simulation)
+
+        with pytest.raises(ValueError, match="also declared in a.yaml"):
+            load(root)
+
+    def test_a_directory_without_schedules_or_simulations_keeps_its_hash(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(root, "knowledge/urls.yaml", "- https://example.com/plans\n")
+
+        # What every SDK took this directory to be before either was declared.
+        assert load(root).hash() == "bb5804bc853eaac855a30ec02037106a"
+
+    def test_schedules_and_simulations_hash_the_way_the_go_sdk_does(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(
+            root,
+            "knowledge/urls.yaml",
+            "- url: https://example.com/plans\n  refresh_hours: 24\n",
+        )
+        write(
+            root,
+            "simulations/lunch.yaml",
+            "- name: lunch <order> & change\n"
+            "  scenario: |\n    Order a turkey club, then swap it.\n"
+            "  assertion: One veggie wrap.\n"
+            "  variations: 3\n"
+            "  tags:\n    b: two\n    a: one\n",
+        )
+
+        # What the Go SDK's agents.Load(...).Hash() gives the same files.
+        assert load(root).hash() == "c55bc13d9e0e146d7facbe1db9e67774"
+
+    def test_a_directory_without_a_declaration_cannot_be_loaded(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "instructions.md", "You are Jean.\n")
+
+        with pytest.raises(ValueError, match="agent.yaml"):
+            load(root)
 
     def test_resolve_finds_examples_voice_agents(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

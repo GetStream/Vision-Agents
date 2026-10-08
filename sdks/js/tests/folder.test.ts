@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 
 import { ConfigurationError } from "../src/index.js";
-import { loadFolder, parsePages, parseSkill } from "../src/node.js";
+import { loadFolder, parsePages, parseSimulations, parseSkill } from "../src/node.js";
 
-/** Writes an agent directory and hands back its path. */
+/** Writes an agent directory, with an agent.yaml unless told otherwise, and hands back its path. */
 async function agentDir(files: Record<string, string>): Promise<string> {
   const root = join(await mkdtemp(join(tmpdir(), "vision-agents-")), "jean");
   await mkdir(root, { recursive: true });
 
-  for (const [name, content] of Object.entries(files)) {
+  for (const [name, content] of Object.entries({ "agent.yaml": "", ...files })) {
     const file = join(root, name);
     await mkdir(join(file, ".."), { recursive: true });
     await writeFile(file, content);
@@ -55,6 +55,85 @@ describe("loadFolder", () => {
 
   it("refuses something that is not a directory", async () => {
     await assert.rejects(() => loadFolder(join(tmpdir(), "not-there")), ConfigurationError);
+  });
+
+  it("refuses a directory without agent.yaml, since that is what makes it an agent", async () => {
+    const path = await agentDir({ "instructions.md": "Be brief." });
+    await rm(join(path, "agent.yaml"));
+
+    await assert.rejects(() => loadFolder(path), /agent\.yaml/);
+  });
+
+  it("reads what agent.yaml says the agent is called and runs on", async () => {
+    const folder = await loadFolder(
+      await agentDir({
+        "agent.yaml": [
+          "# the front desk",
+          "name: receptionist",
+          'llm: "openai/gpt-5.6"',
+          'sts: ""',
+          "speed: 0.9",
+          "harness: default",
+          "mode: voice",
+          "keyterms: [Vision Agents, Stream]",
+          "plugins:",
+          "  - weather",
+          "tags:",
+          "  team: support",
+          "video:",
+          "  source: camera",
+          "dispatch:",
+          "  text: enabled",
+          "",
+        ].join("\n"),
+      }),
+    );
+
+    assert.equal(folder.name, "receptionist");
+    assert.deepEqual(folder.settings, {
+      name: "receptionist",
+      llm: "openai/gpt-5.6",
+      sts: "",
+      speed: 0.9,
+      harness: "default",
+      mode: "voice",
+      keyterms: ["Vision Agents", "Stream"],
+      plugins: ["weather"],
+      tags: { team: "support" },
+      video: { source: "camera", max_frames: 1 },
+      dispatch: { text: "enabled" },
+    });
+  });
+
+  it("is called after its directory when agent.yaml names nothing", async () => {
+    const folder = await loadFolder(await agentDir({ "agent.yaml": "llm: llm-fast\n" }));
+
+    assert.equal(folder.name, "jean");
+  });
+
+  it("sends no speed for a zero one, since zero leaves the voice where it is", async () => {
+    const folder = await loadFolder(await agentDir({ "agent.yaml": "speed: 0\n" }));
+
+    assert.equal(folder.settings?.speed, undefined);
+  });
+
+  it("refuses a declaration it would otherwise have to guess at", async () => {
+    for (const declaration of [
+      "lmm: openai/gpt-5.6\n",
+      "speed: fast\n",
+      "speed: -1\n",
+      "keyterms: Vision Agents\n",
+      "llm:\n  - one\n  - two\n",
+      "video:\n  max_frames: 9\n",
+      "video:\n  frames: 2\n",
+      "dispatch:\n  texts: enabled\n",
+    ]) {
+      await assert.rejects(
+        async () => loadFolder(await agentDir({ "agent.yaml": declaration })),
+        ConfigurationError,
+        declaration,
+      );
+    }
   });
 
   it("reads knowledge in path order, with the source a reader would recognise", async () => {
@@ -115,6 +194,96 @@ describe("loadFolder", () => {
       folder.skills.map((skill) => skill.name),
       ["explain", "recall"],
     );
+  });
+
+  it("reads each simulations file as a list, in file order", async () => {
+    const path = await agentDir({
+      "simulations/lunch.yaml": [
+        "- name: change of order",
+        "  scenario: Order a club, then swap it for a wrap.",
+        "  assertion: The final order is one wrap.",
+        "  variations: 3",
+        "- name: off the menu",
+        "  scenario: Ask for a milkshake.",
+        "  assertion: The agent says there is no milkshake.",
+        "  mode: audio",
+        "",
+      ].join("\n"),
+      "simulations/allergies.yml":
+        "- name: peanut allergy\n  scenario: Ask whether the wrap has nuts.\n  assertion: The agent does not guess.\n",
+      "simulations/notes.txt": "not a simulation",
+    });
+
+    const folder = await loadFolder(path);
+
+    assert.deepEqual(
+      folder.simulations?.map((simulation) => simulation.name),
+      ["peanut allergy", "change of order", "off the menu"],
+    );
+    assert.equal(folder.simulations?.[1]?.variations, 3);
+    assert.equal(folder.simulations?.[2]?.mode, "audio");
+  });
+
+  it("tells an empty simulations/ from none, since one deletes what is stored and the other keeps it", async () => {
+    const path = await agentDir({});
+    const without = await loadFolder(path);
+    await mkdir(join(path, "simulations"));
+    const emptied = await loadFolder(path);
+
+    assert.equal(without.simulations, undefined);
+    assert.deepEqual(emptied.simulations, []);
+  });
+
+  it("refuses a simulation name two files share, since a sync finds one by its name", async () => {
+    const simulation = "- name: change of order\n  scenario: Swap the club.\n  assertion: One wrap.\n";
+    const path = await agentDir({
+      "simulations/a.yaml": simulation,
+      "simulations/b.yaml": simulation,
+    });
+
+    await assert.rejects(() => loadFolder(path), /also declared in a\.yaml/);
+  });
+});
+
+describe("parseSimulations", () => {
+  it("reads a scenario written as prose over several lines, and the tags", () => {
+    const [simulation] = parseSimulations(
+      [
+        "- name: lunch",
+        "  scenario: >",
+        "    Order a club,",
+        "    then swap it.",
+        "  assertion: |-",
+        "    One wrap.",
+        "    Nothing else.",
+        "  max_turns: 6",
+        "  caller_voice: amy",
+        "  tags:",
+        "    area: orders",
+      ].join("\n"),
+    );
+
+    assert.deepEqual(simulation, {
+      name: "lunch",
+      scenario: "Order a club, then swap it.\n",
+      assertion: "One wrap.\nNothing else.",
+      max_turns: 6,
+      caller_voice: "amy",
+      tags: { area: "orders" },
+    });
+  });
+
+  it("refuses a simulation it would otherwise have to guess at", () => {
+    for (const content of [
+      "- name: order\n  scenario: Order.\n  assertion: Ordered.\n  asertion: typo\n",
+      "- name: order\n  scenario: Order.\n",
+      "- scenario: Order.\n  assertion: Ordered.\n",
+      "- name: order\n  scenario: Order.\n  assertion: Ordered.\n  mode: video\n",
+      "- name: order\n  scenario: Order.\n  assertion: Ordered.\n  variations: 0\n",
+      "name: order\n",
+    ]) {
+      assert.throws(() => parseSimulations(content), ConfigurationError, content);
+    }
   });
 });
 
@@ -209,6 +378,19 @@ describe("parsePages", () => {
   it("reads nothing out of nothing", () => {
     assert.deepEqual(parsePages(""), []);
     assert.deepEqual(parsePages("# only a comment\n"), []);
+  });
+
+  it("reads how often a page is read again, and refuses one that is not a number of hours", () => {
+    assert.deepEqual(parsePages("- url: https://example.com/plans\n  refresh_hours: 24\n"), [
+      { url: "https://example.com/plans", refresh_hours: 24 },
+    ]);
+    for (const hours of ["0", "1.5", "daily"]) {
+      assert.throws(
+        () => parsePages(`- url: https://example.com\n  refresh_hours: ${hours}\n`),
+        ConfigurationError,
+        hours,
+      );
+    }
   });
 
   it("refuses a key nothing recognises rather than dropping it", () => {

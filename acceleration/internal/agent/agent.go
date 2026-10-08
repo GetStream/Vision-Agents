@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
@@ -31,6 +32,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -41,6 +43,9 @@ import (
 
 // eventBuffer is how many events may queue before a slow consumer applies backpressure.
 const eventBuffer = 64
+
+// appLabel is the memory label a caller's own app id is kept under.
+const appLabel = "app_id"
 
 // replyBuffer is how many deltas may queue across every reply being generated before the
 // goroutine draining one waits on the goroutine that speaks.
@@ -97,10 +102,11 @@ type Options struct {
 	TTS       *ttsrouter.Router
 	TTSTarget string
 	// STS routes one native audio model that hears the caller and speaks back, in place
-	// of the three above. When it is set the agent is native: it opens that model and no
-	// transcriber, conversation model or voice, so LLM, STT and TTS may all be nil. The
+	// of the three above. When STSTarget is set the agent is native: it opens that model
+	// and no transcriber, conversation model or voice, so LLM, STT and TTS may all be nil
+	// unless the session may later be moved back onto a cascade. The
 	// model owns endpointing, transcription, synthesis and barge-in, and nothing here acts
-	// as any of them. LLM is still used for configured subagents.
+	// as any of them. LLM is still used for the subagent.
 	STS       *stsrouter.Router
 	STSTarget string
 
@@ -109,7 +115,6 @@ type Options struct {
 	// difference between them is which model, not which service. Empty means the agent
 	// answers everything itself.
 	SubagentTarget string
-	Subagents      map[string]string
 	// ControllerTarget routes the flow controller, a fast non-thinking classifier that
 	// only ever returns one small JSON object about who holds the floor. It is a target on
 	// the same router as LLMTarget. Empty falls back to LLMTarget, so a caller who names no
@@ -125,6 +130,9 @@ type Options struct {
 	// which is how a caller outside this process owns its own tools.
 	ToolRunner    ToolRunner
 	OnToolStarted func(ToolStarted)
+	// ToolPolicy is what the tool named asks of the agent (its connector binding's policy).
+	// Nil, or the zero ToolPolicy for a tool, is how every tool has always run.
+	ToolPolicy func(tool string) ToolPolicy
 	// Tools are what the voice model may do rather than say. Each is only offered when
 	// something on this call can run it: the telephony pair needs Telephony, and every
 	// other tool needs a ToolRunner.
@@ -133,6 +141,9 @@ type Options struct {
 	// holding the conversation: running code takes seconds, and a conversation cannot
 	// spare them.
 	Sandbox sandbox.Sandbox
+	// Publish puts the files the subagent's code hands back where the caller can see them,
+	// which is the conversation's channel when there is one. Nil means nowhere.
+	Publish sandbox.Publisher
 	// Tasks caps how much delegated work may run at once. Zero leaves the harness's own
 	// default in place.
 	Tasks int
@@ -142,8 +153,17 @@ type Options struct {
 	VideoSource    string
 	VideoMaxFrames int
 
+	// SpeculativeReplies starts the reply to a settled turn while the flow controller is
+	// still deciding whether it was meant for the agent, and holds it until the ruling says
+	// to answer. It takes the ruling's round trip off every answered turn, and costs the
+	// tokens of the replies a ruling throws away. Off by default.
+	SpeculativeReplies bool
+
 	// Voice selects the speaker. Its meaning is the text-to-speech provider's.
 	Voice string
+	// Speed is the voice's rate of delivery, 1 being its own. Zero leaves it there, and a
+	// voice that cannot be sped up is not routed to when it is set.
+	Speed float64
 	// LanguageHints narrow the candidates in every modality.
 	LanguageHints []string
 	// Keyterms are the business-specific words the transcriber should expect. A provider
@@ -159,9 +179,15 @@ type Options struct {
 	// Memory carries what earlier conversations established into this one. Without it
 	// the agent starts every call knowing nothing but its instructions.
 	Memory memory.Store
-	// AppID scopes memories to the application using this service, so two deployments
-	// sharing one memory account do not read each other's.
+	// AppID narrows memories within the customer, so two deployments of one customer do
+	// not read each other's. It is kept as a label rather than as the app id, which is
+	// always the customer, so it can never reach another customer's.
 	AppID string
+	// SessionID is the session memories are learned in.
+	SessionID string
+	// Incognito recalls memories but writes none, and records no turn timings or
+	// decisions: what is said here is not kept anywhere.
+	Incognito bool
 	// MemoryUserID is who the memories are about. Empty means the customer, which is
 	// what a caller with no user of its own to scope by gets.
 	MemoryUserID string
@@ -204,9 +230,20 @@ type Agent struct {
 	logger  *slog.Logger
 	emitter *Emitter
 
+	// pipe is the pipeline hearing and answering on the call. A swap replaces it.
+	pipe *pipeline
+	// nativeMode is whether pipe is a speech-to-speech model, read on every audio chunk.
+	nativeMode atomic.Bool
+	// switching holds the floor while a swap changes the pipeline: no turn starts and no
+	// audio is taken in.
+	switching atomic.Bool
+	// swapping serialises swaps.
+	swapping sync.Mutex
+
 	llm *llmrouter.Session
 	// replies is where every reply in flight is fanned in to, so the one goroutine that
-	// speaks stays one goroutine however many turns are being generated at once.
+	// speaks stays one goroutine however many turns are being generated at once. Each
+	// cascade pipeline has its own.
 	replies chan llm.Event
 	// streams are the replies still being generated, by turn. Closing one is barge-in.
 	streams map[string]*llm.Stream
@@ -215,6 +252,9 @@ type Agent struct {
 	// the event loop and the floor until Cerebras answered.
 	generatingCancel map[string]context.CancelFunc
 	toolCancels      map[string]context.CancelFunc
+	// speculations are replies started before the flow controller ruled on their words,
+	// held until it does, by candidate.
+	speculations map[string]*speculation
 	// pumps are the goroutines draining those streams into replies.
 	pumps sync.WaitGroup
 
@@ -263,6 +303,9 @@ type Agent struct {
 	// history is the conversation so far. It lives here rather than in a provider so a
 	// failover between providers mid-conversation loses nothing.
 	history []llm.Message
+	// lateResults are lateResult messages held back while the history ends in a call not
+	// yet answered (callsOpen), in the order they came.
+	lateResults []llm.Message
 	// listeners holds one transcription session per participant, because a speech-to-text
 	// stream is bound to a single speaker.
 	listeners map[string]*sttrouter.Session
@@ -299,8 +342,11 @@ type Agent struct {
 	// pendingTools is how many tool calls from the current turn have not come back yet.
 	// The spoken follow-up waits until this is zero so two results share one generate.
 	pendingTools int
-	joined       bool
-	closed       bool
+	// owedTurn is the last turn that ended with tools or delegated work outstanding, which
+	// the reply delivering that work continues.
+	owedTurn string
+	joined   bool
+	closed   bool
 
 	// lastParticipant is who the agent was last talking to, so a reply prompted by
 	// delegated work coming back is attributed to the person who is waiting for it.
@@ -363,39 +409,73 @@ type Agent struct {
 
 // New validates the options and returns an Agent. It opens nothing; Join does that.
 func New(options Options) (*Agent, error) {
-	if options.LLM == nil && options.STS == nil {
-		return nil, errors.New("agent: an llm router is required")
+	native := options.STSTarget != ""
+	if native && options.STS == nil {
+		return nil, stack.Wrap(errors.New("agent: an sts router is required"))
 	}
-	if options.Text && options.STS != nil {
-		return nil, errors.New("agent: a text agent has no voice, so it cannot run a speech-to-speech model")
+	if !native && options.LLM == nil {
+		return nil, stack.Wrap(errors.New("agent: an llm router is required"))
 	}
-	if options.LLM == nil && (options.SubagentTarget != "" || len(options.Subagents) > 0) {
-		return nil, errors.New("agent: subagents require an llm router")
+	if options.Text && native {
+		return nil, stack.Wrap(errors.New("agent: a text agent has no voice, so it cannot run a speech-to-speech model"))
+	}
+	if options.LLM == nil && options.SubagentTarget != "" {
+		return nil, stack.Wrap(errors.New("agent: a subagent requires an llm router"))
 	}
 	// A conversation in writing has nowhere to listen and nothing to speak with, so the
 	// three that carry a voice are only required when there is one. A native agent's one
 	// model is its transcriber and its voice both, so it needs neither router.
 	if !options.Text {
 		if options.Edge == nil {
-			return nil, errors.New("agent: an edge is required")
+			return nil, stack.Wrap(errors.New("agent: an edge is required"))
 		}
-		if options.STS == nil {
+		if !native {
 			if options.STT == nil {
-				return nil, errors.New("agent: an stt router is required")
+				return nil, stack.Wrap(errors.New("agent: an stt router is required"))
 			}
 			if options.TTS == nil {
-				return nil, errors.New("agent: a tts router is required")
+				return nil, stack.Wrap(errors.New("agent: a tts router is required"))
 			}
 		}
 	}
 	if options.CustomerID == "" {
-		return nil, errors.New("agent: a customer id is required")
+		return nil, stack.Wrap(errors.New("agent: a customer id is required"))
 	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
 	}
 	if err := options.Tags.Validate(); err != nil {
 		return nil, err
+	}
+	// Memories belong to the customer unless the caller named someone more specific, and
+	// are always kept under the customer as the app id, so no caller can reach another
+	// customer's and a customer's can be deleted without knowing how its callers labelled
+	// them. A caller's own app id narrows like any other label.
+	scope := memory.Scope{
+		AppID:   options.CustomerID,
+		UserID:  options.CustomerID,
+		AgentID: options.ConfigID,
+		RunID:   options.SessionID,
+		Extra:   options.MemoryFilter,
+	}
+	if options.AppID != "" {
+		scope.Extra = maps.Clone(scope.Extra)
+		if scope.Extra == nil {
+			scope.Extra = map[string]string{}
+		}
+		scope.Extra[appLabel] = options.AppID
+	}
+	if options.MemoryUserID != "" {
+		scope.UserID = options.MemoryUserID
+	}
+	// A session spelled out rather than started from a config is its own agent.
+	if scope.AgentID == "" {
+		scope.AgentID = options.AgentID
+	}
+	if options.Memory != nil {
+		if err := scope.Validate(); err != nil {
+			return nil, err
+		}
 	}
 
 	logger := options.Logger.With("customer", options.CustomerID)
@@ -418,41 +498,35 @@ func New(options Options) (*Agent, error) {
 		listeners:        map[string]*sttrouter.Session{},
 		voices:           map[string]string{},
 		abandoned:        map[string]struct{}{},
-		replies:          make(chan llm.Event, replyBuffer),
 		streams:          map[string]*llm.Stream{},
 		generatingCancel: map[string]context.CancelFunc{},
+		speculations:     map[string]*speculation{},
 		cadence:          settling,
 		duplex:           listening,
 	}
 
 	// Turns are keyed by agent id and decisions by call id, so an agent missing either is
-	// still measured and still reports itself, it is just not kept.
-	if options.Store != nil && options.AgentID != "" {
+	// still measured and still reports itself, it is just not kept. Neither is kept for an
+	// incognito session: a decision holds what was heard, and a turn names the agent.
+	if options.Store != nil && options.AgentID != "" && !options.Incognito {
 		agent.turnStore = newTurnRecorder(options.Store, owner, logger)
 	}
 	var record func(Decided)
-	if options.Store != nil && options.CallID != "" {
+	if options.Store != nil && options.CallID != "" && !options.Incognito {
 		agent.decisionStore = newDecisionRecorder(options.Store, owner, logger)
 		record = agent.decisionStore.Record
 	}
 	agent.converse = newConverse(settling, listening, emitter, record, 0, logger)
 	agent.turns = newTurnTracker(agent.finishTurn)
+	agent.nativeMode.Store(native)
 
 	if options.Memory != nil {
-		// Memories belong to the customer unless the caller named someone more specific,
-		// and are recorded as a modality of their own so what remembering costs is
+		// Memory is recorded as a modality of its own so what remembering costs is
 		// reported alongside what the models cost.
-		scope := memory.Scope{
-			AppID:  options.AppID,
-			UserID: options.CustomerID,
-			Extra:  options.MemoryFilter,
-		}
-		if options.MemoryUserID != "" {
-			scope.UserID = options.MemoryUserID
-		}
 		agent.memory = newMemoryWriter(
 			options.Memory,
 			scope,
+			options.Incognito,
 			owner,
 			routing.NewRecorder(routing.Memory, options.Store, options.Live, logger),
 			logger,
@@ -464,7 +538,7 @@ func New(options Options) (*Agent, error) {
 	if options.Knowledge != nil && options.KnowledgeNamespace != "" {
 		agent.knowledge = newKnowledgeReader(
 			options.Knowledge,
-			options.KnowledgeNamespace,
+			knowledge.Scoped(options.CustomerID, options.KnowledgeNamespace),
 			options.KnowledgeLimit,
 			owner,
 			routing.NewRecorder(routing.Knowledge, options.Store, options.Live, logger),
@@ -477,6 +551,16 @@ func New(options Options) (*Agent, error) {
 
 // finishTurn reports a measured exchange and records it.
 func (a *Agent) finishTurn(turn Turn) {
+	a.logger.Info("voice turn timing", "turn", turn.TurnID,
+		"stt_ms", turn.STTLatencyMs, "cadence_ms", turn.CadenceMs,
+		"decision_ms", turn.DecisionMs, "model_to_first_text_ms", turn.ModelToFirstTextMs,
+		"text_to_tts_ms", turn.TextToTTSMs, "tts_to_audio_ms", turn.TTSToAudioMs,
+		"transcript_to_audio_ms", turn.RoundtripMs,
+		"speech_end_to_audio_ms", turn.SpeechEndToAudioMs,
+		"first_frame_queued_ms", turn.FirstFrameQueuedMs,
+		"first_audible_frame_ms", turn.FirstAudibleFrameMs,
+		"speech_end_to_audible_ms", turn.SpeechEndToAudibleMs,
+		"interrupted", turn.Interrupted)
 	a.emitter.Send(turn)
 	if a.turnStore != nil {
 		a.turnStore.Record(turn)
@@ -491,136 +575,54 @@ func (a *Agent) Join(ctx context.Context) error {
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
-		return errors.New("agent: already closed")
+		return stack.Wrap(errors.New("agent: already closed"))
 	}
 	if a.joined {
 		a.mu.Unlock()
-		return errors.New("agent: already joined")
+		return stack.Wrap(errors.New("agent: already joined"))
 	}
 	a.ctx, a.cancel = context.WithCancel(ctx)
 	a.joined = true
 	a.mu.Unlock()
 
-	// A native agent opens one session where the cascade opens four, and runs one
-	// consumer where it runs six, so it joins on a path of its own rather than threading
-	// through this one.
-	if a.native() {
-		return a.joinNative()
-	}
-
-	start := llmrouter.Request{
-		CustomerID:    a.options.CustomerID,
-		Caller:        a.options.Caller,
-		AgentID:       a.options.AgentID,
-		CallID:        a.options.CallID,
-		Tags:          a.options.Tags,
-		Target:        a.options.LLMTarget,
-		LanguageHints: a.options.LanguageHints,
-	}
-	model, err := a.options.LLM.Start(a.ctx, start)
-	if err != nil {
-		return fmt.Errorf("agent: start llm: %w", err)
-	}
-	a.llm = model
-
-	// Flow decisions use their own fast-model session so deciding whether speech is
-	// complete never competes with the reply being streamed to the voice. It routes to a
-	// non-thinking model of its own, since a decision this small has nothing to think about
-	// and thinking would only add latency to every turn the caller waits through.
-	controllerTarget := a.options.ControllerTarget
-	if controllerTarget == "" {
-		controllerTarget = a.options.LLMTarget
-	}
-	controller, err := a.options.LLM.Start(a.ctx, llmrouter.Request{
-		CustomerID:    a.options.CustomerID,
-		Caller:        a.options.Caller,
-		AgentID:       a.options.AgentID,
-		CallID:        a.options.CallID,
-		Tags:          a.options.Tags,
-		Target:        controllerTarget,
-		LanguageHints: a.options.LanguageHints,
-	})
-	if err != nil {
-		return fmt.Errorf("agent: start flow controller: %w", err)
-	}
-
-	workers, err := a.workers()
-	if err != nil {
-		return err
-	}
-
 	// Searching is routed before the tools are worked out, because whether the model is
 	// offered one depends on whether a provider answered.
 	a.startSearching(a.ctx)
 
-	a.harness, err = harness.New(harness.Options{
-		Text:       a.options.Text,
-		Model:      model,
-		Controller: controller,
-		Workers:    workers,
-		Capture:    a.captureVideo,
-		Skills:     a.options.Skills,
-		Tools:      a.availableTools(),
-		Sandbox:    a.options.Sandbox,
-		Tasks:      a.options.Tasks,
-		MaxTokens:  a.options.MaxTokens,
-		Overwrites: a.options.Overwrites,
-		CacheKey:   a.options.ConfigID,
-		Logger:     a.logger,
-	})
-	if err != nil {
-		return err
-	}
-
-	if !a.options.Text {
-		voice, err := a.options.TTS.Start(a.ctx, ttsrouter.Request{
-			CustomerID:    a.options.CustomerID,
-			AgentID:       a.options.AgentID,
-			CallID:        a.options.CallID,
-			Tags:          a.options.Tags,
-			Target:        a.options.TTSTarget,
-			LanguageHints: a.options.LanguageHints,
-			Voice:         a.options.Voice,
-		})
-		if err != nil {
-			return fmt.Errorf("agent: start tts: %w", err)
-		}
-		a.tts = voice
-		// What the voice wants said about it is read once, here, rather than on every
-		// turn: the session cannot change provider without the agent rejoining, and
-		// instructions() is called under the lock this session was opened outside of.
-		a.voicePrompt = voice.Prompt()
-		a.performs = voice.Performs()
-	}
-
 	// What earlier conversations established is fetched before the call starts, so the
-	// first turn is already answered in the light of it rather than the second.
+	// first turn is already answered in the light of it rather than the second. A native
+	// model takes it in the instructions its session opens with.
 	if a.memory != nil {
 		a.recalled = memory.Prompt(a.memory.Recall(a.ctx, a.options.RecallLimit))
 	}
 
-	if !a.options.Text {
-		if err := a.options.Edge.Join(a.ctx); err != nil {
-			return fmt.Errorf("agent: join edge: %w", err)
+	a.mu.Lock()
+	settings := a.settingsLocked()
+	a.mu.Unlock()
+	if a.native() {
+		prep, err := a.openNative(settings)
+		if err != nil {
+			return err
 		}
+		a.startNative(prep)
+	} else {
+		prep, err := a.openCascade(settings)
+		if err != nil {
+			return err
+		}
+		a.startCascade(prep)
 	}
 
 	a.mu.Lock()
-	a.harnessDrained = make(chan struct{})
 	a.lastSpokeAt = time.Now()
 	a.mu.Unlock()
 
-	a.running.Add(2)
-	go a.consumeLLM()
-	go a.consumeHarness()
-	// The other four all begin at a microphone or end at a speaker, so a conversation
-	// held in writing runs none of them.
 	if !a.options.Text {
-		a.running.Add(4)
-		go a.consumeTTS()
+		if err := a.options.Edge.Join(a.ctx); err != nil {
+			return stack.Wrap(fmt.Errorf("agent: join edge: %w", err))
+		}
+		a.running.Add(1)
 		go a.consumeEdge()
-		go a.consumeCadence()
-		go a.consumePresence()
 
 		// Only a transport with other people in it can answer this, so it is asked for
 		// rather than required. Without it nothing is reported and the agent behaves as
@@ -631,13 +633,8 @@ func (a *Agent) Join(ctx context.Context) error {
 		}
 	}
 
-	if a.options.Text {
-		a.logger.Info("joined", "llm", a.llm.Provider()+"/"+a.llm.Model())
-	} else {
-		a.logger.Info("joined",
-			"llm", a.llm.Provider()+"/"+a.llm.Model(),
-			"tts", a.tts.Provider()+"/"+a.tts.Model())
-	}
+	changed := a.modelsChanged()
+	a.logger.Info("joined", "llm", changed.LLM, "tts", changed.TTS, "sts", changed.STS)
 	a.emitter.Send(Joined{At: time.Now()})
 	return nil
 }
@@ -656,35 +653,64 @@ func (a *Agent) SimpleResponse(ctx context.Context, text string) error {
 // particular reply: every event of it carries the id, and it is what a session records the
 // turn under. A native agent returns an empty one, because a speech-to-speech model decides
 // for itself what counts as a turn and there is nothing here to name.
+//
+// Images go to the vision skill when the agent has one, and to the conversation model
+// itself when it has none but the model can see. With neither the turn is refused with
+// ErrCannotSeeImages rather than answered blind.
 func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePart) (string, error) {
 	if a.native() {
 		return "", a.respondNative(text, images)
 	}
 	if len(images) > 0 {
 		a.mu.Lock()
-		current := a.harness
+		current, model := a.harness, a.llm
 		a.mu.Unlock()
 		if current == nil {
-			return "", errors.New("agent: not joined")
+			return "", stack.Wrap(errors.New("agent: not joined"))
 		}
 		id := replyPrefix + turnStamp()
-		parts := llm.TextParts(text)
-		for index, image := range images {
+		attached := make([]llm.ImagePart, 0, len(images))
+		for _, image := range images {
 			if err := image.Validate(); err != nil {
 				return "", err
 			}
 			image.Data = append([]byte(nil), image.Data...)
-			metadata, _ := json.Marshal(map[string]any{"source": "attachment", "frame_id": fmt.Sprintf("%s-image-%d", id, index+1), "received_at_ms": time.Now().UnixMilli()})
-			parts = append(parts, llm.ContentPart{Text: string(metadata)}, llm.ContentPart{Image: &image})
+			attached = append(attached, image)
 		}
-		if _, err := current.Delegate("vision", text, id, parts, nil); err != nil {
-			return "", err
+		switch {
+		case current.Offers(visionSkill):
+			parts := llm.TextParts(text)
+			for index, image := range attached {
+				described := map[string]any{"source": "attachment", "frame_id": fmt.Sprintf("%s-image-%d", id, index+1), "received_at_ms": time.Now().UnixMilli()}
+				if image.Caption != "" {
+					described["caption"] = image.Caption
+				}
+				metadata, _ := json.Marshal(described)
+				parts = append(parts, llm.ContentPart{Text: string(metadata)}, llm.ContentPart{Image: &image})
+			}
+			if _, err := current.Delegate(visionSkill, text, id, parts, nil); err != nil {
+				return "", err
+			}
+			return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil)
+		case model != nil && model.Capabilities().Accepts(llm.ModalityImage):
+			return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "", attached)
+		default:
+			return "", stack.Wrap(ErrCannotSeeImages)
 		}
-		return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil)
 	}
 	id := replyPrefix + turnStamp()
 	return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "", nil)
 }
+
+// VideoFramesTool is the caller's tool the agent reads frames of the user's video through.
+const VideoFramesTool = "get_video_frames"
+
+// visionSkill is the skill images are handed to when the agent has one.
+const visionSkill = "vision"
+
+// ErrCannotSeeImages is a turn carrying images for an agent with nothing that can look at
+// them: no vision skill, and a conversation model that takes text alone.
+var ErrCannotSeeImages = errors.New("agent: images need a vision skill or a conversation model that accepts images, and this agent has neither")
 
 func (a *Agent) captureVideo(ctx context.Context, request harness.CaptureRequest) ([]llm.ContentPart, error) {
 	if a.options.ToolRunner == nil {
@@ -704,7 +730,7 @@ func (a *Agent) captureVideo(ctx context.Context, request harness.CaptureRequest
 	if err != nil {
 		return nil, err
 	}
-	return a.options.ToolRunner.Run(ctx, llm.ToolCall{ID: request.TaskID + "-capture", Name: "get_video_frames", Arguments: string(arguments)})
+	return a.options.ToolRunner.Run(ctx, llm.ToolCall{ID: request.TaskID + "-capture", Name: VideoFramesTool, Arguments: string(arguments)})
 }
 
 // Ask answers a piece of text in writing and says none of it.
@@ -739,7 +765,7 @@ func (a *Agent) Ask(ctx context.Context, text string) (string, error) {
 	a.history = append(a.history, llm.Message{Role: llm.User, Content: text})
 	history := a.replayLocked()
 	instructions := a.instructions()
-	model := a.llm
+	model, overwrites := a.llm, a.options.Overwrites
 	a.mu.Unlock()
 
 	turnID := writtenPrefix + turnStamp()
@@ -757,7 +783,7 @@ func (a *Agent) Ask(ctx context.Context, text string) (string, error) {
 		Input:           history,
 		MaxOutputTokens: a.options.MaxTokens,
 		PromptCacheKey:  a.options.ConfigID,
-	}.Overwrite(a.options.Overwrites))
+	}.Overwrite(overwrites))
 	if err != nil {
 		return "", err
 	}
@@ -820,13 +846,13 @@ func (a *Agent) Say(ctx context.Context, text string) error {
 	// A native model has no way to say exact words: it says what it makes of a prompt.
 	// Pretending otherwise would promise a caller a script and deliver a paraphrase.
 	if a.native() {
-		return errors.New("agent: a speech-to-speech agent cannot say exact words; use Prompt")
+		return stack.Wrap(errors.New("agent: a speech-to-speech agent cannot say exact words; use Prompt"))
 	}
 
 	a.mu.Lock()
 	if a.tts == nil {
 		a.mu.Unlock()
-		return errors.New("agent: not joined")
+		return stack.Wrap(errors.New("agent: not joined"))
 	}
 	a.speakingTurn = turnID
 	a.saying = text
@@ -858,7 +884,7 @@ func (a *Agent) SetInstructions(text string) {
 	a.prompt = text
 	instructions := a.instructions()
 	if a.native() {
-		instructions = a.nativeInstructions()
+		instructions = a.nativeInstructions(a.harness != nil)
 	}
 	model := a.sts
 	a.mu.Unlock()
@@ -879,14 +905,18 @@ func (a *Agent) Events() <-chan Event { return a.emitter.Events() }
 
 // LLM exposes the model session, so a caller can reach the provider's own features or the
 // price the conversation is billed at.
-func (a *Agent) LLM() *llmrouter.Session { return a.llm }
+func (a *Agent) LLM() *llmrouter.Session {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.llm
+}
 
 // TTS exposes the voice session.
-func (a *Agent) TTS() *ttsrouter.Session { return a.tts }
+func (a *Agent) TTS() *ttsrouter.Session { return a.voice() }
 
 // STS exposes the speech-to-speech session, which a native agent has in place of the
 // three above. Nil on a cascade.
-func (a *Agent) STS() *stsrouter.Session { return a.sts }
+func (a *Agent) STS() *stsrouter.Session { return a.speech() }
 
 // STT is one of the live transcriptions, if anybody has been heard yet.
 func (a *Agent) STT() *sttrouter.Session {
@@ -900,10 +930,13 @@ func (a *Agent) STT() *sttrouter.Session {
 
 // Subagent is the slower model delegated work runs on.
 func (a *Agent) Subagent() *llmrouter.Session {
-	if a.harness == nil {
+	a.mu.Lock()
+	current := a.harness
+	a.mu.Unlock()
+	if current == nil {
 		return nil
 	}
-	return a.harness.Subagent()
+	return current.Subagent()
 }
 
 // History returns the conversation so far.
@@ -944,13 +977,11 @@ func (a *Agent) close() error {
 	a.mu.Lock()
 	a.closed = true
 	cancel := a.cancel
-	drained := a.harnessDrained
-	listeners := make([]*sttrouter.Session, 0, len(a.listeners))
-	for _, listener := range a.listeners {
-		listeners = append(listeners, listener)
-	}
-	a.listeners = map[string]*sttrouter.Session{}
 	a.mu.Unlock()
+	// A swap waiting for its turn boundary gives up once closed is set, and one already
+	// changing the pipeline finishes first, so the pipeline released below is whole.
+	a.swapping.Lock()
+	defer a.swapping.Unlock()
 
 	a.cadence.Close()
 	if cancel != nil {
@@ -964,52 +995,17 @@ func (a *Agent) close() error {
 			failures = append(failures, fmt.Errorf("leave edge: %w", err))
 		}
 	}
-	for _, listener := range listeners {
-		if err := listener.Close(); err != nil {
-			failures = append(failures, fmt.Errorf("close stt: %w", err))
-		}
-	}
-	// The harness goes before the model: it owns the subagent, and abandoning work
-	// nobody will hear is the last useful thing either of them does. Its consumer is
-	// waited on here rather than at the end, so what it abandoned is still reported: the
-	// events channel below is about to close.
-	if a.harness != nil {
-		if err := a.harness.Close(); err != nil {
-			failures = append(failures, fmt.Errorf("close harness: %w", err))
-		}
-		if drained != nil {
-			<-drained
-		}
-	}
-	// Closing the model abandons every reply still being generated, which is what lets the
-	// goroutine draining each one reach the end of its stream. Only once they have all
-	// stopped can the channel they share close, and only then does the speaking goroutine
-	// run out of work.
-	if a.llm != nil {
-		if err := a.llm.Close(); err != nil {
-			failures = append(failures, fmt.Errorf("close llm: %w", err))
-		}
-	}
-	a.pumps.Wait()
-	close(a.replies)
-	if a.tts != nil {
-		if err := a.tts.Close(); err != nil {
-			failures = append(failures, fmt.Errorf("close tts: %w", err))
-		}
-	}
-	// Closing the native session ends its event stream, which is what lets its consumer
-	// run out of work before the consumers are waited on.
-	if a.sts != nil {
-		if err := a.sts.Close(); err != nil {
-			failures = append(failures, fmt.Errorf("close sts: %w", err))
-		}
-	}
+	p, released := a.releasePipeline(false)
+	failures = append(failures, released...)
 
 	// Left is sent before the emitter closes, and the emitter closes before the consumers
 	// are waited on: a consumer blocked emitting to a caller that has stopped reading has
 	// to be let go of, or shutdown would depend on someone draining the channel.
 	a.emitter.Send(Left{At: time.Now()})
 	a.emitter.Close()
+	if p != nil {
+		p.running.Wait()
+	}
 	a.running.Wait()
 
 	// The writers are drained after the consumers have stopped, so a turn that finished
@@ -1038,6 +1034,9 @@ func (a *Agent) consumeEdge() {
 	defer a.running.Done()
 
 	for inbound := range a.options.Edge.Audio() {
+		if a.switching.Load() {
+			continue
+		}
 		// A native model hears one stream rather than one per participant.
 		if a.native() {
 			a.hear(inbound)
@@ -1088,18 +1087,10 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 		a.mu.Unlock()
 		return existing, nil
 	}
-	ctx := a.ctx
+	target := a.options.STTTarget
 	a.mu.Unlock()
 
-	session, err := a.options.STT.Start(ctx, sttrouter.Request{
-		CustomerID:    a.options.CustomerID,
-		AgentID:       a.options.AgentID,
-		CallID:        a.options.CallID,
-		Tags:          a.options.Tags,
-		Target:        a.options.STTTarget,
-		LanguageHints: a.options.LanguageHints,
-		Keyterms:      a.options.Keyterms,
-	})
+	session, err := a.startListener(target)
 	if err != nil {
 		return nil, fmt.Errorf("agent: start stt for %s: %w", participant.ID, err)
 	}
@@ -1195,8 +1186,8 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 }
 
 // consumeCadence puts a turn to the conversation once its words have held still.
-func (a *Agent) consumeCadence() {
-	defer a.running.Done()
+func (a *Agent) consumeCadence(p *pipeline) {
+	defer p.running.Done()
 
 	for {
 		select {
@@ -1208,15 +1199,15 @@ func (a *Agent) consumeCadence() {
 				continue
 			}
 			a.act([]Action{a.converse.Settled(ready, a.floor())})
-		case <-a.ctx.Done():
+		case <-p.ctx.Done():
 			return
 		}
 	}
 }
 
 // consumePresence keeps long listening or thinking gaps from sounding like a dead call.
-func (a *Agent) consumePresence() {
-	defer a.running.Done()
+func (a *Agent) consumePresence(p *pipeline) {
+	defer p.running.Done()
 
 	ticker := time.NewTicker(presenceTick)
 	defer ticker.Stop()
@@ -1230,7 +1221,7 @@ func (a *Agent) consumePresence() {
 			// with no TTS complete to pick it up.
 			a.respondQueued()
 			a.followUp()
-		case <-a.ctx.Done():
+		case <-p.ctx.Done():
 			return
 		}
 	}
@@ -1272,6 +1263,7 @@ func (a *Agent) perform(action Action) {
 		a.checkIn(action.Participant, action.Text)
 
 	case ActSupersede:
+		a.dropSpeculation(action.TurnID)
 		if err := a.harness.CancelDecision(action.TurnID); err != nil {
 			a.fail(err, "flow")
 		}
@@ -1280,6 +1272,7 @@ func (a *Agent) perform(action Action) {
 		a.ask(action.Candidate)
 
 	case ActInterrupt:
+		a.dropSpeculations()
 		a.abandon(action.TurnID)
 		a.mu.Lock()
 		for _, cancel := range a.toolCancels {
@@ -1298,6 +1291,9 @@ func (a *Agent) perform(action Action) {
 
 	case ActAnswer:
 		a.abandon(action.Supersede)
+		if a.adoptSpeculation(action.Candidate, action.Clarify) {
+			return
+		}
 		if err := a.respondCandidate(action.Candidate, action.Clarify); err != nil {
 			a.fail(err, "llm")
 		}
@@ -1332,6 +1328,7 @@ func (a *Agent) ask(ready candidate) {
 	// agent counts as speaking until it has drained.
 	speaking = speaking || a.speechPending()
 
+	a.speculate(current, ready, speaking, anotherVoice)
 	if err := current.Decide(harness.FlowTurn{
 		ID:           ready.ID,
 		Instructions: instructions,
@@ -1343,6 +1340,7 @@ func (a *Agent) ask(ready candidate) {
 		Unfinished:   ready.Unfinished,
 		AnotherVoice: anotherVoice,
 	}); err != nil {
+		a.dropSpeculation(ready.ID)
 		a.converse.Unasked(ready.ID)
 		a.fail(err, "flow")
 	}
@@ -1387,6 +1385,7 @@ func (a *Agent) abandon(turnID string) {
 // sure it was of the words.
 type heard struct {
 	at           time.Time
+	revisedAt    time.Time
 	sttLatencyMs float64
 	confidence   float64
 }
@@ -1424,6 +1423,7 @@ func (a *Agent) respond(participant stt.Participant, text string, listened heard
 func (a *Agent) respondCandidate(ready candidate, note string) error {
 	return a.respondTurn(ready.ID, ready.Participant, ready.Text, heard{
 		at:           ready.ReadyAt,
+		revisedAt:    ready.RevisedAt,
 		sttLatencyMs: ready.STTLatencyMs,
 		confidence:   ready.Confidence,
 	}, note, nil)
@@ -1474,16 +1474,19 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	a.speakingTurn = turnID
 	a.generating = true
 	a.toolReply = false
+	continues := a.owedTurn
+	a.owedTurn = ""
 	instructions := a.instructions()
 	a.mu.Unlock()
 
-	a.turns.begin(turnID, participant, time.Now(), 0)
-	a.emitter.Send(Responding{TurnID: turnID, Participant: participant})
+	a.turns.begin(turnID, participant, time.Now(), time.Time{}, 0)
+	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Continues: continues})
 
 	return a.generate(harness.Turn{
 		ID:           turnID,
 		Instructions: instructions,
 		History:      history,
+		AfterTool:    true,
 	}, "")
 }
 
@@ -1498,7 +1501,7 @@ func (a *Agent) respondTurn(
 	a.mu.Lock()
 	if a.harness == nil {
 		a.mu.Unlock()
-		return errors.New("agent: not joined")
+		return stack.Wrap(errors.New("agent: not joined"))
 	}
 	a.history = append(a.history, a.userTurnLocked(text, images))
 	history := a.replayLocked()
@@ -1509,7 +1512,7 @@ func (a *Agent) respondTurn(
 	instructions := a.instructions()
 	a.mu.Unlock()
 
-	a.turns.begin(turnID, participant, listened.at, listened.sttLatencyMs)
+	a.turns.begin(turnID, participant, listened.at, listened.revisedAt, listened.sttLatencyMs)
 	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Prompt: text})
 
 	return a.generate(harness.Turn{
@@ -1517,6 +1520,7 @@ func (a *Agent) respondTurn(
 		Instructions: instructions,
 		History:      history,
 		Note:         joinNotes(note, a.duplex.Note(listened.confidence)),
+		Images:       images,
 	}, text)
 }
 
@@ -1620,9 +1624,14 @@ func (a *Agent) instructions() string {
 // started it would charge for a judgement already made.
 func (a *Agent) generate(turn harness.Turn, screen string) error {
 	a.mu.Lock()
-	if a.closed || a.harness == nil {
+	if a.closed || a.harness == nil || a.replies == nil {
 		a.mu.Unlock()
-		return errors.New("agent: not joined")
+		return stack.Wrap(errors.New("agent: not joined"))
+	}
+	if a.switching.Load() {
+		a.mu.Unlock()
+		a.logger.Debug("a turn arrived while the models were changing, so it was dropped", "turn", turn.ID)
+		return nil
 	}
 	current := a.harness
 	ctx, cancel := context.WithCancel(a.ctx)
@@ -1663,12 +1672,19 @@ func (a *Agent) startReply(
 		screening = nil
 	}
 
+	a.turns.modelStarted(turn.ID, time.Now())
 	stream, err := current.Respond(ctx, turn)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return
 		}
-		a.fail(err, "llm")
+		// Ended the way a reply failing mid-stream ends, so the turn is over: left
+		// generating, the agent never looks idle and a model switch waits on it forever.
+		a.mu.Lock()
+		replies := a.replies
+		a.mu.Unlock()
+		replies <- llm.ResponseFailed{ResponseID: turn.ID, Err: err, Context: "llm"}
+		replies <- llm.ResponseCompleted{Response: llm.Response{ID: turn.ID, Status: llm.StatusFailed}}
 		return
 	}
 
@@ -1765,8 +1781,11 @@ func (a *Agent) refuse(turnID string, verdict guardrail.Verdict, heldMs float64)
 		HeldMs:      heldMs,
 	})
 
-	a.replies <- llm.OutputTextDelta{ResponseID: turnID, Delta: refusal}
-	a.replies <- llm.ResponseCompleted{Response: llm.Response{ID: turnID, OutputText: refusal}}
+	a.mu.Lock()
+	replies := a.replies
+	a.mu.Unlock()
+	replies <- llm.OutputTextDelta{ResponseID: turnID, Delta: refusal}
+	replies <- llm.ResponseCompleted{Response: llm.Response{ID: turnID, OutputText: refusal}}
 }
 
 // finishGenerate drops the cancel for a turn whose Create has settled or been abandoned.
@@ -1784,8 +1803,11 @@ func (a *Agent) finishGenerate(turnID string) {
 func (a *Agent) pump(turnID string, stream *llm.Stream) {
 	defer stream.Close()
 
+	a.mu.Lock()
+	replies := a.replies
+	a.mu.Unlock()
 	for stream.Next() {
-		a.replies <- stream.Current()
+		replies <- stream.Current()
 	}
 
 	a.mu.Lock()
@@ -1796,10 +1818,10 @@ func (a *Agent) pump(turnID string, stream *llm.Stream) {
 // consumeLLM turns the model's deltas into sentences and sends them to be spoken.
 //
 // It is the only goroutine that speaks.
-func (a *Agent) consumeLLM() {
-	defer a.running.Done()
+func (a *Agent) consumeLLM(p *pipeline, replies <-chan llm.Event) {
+	defer p.running.Done()
 
-	for event := range a.replies {
+	for event := range replies {
 		a.handle(event)
 	}
 }
@@ -1845,11 +1867,17 @@ func (a *Agent) say(turnID, delta string) {
 	if speech == "" {
 		return
 	}
+	a.turns.firstText(turnID, time.Now())
 	a.replying = turnID
 
 	// A stage direction is addressed to the voice, not to the caller: it is taken out of
-	// what is read and remembered, and left in only for a voice that can act it.
-	plain := a.directions.Add(speech)
+	// what is read and remembered, and left in only for a voice that can act it. A
+	// conversation in writing has no voice to address, so a bracket there is only ever
+	// text -- a markdown link, an array literal -- and taking it out corrupts the reply.
+	plain := speech
+	if !a.options.Text {
+		plain = a.directions.Add(speech)
+	}
 	if plain != "" {
 		a.spoken.WriteString(plain)
 		a.mu.Lock()
@@ -1882,8 +1910,11 @@ func (a *Agent) finish(response llm.Response) {
 	// ever text, so it is spoken.
 	tail := a.harness.Flush()
 	// A direction the stripper was still holding is released the same way: unfinished, it
-	// was only ever text.
-	plain := a.directions.Add(tail) + a.directions.Flush()
+	// was only ever text. In writing the stripper never ran, so there is nothing held.
+	plain := tail
+	if !a.options.Text {
+		plain = a.directions.Add(tail) + a.directions.Flush()
+	}
 	a.spoken.WriteString(plain)
 	if !a.performs {
 		tail = plain
@@ -1916,7 +1947,10 @@ func (a *Agent) finish(response llm.Response) {
 		// been cut off. Prompting for it is not enough: the models that do it reliably
 		// are not the ones fast enough to hold a conversation.
 		if fillsPause(response.ID, calls) && strings.TrimSpace(a.spoken.String()) == "" {
-			filler := a.duplex.Working()
+			filler := a.preSpeech(calls)
+			if filler == "" {
+				filler = a.duplex.Working()
+			}
 			a.spoken.WriteString(filler)
 			if err := a.speakSentence(response.ID, filler); err != nil {
 				a.fail(err, "tts")
@@ -1964,8 +1998,14 @@ func (a *Agent) finish(response llm.Response) {
 		a.fail(err, "compaction")
 	}
 
+	pendingWork := len(calls) > 0 || a.Busy()
+	if pendingWork {
+		a.mu.Lock()
+		a.owedTurn = response.ID
+		a.mu.Unlock()
+	}
 	a.emitter.Send(Responded{
-		PendingWork:        len(calls) > 0 || a.Busy(),
+		PendingWork:        pendingWork,
 		TurnID:             response.ID,
 		Text:               said,
 		TimeToFirstTokenMs: response.TimeToFirstTokenMs,
@@ -1990,6 +2030,20 @@ func (a *Agent) finish(response llm.Response) {
 	a.followUp()
 }
 
+// preSpeech is what the first of calls that names one asks to be said while it runs
+// (ToolPolicy.PreSpeech), or empty for none.
+func (a *Agent) preSpeech(calls []llm.ToolCall) string {
+	if a.options.ToolPolicy == nil {
+		return ""
+	}
+	for _, call := range calls {
+		if phrase := a.options.ToolPolicy(call.Name).PreSpeech; phrase != "" {
+			return phrase
+		}
+	}
+	return ""
+}
+
 // fillsPause reports whether a turn that said nothing should say something before the
 // tools it asked for are run.
 func fillsPause(completionID string, calls []llm.ToolCall) bool {
@@ -2006,14 +2060,14 @@ func fillsPause(completionID string, calls []llm.ToolCall) bool {
 }
 
 // consumeTTS publishes the agent's speech to the edge as it is synthesised.
-func (a *Agent) consumeTTS() {
-	defer a.running.Done()
+func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
+	defer p.running.Done()
 
 	// Abandoned audio arrives a frame at a time, so it is reported once per utterance
 	// rather than once per frame.
 	dropping := ""
 
-	for event := range a.tts.Events() {
+	for event := range voice.Events() {
 		switch typed := event.(type) {
 		case tts.AudioChunk:
 			// Audio from an abandoned turn is dropped here rather than published, so
@@ -2032,7 +2086,15 @@ func (a *Agent) consumeTTS() {
 				}
 				continue
 			}
-			if err := a.options.Edge.PublishAudio(typed.Audio); err != nil {
+			var err error
+			if marked, ok := a.options.Edge.(MarkedPlayout); ok {
+				// Publishing returns once the chunk is queued, which for a long one is well
+				// after the participants could have heard it begin, so the edge says when.
+				err = marked.PublishAudioMarked(typed.Audio, a.turns.marksFor(turnOf(typed.SynthesisID)))
+			} else {
+				err = a.options.Edge.PublishAudio(typed.Audio)
+			}
+			if err != nil {
 				a.fail(err, "edge")
 			}
 			a.mu.Lock()
@@ -2093,14 +2155,17 @@ func (a *Agent) consumeTTS() {
 
 // consumeHarness reports what the harness decided, and speaks whatever the subagent came
 // back with.
-func (a *Agent) consumeHarness() {
+func (a *Agent) consumeHarness(current *harness.Harness, drained chan struct{}) {
 	defer a.running.Done()
-	defer close(a.harnessDrained)
+	defer close(drained)
 
-	for event := range a.harness.Events() {
+	for event := range current.Events() {
 		switch typed := event.(type) {
 		case harness.Decided:
 			a.act(a.converse.Ruled(typed, a.floor()))
+			// An answer took the reply started for these words; any other ruling leaves it
+			// unwanted.
+			a.dropSpeculation(typed.CandidateID)
 
 		case harness.Compacted:
 			a.applyCompaction(typed)
@@ -2141,13 +2206,14 @@ func (a *Agent) consumeHarness() {
 				})
 			} else {
 				a.emitter.Send(TaskSettled{
-					Evidence: typed.Evidence, Worker: typed.Worker,
+					Evidence:  typed.Evidence,
 					TaskID:    typed.TaskID,
 					Skill:     typed.Skill,
 					Text:      typed.Text,
 					Question:  typed.Question,
 					ElapsedMs: typed.ElapsedMs,
 					Err:       typed.Err,
+					Files:     typed.Files,
 				})
 			}
 			// Asked after the report rather than instead of it: work that ran out of time
@@ -2237,12 +2303,14 @@ func (a *Agent) follow() error {
 	a.speakingTurn = turnID
 	a.generating = true
 	participant := a.lastParticipant
+	continues := a.owedTurn
+	a.owedTurn = ""
 	instructions := a.instructions()
 	a.mu.Unlock()
 
 	// This turn is deliberately not measured. A Turn reports the wait between someone
 	// finishing a sentence and hearing the answer start, and nobody said anything here.
-	a.emitter.Send(Responding{TurnID: turnID, Participant: participant})
+	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Continues: continues})
 
 	return a.generate(harness.Turn{
 		ID:           turnID,
@@ -2319,6 +2387,7 @@ func (a *Agent) speakSentence(turnID, text string) error {
 	if voice == nil {
 		return errors.New("agent: not joined")
 	}
+	a.turns.ttsStarted(turnID, time.Now())
 
 	if !voice.Streaming() {
 		id := fmt.Sprintf("%s%s%d", turnID, sentenceSuffix, a.sentences)
@@ -2338,8 +2407,9 @@ func (a *Agent) speakSentence(turnID, text string) error {
 func (a *Agent) speakWhole(turnID, text string) error {
 	voice := a.voice()
 	if voice == nil {
-		return errors.New("agent: not joined")
+		return stack.Wrap(errors.New("agent: not joined"))
 	}
+	a.turns.ttsStarted(turnID, time.Now())
 	a.begin()
 	return voice.Synthesize(tts.Request{ID: turnID, Text: text, Final: true})
 }
@@ -2555,52 +2625,25 @@ func (a *Agent) RestoreHistory(history []llm.Message) {
 	a.history = append([]llm.Message(nil), history...)
 }
 
-// workers opens the named subagents shared by cascade and native conversations.
-func (a *Agent) workers() (map[string]func(context.Context) (*llmrouter.Session, error), error) {
-	workers := map[string]func(context.Context) (*llmrouter.Session, error){}
-	targets := map[string]string{}
-	if a.options.SubagentTarget != "" {
-		targets["default"] = a.options.SubagentTarget
+// openSubagent starts the subagent shared by cascade and native conversations, or is nil
+// when there is none. It is routed like anything else, so the work it does is failed over
+// and billed the same way a turn is. A skill that captures video needs it to see.
+func (a *Agent) openSubagent(target string) func(context.Context) (*llmrouter.Session, error) {
+	if target == "" {
+		return nil
 	}
-	for name, target := range a.options.Subagents {
-		targets[name] = target
-	}
-	for name, target := range targets {
-		if target == "" {
-			continue
-		}
-		var modalities []string
-		for _, skill := range a.options.Skills.Skills {
-			binding := skill.Subagent
-			if binding == "" {
-				binding = "default"
-			}
-			if binding == name && skill.CaptureVideo {
-				modalities = []string{llm.ModalityImage}
-			}
-		}
-		workers[name] = func(ctx context.Context) (*llmrouter.Session, error) {
-			tags := maps.Clone(a.options.Tags)
-			if tags == nil {
-				tags = routing.Tags{}
-			}
-			tags["worker"] = name
-			return a.options.LLM.Start(ctx, llmrouter.Request{
-				CustomerID: a.options.CustomerID, Caller: a.options.Caller,
-				AgentID: a.options.AgentID, CallID: a.options.CallID,
-				Tags: tags, Target: target, LanguageHints: a.options.LanguageHints, InputModalities: modalities,
-			})
-		}
-	}
+	var modalities []string
 	for _, skill := range a.options.Skills.Skills {
-		binding := skill.Subagent
-		if binding == "" {
-			binding = "default"
-		}
-		if _, ok := workers[binding]; !ok {
-			return nil, fmt.Errorf("agent: skill %s names unknown worker %s", skill.Name, binding)
+		if skill.CaptureVideo {
+			modalities = []string{llm.ModalityImage}
 		}
 	}
-
-	return workers, nil
+	return func(ctx context.Context) (*llmrouter.Session, error) {
+		return a.options.LLM.Start(ctx, llmrouter.Request{
+			CustomerID: a.options.CustomerID, Caller: a.options.Caller,
+			AgentID: a.options.AgentID, CallID: a.options.CallID,
+			Tags: a.options.Tags, Target: target,
+			LanguageHints: a.options.LanguageHints, InputModalities: modalities,
+		})
+	}
 }

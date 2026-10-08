@@ -3,6 +3,7 @@ package report
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,7 +22,8 @@ type LabeledRun struct {
 type CompareConfig struct {
 	Runs     []LabeledRun
 	Baseline int
-	MDEV2VMS int
+	// MDE is the target's measured noise floor. Without it, deltas are reported ungated.
+	MDE *NoiseFloor
 }
 
 // LoadSummary reads summary.json from a run directory.
@@ -141,7 +143,12 @@ func compareRows(runs []LabeledRun) []compareRow {
 		compareRateRow("Pass rate", stats, func(s runStats) (int, int) { return s.Passed, s.Valid }),
 		comparePointRow("V2V P50 (ms)", stats, func(s runStats) float64 { return float64(s.V2VP50) }),
 		comparePointRow("V2V P95 (ms)", stats, func(s runStats) float64 { return float64(s.V2VP95) }),
-		comparePointRow("Non-tool P50 (ms)", stats, func(s runStats) float64 { return float64(s.NonToolP50) }),
+		compareReplyRow("Reply time, non-tool P50 (ms)", stats, nonToolOf, p50),
+		compareReplyRow("Reply time, non-tool P95 (ms)", stats, nonToolOf, p95),
+		compareReplyRow("Reply time, non-tool mean (ms)", stats, nonToolOf, score.Mean),
+		compareReplyRow("Reply time, tool turns P50 (ms)", stats, toolOf, p50),
+		compareSampledRow("First response P50 (ms)", stats, func(s runStats) (int, int) { return s.FirstResponseP50, s.FirstResponseSamples }),
+		compareSampledRow("First response P95 (ms)", stats, func(s runStats) (int, int) { return s.FirstResponseP95, s.FirstResponseSamples }),
 		comparePointRow("Caller turns P50", stats, func(s runStats) float64 { return float64(s.CallerTurnsP50) }),
 		comparePointRow("Agent turns P50", stats, func(s runStats) float64 { return float64(s.AgentTurnsP50) }),
 	}
@@ -151,14 +158,22 @@ type runStats struct {
 	Passed, Valid, Invalid int
 	V2VP50, V2VP95         int
 	NonToolP50             int
-	CallerTurnsP50         int
-	AgentTurnsP50          int
+	// nonTool and tool are the pooled reply gaps, kept so an interval can be drawn around
+	// any statistic of them rather than only the one the summary stored.
+	nonTool              []int
+	tool                 []int
+	FirstResponseP50     int
+	FirstResponseP95     int
+	FirstResponseSamples int
+	CallerTurnsP50       int
+	AgentTurnsP50        int
 }
 
 func summarizeRun(sum Summary) runStats {
 	var out runStats
 	var v2v []int
 	var nonTool []int
+	var firstResponse []int
 	var callerTurns []int
 	var agentTurns []int
 	for _, call := range sum.Calls {
@@ -177,9 +192,14 @@ func summarizeRun(sum Summary) runStats {
 				continue
 			}
 			v2v = append(v2v, timing.V2VMS)
-			if !timing.Tool {
+			if timing.Tool {
+				out.tool = append(out.tool, timing.V2VMS)
+			} else {
 				nonTool = append(nonTool, timing.V2VMS)
 			}
+		}
+		if first := call.Metrics.FirstResponse; first != nil && first.V2VMS >= 0 {
+			firstResponse = append(firstResponse, first.V2VMS)
 		}
 		if call.Metrics.CallerTurns > 0 {
 			callerTurns = append(callerTurns, call.Metrics.CallerTurns)
@@ -197,6 +217,14 @@ func summarizeRun(sum Summary) runStats {
 		sort.Ints(nonTool)
 		out.NonToolP50 = score.Percentile(nonTool, 50)
 	}
+	out.nonTool = nonTool
+	sort.Ints(out.tool)
+	if len(firstResponse) > 0 {
+		sort.Ints(firstResponse)
+		out.FirstResponseP50 = score.Percentile(firstResponse, 50)
+		out.FirstResponseP95 = score.Percentile(firstResponse, 95)
+	}
+	out.FirstResponseSamples = len(firstResponse)
 	if len(callerTurns) > 0 {
 		sort.Ints(callerTurns)
 		out.CallerTurnsP50 = score.Percentile(callerTurns, 50)
@@ -210,6 +238,9 @@ func summarizeRun(sum Summary) runStats {
 			out.V2VP50 = pack.V2VP50
 			out.V2VP95 = pack.V2VP95
 			out.NonToolP50 = pack.NonToolP50
+			out.FirstResponseP50 = pack.FirstResponseP50
+			out.FirstResponseP95 = pack.FirstResponseP95
+			out.FirstResponseSamples = pack.FirstResponseSamples
 			out.CallerTurnsP50 = pack.CallerTurnsP50
 			out.AgentTurnsP50 = pack.AgentTurnsP50
 			break
@@ -254,16 +285,111 @@ func comparePointRow(name string, stats []runStats, pick func(runStats) float64)
 	return row
 }
 
+// compareSampledRow renders a pooled millisecond percentile with its sample count, where less is
+// better. A run with no samples shows a dash and is never marked best.
+func compareSampledRow(name string, stats []runStats, pick func(runStats) (int, int)) compareRow {
+	row := compareRow{Name: name, Best: -1, Star: make([]bool, len(stats))}
+	for i, st := range stats {
+		v, n := pick(st)
+		if n == 0 {
+			row.Cells = append(row.Cells, compareCell{Text: "—"})
+			continue
+		}
+		row.Cells = append(row.Cells, compareCell{Text: fmt.Sprintf("%d (n=%d)", v, n), Value: float64(v)})
+		if row.Best < 0 || float64(v) < row.Cells[row.Best].Value {
+			row.Best = i
+		}
+	}
+	return row
+}
+
+func nonToolOf(s runStats) []int { return s.nonTool }
+func toolOf(s runStats) []int    { return s.tool }
+func p50(sorted []int) int       { return score.Percentile(sorted, 50) }
+func p95(sorted []int) int       { return score.Percentile(sorted, 95) }
+
+// bootstrapRounds is how many resamples an interval is drawn from. The seed is fixed so the
+// same summaries always print the same intervals.
+const bootstrapRounds = 2000
+
+// bootstrap returns the 95% interval of a statistic of samples, by resampling them.
+func bootstrap(samples []int, stat func(sorted []int) int) (int, int) {
+	return bootstrapDiff(samples, nil, stat)
+}
+
+// bootstrapDiff returns the 95% interval of stat(a) - stat(b), or of stat(a) alone when b is
+// nil. Each side is resampled on its own, because the two runs are independent calls.
+func bootstrapDiff(a, b []int, stat func(sorted []int) int) (int, int) {
+	random := rand.New(rand.NewPCG(1, 2))
+	resample := func(samples []int) int {
+		drawn := make([]int, len(samples))
+		for i := range drawn {
+			drawn[i] = samples[random.IntN(len(samples))]
+		}
+		sort.Ints(drawn)
+		return stat(drawn)
+	}
+	values := make([]int, bootstrapRounds)
+	for i := range values {
+		values[i] = resample(a)
+		if b != nil {
+			values[i] -= resample(b)
+		}
+	}
+	sort.Ints(values)
+	return values[bootstrapRounds*25/1000], values[bootstrapRounds*975/1000-1]
+}
+
+// compareReplyRow renders one reply-time statistic with its 95% interval, where less is
+// better. A run whose interval lies wholly above the best run's is marked, so a gap the
+// sample cannot tell from noise is not read as a win.
+func compareReplyRow(name string, stats []runStats, samples func(runStats) []int, stat func(sorted []int) int) compareRow {
+	row := compareRow{Name: name, Best: -1, Star: make([]bool, len(stats))}
+	for i, st := range stats {
+		values := samples(st)
+		if len(values) == 0 {
+			row.Cells = append(row.Cells, compareCell{Text: "—"})
+			continue
+		}
+		v := stat(values)
+		lo, hi := bootstrap(values, stat)
+		row.Cells = append(row.Cells, compareCell{
+			Text:  fmt.Sprintf("%d (%d–%d, n=%d)", v, lo, hi, len(values)),
+			Value: float64(v), Lo: float64(lo), Hi: float64(hi), HasCI: true,
+		})
+		if row.Best < 0 || float64(v) < row.Cells[row.Best].Value {
+			row.Best = i
+		}
+	}
+	if row.Best < 0 {
+		return row
+	}
+	for i, cell := range row.Cells {
+		if i != row.Best && cell.HasCI && cell.Lo > row.Cells[row.Best].Hi {
+			row.Star[i] = true
+		}
+	}
+	return row
+}
+
 func baselineSection(cfg CompareConfig) string {
 	base := summarizeRun(cfg.Runs[cfg.Baseline].Summary)
 	var b strings.Builder
 	fmt.Fprintf(&b, "Baseline: `%s`.\n\n", cfg.Runs[cfg.Baseline].Label)
-	if cfg.MDEV2VMS <= 0 {
-		b.WriteString("No V2V MDE is configured, so latency deltas are reported without a regression gate.\n\n")
+	if cfg.MDE == nil {
+		b.WriteString("No noise floor is configured, so deltas are reported without a regression gate.\n\n")
 	} else {
-		fmt.Fprintf(&b, "V2V P50 changes larger than %d ms are flagged.\n\n", cfg.MDEV2VMS)
+		fmt.Fprintf(&b, "Changes bigger than the noise floor measured on `%s` over %d runs are flagged, for runs of the series it measured.\n\n", orDash(cfg.MDE.NetworkProfile), len(cfg.MDE.Runs))
 	}
-	b.WriteString("| Run | Pass rate delta | V2V P50 delta | Flag |\n| --- | ---: | ---: | --- |\n")
+	var baseSeries error
+	if cfg.MDE != nil {
+		baseSeries = cfg.MDE.matchesSeries(cfg.Runs[cfg.Baseline].Summary)
+		if baseSeries != nil {
+			fmt.Fprintf(&b, "The baseline is from a different series than the noise floor (%v), so nothing is flagged.\n\n", baseSeries)
+		}
+	}
+	b.WriteString("Reply time is non-tool P50. Its interval is the 95% bootstrap interval of the difference, and the smallest detectable difference is half its width: a change smaller than that cannot be told from noise with these samples.\n\n")
+	b.WriteString("| Run | Pass rate delta | V2V P50 delta | Reply time delta (95% CI) | Smallest detectable | First response P50 delta | Flag |\n| --- | ---: | ---: | ---: | ---: | ---: | --- |\n")
 	for i, run := range cfg.Runs {
 		if i == cfg.Baseline {
 			continue
@@ -273,21 +399,24 @@ func baselineSection(cfg CompareConfig) string {
 		rate, _, _ := wilson95(st.Passed, st.Valid)
 		v2v := st.V2VP50 - base.V2VP50
 		flag := ""
-		if cfg.MDEV2VMS > 0 && absInt(v2v) >= cfg.MDEV2VMS {
-			if v2v > 0 {
-				flag = "regression"
+		if cfg.MDE != nil && baseSeries == nil {
+			if err := cfg.MDE.matchesSeries(run.Summary); err != nil {
+				flag = fmt.Sprintf("not gated: %v", err)
 			} else {
-				flag = "improvement"
+				flag = strings.Join(mdeFlags(*cfg.MDE, base, st), "; ")
 			}
 		}
-		fmt.Fprintf(&b, "| %s | %+.1f pp | %+d ms | %s |\n", run.Label, 100*(rate-baseRate), v2v, flag)
+		first := "—"
+		if st.FirstResponseSamples > 0 && base.FirstResponseSamples > 0 {
+			first = fmt.Sprintf("%+d ms", st.FirstResponseP50-base.FirstResponseP50)
+		}
+		reply, detectable := "—", "—"
+		if len(st.nonTool) > 0 && len(base.nonTool) > 0 {
+			lo, hi := bootstrapDiff(st.nonTool, base.nonTool, p50)
+			reply = fmt.Sprintf("%+d ms (%+d to %+d)", p50(st.nonTool)-p50(base.nonTool), lo, hi)
+			detectable = fmt.Sprintf("%d ms", (hi-lo)/2)
+		}
+		fmt.Fprintf(&b, "| %s | %+.1f pp | %+d ms | %s | %s | %s | %s |\n", run.Label, 100*(rate-baseRate), v2v, reply, detectable, first, flag)
 	}
 	return b.String()
-}
-
-func absInt(v int) int {
-	if v < 0 {
-		return -v
-	}
-	return v
 }

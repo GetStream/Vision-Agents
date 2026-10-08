@@ -116,8 +116,15 @@ func (s *TelnyxSuite) TestSearchingWithoutACountryIsRejectedBeforeAnyCall() {
 }
 
 func (s *TelnyxSuite) TestBuyingANumberOrdersItOnTheConnectionThatReachesTheBridge() {
-	s.answer(`{"data":{"id":"order-9","phone_numbers":[
-		{"phone_number":"+15125551234","country_code":"US","features":[{"name":"voice"}]}]}}`)
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"data":[{"phone_number":"+15125551234",
+				"cost_information":{"monthly_cost":"1.00000"}}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":{"id":"order-9","phone_numbers":[
+			{"phone_number":"+15125551234","country_code":"US","features":[{"name":"voice"}]}]}}`))
+	}
 
 	bought, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234"})
 	s.Require().NoError(err)
@@ -130,6 +137,16 @@ func (s *TelnyxSuite) TestBuyingANumberOrdersItOnTheConnectionThatReachesTheBrid
 	s.Equal("telnyx", bought.Vendor)
 	s.Equal("US", bought.Country)
 	s.Equal([]phone.Capability{phone.Voice}, bought.Capabilities)
+	s.Equal(int64(1_000_000), bought.MonthlyCostMicros, "the order carries no price, so it is the offer's")
+}
+
+func (s *TelnyxSuite) TestANumberNoLongerForSaleIsNotOrdered() {
+	s.answer(`{"data":[]}`)
+
+	_, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234"})
+
+	s.ErrorContains(err, "not for sale")
+	s.Equal(http.MethodGet, s.seen.method)
 }
 
 func (s *TelnyxSuite) TestReleasingANumberLooksUpItsIdFirst() {

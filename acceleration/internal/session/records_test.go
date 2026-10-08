@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -21,6 +23,7 @@ type heldRecorder struct {
 	responses []store.AgentResponse
 	finished  []finishedTurn
 	items     []store.AgentResponseItem
+	videos    []string
 }
 
 type finishedTurn struct {
@@ -46,6 +49,18 @@ func (r *heldRecorder) Item(item store.AgentResponseItem) {
 	defer r.mu.Unlock()
 	r.items = append(r.items, item)
 }
+
+func (r *heldRecorder) Described(string, string, string, string, map[string]any) {}
+
+func (r *heldRecorder) Chose(string, string, string, string) {}
+
+func (r *heldRecorder) SawVideo(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.videos = append(r.videos, id)
+}
+
+func (r *heldRecorder) Flush(context.Context) error { return nil }
 
 // kinds is the conversation as a reader would see it: what happened, in order.
 func (r *heldRecorder) kinds() []string {
@@ -138,6 +153,27 @@ func (s *RecordSuite) TestATurnThatDelegatesStaysOpenUntilItComesBack() {
 	// The resumption is not recorded as something the person said: they asked once.
 	s.Equal([]string{store.ItemSaid, store.ItemThought, store.ItemAnswer, store.ItemAnswer},
 		s.held.kinds())
+}
+
+func (s *RecordSuite) TestAReplyDeliveringAToolResultFinishesTheTurnThatAskedForIt() {
+	s.took(
+		agent.Responding{TurnID: "text-1", Prompt: "Where is my order?"},
+		agent.ToolStarted{TurnID: "text-1", ID: "call-1", Tool: "lookup_order"},
+		agent.Responded{TurnID: "text-1", PendingWork: true},
+		agent.ToolRan{TurnID: "text-1", ID: "call-1", Tool: "lookup_order", Result: "ships tomorrow"},
+		agent.Responding{TurnID: "tool-1", Continues: "text-1"},
+		agent.Responded{TurnID: "tool-1", Text: "It ships tomorrow."},
+	)
+
+	s.Require().Len(s.held.responses, 1, "the reply after the tool answers the same question")
+	s.Require().Len(s.held.finished, 1)
+	s.Equal(s.held.responses[0].ID, s.held.finished[0].id)
+	s.Equal(store.ResponseCompleted, s.held.finished[0].status)
+	s.Equal([]string{store.ItemSaid, store.ItemToolCall, store.ItemAnswer, store.ItemToolResult, store.ItemAnswer},
+		s.held.kinds())
+
+	s.session.abandonTurns()
+	s.Len(s.held.finished, 1, "a finished turn is not closed again when the session ends")
 }
 
 func (s *RecordSuite) TestTwoTurnsAtOnceDoNotMixTheirItems() {
@@ -260,28 +296,63 @@ func (s *RecordSuite) TestTheRowSaysWhoseSessionItIsRatherThanWhoTheAgentJoinedA
 }
 
 func (s *RecordSuite) TestMatchesLiveAnswersTheSameFiltersAsTheStore() {
+	created := time.Now()
 	live := &Session{
-		created: time.Now(),
+		id:       "b",
+		created:  created,
+		modality: store.ModalityVoice,
 		spec: Spec{
 			Caller:    routing.Caller{UserID: "jlahey"},
-			ConfigID:  "cfg-docs",
 			AgentName: "docs",
 			Project:   "Health",
-			Custom:    map[string]any{"tenant": "acme", "seats": 4},
 		},
 	}
 
 	s.True(matchesLive(live, store.SessionFilter{}))
-	s.True(matchesLive(live, store.SessionFilter{UserID: "jlahey", AgentName: "docs"}))
-	s.True(matchesLive(live, store.SessionFilter{Custom: map[string]string{"tenant": "acme"}}))
-	// Numbers survive the round trip through the query string they arrived as.
-	s.True(matchesLive(live, store.SessionFilter{Custom: map[string]string{"seats": "4"}}))
+	s.True(matchesLive(live, store.SessionFilter{UserID: "jlahey", AgentName: "docs", Project: "Health", Modality: store.ModalityVoice}))
 
 	s.False(matchesLive(live, store.SessionFilter{UserID: "randy"}))
+	s.False(matchesLive(live, store.SessionFilter{AgentName: "sales"}))
 	s.False(matchesLive(live, store.SessionFilter{Project: "Docs"}))
-	s.False(matchesLive(live, store.SessionFilter{Custom: map[string]string{"tenant": "other"}}))
-	// Every session this process holds is running, so asking for the closed ones excludes
-	// all of them rather than none.
-	s.False(matchesLive(live, store.SessionFilter{State: store.SessionClosed}))
-	s.True(matchesLive(live, store.SessionFilter{State: store.SessionRunning}))
+	s.False(matchesLive(live, store.SessionFilter{Modality: store.ModalityVideo}))
+
+	// A session nothing records sorts by when it began, the same as its cursor.
+	s.True(matchesLive(live, store.SessionFilter{Cursor: &store.SessionPosition{UpdatedAt: created, ID: "c"}}))
+	s.False(matchesLive(live, store.SessionFilter{Cursor: &store.SessionPosition{UpdatedAt: created, ID: "a"}}))
+}
+
+func (s *RecordSuite) TestFramesOfTheUsersVideoMakeTheSessionAVideoOneOnce() {
+	held := &heldRecorder{}
+	live := &Session{id: "b", modality: store.ModalityVoice, records: held}
+	frames := framesRunner{parts: []llm.ContentPart{{Image: &llm.ImagePart{URL: "data:image/jpeg;base64,AA=="}}}}
+	runner := &videoRunner{next: frames, session: live}
+
+	_, err := runner.Run(s.T().Context(), llm.ToolCall{Name: "lookup_order"})
+	s.Require().NoError(err)
+	s.Equal(store.ModalityVoice, live.Modality(), "another tool's images are not the user's video")
+
+	for range 2 {
+		_, err = runner.Run(s.T().Context(), llm.ToolCall{Name: agent.VideoFramesTool})
+		s.Require().NoError(err)
+	}
+	s.Equal(store.ModalityVideo, live.Modality())
+	s.Equal([]string{"b"}, held.videos, "recorded once, however many frames follow")
+}
+
+func (s *RecordSuite) TestACaptureThatReturnsNoFramesLeavesTheModalityAlone() {
+	live := &Session{id: "b", modality: store.ModalityText}
+	runner := &videoRunner{next: framesRunner{parts: llm.TextParts("no video")}, session: live}
+
+	_, err := runner.Run(s.T().Context(), llm.ToolCall{Name: agent.VideoFramesTool})
+	s.Require().NoError(err)
+	s.Equal(store.ModalityText, live.Modality())
+}
+
+// framesRunner is a caller whose every tool answers with the same parts.
+type framesRunner struct {
+	parts []llm.ContentPart
+}
+
+func (r framesRunner) Run(context.Context, llm.ToolCall) ([]llm.ContentPart, error) {
+	return r.parts, nil
 }

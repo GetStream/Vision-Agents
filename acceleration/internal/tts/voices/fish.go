@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/fish"
 )
 
@@ -46,52 +47,52 @@ func NewFish(options FishOptions) (*Fish, error) {
 // Prepare creates the model and returns the reference id sessions ask for.
 func (f *Fish) Prepare(ctx context.Context, request Request) (string, error) {
 	if err := request.Validate(); err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 
 	body := newForm()
 	if err := body.field("type", "tts"); err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 	if err := body.field("title", request.Name); err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 	if err := body.field("description", request.Description); err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 	// Private, because a customer's own voice has no business on a discovery page. Fast,
 	// because it is the only training mode and it leaves the voice usable at once.
 	if err := body.field("visibility", "private"); err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 	if err := body.field("train_mode", "fast"); err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 	for _, sample := range request.Samples {
 		if err := body.file("voices", sample); err != nil {
-			return "", err
+			return "", stack.Wrap(err)
 		}
 		// Transcripts are positional, so one is sent per recording even when it is blank.
 		if err := f.transcript(body, sample.Transcript); err != nil {
-			return "", err
+			return "", stack.Wrap(err)
 		}
 	}
 	content, contentType, err := body.done()
 	if err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 
 	url := strings.TrimSuffix(f.options.BaseURL, "/") + "/model"
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, url, content)
 	if err != nil {
-		return "", err
+		return "", stack.Wrap(err)
 	}
 	httpRequest.Header.Set("Authorization", "Bearer "+f.options.APIKey)
 	httpRequest.Header.Set("Content-Type", contentType)
 
 	response, err := f.client.Do(httpRequest)
 	if err != nil {
-		return "", fmt.Errorf("voices: fish clone: %w", err)
+		return "", stack.Wrap(fmt.Errorf("voices: fish clone: %w", err))
 	}
 	defer response.Body.Close()
 
@@ -104,13 +105,13 @@ func (f *Fish) Prepare(ctx context.Context, request Request) (string, error) {
 		State string `json:"state"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&created); err != nil {
-		return "", fmt.Errorf("voices: fish clone: decode: %w", err)
+		return "", stack.Wrap(fmt.Errorf("voices: fish clone: decode: %w", err))
 	}
 	if created.ID == "" {
-		return "", errors.New("voices: fish took the recordings but named no model")
+		return "", stack.Wrap(errors.New("voices: fish took the recordings but named no model"))
 	}
 	if created.State == "failed" {
-		return "", errors.New("voices: fish could not train a model from these recordings")
+		return "", stack.Wrap(errors.New("voices: fish could not train a model from these recordings"))
 	}
 	return created.ID, nil
 }
@@ -124,13 +125,13 @@ func (f *Fish) Delete(ctx context.Context, externalID string) error {
 	url := strings.TrimSuffix(f.options.BaseURL, "/") + "/model/" + externalID
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 	httpRequest.Header.Set("Authorization", "Bearer "+f.options.APIKey)
 
 	response, err := f.client.Do(httpRequest)
 	if err != nil {
-		return fmt.Errorf("voices: fish delete: %w", err)
+		return stack.Wrap(fmt.Errorf("voices: fish delete: %w", err))
 	}
 	defer response.Body.Close()
 
@@ -143,8 +144,18 @@ func (f *Fish) Delete(ctx context.Context, externalID string) error {
 	return nil
 }
 
+// Speak says a line in the voice with the model a call would use.
+func (f *Fish) Speak(ctx context.Context, externalID, text string) (Speech, error) {
+	url := strings.TrimSuffix(f.options.BaseURL, "/") + "/v1/tts"
+	header := http.Header{}
+	header.Set("Authorization", "Bearer "+f.options.APIKey)
+	header.Set("model", fish.DefaultModel)
+	payload := map[string]string{"text": text, "reference_id": externalID, "format": "mp3"}
+	return speak(ctx, f.client, fish.ProviderName, url, "audio/mpeg", header, payload)
+}
+
 // transcript writes a texts part, which has to be sent even when empty so the transcripts
 // line up with the recordings they belong to.
 func (f *Fish) transcript(body *form, text string) error {
-	return body.writer.WriteField("texts", text)
+	return stack.Wrap(body.writer.WriteField("texts", text))
 }

@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Sample is one recording, held rather than streamed because the providers all want it as
@@ -33,14 +35,22 @@ type Request struct {
 	Samples     []Sample
 }
 
+// Speech is a short piece of audio spoken in a prepared voice.
+type Speech struct {
+	Audio       []byte
+	ContentType string
+}
+
 // Cloner prepares a voice with one provider.
 //
 // Prepare returns the id the provider's sessions ask for, which is what gets stored as the
 // binding. Delete takes the voice back off the provider, so deleting ours does not leave
-// the customer paying for voices nobody can reach.
+// the customer paying for voices nobody can reach. Speak says a line in the prepared
+// voice, so a customer can hear what the provider made of it before a caller does.
 type Cloner interface {
 	Prepare(ctx context.Context, request Request) (string, error)
 	Delete(ctx context.Context, externalID string) error
+	Speak(ctx context.Context, externalID, text string) (Speech, error)
 }
 
 // Registry holds one cloner per provider name.
@@ -68,7 +78,7 @@ func (r *Registry) Cloner(provider string) (Cloner, error) {
 
 	cloner, ok := r.cloners[provider]
 	if !ok {
-		return nil, fmt.Errorf("voices: %s cannot be given a voice of your own", provider)
+		return nil, stack.Wrap(fmt.Errorf("voices: %s cannot be given a voice of your own", provider))
 	}
 	return cloner, nil
 }
@@ -88,14 +98,14 @@ func (r *Registry) Providers() []string {
 // Validate reports what is wrong with a request, if anything.
 func (r Request) Validate() error {
 	if r.Name == "" {
-		return errors.New("voices: a voice needs a name")
+		return stack.Wrap(errors.New("voices: a voice needs a name"))
 	}
 	if len(r.Samples) == 0 {
-		return errors.New("voices: a voice needs at least one recording to be cloned from")
+		return stack.Wrap(errors.New("voices: a voice needs at least one recording to be cloned from"))
 	}
 	for _, sample := range r.Samples {
 		if len(sample.Content) == 0 {
-			return errors.New("voices: a recording with no audio in it cannot be cloned")
+			return stack.Wrap(errors.New("voices: a recording with no audio in it cannot be cloned"))
 		}
 	}
 	return nil

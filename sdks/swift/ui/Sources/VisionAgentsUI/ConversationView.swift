@@ -34,7 +34,8 @@ public struct ConversationView: View {
             .padding(.horizontal)
 
             Composer(prompt: prompt, isEnabled: session.isConnected) { text in
-                try? await session.send(text)
+                _ = try? await session.responses.create(
+                    text.trimmingCharacters(in: .whitespacesAndNewlines))
             }
             .padding()
         }

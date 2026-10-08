@@ -11,8 +11,8 @@ import Observation
 @MainActor
 @Observable
 public final class AgentSession {
-    /// The session the router opened.
-    public let session: Session
+    /// The session the router opened, as of the last `update`.
+    public private(set) var session: Session
 
     /// The transcript and what the agent is doing.
     public private(set) var conversation = Conversation()
@@ -29,12 +29,24 @@ public final class AgentSession {
     public var turns: [Turn] { conversation.turns }
     public var state: Conversation.State { conversation.state }
 
+    /// This session's turns as the router wrote them down: asking, reading back, rewinding.
+    ///
+    /// What is asked here is shown in `turns` straight away, since a conversation in writing
+    /// is never heard back.
+    public var responses: Responses {
+        Responses(
+            backend: backend, sessionID: session.id, kept: !session.conversationID.isEmpty,
+            asked: { [weak self] text in self?.conversation.said(text) })
+    }
+
+    private let backend: Backend
     private let socket: SessionSocket
     private let tools: [String: AgentTool]
     private var pump: Task<Void, Never>?
 
     init(backend: Backend, session: Session, tools: [AgentTool]) {
         self.session = session
+        self.backend = backend
         self.tools = Dictionary(tools.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
         socket = SessionSocket(
             url: backend.socketURL(
@@ -42,14 +54,23 @@ public final class AgentSession {
                 // Interim transcripts arrive several times a second and decisions are for
                 // somebody watching a call, not for an app holding one.
                 query: ["decisions": "false"]),
-            headers: backend.headers,
+            headers: [:],
             urlSession: backend.urlSession)
     }
 
     /// Opens the socket and starts following the conversation. Doing this twice does nothing.
     public func start() async {
         guard pump == nil else { return }
-        let stream = await socket.open()
+        let headers: [String: String]
+        do {
+            headers = try await backend.headers()
+        } catch let error as AgentsError {
+            return stopped(error)
+        } catch {
+            return stopped(.transport(error))
+        }
+        guard pump == nil else { return }
+        let stream = await socket.open(headers: headers)
         isConnected = true
         pump = Task { [weak self] in
             do {
@@ -68,20 +89,6 @@ public final class AgentSession {
         }
     }
 
-    /// Says this to the agent, as though it had been heard.
-    public func send(_ text: String) async throws {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        conversation.said(trimmed)
-        try await socket.send(.respond(trimmed))
-    }
-
-    /// Submit or retry a persistent text command without adding a second local row.
-    /// Keep the ID across reconnects; reconcile the receipt and Chat messages by ID.
-    public func sendCommand(id: String, text: String) async throws {
-        try await socket.send(.respondCommand(id: id, text: text))
-    }
-
     /// Speaks this without going through the model.
     public func say(_ text: String) async throws {
         try await socket.send(.say(text))
@@ -92,19 +99,23 @@ public final class AgentSession {
         try await socket.send(.interrupt)
     }
 
-    /// Stops the named durable command, and only that one. Keep the ID while the stop is
-    /// in flight: a stop that arrives after its command finished reports how it ended
-    /// rather than interrupting the command accepted after it.
-    public func stopCommand(id: String) async throws {
-        try await socket.send(.interruptCommand(id: id))
-    }
-
     /// Replaces the system prompt, from the next turn on.
     public func setInstructions(_ instructions: String) async throws {
         try await socket.send(.instructions(instructions))
     }
 
-    /// Ends the session and closes the socket.
+    /// Renames or relabels this conversation. Nil leaves a field as it is, and `custom`
+    /// replaces the labels whole.
+    @discardableResult
+    public func update(
+        title: String? = nil, description: String? = nil, custom: [String: JSONValue]? = nil
+    ) async throws -> Session {
+        session = try await VisionAgents(backend: backend).sessions.update(
+            session.id, title: title, description: description, custom: custom)
+        return session
+    }
+
+    /// Ends the session and closes the socket. What it recorded and remembered is kept.
     public func close() async {
         try? await socket.send(.close)
         await socket.close()
@@ -112,6 +123,13 @@ public final class AgentSession {
         pump = nil
         isConnected = false
         conversation.state = .ended
+    }
+
+    /// Deletes this conversation: it is stopped, and its turns and what it remembered go with
+    /// it.
+    public func delete() async throws {
+        try await VisionAgents(backend: backend).sessions.delete(session.id)
+        await close()
     }
 
     private func stopped(_ error: AgentsError?) {
@@ -139,10 +157,15 @@ public final class AgentSession {
         Task { [socket] in
             do {
                 let output = try await tool.run(call.argumentValues)
-                try await socket.send(.toolResult(id: call.id, output: output, error: nil))
+                try await socket.send(
+                    .toolResult(
+                        id: call.id, output: output, error: nil, commandID: call.commandID,
+                        turnID: call.turnID))
             } catch {
                 try? await socket.send(
-                    .toolResult(id: call.id, output: nil, error: error.localizedDescription))
+                    .toolResult(
+                        id: call.id, output: nil, error: error.localizedDescription,
+                        commandID: call.commandID, turnID: call.turnID))
             }
         }
     }

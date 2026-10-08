@@ -8,7 +8,7 @@
 //
 // Usage:
 //
-//	go run ./cmd/knowledge -namespace docs ../docs README.md
+//	go run ./cmd/knowledge -customer examples -namespace docs ../docs README.md
 package main
 
 import (
@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 )
@@ -32,6 +33,7 @@ import (
 const writeTimeout = 60 * time.Second
 
 func main() {
+	customer := flag.String("customer", "", "customer (app id) the knowledge base belongs to")
 	namespace := flag.String("namespace", "", "knowledge base to write into")
 	size := flag.Int("chunk", ingest.DefaultChunk, "characters per passage")
 	dryRun := flag.Bool("dry-run", false, "print the passages instead of writing them")
@@ -44,7 +46,7 @@ func main() {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	options := options{namespace: *namespace, size: *size, dryRun: *dryRun}
+	options := options{customer: *customer, namespace: *namespace, size: *size, dryRun: *dryRun}
 	if err := run(options, flag.Args(), logger); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -52,12 +54,16 @@ func main() {
 }
 
 type options struct {
+	customer  string
 	namespace string
 	size      int
 	dryRun    bool
 }
 
 func run(options options, paths []string, logger *slog.Logger) error {
+	if strings.TrimSpace(options.customer) == "" {
+		return errors.New("a customer is required, knowledge is never shared")
+	}
 	if strings.TrimSpace(options.namespace) == "" {
 		return errors.New("a namespace is required, knowledge is never shared")
 	}
@@ -95,7 +101,7 @@ func run(options options, paths []string, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := base.Upsert(ctx, options.namespace, documents); err != nil {
+	if err := base.Upsert(ctx, knowledge.Scoped(options.customer, options.namespace), documents); err != nil {
 		return err
 	}
 	fmt.Printf("wrote %d passages from %d files to %s\n",

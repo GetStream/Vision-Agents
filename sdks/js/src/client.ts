@@ -1,5 +1,5 @@
 import { Backend, type BackendOptions, type StreamUser, type TokenSource } from "./backend.js";
-import { RouterError } from "./errors.js";
+import { errorOf, RouterError } from "./errors.js";
 import type { components, paths } from "./generated/api.js";
 import {
   claimGuestUser,
@@ -10,12 +10,14 @@ import {
   type GuestUserOptions,
 } from "./guests.js";
 import { AgentHandle } from "./handle.js";
+import { Memories } from "./memories.js";
+import { Simulations } from "./simulations.js";
 
 /** The schemas from the spec, so callers can name a request or a response they build. */
 export type Schemas = components["schemas"];
 
-/** The methods the router serves. It serves no PATCH, because the spec describes none. */
-export type Method = "get" | "post" | "put" | "delete";
+/** The methods the router serves. */
+export type Method = "get" | "post" | "put" | "patch" | "delete";
 
 type Operation<P extends keyof paths, M extends Method> = M extends keyof paths[P]
   ? NonNullable<paths[P][M]>
@@ -93,25 +95,29 @@ type Arguments<Op> = Record<string, never> extends RequestOptions<Op>
   : [options: RequestOptions<Op>];
 
 /**
- * Every REST operation the router serves, typed from the spec.
- *
- * One method per HTTP method rather than one per endpoint. The spec has 93 operations and
- * the shapes are already generated, so a wrapper per endpoint would be 93 functions that
- * say nothing the types do not — and a new endpoint would need one written before it could
- * be called. This way the spec is the API: regenerating is all a new endpoint takes.
+ * The router's API, as resources: `api.simulations`, `api.memories`, `api.agent(name)`.
  *
  * ```ts
- * const api = new Client({ customerId: "local" });
- * const configs = await api.get("/v1/agents/configs");
- * const session = await api.post("/v1/agents/sessions", { body: { call_id: "demo" } });
- * await api.delete("/v1/agents/sessions/{id}", { path: { id: session.id } });
+ * const api = new Client();
+ * const simulation = await api.simulations.create({ name, config_id, scenario, assertion });
+ * const session = await api.agent("docs").sessions.create();
  * ```
+ *
+ * Underneath, `get`, `post`, `put`, `patch` and `delete` take any path in the spec, typed from
+ * it. They are what the resources are built on, and the way to reach an endpoint no resource
+ * covers yet; code a customer reads uses the resource.
  */
 export class Client {
   readonly backend: Backend;
+  /** What the app's agents remember about its users. */
+  readonly memories: Memories;
+  /** Conversations to test an agent with, and their runs. */
+  readonly simulations: Simulations;
 
   constructor(backend: Backend | BackendOptions = {}) {
     this.backend = backend instanceof Backend ? backend : new Backend(backend);
+    this.memories = new Memories(this);
+    this.simulations = new Simulations(this);
   }
 
   /**
@@ -198,6 +204,13 @@ export class Client {
     return this.send("put", path, options[0]);
   }
 
+  patch<P extends PathsWith<"patch">>(
+    path: P,
+    ...options: Arguments<Operation<P, "patch">>
+  ): Promise<Result<Operation<P, "patch">>> {
+    return this.send("patch", path, options[0]);
+  }
+
   delete<P extends PathsWith<"delete">>(
     path: P,
     ...options: Arguments<Operation<P, "delete">>
@@ -216,7 +229,7 @@ export class Client {
 
     const operation = `${method.toUpperCase()} ${template}`;
     const url = new URL(this.backend.url + fill(template, path));
-    for (const [name, value] of Object.entries(query ?? {})) {
+    for (const [name, value] of Object.entries({ ...this.backend.query(), ...query })) {
       if (value === undefined || value === null) {
         continue;
       }
@@ -247,7 +260,7 @@ export class Client {
     }
 
     if (!response.ok) {
-      throw new RouterError(response.status, operation, await complaint(response));
+      throw await errorOf(response, operation);
     }
     if (response.status === 204 || response.headers.get("Content-Length") === "0") {
       return undefined as T;
@@ -265,23 +278,4 @@ function fill(template: string, path: Record<string, string | number> | undefine
     }
     return encodeURIComponent(String(value));
   });
-}
-
-/**
- * What the router said went wrong.
- *
- * Every failure in the spec is `{"error": "..."}`, but a 502 from something in front of the
- * router is not, so the status is the fallback rather than a parse failure.
- */
-async function complaint(response: Response): Promise<string> {
-  const text = await response.text().catch(() => "");
-  try {
-    const parsed = JSON.parse(text) as { error?: string };
-    if (typeof parsed.error === "string" && parsed.error) {
-      return parsed.error;
-    }
-  } catch {
-    // Not JSON, so the body is the best there is.
-  }
-  return text.trim() || `the router answered ${response.status}`;
 }

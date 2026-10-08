@@ -20,6 +20,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -105,16 +106,16 @@ func New(options Options) (*STT, error) {
 		options.URL = os.Getenv("PARAKEET_WS_URL")
 	}
 	if options.URL == "" {
-		return nil, errors.New("parakeet: websocket url is required (set PARAKEET_WS_URL)")
+		return nil, stack.Wrap(errors.New("parakeet: websocket url is required (set PARAKEET_WS_URL)"))
 	}
 	if !strings.HasPrefix(options.URL, "ws://") && !strings.HasPrefix(options.URL, "wss://") {
-		return nil, fmt.Errorf("parakeet: url must be ws:// or wss://, got %s", options.URL)
+		return nil, stack.Wrap(fmt.Errorf("parakeet: url must be ws:// or wss://, got %s", options.URL))
 	}
 	if options.APIKey == "" {
 		options.APIKey = os.Getenv("BASETEN_API_KEY")
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("parakeet: api key is required (set BASETEN_API_KEY)")
+		return nil, stack.Wrap(errors.New("parakeet: api key is required (set BASETEN_API_KEY)"))
 	}
 	if options.Model == "" {
 		options.Model = DefaultModel
@@ -144,7 +145,7 @@ func (s *STT) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
-		return errors.New("parakeet: already started")
+		return stack.Wrap(errors.New("parakeet: already started"))
 	}
 	s.started = true
 	s.mu.Unlock()
@@ -155,9 +156,9 @@ func (s *STT) Start(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, s.options.URL, header)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("parakeet: dial: %w (http %d)", err, response.StatusCode)
+			return stack.Wrap(fmt.Errorf("parakeet: dial: %w (http %d)", err, response.StatusCode))
 		}
-		return fmt.Errorf("parakeet: dial: %w", err)
+		return stack.Wrap(fmt.Errorf("parakeet: dial: %w", err))
 	}
 	s.conn = conn
 
@@ -247,26 +248,26 @@ func (s *STT) Client() *websocket.Conn { return s.conn }
 func (s *STT) handshake() error {
 	payload, err := json.Marshal(clientMetadata{SampleRate: stt.SampleRate, Encoding: "linear16"})
 	if err != nil {
-		return fmt.Errorf("parakeet: encode metadata: %w", err)
+		return stack.Wrap(fmt.Errorf("parakeet: encode metadata: %w", err))
 	}
 	if err := s.write(websocket.TextMessage, payload); err != nil {
-		return fmt.Errorf("parakeet: send metadata: %w", err)
+		return stack.Wrap(fmt.Errorf("parakeet: send metadata: %w", err))
 	}
 
 	_, raw, err := s.conn.ReadMessage()
 	if err != nil {
-		return fmt.Errorf("parakeet: read handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("parakeet: read handshake: %w", err))
 	}
 
 	var message serverMessage
 	if err := json.Unmarshal(raw, &message); err != nil {
-		return fmt.Errorf("parakeet: decode handshake: %w", err)
+		return stack.Wrap(fmt.Errorf("parakeet: decode handshake: %w", err))
 	}
 	if message.Type == messageError {
-		return fmt.Errorf("parakeet: handshake rejected: %s", message.Error)
+		return stack.Wrap(fmt.Errorf("parakeet: handshake rejected: %s", message.Error))
 	}
 	if message.Type != messageReady {
-		return fmt.Errorf("parakeet: expected %q, got %q", messageReady, message.Type)
+		return stack.Wrap(fmt.Errorf("parakeet: expected %q, got %q", messageReady, message.Type))
 	}
 	return nil
 }
@@ -274,7 +275,7 @@ func (s *STT) handshake() error {
 func (s *STT) write(messageType int, payload []byte) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.conn.WriteMessage(messageType, payload)
+	return stack.Wrap(s.conn.WriteMessage(messageType, payload))
 }
 
 // readLoop translates server frames into events until the connection ends.

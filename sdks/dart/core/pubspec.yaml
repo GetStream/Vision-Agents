@@ -1,0 +1,22 @@
+name: vision_agents_core
+description: >-
+  The state layer and client for Stream's Vision Agents: open a conversation with an agent,
+  follow it as it happens, answer its tool calls on the device, and look something up.
+version: 0.1.0
+repository: https://github.com/GetStream/Vision-Agents/tree/main/sdks/dart/core
+topics: [ai, agents, voice, stream]
+
+# Pure Dart, so it runs on the VM, in Flutter on every platform and in a browser, and is
+# tested in the official dart image. The floor is Stream Video's, since the rtc package
+# depends on both.
+environment:
+  sdk: ^3.10.0
+
+dependencies:
+  http: ^1.6.0
+  web_socket: ^1.0.1
+
+dev_dependencies:
+  lints: ^6.1.0
+  test: ^1.32.0
+  yaml: ^3.1.3

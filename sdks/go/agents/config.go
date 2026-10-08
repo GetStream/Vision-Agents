@@ -3,8 +3,11 @@ package agents
 import (
 	"context"
 	"fmt"
+	"maps"
+	"net/http"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
 // Sync stores the agent's configuration in the backend, along with its skills and whatever
@@ -13,10 +16,17 @@ import (
 // A config is what a session can be created from by name, so the things worth deciding once
 // are decided once. Both the config and its skills are found by name first, so calling this
 // twice edits what is stored rather than storing another copy of it.
+//
+// An agent read from a directory is synced whole, with what its agent.yaml declares, and
+// .agent_sync records the fingerprint of what was stored. A directory unchanged since then
+// is only read back, not written again.
 func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 	client, err := a.Client()
 	if err != nil {
 		return nil, err
+	}
+	if a.folder != nil {
+		return a.syncFolder(ctx, client)
 	}
 
 	skills := a.syncedSkills()
@@ -26,24 +36,11 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 		}
 	}
 
-	namespace := ""
-	if a.folder != nil {
-		namespace = a.folder.KnowledgeNamespace()
-		if err := IngestKnowledge(ctx, client, namespace, a.folder.Knowledge); err != nil {
-			return nil, err
-		}
-		if err := SubscribeKnowledgeURLs(ctx, client, namespace, a.folder.KnowledgeURLs); err != nil {
-			return nil, err
-		}
-	}
-
 	wanted := acceleration.AgentConfigRequest{Name: a.options.Name}
 	setString(&wanted.Instructions, a.options.Instructions)
 	setString(&wanted.Guardrail, a.options.Guardrail)
-	setString(&wanted.KnowledgeNamespace, namespace)
-	if a.options.Harness != nil && len(a.options.Harness.Subagents) > 0 {
-		wanted.Subagents = &a.options.Harness.Subagents
-	}
+	harness, subagent, sandbox := a.options.Harness.stored()
+	wanted.Harness, wanted.ThinkingLlm, wanted.Sandbox = harness, subagent, sandbox
 	if len(a.options.CostTracking) > 0 {
 		tags := a.options.CostTracking
 		wanted.Tags = &tags
@@ -57,6 +54,259 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 	}
 
 	return DefineAgent(ctx, client, wanted)
+}
+
+// syncFolder stores the agent's directory in one request. What the code set wins over what
+// the directory says, and is part of the fingerprint, so changing either syncs again.
+func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithResponses) (*acceleration.AgentConfig, error) {
+	folder := a.folder
+	skills := a.syncedSkills()
+	hash := fingerprint(folder.Declaration, a.options.Instructions, a.options.Guardrail,
+		skills, folder.Knowledge, folder.KnowledgeURLs, folder.Simulations)
+	harness, subagent, sandbox := a.options.Harness.stored()
+	if harness != nil || subagent != nil || sandbox != nil || len(a.options.CostTracking) > 0 {
+		hash = fingerprint(hash, fmt.Sprint(deref(harness), deref(subagent), deref(sandbox)),
+			fmt.Sprint(a.options.CostTracking), nil, nil, nil, nil)
+	}
+
+	if ReadStamp(folder.Path) == hash {
+		if stored, err := storedConfig(ctx, client, a.options.Name); err != nil || stored != nil {
+			return stored, err
+		}
+	}
+
+	body := acceleration.SyncAgentRequest{Name: a.options.Name, Hash: hash}
+	setString(&body.Instructions, a.options.Instructions)
+	setString(&body.Guardrail, a.options.Guardrail)
+	if len(skills) > 0 {
+		requests := make([]acceleration.SkillRequest, 0, len(skills))
+		for _, skill := range skills {
+			requests = append(requests, skillRequestOf(skill))
+		}
+		body.Skills = &requests
+	}
+	if len(folder.Knowledge) > 0 {
+		documents := make([]acceleration.KnowledgeDocument, 0, len(folder.Knowledge))
+		for _, document := range folder.Knowledge {
+			documents = append(documents, acceleration.KnowledgeDocument{Source: document.Source, Text: document.Text})
+		}
+		body.Knowledge = &documents
+	}
+	if len(folder.KnowledgeURLs) > 0 {
+		pages := make([]acceleration.KnowledgeUrlDeclaration, 0, len(folder.KnowledgeURLs))
+		for _, page := range folder.KnowledgeURLs {
+			declared := acceleration.KnowledgeUrlDeclaration{Url: page.URL}
+			setString(&declared.Title, page.Title)
+			setString(&declared.Description, page.Description)
+			if page.RefreshHours > 0 {
+				hours := int64(page.RefreshHours)
+				declared.RefreshHours = &hours
+			}
+			pages = append(pages, declared)
+		}
+		body.KnowledgeUrls = &pages
+	}
+	if folder.Simulations != nil {
+		declared := make([]acceleration.SimulationDeclaration, 0, len(folder.Simulations))
+		for _, simulation := range folder.Simulations {
+			declared = append(declared, simulationDeclarationOf(simulation))
+		}
+		body.Simulations = &declared
+	}
+	declareSettings(&body, folder.Settings)
+	if harness != nil {
+		body.Harness = harness
+	}
+	if subagent != nil {
+		body.ThinkingLlm = subagent
+	}
+	if sandbox != nil {
+		body.Sandbox = sandbox
+	}
+	if len(a.options.CostTracking) > 0 {
+		tags := map[string]string{}
+		if body.Tags != nil {
+			tags = *body.Tags
+		}
+		for key, value := range a.options.CostTracking {
+			tags[key] = value
+		}
+		body.Tags = &tags
+	}
+
+	synced, err := client.SyncAgentWithResponse(ctx, body)
+	if err != nil {
+		return nil, fmt.Errorf("agents: syncing %s: %w", a.options.Name, err)
+	}
+	result, err := answer(synced.JSON200, synced.HTTPResponse, synced.Body)
+	if err != nil {
+		return nil, err
+	}
+	for _, warning := range deref(result.Warnings) {
+		a.logger.Warn("synced with a warning", "agent", a.options.Name, "warning", warning)
+	}
+	if err := WriteStamp(folder.Path, hash); err != nil {
+		return nil, err
+	}
+	return &result.Config, nil
+}
+
+// declareSettings carries what agent.yaml declared onto the sync request. Only what the file
+// names is sent, so the router leaves whatever is already stored for the rest.
+// pluginEntries are the plugins a declaration names as the router takes them: an id alone
+// for one with nothing else said about it, or nothing for none.
+func pluginEntries(named []PluginSettings) *[]acceleration.PluginEntry {
+	if len(named) == 0 {
+		return nil
+	}
+	entries := make([]acceleration.PluginEntry, 0, len(named))
+	for _, plugin := range named {
+		var entry acceleration.PluginEntry
+		if !plugin.Readonly && len(plugin.Scopes) == 0 && len(plugin.Toolsets) == 0 && len(plugin.Tools) == 0 {
+			// A string always encodes.
+			_ = entry.FromPluginEntry0(plugin.Name)
+			entries = append(entries, entry)
+			continue
+		}
+		declared := acceleration.PluginWithOptions{Name: plugin.Name}
+		if plugin.Readonly {
+			declared.Readonly = &plugin.Readonly
+		}
+		if len(plugin.Scopes) > 0 {
+			declared.Scopes = &plugin.Scopes
+		}
+		if len(plugin.Toolsets) > 0 {
+			declared.Toolsets = &plugin.Toolsets
+		}
+		if len(plugin.Tools) > 0 {
+			declared.Tools = &plugin.Tools
+		}
+		// Neither does a struct of strings and a bool.
+		_ = entry.FromPluginWithOptions(declared)
+		entries = append(entries, entry)
+	}
+	return &entries
+}
+
+func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
+	if settings.Mode != "" {
+		mode := acceleration.AgentMode(settings.Mode)
+		body.Mode = &mode
+	}
+	setString(&body.Stt, settings.STT)
+	setString(&body.Tts, settings.TTS)
+	body.Sts = settings.STS
+	setString(&body.Voice, settings.Voice)
+	if settings.Speed != 0 {
+		body.Speed = &settings.Speed
+	}
+	setString(&body.Llm, settings.LLM)
+	if settings.Harness != "" {
+		harness := acceleration.Harness(settings.Harness)
+		body.Harness = &harness
+	}
+	if settings.Dispatch != nil {
+		body.Dispatch = &acceleration.AgentDispatch{}
+		if settings.Dispatch.IncomingCall != "" {
+			setting := acceleration.DispatchSetting(settings.Dispatch.IncomingCall)
+			body.Dispatch.IncomingCall = &setting
+		}
+		if settings.Dispatch.Text != "" {
+			setting := acceleration.DispatchSetting(settings.Dispatch.Text)
+			body.Dispatch.Text = &setting
+		}
+	}
+	setString(&body.ThinkingLlm, settings.ThinkingLLM)
+	setString(&body.Search, settings.Search)
+	setString(&body.Greeting, settings.Greeting)
+	if settings.Sandbox != "" {
+		sandbox := acceleration.Sandbox(settings.Sandbox)
+		body.Sandbox = &sandbox
+	}
+	if options := settings.SandboxOptions; options != nil {
+		timeout := options.timeout.Milliseconds()
+		cpu, memory, disk := int64(options.CPU), int64(options.MemoryGB), int64(options.DiskGB)
+		body.SandboxOptions = &acceleration.SandboxOptions{
+			Image: &options.Image, Setup: &options.Setup, TimeoutMs: &timeout,
+			Cpu: &cpu, MemoryGb: &memory, DiskGb: &disk,
+		}
+	}
+	body.AgentPlugins = pluginEntries(settings.AgentPlugins)
+	body.UserPlugins = pluginEntries(settings.UserPlugins)
+	if len(settings.PluginEvents) > 0 {
+		events := make([]acceleration.PluginEvent, 0, len(settings.PluginEvents))
+		for _, event := range settings.PluginEvents {
+			declared := acceleration.PluginEvent{Plugin: event.Plugin, Event: event.Event}
+			if len(event.Arguments) > 0 {
+				arguments := event.Arguments
+				declared.Arguments = &arguments
+			}
+			if event.Instructions != "" {
+				declared.Instructions = &event.Instructions
+			}
+			events = append(events, declared)
+		}
+		body.PluginEvents = &events
+	}
+	if len(settings.MCPServers) > 0 {
+		servers := make([]acceleration.McpServer, 0, len(settings.MCPServers))
+		for _, server := range settings.MCPServers {
+			declared := acceleration.McpServer{Name: server.Name, Url: server.URL}
+			if len(server.Tools) > 0 {
+				declared.Tools = &server.Tools
+			}
+			if len(server.Scopes) > 0 {
+				declared.Scopes = &server.Scopes
+			}
+			if server.User {
+				declared.User = &server.User
+			}
+			servers = append(servers, declared)
+		}
+		body.McpServers = &servers
+	}
+	body.ProgressiveTools = settings.ProgressiveTools
+	if settings.Channels != nil {
+		declared := acceleration.AgentChannels{
+			Whatsapp: channelLine(settings.Channels.WhatsApp),
+			Sms:      channelLine(settings.Channels.SMS),
+			Imessage: channelLine(settings.Channels.IMessage),
+		}
+		if settings.Channels.Identity != "" {
+			identity := acceleration.ChannelIdentity(settings.Channels.Identity)
+			declared.Identity = &identity
+		}
+		body.Channels = &declared
+	}
+	if len(settings.Keyterms) > 0 {
+		body.Keyterms = &settings.Keyterms
+	}
+	if len(settings.Tags) > 0 {
+		tags := maps.Clone(settings.Tags)
+		body.Tags = &tags
+	}
+	if settings.Video != nil {
+		body.Video = &acceleration.SessionVideo{MaxFrames: &settings.Video.MaxFrames}
+		setString(&body.Video.Source, settings.Video.Source)
+	}
+}
+
+// storedConfig is the config stored under a name, or nil when there is none.
+func storedConfig(ctx context.Context, client *acceleration.ClientWithResponses, name string) (*acceleration.AgentConfig, error) {
+	listed, err := client.ListAgentConfigsWithResponse(ctx, &acceleration.ListAgentConfigsParams{Name: &name})
+	if err != nil {
+		return nil, fmt.Errorf("agents: listing configs: %w", err)
+	}
+	stored, err := answer(listed.JSON200, listed.HTTPResponse, listed.Body)
+	if err != nil {
+		return nil, err
+	}
+	for _, config := range *stored {
+		if config.Name == name {
+			return &config, nil
+		}
+	}
+	return nil, nil
 }
 
 // syncedSkills are the skills the stored config should name. The harness is the whole of
@@ -85,7 +335,7 @@ func DefineAgent(
 	if err != nil {
 		return nil, fmt.Errorf("agents: listing configs: %w", err)
 	}
-	stored, err := answer(listed.JSON200, listed.JSON400, listed.JSON401, nil, listed.Status())
+	stored, err := answer(listed.JSON200, listed.HTTPResponse, listed.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -98,14 +348,14 @@ func DefineAgent(
 		if err != nil {
 			return nil, fmt.Errorf("agents: updating config %s: %w", config.Id, err)
 		}
-		return answer(updated.JSON200, updated.JSON400, updated.JSON401, updated.JSON404, updated.Status())
+		return answer(updated.JSON200, updated.HTTPResponse, updated.Body)
 	}
 
 	created, err := client.CreateAgentConfigWithResponse(ctx, wanted)
 	if err != nil {
 		return nil, fmt.Errorf("agents: creating config %s: %w", wanted.Name, err)
 	}
-	return answer(created.JSON201, created.JSON400, created.JSON401, nil, created.Status())
+	return answer(created.JSON201, created.HTTPResponse, created.Body)
 }
 
 // DefineSkills stores skills, editing whichever is already under each name.
@@ -114,7 +364,7 @@ func DefineSkills(ctx context.Context, client *acceleration.ClientWithResponses,
 	if err != nil {
 		return fmt.Errorf("agents: listing skills: %w", err)
 	}
-	stored, err := answer(listed.JSON200, listed.JSON400, listed.JSON401, nil, listed.Status())
+	stored, err := answer(listed.JSON200, listed.HTTPResponse, listed.Body)
 	if err != nil {
 		return err
 	}
@@ -125,23 +375,13 @@ func DefineSkills(ctx context.Context, client *acceleration.ClientWithResponses,
 	}
 
 	for _, skill := range skills {
-		body := acceleration.SkillRequest{
-			Name:     skill.Name,
-			Subagent: &skill.Subagent, CaptureVideo: &skill.CaptureVideo,
-			Description:  skill.Description,
-			Instructions: skill.Instructions,
-		}
-		if skill.Deadline > 0 {
-			milliseconds := skill.Deadline.Milliseconds()
-			body.DeadlineMs = &milliseconds
-		}
-
+		body := skillRequestOf(skill)
 		if id, ok := known[skill.Name]; ok {
 			updated, err := client.UpdateSkillWithResponse(ctx, id, body)
 			if err != nil {
 				return fmt.Errorf("agents: updating skill %s: %w", skill.Name, err)
 			}
-			if _, err := answer(updated.JSON200, updated.JSON400, updated.JSON401, updated.JSON404, updated.Status()); err != nil {
+			if _, err := answer(updated.JSON200, updated.HTTPResponse, updated.Body); err != nil {
 				return err
 			}
 			continue
@@ -151,11 +391,55 @@ func DefineSkills(ctx context.Context, client *acceleration.ClientWithResponses,
 		if err != nil {
 			return fmt.Errorf("agents: creating skill %s: %w", skill.Name, err)
 		}
-		if _, err := answer(created.JSON201, created.JSON400, created.JSON401, nil, created.Status()); err != nil {
+		if _, err := answer(created.JSON201, created.HTTPResponse, created.Body); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func skillRequestOf(skill Skill) acceleration.SkillRequest {
+	body := acceleration.SkillRequest{
+		Name:         skill.Name,
+		CaptureVideo: &skill.CaptureVideo,
+		Description:  skill.Description,
+		Instructions: skill.Instructions,
+	}
+	if skill.Deadline > 0 {
+		milliseconds := skill.Deadline.Milliseconds()
+		body.DeadlineMs = &milliseconds
+	}
+	return body
+}
+
+func simulationDeclarationOf(simulation Simulation) acceleration.SimulationDeclaration {
+	declared := acceleration.SimulationDeclaration{
+		Name:      simulation.Name,
+		Scenario:  simulation.Scenario,
+		Assertion: simulation.Assertion,
+	}
+	if simulation.Mode != "" {
+		mode := acceleration.SimulationDeclarationMode(simulation.Mode)
+		declared.Mode = &mode
+	}
+	if simulation.Variations > 0 {
+		variations := int64(simulation.Variations)
+		declared.Variations = &variations
+	}
+	if simulation.MaxTurns > 0 {
+		turns := int64(simulation.MaxTurns)
+		declared.MaxTurns = &turns
+	}
+	setString(&declared.CallerTarget, simulation.CallerTarget)
+	setString(&declared.JudgeTarget, simulation.JudgeTarget)
+	setString(&declared.CallerStt, simulation.CallerSTT)
+	setString(&declared.CallerTts, simulation.CallerTTS)
+	setString(&declared.CallerVoice, simulation.CallerVoice)
+	if len(simulation.Tags) > 0 {
+		tags := maps.Clone(simulation.Tags)
+		declared.Tags = &tags
+	}
+	return declared
 }
 
 // IngestKnowledge fills a knowledge base with documents an agent can look things up in.
@@ -187,7 +471,7 @@ func IngestKnowledge(
 	if err != nil {
 		return fmt.Errorf("agents: filling %s: %w", namespace, err)
 	}
-	_, err = answer(written.JSON200, written.JSON400, written.JSON401, nil, written.Status())
+	_, err = answer(written.JSON200, written.HTTPResponse, written.Body)
 	return err
 }
 
@@ -205,12 +489,15 @@ func SubscribeKnowledgeURLs(
 		body := acceleration.KnowledgeUrlRequest{Namespace: namespace, Url: page.URL}
 		setString(&body.Title, page.Title)
 		setString(&body.Description, page.Description)
+		if page.RefreshHours > 0 {
+			body.RefreshHours = &page.RefreshHours
+		}
 
 		added, err := client.AddKnowledgeUrlWithResponse(ctx, body)
 		if err != nil {
 			return fmt.Errorf("agents: reading %s: %w", page.URL, err)
 		}
-		if _, err := answer(added.JSON201, added.JSON400, added.JSON401, added.JSON403, added.Status()); err != nil {
+		if _, err := answer(added.JSON201, added.HTTPResponse, added.Body); err != nil {
 			return err
 		}
 	}
@@ -218,20 +505,32 @@ func SubscribeKnowledgeURLs(
 }
 
 // answer returns what the router sent, raising what it said went wrong instead.
-func answer[T any](ok *T, bad, unauthorized, missing *acceleration.Error, status string) (*T, error) {
+func answer[T any](ok *T, response *http.Response, body []byte) (*T, error) {
 	if ok != nil {
 		return ok, nil
 	}
-	for _, failure := range []*acceleration.Error{bad, unauthorized, missing} {
-		if failure != nil {
-			return nil, fmt.Errorf("agents: %s", failure.Error)
-		}
+	return nil, stream.NewRouterError(response, body, "agents", "", "the router answered "+response.Status)
+}
+
+// deref is what a field holds, or its zero value when it holds nothing.
+func deref[T any](field *T) T {
+	var zero T
+	if field == nil {
+		return zero
 	}
-	return nil, fmt.Errorf("agents: the router answered %s", status)
+	return *field
 }
 
 func setString(field **string, value string) {
 	if value != "" {
 		*field = &value
 	}
+}
+
+// channelLine is one declared channel for the wire, or nothing when it names no number.
+func channelLine(line *ChannelSettings) *acceleration.ChannelLineRequest {
+	if line == nil || line.Number == "" {
+		return nil
+	}
+	return &acceleration.ChannelLineRequest{Number: line.Number}
 }

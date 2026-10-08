@@ -1,0 +1,55 @@
+{
+    "name": "getstream/vision-agents",
+    "description": "Server-side PHP SDK for Stream Vision Agents: agents, sessions, dispatch, folder sync and the model router.",
+    "type": "library",
+    "license": "Apache-2.0",
+    "keywords": ["stream", "getstream", "vision-agents", "voice", "ai", "agents"],
+    "homepage": "https://getstream.io/video/voice-agents/",
+    "require": {
+        "php": "^8.4",
+        "ext-json": "*",
+        "getstream/getstream-php": "^12.1",
+        "php-http/discovery": "^1.20",
+        "psr/http-client": "^1.0",
+        "psr/http-factory": "^1.0",
+        "psr/http-message": "^1.1 || ^2.0",
+        "symfony/yaml": "^7.3 || ^8.0"
+    },
+    "require-dev": {
+        "amphp/http-client-psr7": "^1.1",
+        "amphp/http-server": "^3.4",
+        "amphp/websocket-client": "^2.0",
+        "amphp/websocket-server": "^4.0",
+        "nyholm/psr7": "^1.8",
+        "phpstan/phpstan": "^2.2",
+        "phpstan/phpstan-strict-rules": "^2.0",
+        "phpunit/phpunit": "^13.3"
+    },
+    "suggest": {
+        "amphp/websocket-client": "Needed for Dispatch, Session::watch() and the realtime router streams (^2.0)",
+        "amphp/http-client-psr7": "Lets requests made inside a worker suspend a fiber instead of stalling the loop (^1.1)"
+    },
+    "autoload": {
+        "psr-4": {
+            "GetStream\\VisionAgents\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "GetStream\\VisionAgents\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "generate": "php bin/generate.php ../../acceleration/api/openapi.yaml",
+        "generate-check": "php bin/generate.php ../../acceleration/api/openapi.yaml --check",
+        "test": "phpunit",
+        "stan": "phpstan analyse --memory-limit=1G"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "php-http/discovery": false
+        }
+    },
+    "minimum-stability": "stable"
+}

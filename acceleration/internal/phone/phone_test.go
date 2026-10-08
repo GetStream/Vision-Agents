@@ -267,6 +267,37 @@ func (s *PhoneSuite) TestAVendorThatCannotSendAPasswordWillNotDialWithoutAnAllow
 	s.Empty(allowed)
 }
 
+func (s *PhoneSuite) TestAttachDerivesItsAllowlistFromTheVendorDeclaration() {
+	// Attach used to build the trunk's allowlist from the request body, which is always
+	// empty in practice — an open trunk for a password-only vendor, and no way for an
+	// address-only vendor to connect at all. It has to come from the vendor's own
+	// declaration instead, the same way Call already derives it.
+	registry := NewRegistry(s.config())
+
+	declared, ok := registry.Lookup("vonage")
+	s.Require().True(ok)
+	allowed, err := trunkAllowlist(declared)
+	s.Require().NoError(err)
+	s.Equal(declared.Signalling, allowed, "vonage is address-only, so its declared addresses are the allowlist")
+	s.NotEmpty(allowed)
+
+	config, err := parseConfig([]byte(`
+vendors:
+  - vendor: bandwidth
+    capabilities: [voice]
+    credentials: [BANDWIDTH_API_TOKEN]
+    trunk_auth: allowlist
+    operations: [dial]
+`))
+	s.Require().NoError(err)
+	declared, ok = config.Lookup("bandwidth")
+	s.Require().True(ok)
+
+	_, err = trunkAllowlist(declared)
+	s.ErrorContains(err, "none are declared",
+		"a password-less vendor with no declared addresses must be refused, not given an open trunk")
+}
+
 func (s *PhoneSuite) TestATransferSaysWhatItIsMissing() {
 	service, err := NewService(ServiceOptions{Registry: NewRegistry(s.config())})
 	s.Require().NoError(err)
@@ -321,6 +352,21 @@ func (s *PhoneSuite) TestABridgeMustBeASipAddress() {
 	s.ErrorContains(Bridge{}.Validate(), "uri is required")
 	s.ErrorContains(Bridge{URI: "https://example.com"}.Validate(), "not a sip uri")
 	s.NoError(Bridge{URI: "sip:trunk@sip.stream-io-api.com"}.Validate())
+}
+
+func (s *PhoneSuite) TestABridgeCarriesTheNumberStreamFindsItsTrunkBy() {
+	for uri, want := range map[string]string{
+		"sip:bridge.sip.example.com":               "sip:+15550000301@bridge.sip.example.com",
+		"sip:trunk@bridge.sip.example.com":         "sip:+15550000301@bridge.sip.example.com",
+		"sips:bridge.sip.example.com:5061":         "sips:+15550000301@bridge.sip.example.com:5061",
+		"sip:bridge.sip.example.com;transport=tcp": "sip:+15550000301@bridge.sip.example.com;transport=tcp",
+	} {
+		got, err := Bridge{URI: uri, Username: "stream-user", Password: "stream-pass"}.WithNumber("+15550000301")
+		s.Require().NoError(err, uri)
+		s.Equal(Bridge{URI: want, Username: "stream-user", Password: "stream-pass"}, got, uri)
+	}
+	_, err := Bridge{URI: "tel:+15550000301"}.WithNumber("+15550000301")
+	s.EqualError(err, `phone: "tel:+15550000301" is not a sip uri`)
 }
 
 func (s *PhoneSuite) TestCapabilitiesAreCoveredOnlyWhenEveryOneIsPresent() {

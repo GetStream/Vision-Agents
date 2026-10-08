@@ -10,14 +10,20 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
+
+// EnvBucketURL is the environment variable naming the bucket voice recordings live in,
+// for example s3://voices?region=eu-west-1, gs://voices, or file:///var/lib/router/voices.
+const EnvBucketURL = "ROUTER_VOICES_BUCKET_URL"
 
 // Service is the control plane for a customer's own voices: it holds the rows, the
 // recordings behind them and the ids each provider gave them back.
 type Service struct {
-	store   *store.Store
+	store   *appconfig.Store
 	bucket  *blob.Bucket
 	cloners *Registry
 	logger  *slog.Logger
@@ -26,7 +32,7 @@ type Service struct {
 // Options configures a Service. All three dependencies are required, since a voice with
 // nowhere to keep its recordings and nobody to teach them to is not a voice.
 type Options struct {
-	Store   *store.Store
+	Store   *appconfig.Store
 	Bucket  *blob.Bucket
 	Cloners *Registry
 	Logger  *slog.Logger
@@ -38,7 +44,7 @@ func NewService(options Options) (*Service, error) {
 		return nil, errors.New("voices: a database is required")
 	}
 	if options.Bucket == nil {
-		return nil, fmt.Errorf("voices: an object bucket is required (set %s)", blob.EnvURL)
+		return nil, fmt.Errorf("voices: an object bucket is required (set %s)", EnvBucketURL)
 	}
 	if options.Cloners == nil {
 		return nil, errors.New("voices: at least one provider must be able to clone")
@@ -71,7 +77,7 @@ func (s *Service) AddSample(ctx context.Context, customerID, voiceID string, sam
 		return err
 	}
 	if len(sample.Content) == 0 {
-		return errors.New("voices: a recording with no audio in it is not a recording")
+		return stack.Wrap(errors.New("voices: a recording with no audio in it is not a recording"))
 	}
 
 	key := sampleKey(voice, sample.Name)
@@ -87,7 +93,7 @@ func (s *Service) AddSample(ctx context.Context, customerID, voiceID string, sam
 		Bytes:       written,
 		Transcript:  sample.Transcript,
 	}
-	if err := s.store.AddVoiceSample(ctx, &stored); err != nil {
+	if err := s.store.DB().AddVoiceSample(ctx, &stored); err != nil {
 		// The row is what makes the object findable, so an orphan is swept up here rather
 		// than left in the bucket costing money nobody can account for.
 		if err := s.bucket.Delete(ctx, key); err != nil {
@@ -117,7 +123,7 @@ func (s *Service) Prepare(ctx context.Context, customerID, voiceID string, provi
 		sort.Strings(providers)
 	}
 	if len(providers) == 0 {
-		return errors.New("voices: this deployment has no provider that can be given a voice")
+		return stack.Wrap(errors.New("voices: this deployment has no provider that can be given a voice"))
 	}
 
 	for _, provider := range providers {
@@ -139,7 +145,7 @@ func (s *Service) Delete(ctx context.Context, customerID, voiceID string) error 
 		return err
 	}
 
-	bindings, err := s.store.VoiceBindings(ctx, voice.ID)
+	bindings, err := s.store.DB().VoiceBindings(ctx, voice.ID)
 	if err != nil {
 		return err
 	}
@@ -158,7 +164,7 @@ func (s *Service) Delete(ctx context.Context, customerID, voiceID string) error 
 		}
 	}
 
-	samples, err := s.store.VoiceSamples(ctx, voice.ID)
+	samples, err := s.store.DB().VoiceSamples(ctx, voice.ID)
 	if err != nil {
 		return err
 	}
@@ -172,30 +178,66 @@ func (s *Service) Delete(ctx context.Context, customerID, voiceID string) error 
 	return s.store.DeleteVoice(ctx, customerID, voice.ID)
 }
 
+// Providers reports which providers a voice can be prepared with, sorted by name.
+func (s *Service) Providers() []string {
+	providers := s.cloners.Providers()
+	sort.Strings(providers)
+	return providers
+}
+
+// Speak says a line in the voice through one provider it is ready with.
+func (s *Service) Speak(ctx context.Context, customerID, voiceID, provider, text string) (Speech, error) {
+	if strings.TrimSpace(text) == "" {
+		return Speech{}, stack.Wrap(errors.New("voices: there is nothing to say"))
+	}
+	cloner, err := s.cloners.Cloner(provider)
+	if err != nil {
+		return Speech{}, err
+	}
+	externalID, err := s.store.ReadyVoiceBinding(ctx, customerID, voiceID, provider)
+	if err != nil {
+		return Speech{}, err
+	}
+	return cloner.Speak(ctx, externalID, text)
+}
+
 // Samples returns a voice's recordings, oldest first.
 func (s *Service) Samples(ctx context.Context, voiceID string) ([]store.VoiceSample, error) {
-	return s.store.VoiceSamples(ctx, voiceID)
+	return s.store.DB().VoiceSamples(ctx, voiceID)
 }
 
 // Bindings returns what each provider made of a voice.
 func (s *Service) Bindings(ctx context.Context, voiceID string) ([]store.VoiceBinding, error) {
-	return s.store.VoiceBindings(ctx, voiceID)
+	return s.store.DB().VoiceBindings(ctx, voiceID)
 }
 
 // prepareOne sends the recordings to one provider and writes down what came back. It marks
 // the binding pending first, so a clone that is still running is distinguishable from one
 // that was never asked for.
+//
+// A provider that already had the voice keeps its previous id on the binding until a new
+// clone replaces it, and the replaced clone is then taken off the provider. Otherwise every
+// re-preparation would leave one more voice upstream that nothing here knows to delete.
 func (s *Service) prepareOne(
 	ctx context.Context, voice store.Voice, provider string, cloner Cloner, request Request,
 ) {
-	pending := store.VoiceBinding{VoiceID: voice.ID, Provider: provider, State: store.VoicePending}
-	if err := s.store.SaveVoiceBinding(ctx, &pending); err != nil {
+	previous, err := s.externalID(ctx, voice.ID, provider)
+	if err != nil {
+		s.logger.Warn("could not read what a provider already had of a voice",
+			"voice", voice.ID, "provider", provider, "error", err)
+		return
+	}
+
+	pending := store.VoiceBinding{
+		VoiceID: voice.ID, Provider: provider, State: store.VoicePending, ExternalID: previous,
+	}
+	if err := s.store.SaveVoiceBinding(ctx, &pending, voice.CustomerID); err != nil {
 		s.logger.Warn("could not record that a voice is being prepared",
 			"voice", voice.ID, "provider", provider, "error", err)
 		return
 	}
 
-	binding := store.VoiceBinding{VoiceID: voice.ID, Provider: provider}
+	binding := store.VoiceBinding{VoiceID: voice.ID, Provider: provider, ExternalID: previous}
 	externalID, err := cloner.Prepare(ctx, request)
 	if err != nil {
 		binding.State = store.VoiceFailed
@@ -207,20 +249,41 @@ func (s *Service) prepareOne(
 		binding.ExternalID = externalID
 	}
 
-	if err := s.store.SaveVoiceBinding(ctx, &binding); err != nil {
+	if err := s.store.SaveVoiceBinding(ctx, &binding, voice.CustomerID); err != nil {
 		s.logger.Warn("could not record what a provider made of a voice",
 			"voice", voice.ID, "provider", provider, "error", err)
+		return
 	}
+	if binding.State == store.VoiceReady && previous != "" && previous != externalID {
+		if err := cloner.Delete(ctx, previous); err != nil {
+			s.logger.Warn("a provider still holds a voice that has been replaced here",
+				"voice", voice.ID, "provider", provider, "external_id", previous, "error", err)
+		}
+	}
+}
+
+// externalID is the id a provider last gave the voice, or empty when it never had it.
+func (s *Service) externalID(ctx context.Context, voiceID, provider string) (string, error) {
+	bindings, err := s.store.DB().VoiceBindings(ctx, voiceID)
+	if err != nil {
+		return "", err
+	}
+	for _, binding := range bindings {
+		if binding.Provider == provider {
+			return binding.ExternalID, nil
+		}
+	}
+	return "", nil
 }
 
 // request reads the recordings back out of the bucket, which is what every cloner is given.
 func (s *Service) request(ctx context.Context, voice store.Voice) (Request, error) {
-	stored, err := s.store.VoiceSamples(ctx, voice.ID)
+	stored, err := s.store.DB().VoiceSamples(ctx, voice.ID)
 	if err != nil {
 		return Request{}, err
 	}
 	if len(stored) == 0 {
-		return Request{}, errors.New("voices: add a recording before preparing the voice")
+		return Request{}, stack.Wrap(errors.New("voices: add a recording before preparing the voice"))
 	}
 
 	samples := make([]Sample, 0, len(stored))

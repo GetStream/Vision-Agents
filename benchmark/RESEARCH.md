@@ -66,6 +66,8 @@ Run one unchanged target over the full pack, several times, on a pinned runner a
 
 Until that number exists, "P50 dropped 40 ms" is a claim the instrument cannot support. The MDE decides `k`, the CI wiring, and what `voicebench compare` is allowed to flag. Everything else in this section follows from it.
 
+**The instrument has landed; the study has not.** `voicebench noise` reads repeated runs of one target, refuses any that differ in commit, `k`, network profile, scenarios or contracts, and writes each metric's MDE (the largest gap between any two runs) to `baselines/<target>/noise-<pack>.json`. `voicebench compare --mde` gates a baseline diff on that file, every metric against its own MDE, in place of the hand-typed V2V threshold it had before. What remains is running it on the pinned runner and choosing `k` from what it reports.
+
 ### Choose `k` from the measured variance
 
 Default `k = 3` is defensible for binary `pass^k` gates. It is thin for a latency percentile. The report already prints the sample count next to every P50, which would expose this: a pack P50 sitting on a handful of measured turns cannot move a trend line.
@@ -193,6 +195,8 @@ The same command serves baseline-regression mode from the previous section. One 
 ## STT benchmark
 
 The provider suites already know how to stream a clip at call pace and score the settled transcript. What they lack is a dataset, a declared normalizer, aggregate reporting, and a direct-versus-through-the-router split.
+
+**The harness has landed; the datasets and the direct split have not.** `voicebench stt --target` streams a clip manifest through the router's STT socket at call pace and writes a `kind: stt` summary with every metric in the table below, timed the way `testaudio.Measure` times them. It cannot import the router's providers, so it measures through the router only; the direct leg of [Router overhead](#router-overhead) needs a second path. No dataset is wired in yet: a manifest is whatever clips are given to it.
 
 ### Metrics
 
@@ -323,6 +327,8 @@ If turn detection becomes a differentiator of its own, run an adapter against th
 
 Wire the two run tiers: per-PR smoke, nightly full, cached caller audio, pinned runner and region. Fail a PR on evaluator invalid, on inbound drops, and on a change that exceeds the MDE against the stored `accelerated` baseline. Do not fail a PR on a competitor column.
 
+**The nightly has landed, without the MDE gate; the per-PR smoke has not.** `.github/workflows/voicebench.yml` runs the frozen set every night with caller audio cached and network profile `github-ubuntu-latest`, and compares it against the previous night without a gate: no noise floor has been measured on that runner yet. Once one has, committing it and passing it to `compare --mde` makes the nightly a gate.
+
 ## Cross-cutting design
 
 ### Artifacts
@@ -346,7 +352,7 @@ A missing field makes the run incomparable, the same way a missing judge already
 ### CLI
 
 ```
-voicebench synth | run | report | calibrate | compare | stt | tts
+voicebench synth | run | report | calibrate | compare | noise | stt | tts
 ```
 
 `compare` is the shared cross-run command. `stt` and `tts` produce the same `summary.json` family with `kind` set, so `compare` works on all three pillars.

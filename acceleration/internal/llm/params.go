@@ -16,6 +16,12 @@ type ResponseParams struct {
 	// ID correlates every event belonging to one response. Providers generate one when
 	// it is empty. It is not sent upstream.
 	ID string
+	// Purpose names the model's role in a call: reply, flow or subagent.
+	Purpose string
+	// TurnID is the caller exchange behind this request, including delegated work.
+	TurnID string
+	// OnTiming reports this request when it settles, including failed attempts.
+	OnTiming func(CallTiming)
 	// Instructions is the system prompt. It is separate from Input so a caller cannot
 	// forget it on a retry, and providers prepend it themselves.
 	Instructions string
@@ -57,6 +63,18 @@ type ResponseParams struct {
 	// Metadata is carried by the provider and returned with the response. It is for the
 	// caller's own bookkeeping and never reaches the model.
 	Metadata map[string]string
+}
+
+// CallTiming is the time spent in one provider attempt.
+type CallTiming struct {
+	OperationID string
+	Purpose     string
+	TurnID      string
+	Provider    string
+	Model       string
+	TTFTMs      float64
+	DurationMs  float64
+	Success     bool
 }
 
 // Overwrite returns these params with everything the caller asked to change written over

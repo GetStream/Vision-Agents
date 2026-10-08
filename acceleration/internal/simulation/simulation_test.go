@@ -145,6 +145,13 @@ func (s *SimulationSuite) SetupTest() {
 	s.router = router
 }
 
+// judged is what the judge was last handed to rule on.
+func (s *SimulationSuite) judged() string {
+	asked := s.script.requests()
+	s.Require().NotEmpty(asked)
+	return asked[len(asked)-1].Input[0].Content
+}
+
 // caller opens a persona over the scripted router.
 func (s *SimulationSuite) caller(brief string) *caller {
 	persona, err := newCaller(s.ctx, s.router, llmrouter.Request{
@@ -272,7 +279,7 @@ func (s *SimulationSuite) TestTheJudgeIsAskedOnlyTheQuestionItWasGiven() {
 
 	ruled, err := rule(s.ctx, s.router, llmrouter.Request{
 		CustomerID: "customer-1", Target: "scripted/scripted-model",
-	}, "judge-1", "was an order placed for 8pm?", said{
+	}, "judge-1", "was an order placed for 8pm?", nil, said{
 		{Caller: true, Text: "One pizza please."},
 		{Text: "Certainly."},
 	})
@@ -281,12 +288,38 @@ func (s *SimulationSuite) TestTheJudgeIsAskedOnlyTheQuestionItWasGiven() {
 	s.False(ruled.Passed)
 	s.Equal(4, ruled.Score)
 
-	asked := s.script.requests()
-	s.Require().NotEmpty(asked)
-	content := asked[len(asked)-1].Input[0].Content
+	content := s.judged()
 	s.Contains(content, "was an order placed for 8pm?")
 	s.Contains(content, "Caller: One pizza please.")
 	s.Contains(content, "Agent: Certainly.")
+	s.NotContains(content, "tools", "an agent with no tools can only act in words")
+}
+
+func (s *SimulationSuite) TestTheJudgeReadsWhatTheAgentsToolsDidAndNotOnlyWhatItSaid() {
+	s.script.judge = `{"passed": true, "reason": "place_order was called for a pizza hawaii.", "score": 5}`
+
+	_, err := rule(s.ctx, s.router, llmrouter.Request{
+		CustomerID: "customer-1", Target: "scripted/scripted-model",
+	}, "judge-1", "Verify that an order was placed for pizza hawaii.", []string{"place_order"}, said{
+		{Caller: true, Text: "I'd like a pasta bolognese."},
+		{Text: "One bolognese, noted.", Tools: []store.SimulationTool{
+			{Name: "place_order", Arguments: `{"item":"pasta bolognese"}`, Result: "order 7 placed"},
+		}},
+		{Caller: true, Text: "How long is the wait?"},
+		{Text: "About twenty minutes."},
+		{Caller: true, Text: "Actually, make it a pizza hawaii."},
+		{Text: "Done, one pizza hawaii.", Tools: []store.SimulationTool{
+			{Name: "place_order", Arguments: `{"item":"pizza hawaii"}`, Error: "the kitchen is closed"},
+		}},
+	})
+	s.Require().NoError(err)
+
+	content := s.judged()
+	s.Contains(content, "The agent could act through these tools: place_order.")
+	s.Contains(content, `Agent used place_order with {"item":"pasta bolognese"}, which answered: order 7 placed`)
+	// A failed order reads as one, whatever the agent went on to say about it.
+	s.Contains(content, `Agent used place_order with {"item":"pizza hawaii"}, which failed: the kitchen is closed`+
+		"\nAgent: Done, one pizza hawaii.")
 }
 
 func (s *SimulationSuite) TestRewritingKeepsAtMostAsManyWaysOfAskingAsWereWanted() {
@@ -345,8 +378,10 @@ func scriptedConfig() routing.ModalityConfig {
 			Realtime:  true,
 		}},
 		Aliases: map[string]routing.Alias{
-			"llm-fast": {Languages: []string{"en"}, RequireRealtime: true},
-			"llm-flow": {Languages: []string{"en"}, RequireRealtime: true},
+			"llm-fast":            {Languages: []string{"en"}, RequireRealtime: true},
+			"llm-flow":            {Languages: []string{"en"}, RequireRealtime: true},
+			"llm-scenario-runner": {Languages: []string{"en"}, RequireRealtime: true},
+			"llm-judge":           {Languages: []string{"en"}},
 		},
 	}
 }

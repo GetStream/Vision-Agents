@@ -22,6 +22,8 @@ const callWriteTimeout = 5 * time.Second
 type callWrite struct {
 	// started is the row a beginning call writes, nil when this is an ending.
 	started *store.Call
+	// changed is a running call's row after it moved onto other models.
+	changed *store.Call
 	// id and at are which call ended and when.
 	id string
 	at time.Time
@@ -59,6 +61,11 @@ func (r *callRecorder) Started(row store.Call) {
 	r.queueWrite(callWrite{started: &row})
 }
 
+// Changed queues the models a running call moved onto.
+func (r *callRecorder) Changed(row store.Call) {
+	r.queueWrite(callWrite{changed: &row})
+}
+
 // Ended queues the time a call left.
 func (r *callRecorder) Ended(id string, at time.Time) {
 	r.queueWrite(callWrite{id: id, at: at})
@@ -92,6 +99,10 @@ func (r *callRecorder) run() {
 			if err := r.store.StartCall(ctx, write.started); err != nil {
 				r.logger.Error("could not record the call starting", "error", err)
 			}
+		} else if write.changed != nil {
+			if err := r.store.ChangeCallModels(ctx, write.changed); err != nil {
+				r.logger.Error("could not record the call changing models", "error", err)
+			}
 		} else if err := r.store.FinishCall(ctx, write.id, write.at); err != nil {
 			r.logger.Error("could not record the call ending", "error", err)
 		}
@@ -103,16 +114,18 @@ func (r *callRecorder) run() {
 func row(created *Session) store.Call {
 	spec := created.spec
 	call := store.Call{
-		ID:         created.id,
-		CustomerID: spec.CustomerID,
-		CallID:     spec.CallID,
-		AgentID:    spec.AgentID,
-		ConfigID:   spec.ConfigID,
-		CampaignID: spec.CampaignID,
-		ContactID:  spec.ContactID,
-		Direction:  store.Inbound,
-		StartedAt:  created.created.UTC(),
-		Tags:       spec.Tags,
+		ID:          created.id,
+		CustomerID:  spec.CustomerID,
+		StreamAppPK: spec.StreamApp,
+		CallID:      spec.CallID,
+		AgentID:     spec.AgentID,
+		ConfigID:    spec.ConfigID,
+		CampaignID:  spec.CampaignID,
+		ContactID:   spec.ContactID,
+		UserID:      spec.Caller.UserID,
+		Direction:   store.Inbound,
+		StartedAt:   created.created.UTC(),
+		Tags:        spec.Tags,
 		// The spec here has already had a config folded into it, so these are what the
 		// call actually ran with rather than what either side asked for on its own.
 		STT:          spec.STTTarget,
@@ -120,6 +133,7 @@ func row(created *Session) store.Call {
 		LLM:          spec.LLMTarget,
 		STS:          spec.STSTarget,
 		Subagent:     spec.SubagentTarget,
+		Voice:        spec.Voice,
 		Instructions: spec.prompt(),
 	}
 	for _, skill := range created.skills.Skills {

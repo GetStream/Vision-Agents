@@ -198,6 +198,39 @@ func (s *RoutingSuite) TestDefaultConfigDeclaresTheSameShortcutsForEveryModality
 	}
 }
 
+func (s *RoutingSuite) TestOfferedShortcutsAreTheTitledOnesInTheOrderWritten() {
+	config, err := parseConfig([]byte(`
+llm:
+  providers:
+    - provider: a
+      model: fast
+      languages: [en]
+  aliases:
+    zeta:
+      title: Zeta
+    plumbing: {}
+    alpha:
+      title: Alpha
+`))
+	s.Require().NoError(err)
+
+	s.Equal([]string{"zeta", "alpha"}, config[LLM].Offered())
+}
+
+func (s *RoutingSuite) TestTheShippedConversationShortcutComesFirst() {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+
+	s.Equal([]string{"llm-conversational", "llm-fast", "llm-smart"}, config[LLM].Offered())
+	s.Equal("sts-fast", config[STS].Offered()[0])
+	s.Equal([]string{"stt-fast", "stt-accurate"}, config[STT].Offered())
+	s.Equal([]string{"tts-fast", "tts-quality"}, config[TTS].Offered())
+	s.Equal("search-fast", config[Search].Offered()[0])
+	s.NotContains(config[LLM].Offered(), "llm-flow", "the flow controller's shortcut is not a choice")
+	s.NotContains(config[LLM].Offered(), "llm-judge", "a simulation's default is not a choice for a conversation")
+	s.NotContains(config[LLM].Offered(), "llm-scenario-runner", "a simulation's default is not a choice for a conversation")
+}
+
 // shippedSTT is a router over the configuration the binary ships, for the shortcuts whose
 // membership is the thing being tested rather than the mechanism behind it. Every provider
 // builds, since what a base group resolves to is a question about the config and not about
@@ -226,7 +259,7 @@ func (s *RoutingSuite) shippedSTT() *Router[*stubProvider] {
 
 func (s *RoutingSuite) TestABaseGroupResolvesToTheModelsVisionAgentsPicked() {
 	candidates, err := s.shippedSTT().resolveChain(s.ctx, Request{
-		Providers: []string{"base/stt-realtime-fast"},
+		Providers: []string{"stt-fast"},
 	})
 	s.Require().NoError(err)
 
@@ -244,7 +277,7 @@ func (s *RoutingSuite) TestABaseGroupResolvesToTheModelsVisionAgentsPicked() {
 
 func (s *RoutingSuite) TestTheAccurateBaseGroupLeadsWithTheModelThatNamesTheVoice() {
 	candidates, err := s.shippedSTT().resolveChain(s.ctx, Request{
-		Providers: []string{"base/stt-realtime-accurate"},
+		Providers: []string{"stt-accurate"},
 	})
 	s.Require().NoError(err)
 
@@ -261,11 +294,11 @@ func (s *RoutingSuite) TestTheAccurateBaseGroupLeadsWithTheModelThatNamesTheVoic
 func (s *RoutingSuite) TestABaseGroupIsALiveGroupOnly() {
 	batch := false
 	_, err := s.shippedSTT().resolveChain(s.ctx, Request{
-		Providers: []string{"base/stt-realtime-accurate"},
+		Providers: []string{"stt-accurate"},
 		Realtime:  &batch,
 	})
 
-	s.ErrorContains(err, "nothing in the priority list base/stt-realtime-accurate",
+	s.ErrorContains(err, "nothing in the priority list stt-accurate",
 		"a recording belongs at en-recorded, where the batch models are")
 }
 
@@ -274,7 +307,7 @@ func (s *RoutingSuite) TestABaseGroupNarrowsToWhatCanServeTheTermsAsked() {
 	// its options. Of the accurate group only Muse declares diarize, so a config that names
 	// the group and then asks to be told who spoke gets that one rather than all four.
 	candidates, err := s.shippedSTT().resolveChain(s.ctx, Request{
-		Providers: []string{"base/stt-realtime-accurate"},
+		Providers: []string{"stt-accurate"},
 	})
 	s.Require().NoError(err)
 
@@ -294,6 +327,32 @@ func (s *RoutingSuite) TestDefaultConfigPricesEveryProvider() {
 				modality, provider.Name())
 		}
 	}
+}
+
+func (s *RoutingSuite) TestDefaultConfigDeclaresAContextWindowForEveryTextModel() {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+
+	for _, provider := range config[LLM].Providers {
+		s.Positivef(provider.ContextWindow, "%s has no context_window, so a long call is never compacted before it overflows",
+			provider.Name())
+	}
+}
+
+func (s *RoutingSuite) TestDefaultConfigMeasuresTextModelsOnIntelligenceAndSpeed() {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+
+	measured := 0
+	for _, provider := range config[LLM].Providers {
+		b := provider.Benchmark
+		s.Equalf(Benchmark{IntelligenceIndex: b.IntelligenceIndex, OutputTokensPerSecond: b.OutputTokensPerSecond}, b,
+			"%s carries a benchmark that is not a text model's", provider.Name())
+		if b.IntelligenceIndex > 0 && b.OutputTokensPerSecond > 0 {
+			measured++
+		}
+	}
+	s.Positive(measured)
 }
 
 func (s *RoutingSuite) TestDefaultConfigDeclaresADataPolicyForEverySpeechModel() {
@@ -1066,6 +1125,25 @@ func (s *RoutingSuite) TestCostAddsEveryUnitTheModelBillsFor() {
 		"an hour of audio plus a thousand characters")
 }
 
+func (s *RoutingSuite) TestCostPricesImagesByThePicture() {
+	// Qwen Image 3 on FAL: $0.04 a picture, whatever its size.
+	price := Price{PerImage: 0.04}
+
+	s.EqualValues(40_000, price.CostMicros(Usage{Images: 1, Pixels: 1024 * 1024}))
+	s.EqualValues(120_000, price.CostMicros(Usage{Images: 3, Pixels: 3 * 2048 * 2048}),
+		"three pictures cost three times one, however large they are")
+}
+
+func (s *RoutingSuite) TestCostPricesImagesByThePixelsThatCameBack() {
+	// $0.02 a megapixel, a million pixels to the megapixel.
+	price := Price{PerMegapixel: 0.02}
+
+	s.EqualValues(20_000, price.CostMicros(Usage{Images: 1, Pixels: 1_000_000}))
+	s.EqualValues(83_886, price.CostMicros(Usage{Images: 1, Pixels: 2048 * 2048}),
+		"a larger picture costs more even though it is still one picture")
+	s.Zero(price.CostMicros(Usage{Images: 0, Pixels: 0}), "nothing drawn is nothing billed")
+}
+
 func (s *RoutingSuite) TestTierDefaultsToLowLatency() {
 	s.Equal(LowLatency, ProviderConfig{}.tier())
 	s.Equal(HighQuality, ProviderConfig{Tier: HighQuality}.tier())
@@ -1085,12 +1163,12 @@ func (s *RoutingSuite) TestSeeingDropsModelsThatCannotTakeAnImage() {
 	s.ErrorContains(err, "no provider accepts image input")
 }
 
-func (s *RoutingSuite) TestDefaultConfigDeclaresVisionOnOpenAIAndGemini() {
+func (s *RoutingSuite) TestDefaultConfigDeclaresVisionOnOpenAIGeminiAnthropicMetaAndXAI() {
 	config, err := DefaultConfig()
 	s.Require().NoError(err)
 
 	for _, provider := range config[LLM].Providers {
-		if provider.Provider == "openai" || provider.Provider == "gemini" {
+		if provider.Provider == "openai" || provider.Provider == "gemini" || provider.Provider == "anthropic" || provider.Provider == "meta" || provider.Provider == "xai" {
 			s.Containsf(provider.InputModalities, "image", "%s should accept images", provider.Name())
 			continue
 		}

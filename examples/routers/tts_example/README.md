@@ -9,9 +9,6 @@ is, naming the config stores it, and the socket streams PCM back as the provider
 ```yaml
 name: switchboard
 
-tags:
-  team: support
-
 tts:
   target: en-low-latency
 ```
@@ -69,7 +66,7 @@ The first line pays for reaching the provider, the second is what has already be
 for. `spoken.wav` is both of them, written next to this file because an example has no
 speaker.
 
-Nothing here calls `sync_routers`. `Router("switchboard")` finds
+Nothing here calls `sync_routers`. `client.router("switchboard")` finds
 `routers/switchboard/router.yaml` and stores it on the first session; `.router_sync` records
 the md5, so a run that edits nothing sends nothing.
 

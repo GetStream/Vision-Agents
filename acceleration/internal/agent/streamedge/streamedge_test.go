@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -65,34 +66,27 @@ func (s *StreamEdgeSuite) TestACallIDIsRequired() {
 func (s *StreamEdgeSuite) TestCredentialsAreRequired() {
 	_, err := New(Options{CallID: "demo", User: User{ID: "agent"}})
 
-	s.ErrorContains(err, "STREAM_API_KEY")
+	s.ErrorContains(err, "api key")
 }
 
 func (s *StreamEdgeSuite) TestATokenOrASecretIsRequired() {
-	s.T().Setenv("STREAM_API_KEY", "key")
+	_, err := New(Options{CallID: "demo", User: User{ID: "agent"}, APIKey: "key"})
 
-	_, err := New(Options{CallID: "demo", User: User{ID: "agent"}})
-
-	s.ErrorContains(err, "STREAM_USER_TOKEN")
+	s.ErrorContains(err, "secret or a user token")
 }
 
-func (s *StreamEdgeSuite) TestCredentialsComeFromTheEnvironment() {
-	s.T().Setenv("STREAM_API_KEY", "key")
-	s.T().Setenv("STREAM_API_SECRET", "secret")
-
-	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}})
+func (s *StreamEdgeSuite) TestAnAgentJoinsTheAgentCallTypeUnlessOneIsNamed() {
+	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}, APIKey: "key", APISecret: "secret"})
 
 	s.Require().NoError(err)
-	s.Equal("agent", edge.options.CallType, "the call type an agent joins unless one is named")
+	s.Equal("agent", edge.options.CallType)
 }
 
 func (s *StreamEdgeSuite) TestTheDemoLinkJoinsTheAgentsCall() {
-	s.T().Setenv("STREAM_API_KEY", "key")
-	s.T().Setenv("STREAM_API_SECRET", "secret")
 	// A developer whose own environment points the demo somewhere else is not what this is
 	// about.
 	s.T().Setenv("EXAMPLE_BASE_URL", "")
-	edge, err := New(Options{CallID: "my call", User: User{ID: "agent"}})
+	edge, err := New(Options{CallID: "my call", User: User{ID: "agent"}, APIKey: "key", APISecret: "secret"})
 	s.Require().NoError(err)
 
 	link, err := edge.DemoURL(User{ID: "demo-caller"})
@@ -108,10 +102,8 @@ func (s *StreamEdgeSuite) TestTheDemoLinkJoinsTheAgentsCall() {
 }
 
 func (s *StreamEdgeSuite) TestTheDemoLinkCanPointAtAnotherDeployment() {
-	s.T().Setenv("STREAM_API_KEY", "key")
-	s.T().Setenv("STREAM_API_SECRET", "secret")
 	s.T().Setenv("EXAMPLE_BASE_URL", "https://pronto.getstream.io/")
-	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}})
+	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}, APIKey: "key", APISecret: "secret"})
 	s.Require().NoError(err)
 
 	link, err := edge.DemoURL(User{ID: "demo-caller", Name: "Demo caller"})
@@ -121,13 +113,12 @@ func (s *StreamEdgeSuite) TestTheDemoLinkCanPointAtAnotherDeployment() {
 }
 
 func (s *StreamEdgeSuite) TestADemoLinkNeedsASecretToSignAToken() {
-	s.T().Setenv("STREAM_API_KEY", "key")
-	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}, UserToken: "token"})
+	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}, APIKey: "key", UserToken: "token"})
 	s.Require().NoError(err)
 
 	_, err = edge.DemoURL(User{ID: "demo-caller"})
 
-	s.ErrorContains(err, "STREAM_API_SECRET")
+	s.ErrorContains(err, "secret")
 }
 
 func (s *StreamEdgeSuite) TestSpeechIsEncodedToOpusFrames() {
@@ -138,11 +129,9 @@ func (s *StreamEdgeSuite) TestSpeechIsEncodedToOpusFrames() {
 
 	s.Require().NoError(talker.Write(speech(opusSampleRate, 100)))
 
-	// More than five: an utterance ends with a flush, which is what carries the tail of one
-	// out of the pipeline. Here there is no tail to carry, so the last of them are quiet.
 	frames := s.drain(talker)
-	s.Require().Len(frames, 5+flushFrames, "100 ms of speech is five frames, and a flush ends it")
-	for _, frame := range frames[:5] {
+	s.Require().Len(frames, 5, "100 ms of speech is five frames")
+	for _, frame := range frames {
 		s.NotEmpty(frame)
 		s.NotEqual(silenceFrame, frame, "the tone is not silence")
 	}
@@ -226,7 +215,7 @@ func (s *StreamEdgeSuite) TestSpeechNotHeardYetIsThrownAwayOnBargeIn() {
 }
 
 func (s *StreamEdgeSuite) TestTheTailOfAnAbandonedReplyIsNotHeardOnTheNextOne() {
-	// Emptying the queue is not enough on its own: what the pipeline is holding belongs to
+	// Emptying the queue is not enough on its own: what the encoder is holding belongs to
 	// the reply being abandoned too, and would otherwise be the first thing the caller hears
 	// of the next one.
 	talker := newSpeaker(slog.New(slog.DiscardHandler))
@@ -239,7 +228,8 @@ func (s *StreamEdgeSuite) TestTheTailOfAnAbandonedReplyIsNotHeardOnTheNextOne() 
 	s.Require().NoError(talker.Write(speech(24_000, 100)))
 
 	heardMs := len(s.drain(talker)) * 20
-	s.LessOrEqual(heardMs, 100+flushFrames*20,
+	// The flush that ends the reply pads its last part-frame out to a whole one.
+	s.LessOrEqual(heardMs, 100+20,
 		"the abandoned reply was heard at the start of the next one")
 }
 
@@ -323,6 +313,245 @@ func (s *StreamEdgeSuite) TestPublishingIsPacedByWhatIsHeard() {
 	}, 5*time.Second, 10*time.Millisecond, "the utterance never finished being published")
 }
 
+// fakeClock is the clock a speaker reads its playout milestones from in these tests, so a
+// test says how long a frame took to be pulled instead of waiting for it.
+type fakeClock struct {
+	mu sync.Mutex
+	at time.Time
+}
+
+func newFakeClock() *fakeClock { return &fakeClock{at: time.Unix(1_000_000, 0)} }
+
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.at
+}
+
+func (c *fakeClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.at = c.at.Add(d)
+}
+
+// playoutRecord keeps what a speaker reports for one reply.
+type playoutRecord struct {
+	mu     sync.Mutex
+	queued time.Time
+	pulled time.Time
+}
+
+func (r *playoutRecord) FirstFrameQueued(at time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.queued = at
+}
+
+func (r *playoutRecord) FirstAudiblePulled(at time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pulled = at
+}
+
+func (r *playoutRecord) times() (queued, pulled time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.queued, r.pulled
+}
+
+// silence returns speech with nothing in it.
+func silence(sampleRate int, durationMs int) audio.PcmData {
+	return audio.PcmData{Samples: make([]int16, sampleRate*durationMs/1000), SampleRate: sampleRate, Channels: 1}
+}
+
+// timedSpeaker is a speaker whose milestones are read from a clock the test moves.
+func (s *StreamEdgeSuite) timedSpeaker() (*speaker, *fakeClock) {
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	s.T().Cleanup(func() { _ = talker.Close() })
+	clock := newFakeClock()
+	talker.now = clock.Now
+	return talker, clock
+}
+
+func (s *StreamEdgeSuite) TestTheFirstFrameIsQueuedBeforePublishingReturns() {
+	talker, clock := s.timedSpeaker()
+	record := new(playoutRecord)
+
+	s.Require().NoError(talker.WriteMarked(speech(opusSampleRate, 100), record))
+	returned := clock.Now()
+
+	queued, pulled := record.times()
+	s.False(queued.IsZero(), "the first frame was never reported as queued")
+	s.False(queued.After(returned), "a frame cannot be queued after publishing has returned")
+	s.True(pulled.IsZero(), "nothing has been pulled yet")
+}
+
+func (s *StreamEdgeSuite) TestAChunkLongerThanTheQueueReturnsLaterThanTheFirstPullByTheExcess() {
+	// A second of speech does not fit the 400 ms queue, so publishing returns only as the
+	// track drains all but the end of it. Reading that return as when the reply started
+	// overstates it by the part of the chunk that did not fit.
+	talker, clock := s.timedSpeaker()
+	record := new(playoutRecord)
+	type result struct {
+		err      error
+		returned time.Time
+	}
+	written := make(chan result, 1)
+	go func() {
+		err := talker.WriteMarked(speech(opusSampleRate, 1_000), record)
+		written <- result{err: err, returned: clock.Now()}
+	}()
+	s.Require().Eventually(func() bool {
+		queued, _ := record.times()
+		return !queued.IsZero()
+	}, 2*time.Second, time.Millisecond, "the first frame was never reported as queued")
+
+	// The chunk is 50 frames and the queue holds 20, so the writer is let go by the 30th pull
+	// and not before.
+	frames := int(time.Second/opusFrameDuration) - playoutFrames
+	var firstPull time.Time
+	for pull := 1; pull <= frames; pull++ {
+		if pull == frames {
+			select {
+			case <-written:
+				s.Fail("publishing returned while more than the queue was left")
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+		clock.Advance(opusFrameDuration)
+		_, err := talker.NextSample(s.ctx)
+		s.Require().NoError(err)
+		if firstPull.IsZero() {
+			firstPull = clock.Now()
+		}
+	}
+	var done result
+	select {
+	case done = <-written:
+	case <-time.After(2 * time.Second):
+		s.Require().Fail("the publication never returned")
+	}
+	s.Require().NoError(done.err)
+
+	queued, pulled := record.times()
+	s.False(queued.After(firstPull), "the first frame was queued before the track took anything")
+	s.Equal(firstPull, pulled, "the tone is audible from its first frame")
+	s.Equal(time.Duration(frames-1)*opusFrameDuration, done.returned.Sub(firstPull),
+		"publishing returns when the part that did not fit has been drained")
+}
+
+func (s *StreamEdgeSuite) TestTheFirstAudibleFrameIsTheOneAfterTheSilence() {
+	talker, clock := s.timedSpeaker()
+	record := new(playoutRecord)
+	lead := silence(opusSampleRate, 60)
+	lead.Samples = append(lead.Samples, speech(opusSampleRate, 100).Samples...)
+
+	s.Require().NoError(talker.WriteMarked(lead, record))
+	queued := clock.Now()
+	var pulls int
+	for pulls = 0; pulls < 8; pulls++ {
+		clock.Advance(opusFrameDuration)
+		_, err := talker.NextSample(s.ctx)
+		s.Require().NoError(err)
+		if _, pulled := record.times(); !pulled.IsZero() {
+			break
+		}
+	}
+
+	_, pulled := record.times()
+	s.Require().False(pulled.IsZero(), "the track never reported taking speech")
+	s.GreaterOrEqual(pulled.Sub(queued), 3*opusFrameDuration, "the first three frames are silence")
+	s.LessOrEqual(pulled.Sub(queued), 4*opusFrameDuration, "the speech starts at the fourth frame")
+}
+
+func (s *StreamEdgeSuite) TestAReplyWithNothingAudibleIsNeverReportedAsPulled() {
+	talker, clock := s.timedSpeaker()
+	record := new(playoutRecord)
+
+	s.Require().NoError(talker.WriteMarked(silence(opusSampleRate, 100), record))
+	for range 8 {
+		clock.Advance(opusFrameDuration)
+		_, err := talker.NextSample(s.ctx)
+		s.Require().NoError(err)
+	}
+
+	queued, pulled := record.times()
+	s.False(queued.IsZero())
+	s.True(pulled.IsZero(), "a silent frame is not the reply being heard")
+}
+
+func (s *StreamEdgeSuite) TestADroppedReplyNeverStampsTheNextOne() {
+	talker, clock := s.timedSpeaker()
+	dropped, next := new(playoutRecord), new(playoutRecord)
+
+	s.Require().NoError(talker.WriteMarked(speech(opusSampleRate, 100), dropped))
+	talker.drop()
+	clock.Advance(time.Second)
+	s.Require().NoError(talker.WriteMarked(speech(opusSampleRate, 100), next))
+	nextQueued := clock.Now()
+	clock.Advance(opusFrameDuration)
+	_, err := talker.NextSample(s.ctx)
+	s.Require().NoError(err)
+
+	_, droppedPulled := dropped.times()
+	s.True(droppedPulled.IsZero(), "speech thrown away was never taken by the track")
+	queued, pulled := next.times()
+	s.Equal(nextQueued, queued)
+	s.Equal(nextQueued.Add(opusFrameDuration), pulled, "the next reply is reported at its own first frame")
+}
+
+func (s *StreamEdgeSuite) TestSpeechDroppedBeforeItWasPulledIsNotReportedAfterTheCallIsLeft() {
+	talker, clock := s.timedSpeaker()
+	record := new(playoutRecord)
+
+	s.Require().NoError(talker.WriteMarked(speech(opusSampleRate, 100), record))
+	s.Require().NoError(talker.Close())
+	clock.Advance(opusFrameDuration)
+	_, err := talker.NextSample(s.ctx)
+	s.Require().NoError(err)
+
+	_, pulled := record.times()
+	s.True(pulled.IsZero())
+}
+
+func (s *StreamEdgeSuite) TestAReportWhoseFrameNeverCameDoesNotHoldUpTheNextReply() {
+	talker, clock := s.timedSpeaker()
+	stranded, next := new(playoutRecord), new(playoutRecord)
+	s.Require().NoError(talker.Write(speech(opusSampleRate, 100)))
+	for range 3 {
+		_, err := talker.NextSample(s.ctx)
+		s.Require().NoError(err)
+	}
+	// A report owed for a frame the track has already gone past.
+	talker.mu.Lock()
+	talker.armed = append(talker.armed, armedMark{marks: stranded, seq: 1})
+	talker.mu.Unlock()
+	s.Require().NoError(talker.WriteMarked(speech(opusSampleRate, 100), next))
+
+	clock.Advance(opusFrameDuration)
+	s.drain(talker)
+
+	_, strandedPulled := stranded.times()
+	_, pulled := next.times()
+	s.True(strandedPulled.IsZero(), "a frame the track did not take is not reported")
+	s.False(pulled.IsZero(), "the reply after it is still reported")
+}
+
+func (s *StreamEdgeSuite) TestPullingAFrameAllocatesNothing() {
+	talker, _ := s.timedSpeaker()
+	record := new(playoutRecord)
+	s.Require().NoError(talker.WriteMarked(speech(opusSampleRate, 400), record))
+
+	pull := testing.AllocsPerRun(10, func() { _, _ = talker.NextSample(s.ctx) })
+
+	s.Zero(pull, "the track takes a frame on its own clock")
+	_, pulled := record.times()
+	s.False(pulled.IsZero(), "the run included reporting the first audible frame")
+	s.drain(talker)
+	idle := testing.AllocsPerRun(10, func() { _, _ = talker.NextSample(s.ctx) })
+	s.Zero(idle, "and so does the silence between replies")
+}
+
 func (s *StreamEdgeSuite) TestOnlyMonoSpeechIsAccepted() {
 	talker := newSpeaker(slog.New(slog.DiscardHandler))
 	s.T().Cleanup(func() { _ = talker.Close() })
@@ -341,7 +570,7 @@ func (s *StreamEdgeSuite) TestEmptySpeechIsIgnored() {
 }
 
 func (s *StreamEdgeSuite) TestLeavingPartWayThroughAFrameIsNotAFailure() {
-	// The queue is thrown away on leaving, so the part-frame the pipeline is still holding
+	// The queue is thrown away on leaving, so the part-frame the encoder is still holding
 	// was never going to be heard. The encoder only takes whole frames and says so, and
 	// reporting that as a failure makes every call look like it ended badly.
 	talker := newSpeaker(slog.New(slog.DiscardHandler))
@@ -359,4 +588,28 @@ func (s *StreamEdgeSuite) TestPublishingAfterLeavingFails() {
 
 	s.ErrorContains(talker.Write(speech(48_000, 20)), "left")
 	s.NoError(talker.Close(), "closing twice is safe")
+}
+
+func (s *StreamEdgeSuite) TestAnEdgeReadsNoCredentialsFromTheEnvironment() {
+	// A session acts in the app it was pinned to. A key or token in the environment belongs
+	// to the deployment's app, and reading it would join somebody else's call as somebody
+	// else.
+	s.T().Setenv("STREAM_API_KEY", "deploy-key")
+	s.T().Setenv("STREAM_API_SECRET", "deploy-secret")
+	s.T().Setenv("STREAM_USER_TOKEN", "deploy-token")
+
+	edge, err := New(Options{CallID: "call-1", User: User{ID: "agent"}, APIKey: "own-key", APISecret: "own-secret"})
+	s.Require().NoError(err)
+	s.Equal("own-key", edge.options.APIKey)
+	s.Empty(edge.options.UserToken)
+
+	_, err = New(Options{CallID: "call-1", User: User{ID: "agent"}})
+	s.Error(err, "an empty identity must not quietly become the deployment's")
+}
+
+func (s *StreamEdgeSuite) TestAFixedUserTokenIsUsedInPreferenceToASecret() {
+	edge, err := New(Options{CallID: "call-1", User: User{ID: "agent"}, APIKey: "deploy-key", UserToken: "deploy-token"})
+
+	s.Require().NoError(err)
+	s.Equal("deploy-token", edge.options.UserToken)
 }

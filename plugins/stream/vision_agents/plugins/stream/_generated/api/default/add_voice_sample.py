@@ -6,7 +6,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...models.voice import Voice
 from ...models.voice_sample_request import VoiceSampleRequest
 from ...types import Response
@@ -36,31 +36,36 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | Voice | None:
+) -> ErrorResponse | Voice | None:
     if response.status_code == 201:
         response_201 = Voice.from_dict(response.json())
 
         return response_201
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
 
     if response.status_code == 404:
-        response_404 = Error.from_dict(response.json())
+        response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 500:
+        response_500 = ErrorResponse.from_dict(response.json())
+
+        return response_500
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -70,7 +75,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | Voice]:
+) -> Response[ErrorResponse | Voice]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -84,7 +89,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: VoiceSampleRequest,
-) -> Response[Error | Voice]:
+) -> Response[ErrorResponse | Voice]:
     """Add a recording to a voice
 
      The audio is stored in the deployment's object bucket and the voice keeps a reference to it, so
@@ -93,7 +98,7 @@ def sync_detailed(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str):
+        id (str): The resource, as returned when it was created.
         body (VoiceSampleRequest):
 
     Raises:
@@ -101,7 +106,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | Voice]
+        Response[ErrorResponse | Voice]
     """
 
     kwargs = _get_kwargs(
@@ -121,7 +126,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: VoiceSampleRequest,
-) -> Error | Voice | None:
+) -> ErrorResponse | Voice | None:
     """Add a recording to a voice
 
      The audio is stored in the deployment's object bucket and the voice keeps a reference to it, so
@@ -130,7 +135,7 @@ def sync(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str):
+        id (str): The resource, as returned when it was created.
         body (VoiceSampleRequest):
 
     Raises:
@@ -138,7 +143,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | Voice
+        ErrorResponse | Voice
     """
 
     return sync_detailed(
@@ -153,7 +158,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: VoiceSampleRequest,
-) -> Response[Error | Voice]:
+) -> Response[ErrorResponse | Voice]:
     """Add a recording to a voice
 
      The audio is stored in the deployment's object bucket and the voice keeps a reference to it, so
@@ -162,7 +167,7 @@ async def asyncio_detailed(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str):
+        id (str): The resource, as returned when it was created.
         body (VoiceSampleRequest):
 
     Raises:
@@ -170,7 +175,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | Voice]
+        Response[ErrorResponse | Voice]
     """
 
     kwargs = _get_kwargs(
@@ -188,7 +193,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: VoiceSampleRequest,
-) -> Error | Voice | None:
+) -> ErrorResponse | Voice | None:
     """Add a recording to a voice
 
      The audio is stored in the deployment's object bucket and the voice keeps a reference to it, so
@@ -197,7 +202,7 @@ async def asyncio(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str):
+        id (str): The resource, as returned when it was created.
         body (VoiceSampleRequest):
 
     Raises:
@@ -205,7 +210,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | Voice
+        ErrorResponse | Voice
     """
 
     return (

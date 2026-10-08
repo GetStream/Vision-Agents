@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
-	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
 // Sandbox is where code the agent writes gets run.
@@ -27,7 +26,6 @@ func Daytona() *Sandbox {
 // There is nothing behind a skill but a better model and more time. What it declares is the
 // description the fast model chooses by, and the instructions the slow one answers under.
 type Skill struct {
-	Subagent     string
 	CaptureVideo bool
 	// Name is how the fast model asks for it.
 	Name string
@@ -42,35 +40,46 @@ type Skill struct {
 
 // Harness is what stands between what a caller said and the model that answers them.
 //
-// The loop itself runs in the backend, so this is configuration rather than behaviour: it
-// is serialized into the session and the decisions are taken there. Reimplementing the loop
-// here would mean two of them to keep in step.
+// The loop runs in the backend and is part of the agent's stored config, never of a
+// session: Sync writes it, and every session created from the config runs it. That backend
+// hands work to the subagent, loads a skill's instructions when the skill is used, compacts
+// the conversation as it nears the model's context window and starts the sandbox the first
+// time delegated work needs one.
 type Harness struct {
-	// UseSkills offers the backend's built-in skills. Setting Skills replaces them.
-	UseSkills bool
+	// Name is which harness the backend runs. Empty is "default", the only one there is.
+	Name string
 	// Subagents are model targets for the work handed over, keyed by name. The entry under
-	// "default" runs unbound skills; other entries run skills bound to that name.
+	// "default", or the only entry, is the model that runs skills. Empty means the fast
+	// model answers everything itself.
 	Subagents map[string]string
 	// VM is where delegated code runs.
 	VM *Sandbox
-	// Skills of your own, replacing the built-in set.
+	// Skills of your own, stored and named by the config in place of the built-in set.
 	Skills []Skill
-	// Tasks is how much delegated work may run at once. Zero leaves the backend's default.
-	Tasks int
 }
 
 // DefaultHarness is the harness most agents want: the built-in skills and nothing else
 // changed.
 func DefaultHarness() *Harness {
-	return &Harness{UseSkills: true}
+	return &Harness{}
 }
 
-// Subagent is the default worker's model, or the empty string when none is configured.
+// Subagent is the model that runs delegated work, or the empty string when nothing is
+// delegated.
 func (h *Harness) Subagent() string {
 	if h == nil || len(h.Subagents) == 0 {
 		return ""
 	}
-	return h.Subagents["default"]
+	if named, ok := h.Subagents["default"]; ok {
+		return named
+	}
+	// Go randomises map iteration, so the single-entry shorthand is only well defined for
+	// one entry. More than one without a default is a configuration mistake, caught by
+	// Validate before it can pick differently on two runs.
+	for _, target := range h.Subagents {
+		return target
+	}
+	return ""
 }
 
 // Validate refuses a harness that would mean something different on every run.
@@ -78,8 +87,13 @@ func (h *Harness) Validate() error {
 	if h == nil {
 		return nil
 	}
-	if h.Tasks < 0 {
-		return errors.New("agents: tasks cannot be negative")
+	if h.Name != "" && !acceleration.Harness(h.Name).Valid() {
+		return errors.New("agents: there is no harness called " + h.Name)
+	}
+	if len(h.Subagents) > 1 {
+		if _, ok := h.Subagents["default"]; !ok {
+			return errors.New(`agents: several subagents and no "default", so which one runs skills is undecided`)
+		}
 	}
 	for _, skill := range h.Skills {
 		if skill.Name == "" {
@@ -98,44 +112,20 @@ func (h *Harness) Validate() error {
 	return nil
 }
 
-// ReplacesSkills reports whether the harness turns the built-in set off, either by naming
-// skills of its own or by asking for none. An absent list and an empty one mean different
-// things: one leaves the defaults alone, the other turns delegation off.
-func (h *Harness) ReplacesSkills() bool {
-	return h != nil && (len(h.Skills) > 0 || !h.UseSkills)
-}
-
-// apply folds the harness into the call it is configuring.
-func (h *Harness) apply(call *stream.Call) {
+// stored is what the harness sets on the agent's config: its name, subagent and sandbox.
+// Empty fields are left out, so the router keeps whatever is already stored for them.
+func (h *Harness) stored() (name *acceleration.Harness, subagent *string, sandbox *acceleration.Sandbox) {
 	if h == nil {
-		return
+		return nil, nil, nil
 	}
-
-	call.Subagents = h.Subagents
-	call.Tasks = h.Tasks
+	if h.Name != "" {
+		named := acceleration.Harness(h.Name)
+		name = &named
+	}
+	setString(&subagent, h.Subagent())
 	if h.VM != nil {
-		call.Sandbox = h.VM.Provider
+		provider := acceleration.Sandbox(h.VM.Provider)
+		sandbox = &provider
 	}
-	if h.ReplacesSkills() {
-		replacements := make([]acceleration.SessionSkill, 0, len(h.Skills))
-		for _, skill := range h.Skills {
-			replacements = append(replacements, skill.session())
-		}
-		call.Skills = &replacements
-	}
-}
-
-// session renders a skill as the session spec understands it.
-func (s Skill) session() acceleration.SessionSkill {
-	rendered := acceleration.SessionSkill{
-		Name:     s.Name,
-		Subagent: &s.Subagent, CaptureVideo: &s.CaptureVideo,
-		Description:  s.Description,
-		Instructions: s.Instructions,
-	}
-	if s.Deadline > 0 {
-		milliseconds := s.Deadline.Milliseconds()
-		rendered.DeadlineMs = &milliseconds
-	}
-	return rendered
+	return name, subagent, sandbox
 }

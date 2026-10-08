@@ -3,7 +3,6 @@ package stream
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 	"time"
 )
@@ -57,7 +56,7 @@ func (b Backend) ConversationHistory(ctx context.Context, cid, agentID, before s
 		return ConversationPage{}, err
 	}
 	if r.JSON200 == nil {
-		return ConversationPage{}, fmt.Errorf("conversation history: %s", r.Status())
+		return ConversationPage{}, NewRouterError(r.HTTPResponse, r.Body, "", "conversation history", r.Status())
 	}
 	raw, _ := json.Marshal(r.JSON200)
 	var page ConversationPage

@@ -28,8 +28,6 @@ type RouterOptions struct {
 	// Name is what the config is called, which is also how Router{Config: name} finds it.
 	// In a file it defaults to the file's own name.
 	Name string `json:"name,omitempty"`
-	// Tags are cost labels carried onto everything routed under it.
-	Tags map[string]string `json:"tags,omitempty"`
 	// STT, TTS, LLM and Search are how it transcribes, speaks, answers and looks things
 	// up. Each is a default that a per-call option overrides.
 	STT    *acceleration.SttOptions    `json:"stt,omitempty"`
@@ -101,9 +99,7 @@ func (r Router) ConfigureSTT(
 	// half of it should not silently drop the voice half.
 	if stored != nil {
 		wanted.Tts, wanted.Llm, wanted.Search = stored.Tts, stored.Llm, stored.Search
-		wanted.Tags = stored.Tags
 	}
-	r.label(&wanted.Tags)
 
 	return storeRouterConfig(ctx, client, wanted, stored)
 }
@@ -135,9 +131,7 @@ func (r Router) ConfigureTTS(
 	wanted := acceleration.RouterConfigRequest{Name: r.Config, Tts: options}
 	if stored != nil {
 		wanted.Stt, wanted.Llm, wanted.Search = stored.Stt, stored.Llm, stored.Search
-		wanted.Tags = stored.Tags
 	}
-	r.label(&wanted.Tags)
 
 	return storeRouterConfig(ctx, client, wanted, stored)
 }
@@ -150,8 +144,6 @@ func (r Router) ConfigureTTS(
 // written by name, so running this twice edits rather than duplicates.
 //
 //	# routers/healthcare.yaml
-//	tags:
-//	  team: clinical
 //	stt:
 //	  providers: [deepgram, parakeet]
 //	  data_policy:
@@ -192,10 +184,6 @@ func (o RouterOptions) request() acceleration.RouterConfigRequest {
 		Tts:    o.TTS,
 		Llm:    o.LLM,
 		Search: o.Search,
-	}
-	if len(o.Tags) > 0 {
-		tags := o.Tags
-		wanted.Tags = &tags
 	}
 	return wanted
 }
@@ -272,7 +260,7 @@ func namedRouterConfig(
 		return nil, fmt.Errorf("stream: listing router configs: %w", err)
 	}
 	if listed.JSON200 == nil {
-		return nil, refusal(listed.Status(), listed.JSON400, listed.JSON401)
+		return nil, refusal(listed.HTTPResponse, listed.Body)
 	}
 
 	for _, config := range *listed.JSON200 {
@@ -297,7 +285,7 @@ func storeRouterConfig(
 			return nil, fmt.Errorf("stream: updating router config %s: %w", stored.Id, err)
 		}
 		if updated.JSON200 == nil {
-			return nil, refusal(updated.Status(), updated.JSON400, updated.JSON401, updated.JSON404)
+			return nil, refusal(updated.HTTPResponse, updated.Body)
 		}
 		return updated.JSON200, nil
 	}
@@ -307,7 +295,7 @@ func storeRouterConfig(
 		return nil, fmt.Errorf("stream: creating router config %s: %w", wanted.Name, err)
 	}
 	if created.JSON201 == nil {
-		return nil, refusal(created.Status(), created.JSON400, created.JSON401)
+		return nil, refusal(created.HTTPResponse, created.Body)
 	}
 	return created.JSON201, nil
 }

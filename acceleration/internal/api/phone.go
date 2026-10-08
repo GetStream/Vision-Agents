@@ -7,25 +7,27 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
+	"github.com/danielgtaylor/huma/v2"
 )
 
 // The phone paths are served only when a deployment configured telephony. Without it they
 // answer 400 with what is missing rather than 404, because the path exists and it is the
 // deployment that is incomplete.
 
-// ListPhoneVendors reports every vendor and whether it can be used.
-func (s *Server) ListPhoneVendors(
-	ctx context.Context,
-	_ ListPhoneVendorsRequestObject,
-) (ListPhoneVendorsResponseObject, error) {
+// listPhoneVendors reports every vendor and whether it can be used.
+func (s *Server) listPhoneVendors(ctx context.Context, _ *listPhoneVendorsRequest) (*listPhoneVendorsResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return ListPhoneVendors401JSONResponse{missingCustomer()}, nil
+		return nil, errMissingCustomer
 	}
 	if s.phone == nil {
-		return ListPhoneVendors200JSONResponse{}, nil
+		return &listPhoneVendorsResponse{Body: []PhoneVendor{}}, nil
 	}
 
 	registry := s.phone.Registry()
@@ -51,62 +53,59 @@ func (s *Server) ListPhoneVendors(
 		}
 		vendors = append(vendors, listed)
 	}
-	return ListPhoneVendors200JSONResponse(vendors), nil
+	return &listPhoneVendorsResponse{Body: vendors}, nil
 }
 
-// SearchPhoneNumbers asks what is for sale, at one vendor or at every usable one.
-func (s *Server) SearchPhoneNumbers(
-	ctx context.Context,
-	request SearchPhoneNumbersRequestObject,
-) (SearchPhoneNumbersResponseObject, error) {
+// searchPhoneNumbers asks what is for sale, at one vendor or at every usable one.
+func (s *Server) searchPhoneNumbers(ctx context.Context, request *searchPhoneNumbersRequest) (*searchPhoneNumbersResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return SearchPhoneNumbers401JSONResponse{missingCustomer()}, nil
+		return nil, errMissingCustomer
 	}
 	if s.phone == nil {
-		return SearchPhoneNumbers400JSONResponse{noTelephony()}, nil
+		return nil, errNoTelephony
 	}
 
 	// Voice is what an agent needs, so it is always required, on top of whatever else
 	// was asked for.
 	search := phone.Search{
-		Country:      request.Params.Country,
+		Country:      request.Country,
 		Capabilities: []phone.Capability{phone.Voice},
 	}
-	if request.Params.AreaCode != nil {
-		search.AreaCode = *request.Params.AreaCode
+	if request.AreaCode.ptr() != nil {
+		search.AreaCode = *request.AreaCode.ptr()
 	}
-	if request.Params.Contains != nil {
-		search.Contains = *request.Params.Contains
+	if request.Contains.ptr() != nil {
+		search.Contains = *request.Contains.ptr()
 	}
-	if request.Params.Prefix != nil {
-		search.Prefix = *request.Params.Prefix
+	if request.Prefix.ptr() != nil {
+		search.Prefix = *request.Prefix.ptr()
 	}
-	if request.Params.Locality != nil {
-		search.Locality = *request.Params.Locality
+	if request.Locality.ptr() != nil {
+		search.Locality = *request.Locality.ptr()
 	}
-	if request.Params.AdministrativeArea != nil {
-		search.AdministrativeArea = *request.Params.AdministrativeArea
+	if request.AdministrativeArea.ptr() != nil {
+		search.AdministrativeArea = *request.AdministrativeArea.ptr()
 	}
-	if request.Params.NumberType != nil {
-		search.Type = phone.NumberType(*request.Params.NumberType)
+	if request.NumberType.ptr() != nil {
+		search.Type = phone.NumberType(*request.NumberType.ptr())
 	}
-	if request.Params.Features != nil {
-		for _, feature := range *request.Params.Features {
+	if request.Features.ptr() != nil {
+		for _, feature := range *request.Features.ptr() {
 			if capability := phone.Capability(feature); capability != phone.Voice {
 				search.Capabilities = append(search.Capabilities, capability)
 			}
 		}
 	}
-	if request.Params.Limit != nil {
-		search.Limit = *request.Params.Limit
+	if request.Limit.ptr() != nil {
+		search.Limit = *request.Limit.ptr()
 	}
 
-	offers, err := s.searchOffers(ctx, request.Params.Vendor, search)
+	offers, err := s.searchOffers(ctx, request.Vendor.ptr(), search)
 	if errors.Is(err, phone.ErrNotImplemented) {
-		return SearchPhoneNumbers404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
+		return nil, notFound(err.Error())
 	}
 	if err != nil {
-		return SearchPhoneNumbers400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
 	}
 
 	result := NumberSearchResult{
@@ -142,7 +141,7 @@ func (s *Server) SearchPhoneNumbers(
 			Reason: skipped.Reason,
 		})
 	}
-	return SearchPhoneNumbers200JSONResponse(result), nil
+	return &searchPhoneNumbersResponse{Body: result}, nil
 }
 
 // searchOffers asks one vendor when one is named and all of them when none is, so both
@@ -162,51 +161,45 @@ func (s *Server) searchOffers(
 	return phone.Offers{Numbers: offered}, nil
 }
 
-// ListPhoneNumbers returns what the calling customer holds.
-func (s *Server) ListPhoneNumbers(
-	ctx context.Context,
-	request ListPhoneNumbersRequestObject,
-) (ListPhoneNumbersResponseObject, error) {
+// listPhoneNumbers returns what the calling customer holds.
+func (s *Server) listPhoneNumbers(ctx context.Context, request *listPhoneNumbersRequest) (*listPhoneNumbersResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return ListPhoneNumbers401JSONResponse{missingCustomer()}, nil
+		return nil, errMissingCustomer
 	}
 	if s.phone == nil {
-		return ListPhoneNumbers400JSONResponse{noTelephony()}, nil
+		return nil, errNoTelephony
 	}
 
-	includeReleased := request.Params.IncludeReleased != nil && *request.Params.IncludeReleased
+	includeReleased := request.IncludeReleased.ptr() != nil && *request.IncludeReleased.ptr()
 	held, err := s.phone.Numbers(ctx, customerID, includeReleased)
 	if err != nil {
-		return ListPhoneNumbers400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
 	}
 
 	numbers := make([]PhoneNumber, 0, len(held))
 	for _, number := range held {
 		numbers = append(numbers, phoneNumber(number))
 	}
-	return ListPhoneNumbers200JSONResponse(numbers), nil
+	return &listPhoneNumbersResponse{Body: numbers}, nil
 }
 
-// BuyPhoneNumber buys a number for the calling customer.
-func (s *Server) BuyPhoneNumber(
-	ctx context.Context,
-	request BuyPhoneNumberRequestObject,
-) (BuyPhoneNumberResponseObject, error) {
+// buyPhoneNumber buys a number for the calling customer.
+func (s *Server) buyPhoneNumber(ctx context.Context, request *buyPhoneNumberRequest) (*buyPhoneNumberResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return BuyPhoneNumber401JSONResponse{missingCustomer()}, nil
+		return nil, errMissingCustomer
 	}
 	if request.Body == nil {
-		return BuyPhoneNumber400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, invalidRequest("a request body is required")
 	}
 	if s.phone == nil {
-		return BuyPhoneNumber400JSONResponse{noTelephony()}, nil
+		return nil, errNoTelephony
 	}
 
 	tags := phoneTags(request.Body.Tags)
 	if err := tags.Validate(); err != nil {
-		return BuyPhoneNumber400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
 	}
 
 	purchase := phone.Purchase{
@@ -220,48 +213,42 @@ func (s *Server) BuyPhoneNumber(
 
 	bought, err := s.phone.Buy(ctx, purchase)
 	if errors.Is(err, phone.ErrNotImplemented) {
-		return BuyPhoneNumber404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
+		return nil, notFound(err.Error())
 	}
 	if err != nil {
-		return BuyPhoneNumber400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
 	}
-	return BuyPhoneNumber201JSONResponse(phoneNumber(bought)), nil
+	return &buyPhoneNumberResponse{Body: phoneNumber(bought)}, nil
 }
 
-// ReleasePhoneNumber gives a number back.
-func (s *Server) ReleasePhoneNumber(
-	ctx context.Context,
-	request ReleasePhoneNumberRequestObject,
-) (ReleasePhoneNumberResponseObject, error) {
+// releasePhoneNumber gives a number back.
+func (s *Server) releasePhoneNumber(ctx context.Context, request *releasePhoneNumberRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return ReleasePhoneNumber401JSONResponse{missingCustomer()}, nil
+		return nil, errMissingCustomer
 	}
 	if s.phone == nil {
-		return ReleasePhoneNumber400JSONResponse{noTelephony()}, nil
+		return nil, errNoTelephony
 	}
 
 	err := s.phone.Release(ctx, customerID, request.E164)
 	if err != nil && strings.Contains(err.Error(), "is not a number") {
-		return ReleasePhoneNumber404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
+		return nil, notFound(err.Error())
 	}
 	if err != nil {
-		return ReleasePhoneNumber400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
 	}
-	return ReleasePhoneNumber204Response{}, nil
+	return nil, nil
 }
 
-// AttachPhoneNumber points a number at a Stream call.
-func (s *Server) AttachPhoneNumber(
-	ctx context.Context,
-	request AttachPhoneNumberRequestObject,
-) (AttachPhoneNumberResponseObject, error) {
+// attachPhoneNumber points a number at a Stream call.
+func (s *Server) attachPhoneNumber(ctx context.Context, request *attachPhoneNumberRequest) (*attachPhoneNumberResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return AttachPhoneNumber401JSONResponse{missingCustomer()}, nil
+		return nil, errMissingCustomer
 	}
 	if s.phone == nil {
-		return AttachPhoneNumber400JSONResponse{noTelephony()}, nil
+		return nil, errNoTelephony
 	}
 
 	attachment := phone.Attachment{CustomerID: customerID, E164: request.E164}
@@ -279,38 +266,36 @@ func (s *Server) AttachPhoneNumber(
 
 	attached, err := s.phone.Attach(ctx, attachment)
 	if err != nil && strings.Contains(err.Error(), "is not a number") {
-		return AttachPhoneNumber404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
+		return nil, notFound(err.Error())
+	}
+	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
+		return nil, err
 	}
 	if err != nil {
-		return AttachPhoneNumber400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
 	}
 
-	return AttachPhoneNumber200JSONResponse{
-		TrunkId: attached.TrunkID,
+	return &attachPhoneNumberResponse{Body: AttachedNumber{TrunkId: attached.TrunkID,
 		RouteId: attached.RouteID,
-		SipUri:  attached.Bridge.URI,
-	}, nil
+		SipUri:  attached.Bridge.URI}}, nil
 }
 
-// PlacePhoneCall dials out from one of the customer's numbers.
-func (s *Server) PlacePhoneCall(
-	ctx context.Context,
-	request PlacePhoneCallRequestObject,
-) (PlacePhoneCallResponseObject, error) {
+// placePhoneCall dials out from one of the customer's numbers.
+func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequest) (*placePhoneCallResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return PlacePhoneCall401JSONResponse{missingCustomer()}, nil
+		return nil, errMissingCustomer
 	}
 	if request.Body == nil {
-		return PlacePhoneCall400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, invalidRequest("a request body is required")
 	}
 	if s.phone == nil {
-		return PlacePhoneCall400JSONResponse{noTelephony()}, nil
+		return nil, errNoTelephony
 	}
 
 	tags := phoneTags(request.Body.Tags)
 	if err := tags.Validate(); err != nil {
-		return PlacePhoneCall400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
 	}
 
 	call := phone.CallRequest{
@@ -326,9 +311,7 @@ func (s *Server) PlacePhoneCall(
 	}
 	if request.Body.RingTimeoutSeconds != nil {
 		if *request.Body.RingTimeoutSeconds < 0 {
-			return PlacePhoneCall400JSONResponse{
-				badRequest("a call cannot ring for less than no time"),
-			}, nil
+			return nil, invalidRequest("a call cannot ring for less than no time")
 		}
 		call.RingTimeout = time.Duration(*request.Body.RingTimeoutSeconds) * time.Second
 	}
@@ -343,20 +326,24 @@ func (s *Server) PlacePhoneCall(
 	}
 
 	placed, err := s.phone.Call(ctx, call)
+	if errors.Is(err, dlc.ErrRefused) {
+		return nil, forbidden(err.Error())
+	}
 	if err != nil && strings.Contains(err.Error(), "is not a number") {
-		return PlacePhoneCall404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
+		return nil, notFound(err.Error())
+	}
+	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
+		return nil, err
 	}
 	if err != nil {
-		return PlacePhoneCall400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
 	}
 
-	return PlacePhoneCall202JSONResponse{
-		VendorCallId: placed.VendorCallID,
-		Status:       placed.Status,
-		Vendor:       &placed.Vendor,
-		CallId:       &placed.CallID,
-		CallType:     &placed.CallType,
-	}, nil
+	return &placePhoneCallResponse{Body: PlacedCall{VendorCallId: placed.VendorCallID,
+		Status:   placed.Status,
+		Vendor:   &placed.Vendor,
+		CallId:   &placed.CallID,
+		CallType: &placed.CallType}}, nil
 }
 
 // answerPhoneCall serves the call plan a vendor fetches when the person it called picks up.
@@ -368,7 +355,7 @@ func (s *Server) PlacePhoneCall(
 func (s *Server) answerPhoneCall(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	if s.phone == nil {
-		http.Error(w, "telephony is not configured", http.StatusNotFound)
+		writeError(w, notFound("telephony is not configured"))
 		return
 	}
 
@@ -377,7 +364,7 @@ func (s *Server) answerPhoneCall(w http.ResponseWriter, r *http.Request) {
 		// The vendor is about to bridge a live call to nowhere, so this is worth a log
 		// line even though there is nobody to return the detail to.
 		s.logger.Error("could not answer a placed call", "error", err)
-		http.Error(w, "that call is not waiting to be answered", http.StatusNotFound)
+		writeError(w, notFound("that call is not waiting to be answered"))
 		return
 	}
 
@@ -387,25 +374,22 @@ func (s *Server) answerPhoneCall(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// TransferPhoneCall brings a human onto a call that is already happening.
-func (s *Server) TransferPhoneCall(
-	ctx context.Context,
-	request TransferPhoneCallRequestObject,
-) (TransferPhoneCallResponseObject, error) {
+// transferPhoneCall brings a human onto a call that is already happening.
+func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCallRequest) (*transferPhoneCallResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
-		return TransferPhoneCall401JSONResponse{missingCustomer()}, nil
+		return nil, errMissingCustomer
 	}
 	if request.Body == nil {
-		return TransferPhoneCall400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, invalidRequest("a request body is required")
 	}
 	if s.phone == nil {
-		return TransferPhoneCall400JSONResponse{noTelephony()}, nil
+		return nil, errNoTelephony
 	}
 
 	tags := phoneTags(request.Body.Tags)
 	if err := tags.Validate(); err != nil {
-		return TransferPhoneCall400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
 	}
 
 	transfer := phone.TransferRequest{
@@ -417,44 +401,229 @@ func (s *Server) TransferPhoneCall(
 	if request.Body.CallType != nil {
 		transfer.CallType = *request.Body.CallType
 	}
+	app, err := s.callApp(ctx, customerID, transfer.CallType, transfer.CallID)
+	if err != nil {
+		return nil, err
+	}
+	transfer.StreamApp = app
 
 	placed, err := s.phone.Transfer(ctx, transfer)
 	if err != nil && strings.Contains(err.Error(), "is not a number") {
-		return TransferPhoneCall404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
+		return nil, notFound(err.Error())
+	}
+	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
+		return nil, err
 	}
 	if err != nil {
-		return TransferPhoneCall400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
 	}
 
-	return TransferPhoneCall202JSONResponse{
-		VendorCallId: placed.VendorCallID,
-		Status:       placed.Status,
-	}, nil
+	return &transferPhoneCallResponse{Body: PlacedCall{VendorCallId: placed.VendorCallID,
+		Status: placed.Status}}, nil
 }
 
-// PressPhoneDigits presses digits on a call placed from here.
-func (s *Server) PressPhoneDigits(
-	ctx context.Context,
-	request PressPhoneDigitsRequestObject,
-) (PressPhoneDigitsResponseObject, error) {
+// pressPhoneDigits presses digits on a call placed from here.
+func (s *Server) pressPhoneDigits(ctx context.Context, request *pressPhoneDigitsRequest) (*struct{}, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
-		return PressPhoneDigits401JSONResponse{missingCustomer()}, nil
+		return nil, errMissingCustomer
 	}
 	if request.Body == nil {
-		return PressPhoneDigits400JSONResponse{badRequest("a request body is required")}, nil
+		return nil, invalidRequest("a request body is required")
 	}
 	if s.phone == nil {
-		return PressPhoneDigits400JSONResponse{noTelephony()}, nil
+		return nil, errNoTelephony
 	}
 
 	err := s.phone.SendDigits(ctx, request.Body.Vendor, request.VendorCallId, request.Body.Digits)
 	if errors.Is(err, phone.ErrNotImplemented) {
-		return PressPhoneDigits404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
+		return nil, notFound(err.Error())
 	}
 	if err != nil {
-		return PressPhoneDigits400JSONResponse{badRequest(err.Error())}, nil
+		return nil, invalidRequest(err.Error())
 	}
-	return PressPhoneDigits204Response{}, nil
+	return nil, nil
+}
+
+// sipTrunk renders a stored trunk. The sealed password stays behind; whether there is one
+// is all a caller needs.
+func sipTrunk(trunk store.SIPTrunk) SipTrunk {
+	return SipTrunk{
+		Id: trunk.ID, Name: trunk.Name, Host: trunk.Host, Port: trunk.Port,
+		Transport: trunk.Transport, Username: trunk.Username, LateOffer: trunk.LateOffer,
+		Codecs: trunk.Codecs, HasPassword: trunk.HasPassword(),
+		CreatedAt: trunk.CreatedAt, UpdatedAt: trunk.UpdatedAt,
+	}
+}
+
+// sipTrunkFailure turns what the phone service said into the status a caller can act on.
+func sipTrunkFailure(err error) error {
+	switch {
+	case errors.Is(err, phone.ErrSIPTrunksDisabled):
+		return notConfigured(err.Error())
+	case errors.Is(err, store.ErrNoSIPTrunk):
+		return notFound(err.Error())
+	case errors.Is(err, store.ErrSIPTrunkInUse), errors.Is(err, store.ErrNumberHeld):
+		return conflict(err.Error())
+	case errors.Is(err, phone.ErrInvalidSIPTrunk):
+		return invalidRequest(err.Error())
+	default:
+		// Anything else is this deployment's failure, not the caller's: Huma answers it 500.
+		return err
+	}
+}
+
+// listSipTrunks returns the calling customer's own SIP trunks.
+func (s *Server) listSipTrunks(ctx context.Context, _ *listSipTrunksRequest) (*listSipTrunksResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.phone == nil {
+		return nil, errNoTelephony
+	}
+	trunks, err := s.phone.SIPTrunks(ctx, customerID)
+	if err != nil {
+		return nil, sipTrunkFailure(err)
+	}
+	rendered := make([]SipTrunk, 0, len(trunks))
+	for _, trunk := range trunks {
+		rendered = append(rendered, sipTrunk(trunk))
+	}
+	return &listSipTrunksResponse{Body: rendered}, nil
+}
+
+// createSipTrunk stores one of the calling customer's own SIP trunks.
+func (s *Server) createSipTrunk(ctx context.Context, request *createSipTrunkRequest) (*sipTrunkResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.phone == nil {
+		return nil, errNoTelephony
+	}
+	body := request.Body
+	settings := phone.SIPTrunkSettings{
+		Name: body.Name, Host: body.Host, Username: body.Username,
+	}
+	// Left out, the password is nil, which the service answers "password is required".
+	if body.Password != "" {
+		settings.Password = &body.Password
+	}
+	if body.Port != nil {
+		settings.Port = *body.Port
+	}
+	if body.Transport != nil {
+		settings.Transport = *body.Transport
+	}
+	if body.LateOffer != nil {
+		settings.LateOffer = *body.LateOffer
+	}
+	if body.Codecs != nil {
+		settings.Codecs = *body.Codecs
+	}
+	trunk, err := s.phone.CreateSIPTrunk(ctx, customerID, settings)
+	if err != nil {
+		return nil, sipTrunkFailure(err)
+	}
+	return &sipTrunkResponse{Body: sipTrunk(trunk)}, nil
+}
+
+// getSipTrunk returns one of the calling customer's own SIP trunks.
+func (s *Server) getSipTrunk(ctx context.Context, request *sipTrunkRequest) (*sipTrunkResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.phone == nil {
+		return nil, errNoTelephony
+	}
+	trunk, err := s.phone.SIPTrunk(ctx, customerID, request.Id)
+	if err != nil {
+		return nil, sipTrunkFailure(err)
+	}
+	return &sipTrunkResponse{Body: sipTrunk(trunk)}, nil
+}
+
+// updateSipTrunk changes what was sent and keeps the rest, the password included.
+func (s *Server) updateSipTrunk(ctx context.Context, request *updateSipTrunkRequest) (*sipTrunkResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.phone == nil {
+		return nil, errNoTelephony
+	}
+	existing, err := s.phone.SIPTrunk(ctx, customerID, request.Id)
+	if err != nil {
+		return nil, sipTrunkFailure(err)
+	}
+	settings := phone.SettingsOf(existing)
+	body := request.Body
+	if body.Name != nil {
+		settings.Name = *body.Name
+	}
+	if body.Host != nil {
+		settings.Host = *body.Host
+	}
+	if body.Port != nil {
+		settings.Port = *body.Port
+	}
+	if body.Transport != nil {
+		settings.Transport = *body.Transport
+	}
+	if body.Username != nil {
+		settings.Username = *body.Username
+	}
+	if body.LateOffer != nil {
+		settings.LateOffer = *body.LateOffer
+	}
+	if body.Codecs != nil {
+		settings.Codecs = *body.Codecs
+	}
+	settings.Password = body.Password
+	trunk, err := s.phone.UpdateSIPTrunk(ctx, customerID, request.Id, settings)
+	if err != nil {
+		return nil, sipTrunkFailure(err)
+	}
+	return &sipTrunkResponse{Body: sipTrunk(trunk)}, nil
+}
+
+// deleteSipTrunk removes a trunk with no numbers left on it.
+func (s *Server) deleteSipTrunk(ctx context.Context, request *sipTrunkRequest) (*struct{}, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.phone == nil {
+		return nil, errNoTelephony
+	}
+	if err := s.phone.DeleteSIPTrunk(ctx, customerID, request.Id); err != nil {
+		return nil, sipTrunkFailure(err)
+	}
+	return nil, nil
+}
+
+// addTrunkNumber records a number on one of the calling customer's own SIP trunks.
+func (s *Server) addTrunkNumber(ctx context.Context, request *addTrunkNumberRequest) (*addTrunkNumberResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.phone == nil {
+		return nil, errNoTelephony
+	}
+	// Tags are checked by the service with the number, so a bad one is answered
+	// "sip_trunk: invalid: <reason>" like the rest.
+	number, err := s.phone.AddTrunkNumber(ctx, phone.TrunkNumber{
+		Owner:   routing.Owner{CustomerID: customerID, Tags: phoneTags(request.Body.Tags)},
+		TrunkID: request.Id,
+		E164:    request.Body.E164,
+		Country: request.Body.Country,
+	})
+	if err != nil {
+		return nil, sipTrunkFailure(err)
+	}
+	return &addTrunkNumberResponse{Body: phoneNumber(number)}, nil
 }
 
 func phoneNumber(held store.PhoneNumber) PhoneNumber {
@@ -477,6 +646,10 @@ func phoneNumber(held store.PhoneNumber) PhoneNumber {
 	if held.StreamTrunkID != "" {
 		trunk := held.StreamTrunkID
 		number.StreamTrunkId = &trunk
+	}
+	if held.SIPTrunkID != "" {
+		trunk := held.SIPTrunkID
+		number.SipTrunkId = &trunk
 	}
 	return number
 }
@@ -504,6 +677,595 @@ func phoneTags(tags *map[string]string) routing.Tags {
 	return routing.Tags(*tags)
 }
 
-func noTelephony() BadRequestJSONResponse {
-	return badRequest("phone numbers are not available: no telephony configured")
+var errNoTelephony = notConfigured("phone numbers are not available: no telephony configured")
+
+// callApp is the Stream app a live call is in, which a human transferred into it has to be
+// routed in too: the running session's, then the app its lines were made in, then the
+// customer's own.
+func (s *Server) callApp(ctx context.Context, customerID, callType, callID string) (int64, error) {
+	if callType == "" {
+		callType = defaultCallType
+	}
+	if s.sessions != nil {
+		for _, running := range s.sessions.List(session.Owner{CustomerID: customerID, Kind: auth.KindServer}) {
+			if spec := running.Spec(); spec.CallID == callID && spec.CallType == callType {
+				return spec.StreamApp, nil
+			}
+		}
+	}
+	if s.store != nil {
+		pin, found, err := s.store.CallPin(ctx, customerID, callType, callID)
+		if err != nil || found {
+			return pin, err
+		}
+	}
+	if s.stream == nil {
+		return 0, nil
+	}
+	return s.stream.Pin(ctx, customerID)
+}
+
+// registerPhone declares the operations served in phone.go.
+func (s *Server) registerPhone(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "listPhoneVendors",
+		Method:      http.MethodGet,
+		Path:        "/v1/phone/vendors",
+		Summary:     "List the telephony vendors and whether they can be used",
+		Description: "Every vendor this service knows about. A vendor that is declared but not implemented is " +
+			"listed rather than hidden, so what is missing is visible before a number is bought.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The declared vendors"},
+		},
+		Errors: []int{http.StatusUnauthorized, http.StatusForbidden},
+	}, s.listPhoneVendors)
+	huma.Register(api, huma.Operation{
+		OperationID: "searchPhoneNumbers",
+		Method:      http.MethodGet,
+		Path:        "/v1/phone/numbers/available",
+		Summary:     "Search for numbers to buy, at one vendor or all of them",
+		Description: "Naming a vendor searches only that one. Leaving it out asks every vendor that has its " +
+			"credentials, at once, and merges what they offer cheapest first. Vendors do not agree " +
+			"on how a search can be narrowed, so one whose API cannot express a filter is reported " +
+			"in `skipped` rather than asked without it, which would answer a search for one place " +
+			"with numbers from another.",
+		// Declared rather than read off the input, so the default is documented without
+		// being filled in: the handler tells a parameter left out from one sent.
+		Parameters: []*huma.Param{
+			{Name: "limit", In: "query", Schema: &huma.Schema{Type: huma.TypeInteger, Default: 10}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "What the vendors are offering, and which could not answer"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.searchPhoneNumbers)
+	huma.Register(api, huma.Operation{
+		OperationID: "listPhoneNumbers",
+		Method:      http.MethodGet,
+		Path:        "/v1/phone/numbers",
+		Summary:     "The numbers the calling customer holds",
+		// Declared rather than read off the input, so the default is documented without
+		// being filled in: the handler tells a parameter left out from one sent.
+		Parameters: []*huma.Param{
+			{Name: "include_released", In: "query", Description: "Include numbers that have been given back. A released number keeps its row, because what it cost while it was held is still part of that month's bill.", Schema: &huma.Schema{Type: huma.TypeBoolean, Default: false}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The customer's numbers, newest first"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.listPhoneNumbers)
+	huma.Register(api, huma.Operation{
+		OperationID:   "buyPhoneNumber",
+		Method:        http.MethodPost,
+		Path:          "/v1/phone/numbers",
+		Summary:       "Buy a number, which starts its monthly charge",
+		DefaultStatus: http.StatusCreated,
+		Responses: map[string]*huma.Response{
+			"201": {Description: "The number is bought and recorded"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.buyPhoneNumber)
+	huma.Register(api, huma.Operation{
+		OperationID:   "releasePhoneNumber",
+		Method:        http.MethodDelete,
+		Path:          "/v1/phone/numbers/{e164}",
+		Summary:       "Give a number back, which stops its monthly charge",
+		DefaultStatus: http.StatusNoContent,
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The number was released"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.releasePhoneNumber)
+	huma.Register(api, huma.Operation{
+		OperationID: "attachPhoneNumber",
+		Method:      http.MethodPost,
+		Path:        "/v1/phone/numbers/{e164}/attach",
+		Summary:     "Point a number at a Stream call",
+		Description: "Creates the SIP inbound trunk and routing rule and tells the vendor to send calls " +
+			"there. This is what turns a bought number into one that reaches an agent.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The number now reaches a call"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.attachPhoneNumber)
+	huma.Register(api, huma.Operation{
+		OperationID: "placePhoneCall",
+		Method:      http.MethodPost,
+		Path:        "/v1/phone/calls",
+		Summary:     "Place an outbound call and bridge it into a Stream call",
+		Description: "Stream's SIP is inbound only, so the vendor originates the call and connects it to a " +
+			"trunk the agent is already on, rather than Stream dialling out.",
+		DefaultStatus: http.StatusAccepted,
+		Responses: map[string]*huma.Response{
+			"202": {Description: "The vendor is placing the call"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.placePhoneCall)
+	huma.Register(api, huma.Operation{
+		OperationID: "transferPhoneCall",
+		Method:      http.MethodPost,
+		Path:        "/v1/phone/calls/transfer",
+		Summary:     "Bring a human onto a call that is already happening",
+		Description: "Stream's SIP is inbound only, so a transfer is a second leg rather than a handover: the " +
+			"vendor dials the human and the answered leg is routed into the same Stream call, after " +
+			"which the agent can leave. The caller is never moved, so nothing is lost if nobody " +
+			"answers.",
+		DefaultStatus: http.StatusAccepted,
+		Responses: map[string]*huma.Response{
+			"202": {Description: "The vendor is dialling the human"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.transferPhoneCall)
+	huma.Register(api, huma.Operation{
+		OperationID: "pressPhoneDigits",
+		Method:      http.MethodPost,
+		Path:        "/v1/phone/calls/{vendor_call_id}/digits",
+		Summary:     "Press digits on a call placed from here",
+		Description: "For getting past a menu on an outbound call. The call is named by the id its vendor " +
+			"gave when it was dialled, so only calls placed from this service can be pressed at. Not " +
+			"every vendor can do this without ending the call it is on, and one that cannot says so.",
+		DefaultStatus: http.StatusNoContent,
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The digits were pressed"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.pressPhoneDigits)
+	sipTrunkErrors := []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
+		http.StatusNotFound, http.StatusConflict}
+	huma.Register(api, huma.Operation{
+		OperationID: "listSipTrunks",
+		Method:      http.MethodGet,
+		Path:        "/v1/phone/trunks",
+		Summary:     "The calling customer's own SIP trunks",
+		Description: "Trunks outbound calls from the customer's own numbers are dialled through. " +
+			"Passwords are never returned. Answers not_configured on a deployment with no key to seal them with.",
+		Responses: map[string]*huma.Response{"200": {Description: "The customer's trunks, newest first"}},
+		Errors:    sipTrunkErrors,
+	}, s.listSipTrunks)
+	huma.Register(api, huma.Operation{
+		OperationID:   "createSipTrunk",
+		Method:        http.MethodPost,
+		Path:          "/v1/phone/trunks",
+		Summary:       "Add one of the customer's own SIP trunks",
+		DefaultStatus: http.StatusCreated,
+		Responses:     map[string]*huma.Response{"201": {Description: "The trunk is stored, its password sealed"}},
+		Errors:        sipTrunkErrors,
+	}, s.createSipTrunk)
+	huma.Register(api, huma.Operation{
+		OperationID: "getSipTrunk",
+		Method:      http.MethodGet,
+		Path:        "/v1/phone/trunks/{id}",
+		Summary:     "One of the customer's own SIP trunks",
+		Responses:   map[string]*huma.Response{"200": {Description: "The trunk"}},
+		Errors:      sipTrunkErrors,
+	}, s.getSipTrunk)
+	huma.Register(api, huma.Operation{
+		OperationID: "updateSipTrunk",
+		Method:      http.MethodPatch,
+		Path:        "/v1/phone/trunks/{id}",
+		Summary:     "Change a SIP trunk",
+		Description: "Fields left out keep what the trunk has. Leaving out the password keeps the stored one.",
+		Responses:   map[string]*huma.Response{"200": {Description: "The trunk as it now is"}},
+		Errors:      sipTrunkErrors,
+	}, s.updateSipTrunk)
+	huma.Register(api, huma.Operation{
+		OperationID:   "deleteSipTrunk",
+		Method:        http.MethodDelete,
+		Path:          "/v1/phone/trunks/{id}",
+		Summary:       "Remove a SIP trunk with no numbers on it",
+		Description:   "Answers 409 while numbers are on the trunk. Release them first.",
+		DefaultStatus: http.StatusNoContent,
+		Responses:     map[string]*huma.Response{"204": {Description: "The trunk was removed"}},
+		Errors:        sipTrunkErrors,
+	}, s.deleteSipTrunk)
+	huma.Register(api, huma.Operation{
+		OperationID: "addTrunkNumber",
+		Method:      http.MethodPost,
+		Path:        "/v1/phone/trunks/{id}/numbers",
+		Summary:     "Add a number that is on this SIP trunk",
+		Description: "Nothing is bought. The number is recorded with vendor sip_trunk, and calls from it " +
+			"are dialled through this trunk. Whether the number is really the customer's is for the " +
+			"trunk's carrier to decide when it is called from. Release it with DELETE /v1/phone/numbers/{e164}.",
+		DefaultStatus: http.StatusCreated,
+		Responses:     map[string]*huma.Response{"201": {Description: "The number is on the trunk"}},
+		Errors:        sipTrunkErrors,
+	}, s.addTrunkNumber)
+}
+
+type listPhoneVendorsRequest struct{}
+
+type listPhoneVendorsResponse struct {
+	Body []PhoneVendor `nullable:"false"`
+}
+
+type searchPhoneNumbersRequest struct {
+	Vendor             optionalParam[string]            `query:"vendor" doc:"One vendor to search. Absent searches every usable vendor."`
+	Country            string                           `query:"country" doc:"ISO 3166-1 alpha-2 country code." required:"true"`
+	AreaCode           optionalParam[string]            `query:"area_code"`
+	Contains           optionalParam[string]            `query:"contains" doc:"Digits the number must contain, anywhere in it."`
+	Prefix             optionalParam[string]            "query:\"prefix\" doc:\"Digits the number must start with, matched after the country dial code. This differs from `contains` in where the digits have to fall.\""
+	Locality           optionalParam[string]            `query:"locality" doc:"A city, region or rate centre."`
+	AdministrativeArea optionalParam[string]            `query:"administrative_area" doc:"A US state or Canadian province."`
+	NumberType         optionalParam[PhoneNumberType]   `query:"number_type"`
+	Features           optionalParam[[]PhoneCapability] `query:"features,explode" doc:"Capabilities every number must have. Repeat the parameter to require several. A vendor that cannot filter on one still reports what its numbers carry, so these are checked on the results either way."`
+	Limit              optionalParam[int]               `query:"limit"`
+}
+
+type searchPhoneNumbersResponse struct {
+	Body NumberSearchResult
+}
+
+type listPhoneNumbersRequest struct {
+	IncludeReleased optionalParam[bool] `query:"include_released" doc:"Include numbers that have been given back. A released number keeps its row, because what it cost while it was held is still part of that month's bill."`
+}
+
+type listPhoneNumbersResponse struct {
+	Body []PhoneNumber `nullable:"false"`
+}
+
+type buyPhoneNumberRequest struct {
+	Body *BuyNumberRequest `required:"true"`
+}
+
+type buyPhoneNumberResponse struct {
+	Body PhoneNumber
+}
+
+type releasePhoneNumberRequest struct {
+	E164 string `path:"e164" doc:"The number in +15551234567 form."`
+}
+
+type attachPhoneNumberRequest struct {
+	E164 string `path:"e164"`
+	Body *AttachNumberRequest
+}
+
+type attachPhoneNumberResponse struct {
+	Body AttachedNumber
+}
+
+type placePhoneCallRequest struct {
+	Body *PlaceCallRequest `required:"true"`
+}
+
+type placePhoneCallResponse struct {
+	Body PlacedCall
+}
+
+type transferPhoneCallRequest struct {
+	Body *TransferCallRequest `required:"true"`
+}
+
+type transferPhoneCallResponse struct {
+	Body PlacedCall
+}
+
+type pressPhoneDigitsRequest struct {
+	VendorCallId string              `path:"vendor_call_id"`
+	Body         *PressDigitsRequest `required:"true"`
+}
+
+type listSipTrunksRequest struct{}
+
+type listSipTrunksResponse struct {
+	Body []SipTrunk `nullable:"false"`
+}
+
+type createSipTrunkRequest struct {
+	Body *CreateSipTrunkRequest `required:"true"`
+}
+
+type sipTrunkRequest struct {
+	Id string `path:"id"`
+}
+
+type updateSipTrunkRequest struct {
+	Id   string                 `path:"id"`
+	Body *UpdateSipTrunkRequest `required:"true"`
+}
+
+type sipTrunkResponse struct {
+	Body SipTrunk
+}
+
+type addTrunkNumberRequest struct {
+	Id   string                 `path:"id"`
+	Body *AddTrunkNumberRequest `required:"true"`
+}
+
+type addTrunkNumberResponse struct {
+	Body PhoneNumber
+}
+
+// AddTrunkNumberRequest is the AddTrunkNumberRequest schema.
+type AddTrunkNumberRequest struct {
+	Country string             `json:"country,omitempty" doc:"Required. ISO 3166-1 alpha-2 country code."`
+	E164    string             `json:"e164,omitempty" doc:"Required. The number in +15551234567 form."`
+	Tags    *map[string]string `json:"tags,omitempty" doc:"The customer's own cost labels."`
+}
+
+// AttachNumberRequest is the AttachNumberRequest schema.
+type AttachNumberRequest struct {
+	AllowedIps *[]string `json:"allowed_ips,omitempty" doc:"The vendor's signalling addresses, as IPs or CIDR blocks."`
+	CallId     *string   `json:"call_id,omitempty" doc:"The call every caller joins. Omit to give each caller their own call, named after the number they rang."`
+	CallType   *string   `json:"call_type,omitempty" doc:"The Stream call type. Omit for \"agent\"."`
+}
+
+// AttachedNumber is the AttachedNumber schema.
+type AttachedNumber struct {
+	RouteId string `json:"route_id"`
+	SipUri  string `json:"sip_uri" doc:"Where the vendor sends calls, e.g. sip:trunk@sip.stream-io-api.com."`
+	TrunkId string `json:"trunk_id"`
+}
+
+// AvailableNumber is the AvailableNumber schema.
+type AvailableNumber struct {
+	Capabilities      []PhoneCapability `json:"capabilities" nullable:"false"`
+	Country           string            `json:"country"`
+	E164              string            `json:"e164" example:"+15125551234"`
+	Locality          *string           `json:"locality,omitempty"`
+	MonthlyCostMicros *int64            `json:"monthly_cost_micros,omitempty" doc:"Millionths of a dollar per month, zero when the vendor does not quote one."`
+	NumberType        *PhoneNumberType  `json:"number_type,omitempty"`
+	Region            *string           `json:"region,omitempty"`
+	Vendor            string            `json:"vendor" doc:"Who is offering it, which is also who to buy it from." example:"telnyx"`
+}
+
+// BuyNumberRequest is the BuyNumberRequest schema.
+type BuyNumberRequest struct {
+	Country *string            `json:"country,omitempty" doc:"The country the number was offered from, as the search reported it. Most vendors buy by number alone; the few that buy out of a country's inventory need this, and it cannot be guessed back out of the number." example:"US"`
+	E164    string             `json:"e164" example:"+15125551234"`
+	Tags    *map[string]string `json:"tags,omitempty" doc:"Cost labels carried onto the purchase's request row."`
+	Vendor  string             `json:"vendor" example:"twilio"`
+}
+
+// The trunk request fields are optional in the schema and checked by the phone service
+// instead, so a missing or wrong field is answered "sip_trunk: invalid: <reason>" like every
+// other problem with a trunk, rather than by the schema validator in its own words.
+
+// CreateSipTrunkRequest is the CreateSipTrunkRequest schema.
+type CreateSipTrunkRequest struct {
+	Codecs    *[]string `json:"codecs,omitempty" doc:"PCMU, PCMA or G722, in order of preference. Omit for PCMU then PCMA."`
+	Host      string    `json:"host,omitempty" doc:"Required. The trunk's hostname, without sip: or a port, e.g. example.pstn.twilio.com."`
+	LateOffer *bool     `json:"late_offer,omitempty" doc:"The trunk accepts an INVITE without SDP. Omit for false."`
+	Name      string    `json:"name,omitempty" doc:"Required."`
+	Password  string    `json:"password,omitempty" doc:"Required. Stored sealed and never returned."`
+	Port      *int      `json:"port,omitempty" doc:"Omit for 5060."`
+	Transport *string   `json:"transport,omitempty" doc:"udp, tcp or tls. Omit for tcp."`
+	Username  string    `json:"username,omitempty" doc:"Required."`
+}
+
+// NumberSearchResult is the NumberSearchResult schema.
+type NumberSearchResult struct {
+	Numbers []AvailableNumber `json:"numbers" doc:"What the vendors are offering, cheapest first." nullable:"false"`
+	Skipped []SkippedVendor   `json:"skipped" doc:"Vendors that were not part of the answer. A search that reached two of eight vendors found what two vendors had, and deciding whether to buy needs to know which." nullable:"false"`
+}
+
+// PhoneCapability What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.
+type PhoneCapability string
+
+// Defines values for PhoneCapability.
+const (
+	PhoneCapabilityEmergency        PhoneCapability = "emergency"
+	PhoneCapabilityFax              PhoneCapability = "fax"
+	PhoneCapabilityHdVoice          PhoneCapability = "hd_voice"
+	PhoneCapabilityInternationalSms PhoneCapability = "international_sms"
+	PhoneCapabilityLocalCalling     PhoneCapability = "local_calling"
+	PhoneCapabilityMms              PhoneCapability = "mms"
+	PhoneCapabilitySms              PhoneCapability = "sms"
+	PhoneCapabilityVoice            PhoneCapability = "voice"
+)
+
+// Valid indicates whether the value is a known member of the PhoneCapability enum.
+func (e PhoneCapability) Valid() bool {
+	switch e {
+	case PhoneCapabilityEmergency:
+		return true
+	case PhoneCapabilityFax:
+		return true
+	case PhoneCapabilityHdVoice:
+		return true
+	case PhoneCapabilityInternationalSms:
+		return true
+	case PhoneCapabilityLocalCalling:
+		return true
+	case PhoneCapabilityMms:
+		return true
+	case PhoneCapabilitySms:
+		return true
+	case PhoneCapabilityVoice:
+		return true
+	default:
+		return false
+	}
+}
+
+func (PhoneCapability) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "PhoneCapability", "What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.", "voice", "sms", "mms", "fax", "emergency", "hd_voice", "international_sms", "local_calling")
+}
+
+// PhoneNumber is the PhoneNumber schema.
+type PhoneNumber struct {
+	Capabilities      []PhoneCapability  `json:"capabilities" nullable:"false"`
+	Country           string             `json:"country"`
+	E164              string             `json:"e164"`
+	MonthlyCostMicros int64              `json:"monthly_cost_micros"`
+	PurchasedAt       time.Time          `json:"purchased_at"`
+	ReleasedAt        *time.Time         `json:"released_at,omitempty" nullable:"true"`
+	SipTrunkId        *string            `json:"sip_trunk_id,omitempty" doc:"The customer's own SIP trunk calls from this number are dialled through. Present only for vendor sip_trunk."`
+	StreamTrunkId     *string            `json:"stream_trunk_id,omitempty" doc:"The SIP trunk calls to this number arrive on. Absent until attached."`
+	Tags              *map[string]string `json:"tags,omitempty" doc:"The customer's own cost labels."`
+	Vendor            string             `json:"vendor"`
+}
+
+// PhoneNumberType What kind of number it is, which decides who pays for the call.
+type PhoneNumberType string
+
+// Defines values for PhoneNumberType.
+const (
+	Local    PhoneNumberType = "local"
+	Mobile   PhoneNumberType = "mobile"
+	TollFree PhoneNumberType = "toll_free"
+)
+
+// Valid indicates whether the value is a known member of the PhoneNumberType enum.
+func (e PhoneNumberType) Valid() bool {
+	switch e {
+	case Local:
+		return true
+	case Mobile:
+		return true
+	case TollFree:
+		return true
+	default:
+		return false
+	}
+}
+
+func (PhoneNumberType) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "PhoneNumberType", "What kind of number it is, which decides who pays for the call.", "local", "toll_free", "mobile")
+}
+
+// PhoneOperation is the PhoneOperation schema.
+type PhoneOperation string
+
+// Defines values for PhoneOperation.
+const (
+	PhoneOperationAttach     PhoneOperation = "attach"
+	PhoneOperationBuy        PhoneOperation = "buy"
+	PhoneOperationDial       PhoneOperation = "dial"
+	PhoneOperationRelease    PhoneOperation = "release"
+	PhoneOperationSearch     PhoneOperation = "search"
+	PhoneOperationSendDigits PhoneOperation = "send_digits"
+)
+
+// Valid indicates whether the value is a known member of the PhoneOperation enum.
+func (e PhoneOperation) Valid() bool {
+	switch e {
+	case PhoneOperationAttach:
+		return true
+	case PhoneOperationBuy:
+		return true
+	case PhoneOperationDial:
+		return true
+	case PhoneOperationRelease:
+		return true
+	case PhoneOperationSearch:
+		return true
+	case PhoneOperationSendDigits:
+		return true
+	default:
+		return false
+	}
+}
+
+func (PhoneOperation) Schema(registry huma.Registry) *huma.Schema {
+	ref := namedEnum(registry, "PhoneOperation", "", "search", "buy", "release", "attach", "dial", "send_digits")
+	registry.Map()["PhoneOperation"].Extensions = map[string]any{"x-enum-varnames": []any{"PhoneOperationSearch", "PhoneOperationBuy", "PhoneOperationRelease", "PhoneOperationAttach", "PhoneOperationDial", "PhoneOperationSendDigits"}}
+	return ref
+}
+
+// PhoneVendor is the PhoneVendor schema.
+type PhoneVendor struct {
+	Capabilities       []PhoneCapability `json:"capabilities" nullable:"false"`
+	Implemented        bool              `json:"implemented" doc:"Whether this service can actually work with the vendor."`
+	MissingCredentials *[]string         `json:"missing_credentials,omitempty" doc:"The environment variables the vendor needs and does not have."`
+	Operations         *[]PhoneOperation `json:"operations,omitempty" doc:"What this service can do at the vendor. Eight vendors buy numbers and two of those also bridge calls, so a number is not bought from a vendor that cannot answer on it by accident."`
+	Ready              bool              `json:"ready" doc:"Implemented and holding every credential it needs."`
+	Vendor             string            `json:"vendor" example:"twilio"`
+}
+
+// PlaceCallRequest is the PlaceCallRequest schema.
+type PlaceCallRequest struct {
+	CallId             *string            `json:"call_id,omitempty" doc:"The Stream call the answered leg joins, and so the one the agent has to be in. Omit to have one named after this call, since two calls from the same number are two conversations."`
+	CallType           *string            `json:"call_type,omitempty" doc:"The Stream call type. Omit for \"agent\"."`
+	Custom             *map[string]string `json:"custom,omitempty" doc:"Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it."`
+	From               string             `json:"from" doc:"One of the customer's own numbers, which is what the person sees."`
+	Headers            *map[string]string `json:"headers,omitempty" doc:"Carried to the person's leg as custom SIP headers. Only some vendors can express these, and one that cannot refuses the call."`
+	InitialDigits      *string            `json:"initial_digits,omitempty" doc:"Digits pressed once the person answers, for reaching an extension behind a menu, e.g. \"ww1234#\". w is a short pause and W a long one."`
+	RingTimeoutSeconds *int               `json:"ring_timeout_seconds,omitempty" doc:"How long to ring before giving up. Omit to leave the vendor's default, which is long enough to reach voicemail. A vendor whose call API cannot express it refuses the call rather than ringing for its own default."`
+	Tags               *map[string]string `json:"tags,omitempty"`
+	To                 string             `json:"to"`
+}
+
+func (*PlaceCallRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["ring_timeout_seconds"].Format = ""
+	return schema
+}
+
+// PlacedCall is the PlacedCall schema.
+type PlacedCall struct {
+	CallId       *string `json:"call_id,omitempty" doc:"The Stream call the answered leg is routed into. An agent that is not in it hears nothing when the person picks up."`
+	CallType     *string `json:"call_type,omitempty"`
+	Status       string  `json:"status" doc:"The vendor's own word for where the call is, e.g. \"queued\"."`
+	Vendor       *string `json:"vendor,omitempty" doc:"Who is placing the call."`
+	VendorCallId string  `json:"vendor_call_id"`
+}
+
+// PressDigitsRequest is the PressDigitsRequest schema.
+type PressDigitsRequest struct {
+	Digits string `json:"digits" doc:"What to press. Only 0-9, * and # can be pressed, and w waits half a second between two of them."`
+	Vendor string `json:"vendor" doc:"Who is carrying the call, e.g. \"telnyx\"."`
+}
+
+// SipTrunk is the SipTrunk schema.
+type SipTrunk struct {
+	Codecs      []string  `json:"codecs" nullable:"false" doc:"Audio codecs offered to the trunk, in order of preference."`
+	CreatedAt   time.Time `json:"created_at"`
+	HasPassword bool      `json:"has_password" doc:"Whether a password is stored. The password itself is never returned. False for a trunk that arrived from another deployment, which needs one set before it can be called through."`
+	Host        string    `json:"host" doc:"The trunk's hostname, without sip: or a port."`
+	Id          string    `json:"id"`
+	LateOffer   bool      `json:"late_offer" doc:"The trunk accepts an INVITE without SDP."`
+	Name        string    `json:"name"`
+	Port        int       `json:"port"`
+	Transport   string    `json:"transport" enum:"udp,tcp,tls"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Username    string    `json:"username"`
+}
+
+// SkippedVendor is the SkippedVendor schema.
+type SkippedVendor struct {
+	Reason string `json:"reason" example:"cannot search by administrative_area"`
+	Vendor string `json:"vendor" example:"twilio"`
+}
+
+// TransferCallRequest is the TransferCallRequest schema.
+type TransferCallRequest struct {
+	CallId   string             `json:"call_id" doc:"The Stream call the caller and the agent are already on."`
+	CallType *string            `json:"call_type,omitempty" doc:"The Stream call type. Omit for \"agent\"."`
+	From     string             `json:"from" doc:"The customer's number the human is dialled from, which is what they see."`
+	Tags     *map[string]string `json:"tags,omitempty"`
+	To       string             `json:"to" doc:"The human being brought onto the call."`
+}
+
+// UpdateSipTrunkRequest is the UpdateSipTrunkRequest schema. Every field left out keeps
+// what the trunk has.
+type UpdateSipTrunkRequest struct {
+	Codecs    *[]string `json:"codecs,omitempty"`
+	Host      *string   `json:"host,omitempty"`
+	LateOffer *bool     `json:"late_offer,omitempty"`
+	Name      *string   `json:"name,omitempty"`
+	Password  *string   `json:"password,omitempty" doc:"Omit to keep the stored password."`
+	Port      *int      `json:"port,omitempty"`
+	Transport *string   `json:"transport,omitempty" doc:"udp, tcp or tls."`
+	Username  *string   `json:"username,omitempty"`
 }

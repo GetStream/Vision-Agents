@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Term is one optional thing a request asks a provider for beyond a target and a
@@ -73,6 +75,14 @@ const (
 	TextInput        Term = "text"
 	InputTranscript  Term = "input_transcript"
 	OutputTranscript Term = "output_transcript"
+	// The image terms. A picture drawn at whatever size the model liked, or from a seed it
+	// never read, looks like an answer to the request and is not one, so these are refused
+	// by a model that cannot honour them rather than dropped. An image model that declares
+	// format can be asked for PNG or JPEG.
+	Size           Term = "size"
+	AspectRatio    Term = "aspect_ratio"
+	Seed           Term = "seed"
+	NegativePrompt Term = "negative_prompt"
 )
 
 // Transcription modes. Verbatim keeps what was said; Smart tidies it.
@@ -177,6 +187,24 @@ func (p DataPolicy) Valid() bool {
 	return p.Retention.Valid()
 }
 
+// Stricter returns what a provider has to meet to satisfy both policies: training
+// forbidden if either forbids it, and the shorter of the two retentions.
+func (p DataPolicy) Stricter(other DataPolicy) DataPolicy {
+	merged := p
+	if other.AllowTraining != nil && (merged.AllowTraining == nil || !*other.AllowTraining) {
+		merged.AllowTraining = other.AllowTraining
+	}
+	if other.Retention == "" {
+		return merged
+	}
+	mine, ok := merged.Retention.Window()
+	theirs, known := other.Retention.Window()
+	if !ok || (known && theirs < mine) {
+		merged.Retention = other.Retention
+	}
+	return merged
+}
+
 // SatisfiedBy reports whether a provider that handles data this way may serve a request
 // that asked for this policy.
 func (p DataPolicy) SatisfiedBy(handling DataHandling) bool {
@@ -245,14 +273,18 @@ type STT struct {
 	// which is "this one, and this one after it": a shortcut ranks its members by health,
 	// and a caller who has decided that one vendor comes first wants to be asked second
 	// only when the first is down. Empty leaves the choice to Target.
-	Providers       []string `json:"providers,omitempty"`
-	Languages       []string `json:"languages,omitempty"`
-	DetectLanguage  *bool    `json:"detect_language,omitempty"`
-	SampleRate      *int     `json:"sample_rate,omitempty"`
-	Interim         *bool    `json:"interim,omitempty"`
-	Endpointing     string   `json:"endpointing,omitempty"`
-	SilenceMs       *int     `json:"silence_ms,omitempty"`
-	UtteranceEndMs  *int     `json:"utterance_end_ms,omitempty"`
+	Providers      []string `json:"providers,omitempty"`
+	Languages      []string `json:"languages,omitempty"`
+	DetectLanguage *bool    `json:"detect_language,omitempty"`
+	SampleRate     *int     `json:"sample_rate,omitempty"`
+	Interim        *bool    `json:"interim,omitempty"`
+	Endpointing    string   `json:"endpointing,omitempty"`
+	SilenceMs      *int     `json:"silence_ms,omitempty"`
+	UtteranceEndMs *int     `json:"utterance_end_ms,omitempty"`
+	// EagerEndOfTurn asks for a transcript as soon as the model guesses the turn may be
+	// over, before it is sure. It is not a term: a model without an eager end of turn
+	// transcribes as it always does rather than being routed away from.
+	EagerEndOfTurn  *bool    `json:"eager_end_of_turn,omitempty"`
 	Diarize         *bool    `json:"diarize,omitempty"`
 	MaxSpeakers     *int     `json:"max_speakers,omitempty"`
 	Keyterms        []string `json:"keyterms,omitempty"`
@@ -290,6 +322,7 @@ func (o STT) Merge(over STT) STT {
 	overwrite(&merged.Endpointing, over.Endpointing)
 	overwritePointer(&merged.SilenceMs, over.SilenceMs)
 	overwritePointer(&merged.UtteranceEndMs, over.UtteranceEndMs)
+	overwritePointer(&merged.EagerEndOfTurn, over.EagerEndOfTurn)
 	overwritePointer(&merged.Diarize, over.Diarize)
 	overwritePointer(&merged.MaxSpeakers, over.MaxSpeakers)
 	overwriteSlice(&merged.Keyterms, over.Keyterms)
@@ -322,28 +355,28 @@ func (o STT) Merge(over STT) STT {
 // than ignored once a socket is open.
 func (o STT) Validate() error {
 	if o.Mode != "" && o.Mode != ModeVerbatim && o.Mode != ModeSmart {
-		return fmt.Errorf("options: mode is %s or %s, not %q", ModeVerbatim, ModeSmart, o.Mode)
+		return stack.Wrap(fmt.Errorf("options: mode is %s or %s, not %q", ModeVerbatim, ModeSmart, o.Mode))
 	}
 	// Smart rewrites what was said, and a word cannot be timed or attributed to a speaker
 	// once it may not be the word that was spoken. Refusing beats returning timings that
 	// point into a transcript nobody said.
 	if o.Mode == ModeSmart {
 		if on(o.Diarize) || o.MaxSpeakers != nil {
-			return errors.New("options: smart mode cannot diarize, since it rewrites what was said")
+			return stack.Wrap(errors.New("options: smart mode cannot diarize, since it rewrites what was said"))
 		}
 		if on(o.Words) {
-			return errors.New("options: smart mode has no word timings, since it rewrites what was said")
+			return stack.Wrap(errors.New("options: smart mode has no word timings, since it rewrites what was said"))
 		}
 	}
 	if !o.DataPolicy.Valid() {
-		return fmt.Errorf("options: retention is none or a duration such as 30d, not %q", o.DataPolicy.Retention)
+		return stack.Wrap(fmt.Errorf("options: retention is none or a duration such as 30d, not %q", o.DataPolicy.Retention))
 	}
 	for provider, block := range o.Overwrites {
 		if provider == "" {
-			return errors.New("options: an overwrite has to name the provider it is for")
+			return stack.Wrap(errors.New("options: an overwrite has to name the provider it is for"))
 		}
 		if !json.Valid(block) {
-			return fmt.Errorf("options: the overwrites for %s are not valid JSON", provider)
+			return stack.Wrap(fmt.Errorf("options: the overwrites for %s are not valid JSON", provider))
 		}
 	}
 	return nil
@@ -450,14 +483,14 @@ func (o TTS) Merge(over TTS) TTS {
 // Validate reports the first thing about these options a voice could not be asked for.
 func (o TTS) Validate() error {
 	if !o.DataPolicy.Valid() {
-		return fmt.Errorf("options: retention is none or a duration such as 30d, not %q", o.DataPolicy.Retention)
+		return stack.Wrap(fmt.Errorf("options: retention is none or a duration such as 30d, not %q", o.DataPolicy.Retention))
 	}
 	for provider, block := range o.Overwrites {
 		if provider == "" {
-			return errors.New("options: an overwrite has to name the provider it is for")
+			return stack.Wrap(errors.New("options: an overwrite has to name the provider it is for"))
 		}
 		if !json.Valid(block) {
-			return fmt.Errorf("options: the overwrites for %s are not valid JSON", provider)
+			return stack.Wrap(fmt.Errorf("options: the overwrites for %s are not valid JSON", provider))
 		}
 	}
 	return nil
@@ -480,7 +513,10 @@ func (o TTS) Terms() []Term {
 // parameters the providers already speak rather than a second vocabulary for the same
 // things, so nothing here has to be translated on the way through.
 type LLM struct {
-	Target          string            `json:"target,omitempty"`
+	Target string `json:"target,omitempty"`
+	// Providers is a priority list of where to try, in the order given, on the same terms
+	// as the other modalities. Empty leaves the choice to Target.
+	Providers       []string          `json:"providers,omitempty"`
 	Instructions    string            `json:"instructions,omitempty"`
 	MaxOutputTokens *int              `json:"max_output_tokens,omitempty"`
 	Temperature     *float64          `json:"temperature,omitempty"`
@@ -497,6 +533,7 @@ type LLM struct {
 func (o LLM) Merge(over LLM) LLM {
 	merged := o
 	overwrite(&merged.Target, over.Target)
+	overwriteSlice(&merged.Providers, over.Providers)
 	overwrite(&merged.Instructions, over.Instructions)
 	overwritePointer(&merged.MaxOutputTokens, over.MaxOutputTokens)
 	overwritePointer(&merged.Temperature, over.Temperature)
@@ -519,7 +556,10 @@ func (o LLM) Terms() []Term { return nil }
 
 // Search is how a caller wants a question answered.
 type Search struct {
-	Target         string   `json:"target,omitempty"`
+	Target string `json:"target,omitempty"`
+	// Providers is a priority list of where to try, in the order given, on the same terms
+	// as the other modalities. Empty leaves the choice to Target, or to the depth.
+	Providers      []string `json:"providers,omitempty"`
 	Depth          string   `json:"depth,omitempty"`
 	Results        *int     `json:"results,omitempty"`
 	IncludeDomains []string `json:"include_domains,omitempty"`
@@ -535,6 +575,7 @@ type Search struct {
 func (o Search) Merge(over Search) Search {
 	merged := o
 	overwrite(&merged.Target, over.Target)
+	overwriteSlice(&merged.Providers, over.Providers)
 	overwrite(&merged.Depth, over.Depth)
 	overwritePointer(&merged.Results, over.Results)
 	overwriteSlice(&merged.IncludeDomains, over.IncludeDomains)
@@ -691,31 +732,31 @@ func (o STS) Validate() error {
 	switch o.TurnDetection {
 	case "", TurnServerVAD, TurnSemantic, TurnManual:
 	default:
-		return fmt.Errorf("options: turn_detection is %s, %s or %s, not %q",
-			TurnServerVAD, TurnSemantic, TurnManual, o.TurnDetection)
+		return stack.Wrap(fmt.Errorf("options: turn_detection is %s, %s or %s, not %q",
+			TurnServerVAD, TurnSemantic, TurnManual, o.TurnDetection))
 	}
 	// A silence threshold only means something to a silence timer. A model reading the
 	// words does not wait out a pause, so a threshold it was given would be a setting that
 	// was accepted and changed nothing.
 	if o.TurnDetection != "" && o.TurnDetection != TurnServerVAD && (o.SilenceMs != nil || o.PrefixPaddingMs != nil) {
-		return fmt.Errorf("options: silence_ms and prefix_padding_ms tune a %s turn detector, not %s",
-			TurnServerVAD, o.TurnDetection)
+		return stack.Wrap(fmt.Errorf("options: silence_ms and prefix_padding_ms tune a %s turn detector, not %s",
+			TurnServerVAD, o.TurnDetection))
 	}
 	if o.SilenceMs != nil && *o.SilenceMs < 0 {
-		return fmt.Errorf("options: silence_ms cannot be negative, got %d", *o.SilenceMs)
+		return stack.Wrap(fmt.Errorf("options: silence_ms cannot be negative, got %d", *o.SilenceMs))
 	}
 	if o.PrefixPaddingMs != nil && *o.PrefixPaddingMs < 0 {
-		return fmt.Errorf("options: prefix_padding_ms cannot be negative, got %d", *o.PrefixPaddingMs)
+		return stack.Wrap(fmt.Errorf("options: prefix_padding_ms cannot be negative, got %d", *o.PrefixPaddingMs))
 	}
 	if !o.DataPolicy.Valid() {
-		return fmt.Errorf("options: retention is none or a duration such as 30d, not %q", o.DataPolicy.Retention)
+		return stack.Wrap(fmt.Errorf("options: retention is none or a duration such as 30d, not %q", o.DataPolicy.Retention))
 	}
 	for provider, block := range o.Overwrites {
 		if provider == "" {
-			return errors.New("options: an overwrite has to name the provider it is for")
+			return stack.Wrap(errors.New("options: an overwrite has to name the provider it is for"))
 		}
 		if !json.Valid(block) {
-			return fmt.Errorf("options: the overwrites for %s are not valid JSON", provider)
+			return stack.Wrap(fmt.Errorf("options: the overwrites for %s are not valid JSON", provider))
 		}
 	}
 	return nil

@@ -1,0 +1,125 @@
+package io.getstream.visionagents.core
+
+import io.getstream.visionagents.core.generated.Equals
+import io.getstream.visionagents.core.generated.SessionFilter
+import io.getstream.visionagents.core.generated.SessionQuery as QuerySchema
+import io.getstream.visionagents.core.generated.TextMatch
+import kotlinx.serialization.json.JsonObject
+
+/**
+ * What a session should be, for the cases the shorthands do not cover.
+ *
+ * Everything is optional because everything has an answer already: a named config decides
+ * what this does not say, and the router decides what the config does not. Null means "leave
+ * it off the request", never "send a copy of the server's default".
+ */
+public data class SessionOptions(
+    /**
+     * A UUID to hold the session by, for a caller that wants to know it before the session
+     * exists. One already taken is refused with a 409. Null lets the router generate one.
+     */
+    val id: String? = null,
+    /** An agent config to start from, by the name it was synced under. */
+    val agent: String? = null,
+    /** An agent config to start from, by id. Naming both this and [agent] is refused. */
+    val configId: String? = null,
+    /** What to call the conversation, for a list a person reads. The model never sees it. */
+    val title: String? = null,
+    /** A longer note about the conversation, searched alongside the title. */
+    val description: String? = null,
+    /** What the conversation belongs to. Also recorded as its "project" cost tag. */
+    val projectId: String? = null,
+    /** Anything of yours to remember about the session. Sessions can be queried by it. */
+    val custom: JsonObject? = null,
+    /** Record nothing about this conversation: it cannot be found, rewound or forked afterwards. */
+    val incognito: Boolean? = null,
+    /** The Stream Chat channel of an earlier text conversation to carry on. */
+    val conversationId: String? = null,
+    /** What to change about the models for this conversation alone. */
+    val modelOverwrites: ModelOverwrites? = null,
+    /** The system prompt. */
+    val instructions: String? = null,
+    /** Said on joining without going through the model. */
+    val greeting: String? = null,
+    val llm: String? = null,
+    val stt: String? = null,
+    val tts: String? = null,
+    /** A provider-specific voice id. */
+    val voice: String? = null,
+    /** Functions of yours the agent may call, answered on this device. */
+    val tools: List<AgentTool> = emptyList(),
+    /** Cost labels, carried onto every request the session makes. */
+    val tags: Map<String, String> = emptyMap(),
+)
+
+/**
+ * What to change about a conversation while continuing it as a new one.
+ *
+ * Null means the fork keeps what the parent had.
+ */
+public data class ForkOptions(
+    /** Carry the history only up to the end of this response, and branch from there. */
+    val responseId: String? = null,
+    /** Another agent config to continue as, by name. */
+    val agent: String? = null,
+    /** Another agent config to continue as, by id. */
+    val configId: String? = null,
+    val title: String? = null,
+    val description: String? = null,
+    val projectId: String? = null,
+    val custom: JsonObject? = null,
+    val modelOverwrites: ModelOverwrites? = null,
+    val instructions: String? = null,
+    /** Keep the fork off the record. */
+    val incognito: Boolean? = null,
+    /**
+     * Start the fork with none of the parent's history. Cannot be combined with [responseId],
+     * which is a point in that history.
+     */
+    val withoutHistory: Boolean = false,
+    /** The call the fork joins, which a voice session needs and a text session refuses. */
+    val callId: String? = null,
+)
+
+/**
+ * Which conversations to list.
+ *
+ * Only ever this caller's own, whatever is asked for: the router narrows a device to its own
+ * sessions, so this cannot be widened to anybody else's.
+ */
+public data class SessionQuery(
+    /** Only those opened against this agent name. */
+    val agent: String? = null,
+    /** Only those created with this agent id, which names their transcript channel. */
+    val agentId: String? = null,
+    /** Only this project's. A search covers every project, so the router refuses it there. */
+    val projectId: String? = null,
+    /** Only those the user took part in this way. Omitted is every way. */
+    val modality: Session.Modality? = null,
+    /** Only the live ones, or only the ended ones. Omitted is both. */
+    val state: Session.State? = null,
+    /** Up to 200. Omitted is 25. */
+    val limit: Int? = null,
+    /** The [Page.nextCursor] of the page before, asked with the same filters. Omitted is the first page. */
+    val cursor: String? = null,
+) {
+    internal fun schema(text: String): QuerySchema = QuerySchema(
+        filter = SessionFilter(
+            agent = equals(agent),
+            agentId = equals(agentId),
+            projectId = equals(projectId),
+            modality = equals(
+                when (modality) {
+                    Session.Modality.Unknown -> throw AgentsException.Configuration("an unknown modality cannot be asked for")
+                    else -> modality?.name?.lowercase()
+                },
+            ),
+            state = equals(state?.name?.lowercase()),
+            text = text.ifEmpty { null }?.let(::TextMatch),
+        ),
+        limit = limit?.toLong(),
+        cursor = cursor?.ifEmpty { null },
+    )
+
+    private fun equals(value: String?): Equals? = value?.ifEmpty { null }?.let(::Equals)
+}

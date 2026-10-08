@@ -17,12 +17,12 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
-// DefaultDialogueModel is the v3 model meant for conversation. The other one, eleven_v3,
-// is for scripted dialogue between several speakers.
-const DefaultDialogueModel = "eleven_v3_conversational"
+// DefaultDialogueModel is v4 tuned for real time, the dialogue model meant for conversation.
+const DefaultDialogueModel = "eleven_v4_turbo"
 
 // dialoguePath is the endpoint that serves the v3 models. It is a different protocol from
 // the one above, not another model on the same socket.
@@ -117,8 +117,12 @@ func NewDialogue(options Options) (*Dialogue, error) {
 		return nil, err
 	}
 	if !Performs(options.Model) {
-		return nil, fmt.Errorf(
-			"elevenlabs: %s is not a dialogue model, open it with New", options.Model)
+		return nil, stack.Wrap(fmt.Errorf(
+			"elevenlabs: %s is not a dialogue model, open it with New", options.Model))
+	}
+	// The dialogue socket takes stability and nothing else, so a speed would be dropped.
+	if options.Speed != 0 {
+		return nil, stack.Wrap(fmt.Errorf("elevenlabs: %s takes no speed", options.Model))
 	}
 
 	return &Dialogue{
@@ -136,7 +140,7 @@ func (d *Dialogue) Start(ctx context.Context) error {
 	d.mu.Lock()
 	if d.started {
 		d.mu.Unlock()
-		return errors.New("elevenlabs: already started")
+		return stack.Wrap(errors.New("elevenlabs: already started"))
 	}
 	d.started = true
 	d.mu.Unlock()
@@ -154,9 +158,9 @@ func (d *Dialogue) Start(ctx context.Context) error {
 // the one with Final set flushes it so the tail is generated at once.
 func (d *Dialogue) Synthesize(request tts.Request) error {
 	if request.Voice != "" && request.Voice != d.options.VoiceID {
-		return fmt.Errorf(
+		return stack.Wrap(fmt.Errorf(
 			"elevenlabs: the connection is bound to voice %s, open a new session for %s",
-			d.options.VoiceID, request.Voice)
+			d.options.VoiceID, request.Voice))
 	}
 
 	synthesis, opened, newTurn, err := d.track(request)
@@ -182,7 +186,7 @@ func (d *Dialogue) Synthesize(request tts.Request) error {
 		}
 		if err := d.send(dialogueClientMessage{Inputs: []dialogueInput{input}}); err != nil {
 			d.forget(synthesis.ID)
-			return fmt.Errorf("elevenlabs: send text: %w", err)
+			return stack.Wrap(fmt.Errorf("elevenlabs: send text: %w", err))
 		}
 		synthesis.AddText(request.Text)
 	}
@@ -193,7 +197,7 @@ func (d *Dialogue) Synthesize(request tts.Request) error {
 	// The server buffers until it has enough words to say something well, so an utterance
 	// that has ended has to ask for the rest of it.
 	if err := d.send(dialogueClientMessage{Flush: true}); err != nil {
-		return fmt.Errorf("elevenlabs: flush: %w", err)
+		return stack.Wrap(fmt.Errorf("elevenlabs: flush: %w", err))
 	}
 	return nil
 }
@@ -223,7 +227,7 @@ func (d *Dialogue) Interrupt() error {
 	// The call is still going, so the voice is opened again rather than left for whoever
 	// next tries to speak through it.
 	if err := d.dial(context.Background()); err != nil {
-		return fmt.Errorf("elevenlabs: reopen after interrupt: %w", err)
+		return stack.Wrap(fmt.Errorf("elevenlabs: reopen after interrupt: %w", err))
 	}
 	return nil
 }
@@ -281,6 +285,9 @@ func (d *Dialogue) Provider() string { return ProviderName }
 // Model implements tts.TTS.
 func (d *Dialogue) Model() string { return d.options.Model }
 
+// Voice is the voice id every line is spoken in.
+func (d *Dialogue) Voice() string { return d.options.VoiceID }
+
 // Streaming reports true: the model generates from partial text.
 func (d *Dialogue) Streaming() bool { return true }
 
@@ -319,9 +326,9 @@ func (d *Dialogue) dial(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, d.url(), header)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("elevenlabs: dial: %w (http %d)", err, response.StatusCode)
+			return stack.Wrap(fmt.Errorf("elevenlabs: dial: %w (http %d)", err, response.StatusCode))
 		}
-		return fmt.Errorf("elevenlabs: dial: %w", err)
+		return stack.Wrap(fmt.Errorf("elevenlabs: dial: %w", err))
 	}
 
 	d.mu.Lock()
@@ -339,7 +346,7 @@ func (d *Dialogue) dial(ctx context.Context) error {
 		d.conn = nil
 		d.mu.Unlock()
 		conn.Close()
-		return fmt.Errorf("elevenlabs: register voice: %w", err)
+		return stack.Wrap(fmt.Errorf("elevenlabs: register voice: %w", err))
 	}
 
 	go d.readLoop(conn)
@@ -372,15 +379,15 @@ func (d *Dialogue) track(request tts.Request) (*tts.Synthesis, bool, bool, error
 	defer d.mu.Unlock()
 
 	if d.shutdown {
-		return nil, false, false, errors.New("elevenlabs: session closed")
+		return nil, false, false, stack.Wrap(errors.New("elevenlabs: session closed"))
 	}
 	if !d.started || d.conn == nil {
-		return nil, false, false, errors.New("elevenlabs: not started")
+		return nil, false, false, stack.Wrap(errors.New("elevenlabs: not started"))
 	}
 	// A partial with no id could not be matched to its continuation, so it is a caller
 	// error rather than something to silently drop.
 	if !request.Final && request.ID == "" {
-		return nil, false, false, errors.New("elevenlabs: a partial request needs an id")
+		return nil, false, false, stack.Wrap(errors.New("elevenlabs: a partial request needs an id"))
 	}
 
 	if request.ID != "" {
@@ -433,7 +440,7 @@ func (d *Dialogue) takeRemaining() []*tts.Synthesis {
 func (d *Dialogue) send(message dialogueClientMessage) error {
 	payload, err := json.Marshal(message)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 
 	d.writeMu.Lock()
@@ -443,9 +450,9 @@ func (d *Dialogue) send(message dialogueClientMessage) error {
 	conn := d.conn
 	d.mu.Unlock()
 	if conn == nil {
-		return errors.New("not connected")
+		return stack.Wrap(errors.New("not connected"))
 	}
-	return conn.WriteMessage(websocket.TextMessage, payload)
+	return stack.Wrap(conn.WriteMessage(websocket.TextMessage, payload))
 }
 
 // readLoop turns server frames into events until this connection ends. It takes the

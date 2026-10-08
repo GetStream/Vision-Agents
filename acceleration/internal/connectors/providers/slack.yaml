@@ -1,0 +1,172 @@
+# Slack's hosted MCP server, over the user-token flow the prototype ran live
+# (internal/mcp/connectors.yaml:2-44 on codex/connector-support at cf62af0d, «[proto]:N»
+# below; its live OAuth and tool call are in docs/connector-handover.md:181 there). The
+# core's fixture testdata/manifests/slack.yaml is the bot-token flow; this is not.
+# Vendor pages, opened October 1, 2026:
+#   [mcp]     https://docs.slack.dev/ai/slack-mcp-server/
+#   [user]    https://docs.slack.dev/reference/methods/oauth.v2.user.access
+#   [rotate]  https://docs.slack.dev/authentication/using-token-rotation
+#   [revoke]  https://docs.slack.dev/reference/methods/auth.revoke
+# and, opened October 6, 2026:
+#   [verify]      https://docs.slack.dev/authentication/verifying-requests-from-slack
+#   [handshake]   https://docs.slack.dev/reference/events/url_verification
+#   [revoked]     https://docs.slack.dev/reference/events/tokens_revoked
+#   [uninstalled] https://docs.slack.dev/reference/events/app_uninstalled
+# Architecture rows cited are «Stress test: 12 awkward providers», row 5, in
+# acceleration/docs/connectors/architecture.md on connectors/planning.
+id: slack
+# A new revision for any change to what this file says; see AGENTS.md. 2 adds
+# endpoints.resource. 3 renames client.policy to client.registration. 4 adds the channel
+# block that reads tokens_revoked and app_uninstalled. 5 captures user_id from $.user_id,
+# where the live token response has it.
+revision: 5
+# [proto]:3-5
+name: Slack
+category: Communication
+description: Search the workspace, read and send messages, and look people up.
+endpoints:
+  # [mcp]; [proto]:10-11
+  authorize: https://slack.com/oauth/v2_user/authorize
+  token: https://slack.com/api/oauth.v2.user.access
+  # [revoke] says GET https://slack.com/api/auth.revoke, and does not say whether it takes a
+  # user token. # unverified
+  revoke: https://slack.com/api/auth.revoke
+  # [mcp]; [proto]:6
+  mcp: https://mcp.slack.com/mcp
+  # The RFC 8707 resource indicator sent on authorize and on the code exchange. The
+  # endpoints above are pinned, so oauth2_code discovers nothing and needs it here. It is
+  # [proto]:9, and the MCP server's own protected resource metadata says the same:
+  # GET https://mcp.slack.com/.well-known/oauth-protected-resource at 2026-10-02T19:01:52Z
+  # answered "resource":"https://mcp.slack.com" (RFC 9728 section 2).
+  resource: https://mcp.slack.com
+# Authorization code: [proto]:7-8 (auth: oauth, oauth_mode: confidential).
+schemes: [oauth2_code]
+client:
+  # Slack MCP needs a registered app with a fixed app id ([mcp]), so the operator owns it.
+  registration: [operator]
+  # [proto]:13. [user] prefers HTTP Basic (client_secret_basic); the post form is what the
+  # prototype ran live.
+  auth_method: client_secret_post
+  # [proto]:14
+  env: SLACK
+scopes:
+  # User-token scopes ([mcp], «OAuth scopes needed on user token»), exactly the prototype's,
+  # [proto]:15-44, so the authorize URL matches the one the prototype built (T9 acceptance).
+  list:
+    - search:read.public
+    - search:read.private
+    - search:read.mpim
+    - search:read.im
+    - search:read.files
+    - search:read.users
+    - files:read
+    - files:write
+    - emoji:read
+    - chat:write
+    - channels:history
+    - groups:history
+    - mpim:history
+    - im:history
+    - channels:write
+    - groups:write
+    - im:write
+    - mpim:write
+    - reactions:write
+    - canvases:read
+    - canvases:write
+    - users:read
+    - users:read.email
+    - channels:read
+    - groups:read
+    - mpim:read
+    - im:read
+    - lists:read
+    - lists:write
+  # Comma-separated: row 5; the prototype joined Slack's scopes with commas
+  # (internal/mcp/oauth.go:265-266 at cf62af0d).
+  separator: ","
+capture:
+  # The live token response, not [user]'s example. A consent through a real Slack app with
+  # token rotation on, on 2026-10-08, answered oauth.v2.user.access with these keys (observed
+  # response keys, logged as key:type with no values): access_token:string app_id:string
+  # enterprise:null expires_in:number is_enterprise_install:bool ok:bool refresh_token:string
+  # scope:string team:object team.id:string team.name:string token_type:string user_id:string.
+  # The user is the top-level user_id, and there is no authed_user, which [user]'s example
+  # shows and revisions 1-4 read, so every consent failed with «token_response has no
+  # $.authed_user.id». The prototype read team.id and authed_user.id
+  # (internal/mcp/oauth.go:106-116,832-837 at cf62af0d), and its handover says the live
+  # connection gave no stable account id (docs/connector-handover.md:190-192 there).
+  - name: team_id
+    from: token_response
+    path: $.team.id
+  - name: user_id
+    from: token_response
+    path: $.user_id
+  # Only an Enterprise Grid org install carries it: row 5 («capture: enterprise_id»). [user]'s
+  # example does not show it. # unverified. The live response above has enterprise: null,
+  # which capture reads as absent.
+  - name: enterprise_id
+    from: token_response
+    path: $.enterprise.id
+    optional: true
+# Team and user: row 5 («identity: $.team.id + $.authed_user.id»), the user read from
+# $.user_id as above.
+identity: [team_id, user_id]
+refresh:
+  # User tokens rotate too and expire in 43,200 seconds: [rotate]. Its grace is «brief», with
+  # no number, so none is set. [rotate] refreshes at oauth.v2.access; [user] takes a
+  # refresh_token grant at the token endpoint above, which is where the prototype refreshed
+  # ([proto]:12). A live refresh was never run there (docs/connector-design.md:571).
+  rotating: true
+  access_ttl: 12h
+rate_limit:
+  # Per workspace: row 5, which is the tenant here.
+  per: tenant
+sources:
+  - kind: mcp
+    endpoint: mcp
+# Slack tells the app about its grants as Events API events to the app's Request URL
+# ([revoked], [uninstalled]), which for the operator's app is
+# POST /v1/agents/connectors/events/slack. Nobody writes to this connector, so the block has
+# signals and no messages.
+channel:
+  verifier:
+    # [verify]: HMAC-SHA256 of v0:{timestamp}:{body} with the app's signing secret, hex,
+    # after v0= in X-Slack-Signature; the timestamp in X-Slack-Request-Timestamp, refused
+    # when it is «more than five minutes from local time». Same values as the core's
+    # testdata/manifests/slack_bot.yaml.
+    kind: hmac_header
+    # The operator's app, as client.registration is: its signing secret is
+    # SLACK_MCP_SIGNING_SECRET, beside the client id and secret (api.ConnectorEventSecrets).
+    secret: operator
+    header: X-Slack-Signature
+    algorithm: sha256
+    encoding: hex
+    prefix: v0=
+    signed: "v0:{timestamp}:{body}"
+    timestamp_header: X-Slack-Request-Timestamp
+    max_age: 5m
+  # [verify] signs the raw JSON body.
+  format: json
+  # [handshake]: {"type": "url_verification", "challenge": "..."}, answered with the
+  # challenge as text/plain.
+  challenge: $.challenge
+  signals:
+    # [revoked]: event.tokens.oauth lists the user ids whose user tokens were revoked («an
+    # array of user IDs, not the actual token strings»), and team_id is on the envelope. This
+    # connector holds user tokens only, so event.tokens.bot is not read.
+    - kind: revoked
+      match:
+        $.event.type: tokens_revoked
+      each: $.event.tokens.oauth[*]
+      identity:
+        team_id: $.team_id
+        user_id: $.event.tokens.oauth[*]
+    # [uninstalled]: the app is gone from the workspace, so every user's grant in it is. It
+    # names the team on the envelope and no user. Whether Slack also sends tokens_revoked
+    # for each user on an uninstall is not on these pages. # unverified
+    - kind: uninstalled
+      match:
+        $.event.type: app_uninstalled
+      identity:
+        team_id: $.team_id

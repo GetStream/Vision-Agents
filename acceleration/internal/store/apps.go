@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ErrNoAPIKey says no live key has that id. It is one error for every reason a key might
@@ -28,7 +30,9 @@ func (s *Store) CreateOrganization(ctx context.Context, org *Organization) error
 	return nil
 }
 
-// CreateApp stores a new app and fills in its id and timestamp.
+// CreateApp stores a new app and fills in its timestamp. An id the caller already chose
+// is kept, which is what moving a deployment needs: every other table's customer_id holds
+// the app id, so the rows only mean the same thing somewhere else if the app does.
 func (s *Store) CreateApp(ctx context.Context, app *App) error {
 	if app.OrganizationID == "" {
 		return errors.New("store: an app needs an organization")
@@ -37,7 +41,9 @@ func (s *Store) CreateApp(ctx context.Context, app *App) error {
 		return errors.New("store: an app needs a name")
 	}
 
-	app.ID = newID()
+	if app.ID == "" {
+		app.ID = newID()
+	}
 	app.CreatedAt = time.Now().UTC()
 
 	if _, err := s.db.NewInsert().Model(app).Exec(ctx); err != nil {
@@ -73,6 +79,10 @@ type APIKeyOwner struct {
 	Sealed         []byte      `bun:"secret_sealed"`
 	KEKVersion     int         `bun:"kek_version"`
 	Settings       AppSettings `bun:"settings,type:jsonb"`
+	// ExpiresAt is when the key stops working, nil for one that never does. The query
+	// already leaves a lapsed key out; it is carried so that a caller holding this row
+	// for a while can tell when it stopped being true.
+	ExpiresAt *time.Time `bun:"expires_at"`
 }
 
 // AppSettingsFor returns what an app has turned on or off.
@@ -82,7 +92,7 @@ type APIKeyOwner struct {
 // having written an app row for it must not have every end user turned away because of it.
 func (s *Store) AppSettingsFor(ctx context.Context, appID string) (AppSettings, error) {
 	if appID == "" {
-		return AppSettings{}, errors.New("store: an app id is required")
+		return AppSettings{}, stack.Wrap(errors.New("store: an app id is required"))
 	}
 
 	var app App
@@ -95,9 +105,25 @@ func (s *Store) AppSettingsFor(ctx context.Context, appID string) (AppSettings, 
 		return AppSettings{}, nil
 	}
 	if err != nil {
-		return AppSettings{}, fmt.Errorf("store: app settings: %w", err)
+		return AppSettings{}, stack.Wrap(fmt.Errorf("store: app settings: %w", err))
 	}
 	return app.Settings, nil
+}
+
+// ErrNoApp says no app has that id.
+var ErrNoApp = errors.New("store: no such app")
+
+// AppByID returns one app, or ErrNoApp.
+func (s *Store) AppByID(ctx context.Context, id string) (App, error) {
+	var app App
+	err := s.db.NewSelect().Model(&app).Where("id = ?", id).Limit(1).Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return App{}, ErrNoApp
+	}
+	if err != nil {
+		return App{}, fmt.Errorf("store: app: %w", err)
+	}
+	return app, nil
 }
 
 // LiveAPIKey returns the owner of the key with that id, provided it has not been revoked
@@ -106,7 +132,7 @@ func (s *Store) LiveAPIKey(ctx context.Context, id string) (APIKeyOwner, error) 
 	var owner APIKeyOwner
 
 	err := s.db.NewSelect().Model((*APIKey)(nil)).
-		ColumnExpr("k.app_id, k.secret_sealed, k.kek_version").
+		ColumnExpr("k.app_id, k.secret_sealed, k.kek_version, k.expires_at").
 		ColumnExpr("ap.organization_id, ap.settings").
 		Join("JOIN apps AS ap ON ap.id = k.app_id").
 		Where("k.id = ?", id).

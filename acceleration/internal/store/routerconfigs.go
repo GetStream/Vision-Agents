@@ -6,15 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // CreateRouterConfig stores a new config and fills in its id and timestamps.
 func (s *Store) CreateRouterConfig(ctx context.Context, config *RouterConfig) error {
 	if config.CustomerID == "" {
-		return errors.New("store: customer id is required")
+		return stack.Wrap(errors.New("store: customer id is required"))
 	}
 	if config.Name == "" {
-		return errors.New("store: a router config needs a name")
+		return stack.Wrap(errors.New("store: a router config needs a name"))
 	}
 
 	config.ID = newID()
@@ -22,10 +24,9 @@ func (s *Store) CreateRouterConfig(ctx context.Context, config *RouterConfig) er
 	config.CreatedAt = now
 	config.UpdatedAt = now
 	config.DeletedAt = nil
-	normalizeRouterConfig(config)
 
 	if _, err := s.db.NewInsert().Model(config).Exec(ctx); err != nil {
-		return fmt.Errorf("store: create router config: %w", err)
+		return stack.Wrap(fmt.Errorf("store: create router config: %w", err))
 	}
 	return nil
 }
@@ -34,27 +35,26 @@ func (s *Store) CreateRouterConfig(ctx context.Context, config *RouterConfig) er
 // update is what the config now is rather than what changed about it.
 func (s *Store) UpdateRouterConfig(ctx context.Context, config *RouterConfig) error {
 	if config.CustomerID == "" || config.ID == "" {
-		return errors.New("store: a customer and a config id are required")
+		return stack.Wrap(errors.New("store: a customer and a config id are required"))
 	}
 	if config.Name == "" {
-		return errors.New("store: a router config needs a name")
+		return stack.Wrap(errors.New("store: a router config needs a name"))
 	}
 
 	config.UpdatedAt = time.Now().UTC()
-	normalizeRouterConfig(config)
 
 	result, err := s.db.NewUpdate().Model(config).
-		Column("name", "stt", "tts", "llm", "sts", "search", "tags", "updated_at").
+		Column("name", "stt", "tts", "llm", "sts", "search", "updated_at").
 		Where("id = ?", config.ID).
 		Where("customer_id = ?", config.CustomerID).
 		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: update router config: %w", err)
+		return stack.Wrap(fmt.Errorf("store: update router config: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: update router config: %w", err)
+		return stack.Wrap(fmt.Errorf("store: update router config: %w", err))
 	}
 	if affected == 0 {
 		return unknownRouterConfig(config.ID)
@@ -66,7 +66,7 @@ func (s *Store) UpdateRouterConfig(ctx context.Context, config *RouterConfig) er
 // under it still name it.
 func (s *Store) DeleteRouterConfig(ctx context.Context, customerID, id string) error {
 	if customerID == "" || id == "" {
-		return errors.New("store: a customer and a config id are required")
+		return stack.Wrap(errors.New("store: a customer and a config id are required"))
 	}
 
 	result, err := s.db.NewUpdate().Model((*RouterConfig)(nil)).
@@ -76,11 +76,11 @@ func (s *Store) DeleteRouterConfig(ctx context.Context, customerID, id string) e
 		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: delete router config: %w", err)
+		return stack.Wrap(fmt.Errorf("store: delete router config: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: delete router config: %w", err)
+		return stack.Wrap(fmt.Errorf("store: delete router config: %w", err))
 	}
 	if affected == 0 {
 		return unknownRouterConfig(id)
@@ -91,7 +91,7 @@ func (s *Store) DeleteRouterConfig(ctx context.Context, customerID, id string) e
 // RouterConfig returns one config a customer holds.
 func (s *Store) RouterConfig(ctx context.Context, customerID, id string) (RouterConfig, error) {
 	if customerID == "" || id == "" {
-		return RouterConfig{}, errors.New("store: a customer and a config id are required")
+		return RouterConfig{}, stack.Wrap(errors.New("store: a customer and a config id are required"))
 	}
 
 	var config RouterConfig
@@ -105,7 +105,7 @@ func (s *Store) RouterConfig(ctx context.Context, customerID, id string) (Router
 		return RouterConfig{}, unknownRouterConfig(id)
 	}
 	if err != nil {
-		return RouterConfig{}, fmt.Errorf("store: router config: %w", err)
+		return RouterConfig{}, stack.Wrap(fmt.Errorf("store: router config: %w", err))
 	}
 	return config, nil
 }
@@ -114,7 +114,7 @@ func (s *Store) RouterConfig(ctx context.Context, customerID, id string) (Router
 // caller that names a config rather than an id reaches one.
 func (s *Store) RouterConfigByName(ctx context.Context, customerID, name string) (RouterConfig, bool, error) {
 	if customerID == "" || name == "" {
-		return RouterConfig{}, false, errors.New("store: a customer and a config name are required")
+		return RouterConfig{}, false, stack.Wrap(errors.New("store: a customer and a config name are required"))
 	}
 
 	var config RouterConfig
@@ -128,7 +128,7 @@ func (s *Store) RouterConfigByName(ctx context.Context, customerID, name string)
 		return RouterConfig{}, false, nil
 	}
 	if err != nil {
-		return RouterConfig{}, false, fmt.Errorf("store: router config by name: %w", err)
+		return RouterConfig{}, false, stack.Wrap(fmt.Errorf("store: router config by name: %w", err))
 	}
 	return config, true, nil
 }
@@ -136,7 +136,7 @@ func (s *Store) RouterConfigByName(ctx context.Context, customerID, name string)
 // CustomerRouterConfigs returns the configs a customer holds, newest first.
 func (s *Store) CustomerRouterConfigs(ctx context.Context, customerID string) ([]RouterConfig, error) {
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
 	var configs []RouterConfig
@@ -146,19 +146,11 @@ func (s *Store) CustomerRouterConfigs(ctx context.Context, customerID string) ([
 		Order("created_at DESC").
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("store: customer router configs: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer router configs: %w", err))
 	}
 	return configs, nil
 }
 
-// normalizeRouterConfig fills in the map a nil would write as null, which the column is
-// not.
-func normalizeRouterConfig(config *RouterConfig) {
-	if config.Tags == nil {
-		config.Tags = map[string]string{}
-	}
-}
-
 func unknownRouterConfig(id string) error {
-	return fmt.Errorf("store: there is no router config %s", id)
+	return stack.Wrap(fmt.Errorf("store: there is no router config %s", id))
 }

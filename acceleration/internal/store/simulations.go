@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // defaultMaxTurns is how long a conversation a simulation that did not say runs for. A
@@ -18,7 +20,7 @@ const defaultMaxTurns = 12
 // maxTurns and maxVariations bound what a customer may ask for, since every turn is a
 // model call and every variation is a whole conversation.
 const (
-	maxTurns      = 30
+	maxTurns      = 200
 	maxVariations = 10
 )
 
@@ -39,7 +41,7 @@ func (s *Store) CreateSimulation(ctx context.Context, simulation *Simulation) er
 	normalizeSimulation(simulation)
 
 	if _, err := s.db.NewInsert().Model(simulation).Exec(ctx); err != nil {
-		return fmt.Errorf("store: create simulation: %w", err)
+		return stack.Wrap(fmt.Errorf("store: create simulation: %w", err))
 	}
 	return nil
 }
@@ -48,7 +50,7 @@ func (s *Store) CreateSimulation(ctx context.Context, simulation *Simulation) er
 // alone: they carry their own copy of what they tested.
 func (s *Store) UpdateSimulation(ctx context.Context, simulation *Simulation) error {
 	if simulation.ID == "" {
-		return errors.New("store: a simulation id is required")
+		return stack.Wrap(errors.New("store: a simulation id is required"))
 	}
 	if err := checkSimulation(simulation); err != nil {
 		return err
@@ -66,11 +68,11 @@ func (s *Store) UpdateSimulation(ctx context.Context, simulation *Simulation) er
 		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: update simulation: %w", err)
+		return stack.Wrap(fmt.Errorf("store: update simulation: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: update simulation: %w", err)
+		return stack.Wrap(fmt.Errorf("store: update simulation: %w", err))
 	}
 	if affected == 0 {
 		return unknownSimulation(simulation.ID)
@@ -82,7 +84,7 @@ func (s *Store) UpdateSimulation(ctx context.Context, simulation *Simulation) er
 // it are still worth reading.
 func (s *Store) DeleteSimulation(ctx context.Context, customerID, id string) error {
 	if customerID == "" || id == "" {
-		return errors.New("store: a customer and a simulation id are required")
+		return stack.Wrap(errors.New("store: a customer and a simulation id are required"))
 	}
 
 	result, err := s.db.NewUpdate().Model((*Simulation)(nil)).
@@ -92,11 +94,11 @@ func (s *Store) DeleteSimulation(ctx context.Context, customerID, id string) err
 		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store: delete simulation: %w", err)
+		return stack.Wrap(fmt.Errorf("store: delete simulation: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("store: delete simulation: %w", err)
+		return stack.Wrap(fmt.Errorf("store: delete simulation: %w", err))
 	}
 	if affected == 0 {
 		return unknownSimulation(id)
@@ -107,7 +109,7 @@ func (s *Store) DeleteSimulation(ctx context.Context, customerID, id string) err
 // Simulation returns one simulation a customer holds.
 func (s *Store) Simulation(ctx context.Context, customerID, id string) (Simulation, error) {
 	if customerID == "" || id == "" {
-		return Simulation{}, errors.New("store: a customer and a simulation id are required")
+		return Simulation{}, stack.Wrap(errors.New("store: a customer and a simulation id are required"))
 	}
 
 	var simulation Simulation
@@ -121,7 +123,7 @@ func (s *Store) Simulation(ctx context.Context, customerID, id string) (Simulati
 		return Simulation{}, unknownSimulation(id)
 	}
 	if err != nil {
-		return Simulation{}, fmt.Errorf("store: simulation: %w", err)
+		return Simulation{}, stack.Wrap(fmt.Errorf("store: simulation: %w", err))
 	}
 	return simulation, nil
 }
@@ -129,7 +131,7 @@ func (s *Store) Simulation(ctx context.Context, customerID, id string) (Simulati
 // CustomerSimulations returns a customer's simulations, newest first.
 func (s *Store) CustomerSimulations(ctx context.Context, customerID string) ([]Simulation, error) {
 	if customerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
 	var simulations []Simulation
@@ -139,7 +141,7 @@ func (s *Store) CustomerSimulations(ctx context.Context, customerID string) ([]S
 		Order("created_at DESC").
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("store: customer simulations: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: customer simulations: %w", err))
 	}
 	return simulations, nil
 }
@@ -148,10 +150,10 @@ func (s *Store) CustomerSimulations(ctx context.Context, customerID string) ([]S
 // only just begun already shows how many ways it is going to ask.
 func (s *Store) StartSimulationRun(ctx context.Context, run *SimulationRun, cases []SimulationCase) error {
 	if run.CustomerID == "" || run.SimulationID == "" {
-		return errors.New("store: a customer and a simulation id are required")
+		return stack.Wrap(errors.New("store: a customer and a simulation id are required"))
 	}
 	if len(cases) == 0 {
-		return errors.New("store: a run needs at least one conversation to have")
+		return stack.Wrap(errors.New("store: a run needs at least one conversation to have"))
 	}
 
 	run.ID = newID()
@@ -180,7 +182,7 @@ func (s *Store) StartSimulationRun(ctx context.Context, run *SimulationRun, case
 		return err
 	})
 	if err != nil {
-		return fmt.Errorf("store: start simulation run: %w", err)
+		return stack.Wrap(fmt.Errorf("store: start simulation run: %w", err))
 	}
 	return nil
 }
@@ -248,7 +250,7 @@ func (s *Store) FinishSimulationRun(ctx context.Context, run SimulationRun) erro
 // SimulationRun returns one run a customer holds.
 func (s *Store) SimulationRun(ctx context.Context, customerID, id string) (SimulationRun, error) {
 	if customerID == "" || id == "" {
-		return SimulationRun{}, errors.New("store: a customer and a run id are required")
+		return SimulationRun{}, stack.Wrap(errors.New("store: a customer and a run id are required"))
 	}
 
 	var run SimulationRun
@@ -261,7 +263,7 @@ func (s *Store) SimulationRun(ctx context.Context, customerID, id string) (Simul
 		return SimulationRun{}, unknownSimulationRun(id)
 	}
 	if err != nil {
-		return SimulationRun{}, fmt.Errorf("store: simulation run: %w", err)
+		return SimulationRun{}, stack.Wrap(fmt.Errorf("store: simulation run: %w", err))
 	}
 	return run, nil
 }
@@ -270,7 +272,7 @@ func (s *Store) SimulationRun(ctx context.Context, customerID, id string) (Simul
 // and what every simulation has come to lately, which is the same question asked twice.
 func (s *Store) SimulationRuns(ctx context.Context, filter SimulationRunFilter) ([]SimulationRun, error) {
 	if filter.CustomerID == "" {
-		return nil, errors.New("store: customer id is required")
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 	limit := filter.Limit
 	if limit <= 0 {
@@ -288,7 +290,7 @@ func (s *Store) SimulationRuns(ctx context.Context, filter SimulationRunFilter) 
 	}
 
 	if err := query.Order("started_at DESC").Limit(limit).Scan(ctx); err != nil {
-		return nil, fmt.Errorf("store: simulation runs: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: simulation runs: %w", err))
 	}
 	return runs, nil
 }
@@ -296,7 +298,7 @@ func (s *Store) SimulationRuns(ctx context.Context, filter SimulationRunFilter) 
 // SimulationCases returns a run's conversations, in the order they were asked.
 func (s *Store) SimulationCases(ctx context.Context, runID string) ([]SimulationCase, error) {
 	if runID == "" {
-		return nil, errors.New("store: a run id is required")
+		return nil, stack.Wrap(errors.New("store: a run id is required"))
 	}
 
 	var cases []SimulationCase
@@ -305,7 +307,7 @@ func (s *Store) SimulationCases(ctx context.Context, runID string) ([]Simulation
 		Order("variation ASC").
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("store: simulation cases: %w", err)
+		return nil, stack.Wrap(fmt.Errorf("store: simulation cases: %w", err))
 	}
 	return cases, nil
 }
@@ -348,21 +350,21 @@ func (s *Store) AbandonSimulationRuns(ctx context.Context, before time.Time) err
 func checkSimulation(simulation *Simulation) error {
 	switch {
 	case simulation.CustomerID == "":
-		return errors.New("store: customer id is required")
+		return stack.Wrap(errors.New("store: customer id is required"))
 	case simulation.Name == "":
-		return errors.New("store: a simulation needs a name")
+		return stack.Wrap(errors.New("store: a simulation needs a name"))
 	case simulation.ConfigID == "":
-		return errors.New("store: a simulation needs an agent to run against")
+		return stack.Wrap(errors.New("store: a simulation needs an agent to run against"))
 	case simulation.Scenario == "":
-		return errors.New("store: a simulation needs something to ask")
+		return stack.Wrap(errors.New("store: a simulation needs something to ask"))
 	case simulation.Assertion == "":
-		return errors.New("store: a simulation needs something to check")
+		return stack.Wrap(errors.New("store: a simulation needs something to check"))
 	case simulation.Mode != SimulationText && simulation.Mode != SimulationAudio:
-		return fmt.Errorf("store: a simulation is %s or %s", SimulationText, SimulationAudio)
+		return stack.Wrap(fmt.Errorf("store: a simulation is %s or %s", SimulationText, SimulationAudio))
 	case simulation.Variations > maxVariations:
-		return fmt.Errorf("store: a simulation may try at most %d ways of asking", maxVariations)
+		return stack.Wrap(fmt.Errorf("store: a simulation may try at most %d ways of asking", maxVariations))
 	case simulation.MaxTurns > maxTurns:
-		return fmt.Errorf("store: a conversation may run at most %d turns", maxTurns)
+		return stack.Wrap(fmt.Errorf("store: a conversation may run at most %d turns", maxTurns))
 	}
 	return nil
 }
@@ -382,9 +384,9 @@ func normalizeSimulation(simulation *Simulation) {
 }
 
 func unknownSimulation(id string) error {
-	return fmt.Errorf("store: there is no simulation %s", id)
+	return stack.Wrap(fmt.Errorf("store: there is no simulation %s", id))
 }
 
 func unknownSimulationRun(id string) error {
-	return fmt.Errorf("store: there is no simulation run %s", id)
+	return stack.Wrap(fmt.Errorf("store: there is no simulation run %s", id))
 }

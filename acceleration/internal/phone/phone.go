@@ -25,6 +25,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // maxInitialDigits is how many keys can be pressed when a call is answered. Twilio takes
@@ -206,12 +208,27 @@ type Bridge struct {
 // Validate reports whether the bridge is usable.
 func (b Bridge) Validate() error {
 	if b.URI == "" {
-		return errors.New("phone: a bridge uri is required")
+		return stack.Wrap(errors.New("phone: a bridge uri is required"))
 	}
 	if !strings.HasPrefix(b.URI, "sip:") && !strings.HasPrefix(b.URI, "sips:") {
-		return fmt.Errorf("phone: %q is not a sip uri", b.URI)
+		return stack.Wrap(fmt.Errorf("phone: %q is not a sip uri", b.URI))
 	}
 	return nil
+}
+
+// WithNumber is the bridge with the number as the user part of its URI. Stream finds the
+// trunk and its routing rule by the number in the To user, so a URI without it reaches
+// nothing.
+func (b Bridge) WithNumber(e164 string) (Bridge, error) {
+	scheme, rest, ok := strings.Cut(b.URI, ":")
+	if !ok || (scheme != "sip" && scheme != "sips") || rest == "" {
+		return Bridge{}, stack.Wrap(fmt.Errorf("phone: %q is not a sip uri", b.URI))
+	}
+	if _, host, hasUser := strings.Cut(rest, "@"); hasUser {
+		rest = host
+	}
+	b.URI = scheme + ":" + e164 + "@" + rest
+	return b, nil
 }
 
 // Inbound points a number at the bridge, so calling it reaches an agent.
@@ -258,6 +275,9 @@ type Outbound struct {
 	// one from when the person answers. It is set only for those vendors, and what it
 	// serves is that vendor's own Answer.
 	AnswerURL string
+	// Trunk is the customer's own SIP trunk the call is dialled through. It is set only
+	// for numbers with vendor sip_trunk; every other vendor dials through its own network.
+	Trunk *SIPTrunk
 }
 
 // Features are the terms this call is placed on, which is what a vendor has to be able to
@@ -290,21 +310,21 @@ func (o Outbound) Unsupported(provider Provider) []CallFeature {
 // Validate reports whether the call can be placed as described.
 func (o Outbound) Validate() error {
 	if o.From == "" || o.To == "" {
-		return errors.New("phone: a call needs a from and a to")
+		return stack.Wrap(errors.New("phone: a call needs a from and a to"))
 	}
 	if err := o.Bridge.Validate(); err != nil {
 		return err
 	}
 	if o.RingTimeout < 0 {
-		return errors.New("phone: a call cannot ring for less than no time")
+		return stack.Wrap(errors.New("phone: a call cannot ring for less than no time"))
 	}
 	if o.InitialDigits != "" {
 		if err := ValidateDigits(o.InitialDigits); err != nil {
 			return err
 		}
 		if len(o.InitialDigits) > maxInitialDigits {
-			return fmt.Errorf("phone: %d digits is more than the %d every vendor takes on answer",
-				len(o.InitialDigits), maxInitialDigits)
+			return stack.Wrap(fmt.Errorf("phone: %d digits is more than the %d every vendor takes on answer",
+				len(o.InitialDigits), maxInitialDigits))
 		}
 	}
 	return nil
@@ -416,7 +436,7 @@ func (n *notImplemented) Vendor() string { return n.vendor }
 func (n *notImplemented) Client() *http.Client { return n.client }
 
 func (n *notImplemented) err() error {
-	return fmt.Errorf("%w: %s", ErrNotImplemented, n.vendor)
+	return stack.Wrap(fmt.Errorf("%w: %s", ErrNotImplemented, n.vendor))
 }
 
 // ValidateDigits reports whether a string can be pressed on a keypad.
@@ -428,14 +448,14 @@ func (n *notImplemented) err() error {
 // silent no-op on the call.
 func ValidateDigits(digits string) error {
 	if digits == "" {
-		return errors.New("phone: pressing needs digits to press")
+		return stack.Wrap(errors.New("phone: pressing needs digits to press"))
 	}
 	for _, key := range digits {
 		switch {
 		case key >= '0' && key <= '9', key >= 'A' && key <= 'D',
 			key == '*', key == '#', key == 'w', key == 'W':
 		default:
-			return fmt.Errorf("phone: %q is not something a keypad can press", string(key))
+			return stack.Wrap(fmt.Errorf("phone: %q is not something a keypad can press", string(key)))
 		}
 	}
 	return nil

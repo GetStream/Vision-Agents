@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
@@ -123,8 +124,8 @@ func (r *Runner) Start(ctx context.Context, customerID, id string) (store.Simula
 		return store.SimulationRun{}, err
 	}
 	if simulation.Mode == store.SimulationAudio && (r.tts == nil || r.stt == nil) {
-		return store.SimulationRun{}, errors.New(
-			"simulation: this deployment cannot give the caller a voice or ears, so it cannot run an audio simulation")
+		return store.SimulationRun{}, stack.Wrap(errors.New(
+			"simulation: this deployment cannot give the caller a voice or ears, so it cannot run an audio simulation"))
 	}
 	// The config is read once, here, rather than per conversation: a run is one agent
 	// asked the same thing several ways, and editing it halfway through would mean the
@@ -137,12 +138,12 @@ func (r *Runner) Start(ctx context.Context, customerID, id string) (store.Simula
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
-		return store.SimulationRun{}, errors.New("simulation: the runner is shut down")
+		return store.SimulationRun{}, stack.Wrap(errors.New("simulation: the runner is shut down"))
 	}
 	if len(r.running) >= runsAtOnce {
 		r.mu.Unlock()
-		return store.SimulationRun{}, fmt.Errorf(
-			"simulation: %d runs are already going, so this one would have to wait", runsAtOnce)
+		return store.SimulationRun{}, stack.Wrap(fmt.Errorf(
+			"simulation: %d runs are already going, so this one would have to wait", runsAtOnce))
 	}
 	r.mu.Unlock()
 
@@ -168,7 +169,7 @@ func (r *Runner) Start(ctx context.Context, customerID, id string) (store.Simula
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
-		return store.SimulationRun{}, errors.New("simulation: the runner is shut down")
+		return store.SimulationRun{}, stack.Wrap(errors.New("simulation: the runner is shut down"))
 	}
 	// The run outlives the request that started it, so it takes the background rather than
 	// a context that is cancelled the moment the caller is answered.
@@ -349,7 +350,7 @@ func (r *Runner) play(
 		AgentID:    owner.AgentID,
 		Tags:       owner.Tags,
 		Target:     simulation.JudgeTarget,
-	}, "judge-"+kase.ID, simulation.Assertion, so)
+	}, "judge-"+kase.ID, simulation.Assertion, over.Session().Tools(), so)
 	if err != nil {
 		return errored(kase, err)
 	}

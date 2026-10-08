@@ -29,6 +29,9 @@ type router struct {
 	configs []acceleration.AgentConfig
 	// asked counts how many times the configs were listed, which a session must not need.
 	asked int
+	// conversation is the conversation a created session reports it is kept in. Empty is a
+	// session nothing is kept for.
+	conversation string
 
 	// serve is what the socket does once a client is on it.
 	serve func(t *testing.T, connection *websocket.Conn)
@@ -49,15 +52,20 @@ func newRouter(t *testing.T, serve func(*testing.T, *websocket.Conn)) *router {
 
 		backend.mu.Lock()
 		backend.requests = append(backend.requests, request)
+		conversation := backend.conversation
 		backend.mu.Unlock()
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(acceleration.Session{
+		created := acceleration.Session{
 			Id: "session-1", AgentId: "agent-1", CallId: "call-1",
 			CallType: "default", UserId: "jean", State: "running",
 			CreatedAt: time.Now(),
-		})
+		}
+		if conversation != "" {
+			created.ConversationId = &conversation
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(created)
 	})
 
 	mux.HandleFunc("GET /v1/agents/configs", func(w http.ResponseWriter, _ *http.Request) {
@@ -209,7 +217,7 @@ func TestAConversationCarriesTheLabelsAPersonFindsItBy(t *testing.T) {
 	if _, err := pipeline.Join(t.Context(), Call{
 		Title:           "Is Stream better?",
 		Description:     "The comparison question, again",
-		Project:         "docs",
+		ProjectID:       "docs",
 		Custom:          map[string]any{"ticket": "4721"},
 		ModelOverwrites: &acceleration.ModelOverwrites{Llm: pointerTo("openai/gpt-5")},
 	}); err != nil {
@@ -221,8 +229,8 @@ func TestAConversationCarriesTheLabelsAPersonFindsItBy(t *testing.T) {
 	if request.Title == nil || *request.Title != "Is Stream better?" {
 		t.Errorf("the title went over as %v", request.Title)
 	}
-	if request.Project == nil || *request.Project != "docs" {
-		t.Errorf("the project went over as %v", request.Project)
+	if request.ProjectId == nil || *request.ProjectId != "docs" {
+		t.Errorf("the project went over as %v", request.ProjectId)
 	}
 	if request.Custom == nil || (*request.Custom)["ticket"] != "4721" {
 		t.Errorf("the labels went over as %v", request.Custom)
@@ -232,15 +240,11 @@ func TestAConversationCarriesTheLabelsAPersonFindsItBy(t *testing.T) {
 	}
 }
 
-func TestAnIncognitoConversationNeverAsksForATranscript(t *testing.T) {
+func TestAnIncognitoConversationAsksToKeepNothing(t *testing.T) {
 	backend := newRouter(t, hold)
 	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
 
-	// Asking for both is a contradiction, and the conversation the caller wanted is the
-	// incognito one: an off-the-record conversation writes nothing down by definition.
-	if _, err := pipeline.Join(t.Context(), Call{
-		Incognito: true, PersistConversation: true,
-	}); err != nil {
+	if _, err := pipeline.Join(t.Context(), Call{Incognito: true}); err != nil {
 		t.Fatal(err)
 	}
 	defer pipeline.Leave(context.Background())
@@ -248,9 +252,6 @@ func TestAnIncognitoConversationNeverAsksForATranscript(t *testing.T) {
 	request := backend.created(t)
 	if request.Incognito == nil || !*request.Incognito {
 		t.Error("incognito was not asked for")
-	}
-	if request.PersistConversation != nil {
-		t.Errorf("an incognito conversation asked for a transcript: %v", *request.PersistConversation)
 	}
 }
 
@@ -437,11 +438,11 @@ func TestSayingSomethingSendsItDownTheSocket(t *testing.T) {
 	if err := pipeline.Say("we are closing in five minutes", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := pipeline.Respond("answer them", true); err != nil {
+	if err := pipeline.Interrupt(); err != nil {
 		t.Fatal(err)
 	}
 
-	want := []string{"say", "interrupt", "respond"}
+	want := []string{"say", "interrupt"}
 	for _, kind := range want {
 		select {
 		case frame := <-sent:
@@ -511,3 +512,20 @@ func next(t *testing.T, events <-chan Event) Event {
 
 // pointerTo is an optional field a test wants set, for the generated types that take one.
 func pointerTo[T any](value T) *T { return &value }
+
+func TestASettledTaskCarriesTheFilesItsCodeMade(t *testing.T) {
+	event := eventOf(Frame{"type": "task_settled", "text": "A teapot.", "files": []any{
+		map[string]any{"name": "teapot.png", "mime_type": "image/png", "url": "https://cdn.example/teapot.png", "size": float64(3)},
+	}})
+
+	want := []Attachment{{Name: "teapot.png", MIMEType: "image/png", URL: "https://cdn.example/teapot.png", Size: 3}}
+	if len(event.Files) != 1 || event.Files[0] != want[0] {
+		t.Errorf("the files read as %+v", event.Files)
+	}
+}
+
+func TestAnEventWithoutFilesHasNone(t *testing.T) {
+	if files := eventOf(Frame{"type": "task_settled", "files": []any{}}).Files; files != nil {
+		t.Errorf("an empty list read as %+v", files)
+	}
+}

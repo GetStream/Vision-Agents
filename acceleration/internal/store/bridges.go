@@ -5,28 +5,30 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ParkBridge saves what a vendor should be told when the person it is calling answers.
 func (s *Store) ParkBridge(ctx context.Context, bridge *CallBridge) error {
 	if bridge.Token == "" {
-		return errors.New("store: a bridge needs a token")
+		return stack.Wrap(errors.New("store: a bridge needs a token"))
 	}
 	if bridge.CustomerID == "" || bridge.Vendor == "" {
-		return errors.New("store: a bridge needs a customer and a vendor")
+		return stack.Wrap(errors.New("store: a bridge needs a customer and a vendor"))
 	}
 	if bridge.TrunkURI == "" {
-		return errors.New("store: a bridge needs somewhere to bridge to")
+		return stack.Wrap(errors.New("store: a bridge needs somewhere to bridge to"))
 	}
 	if bridge.ExpiresAt.IsZero() {
-		return errors.New("store: a bridge needs to expire")
+		return stack.Wrap(errors.New("store: a bridge needs to expire"))
 	}
 	if bridge.CreatedAt.IsZero() {
 		bridge.CreatedAt = time.Now().UTC()
 	}
 
 	if _, err := s.db.NewInsert().Model(bridge).Exec(ctx); err != nil {
-		return fmt.Errorf("store: park bridge: %w", err)
+		return stack.Wrap(fmt.Errorf("store: park bridge: %w", err))
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package harness
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -53,6 +54,50 @@ func (s *ToolsSuite) TestTheBuiltInSetIsUsable() {
 
 	_, known = tools.Lookup("press")
 	s.True(known)
+}
+
+func (s *ToolsSuite) TestOnlyAModelWithToolsIsToldHowToUseThem() {
+	s.Empty(Tools{}.Prompt(), "a harness without tools adds nothing to the system prompt")
+	s.Equal(usePolicy, testTools().Prompt())
+}
+
+func (s *ToolsSuite) TestTheUsePolicyKeepsTheReadBackThatPrecedesAnAction() {
+	// Acting at once must not turn into acting in silence: what the operator has the agent say
+	// before a tool, and in its absence what the agent is doing, comes first, in the same turn.
+	s.Contains(usePolicy, "Before calling a tool, say one short sentence")
+	s.Contains(usePolicy, "what your instructions ask you to say before acting")
+	s.Contains(usePolicy, "reading the caller's details back")
+	s.Contains(usePolicy, "or else what you are doing")
+	s.Contains(usePolicy, "never in place of a required read-back")
+	s.Contains(usePolicy, "call the tool in the same turn")
+}
+
+func (s *ToolsSuite) TestTheSentenceBeforeACallOpensWithTheHoldPhraseAndRunsOnIntoTheReadBack() {
+	// A read-back takes seconds to say, so a hold phrase after it, or after the result, is
+	// heard once the wait is over. It opens the sentence and the sentence carries on, because
+	// a one-word sentence of its own leaves a pause an interruption falls into.
+	s.Contains(usePolicy, "one short sentence that opens with a brief hold phrase")
+	s.Contains(usePolicy, "\"One moment,\" and goes straight on, with no full stop between, into what")
+	s.Contains(usePolicy, "never as a sentence of its own")
+	s.Contains(usePolicy, "never after the call or after a result")
+}
+
+func (s *ToolsSuite) TestAResultIsAnsweredFromWithoutAnotherHoldPhrase() {
+	// The wait has one hold phrase. A result that calls for another tool starts a wait of its
+	// own, which gets its own sentence.
+	s.Contains(usePolicy, "After a result, answer from it")
+	s.Contains(usePolicy, "if the request needs another tool, open that call with its own sentence")
+}
+
+func (s *ToolsSuite) TestTheUsePolicyIsShortAndNamesNoToolOrDeployment() {
+	s.LessOrEqual(len(strings.Fields(usePolicy)), 160)
+	s.GreaterOrEqual(len(strings.Fields(usePolicy)), 60)
+	built, err := DefaultTools()
+	s.Require().NoError(err)
+	for _, tool := range append(built.Tools, testTools().Tools...) {
+		s.NotContains(strings.ToLower(usePolicy), strings.ToLower(tool.Name),
+			"the policy is about any tool, not one of them")
+	}
 }
 
 func (s *ToolsSuite) TestLoadFallsBackToTheBuiltInSet() {

@@ -47,7 +47,7 @@ CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
   --pack restaurant --target python --spawn --k 3
 ```
 
-Evaluate the shipped acceleration bundle (`stream.Accelerated` in Python, function calling still in Python). On spawn it `sync_agent`s [`agents/accelerated/{pack}/`](agents/accelerated/) — the skills that pack's subagent may run — and names that stored config, so Sol actually runs them. Those skills are the only thing acceleration is handed on top: the prompt is the same contract file every other target gets, and world tools stay registered in Python. The as-shipped pipeline is the `customer_support` triple: Gemini transcribe-live, Gemini flash-lite, Inworld TTS-2 Flash, Sol as subagent. Override with `VOICEBENCH_STT` / `_TTS` / `_MODEL` / `_SUBAGENT`. The router must already be running at `STREAM_ACCELERATION_URL` (default `http://localhost:8080`), or pass `--bin` to spawn it:
+Evaluate the shipped acceleration bundle (`stream.Accelerated` in Python, function calling still in Python). On spawn it `sync_agent`s [`agents/accelerated/{pack}/`](agents/accelerated/) — the skills that pack's subagent may run — and names that stored config, so Sol actually runs them. Those skills are the only thing acceleration is handed on top: the prompt is the same contract file every other target gets, and world tools stay registered in Python. The as-shipped pipeline is the `customer_support` triple: Gemini transcribe-live, Gemini flash-lite, Inworld TTS-2 Flash, Sol as subagent. Override with `VOICEBENCH_STT` / `_TTS` / `_MODEL`; the subagent is the harness's, so it is named as `thinking_llm` in each pack's `agent.yaml`. The router must already be running at `STREAM_ACCELERATION_URL` (default `http://localhost:8080`), or pass `--bin` to spawn it. To run against a hosted router behind Stream's authenticating proxy, set `STREAM_ACCELERATION_URL` to it and `STREAM_ACCELERATION_AUTHENTICATE=1`; the agent then connects with `STREAM_API_KEY` and `STREAM_API_SECRET` instead of a customer id, and `heard.json` is not captured:
 
 ```bash
 CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
@@ -82,20 +82,27 @@ CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
 
 `--spawn` runs the worker locally; it dials out to LiveKit, so the loopback world server stays reachable. Voicebench pins LiveKit Cloud to the `us` region group (`wss://<project>.us.rtc.livekit.cloud`) so a laptop in the US does not hairpin media through Brazil or similar. `us-east` is accepted and maps to that group — LiveKit has no Ashburn-only realtime hostname. Set `LIVEKIT_REGION=auto` to keep geo-DNS. `--livekit-agent your-agent` dispatches your own worker instead. That worker must read `world_url`, the vertical `pack`, contract `instructions`, and tool schemas from the dispatch metadata and call the world server itself, and it needs a `--world-url` it can reach — Voicebench refuses to run a remote worker against a loopback world server. A worker that ignores the metadata will call no tools, so Voicebench flags the trial in the report's Warnings section.
 
-`--target acceleration --target-url http://127.0.0.1:8080` targets a router that is already running. `--target python --target-url http://127.0.0.1:8000` targets a Python Vision Agents server that is already running. `--target accelerated --target-url http://127.0.0.1:8000` targets a Python server whose LLM is `stream.Accelerated`. `--target livekit --target-url wss://... --livekit-agent my-agent` runs the caller in a LiveKit room and creates a LiveKit agent dispatch with benchmark metadata. For targets Voicebench did not spawn, pass `--target-model` and `--target-voice` so the manifest identifies their runtime configuration. Set `--network-profile` (or `VOICEBENCH_NETWORK_PROFILE`) to a stable runner-region and connection label shared by comparable runs. For a quick smoke test, add `--scenario restaurant.golden --k 1`. `--frozen` runs only the scenario ids in [`scenarios/frozen.txt`](scenarios/frozen.txt).
+`--target acceleration --target-url http://127.0.0.1:8080` targets a router that is already running. `--target python --target-url http://127.0.0.1:8000` targets a Python Vision Agents server that is already running. `--target accelerated --target-url http://127.0.0.1:8000` targets a Python server whose LLM is `stream.Accelerated`. `--target livekit --target-url wss://... --livekit-agent my-agent` runs the caller in a LiveKit room and creates a LiveKit agent dispatch with benchmark metadata. For targets Voicebench did not spawn, pass `--target-model` and `--target-voice` so the manifest identifies their runtime configuration. Set `--network-profile` (or `VOICEBENCH_NETWORK_PROFILE`) to a stable runner-region and connection label shared by comparable runs. For a quick smoke test, add `--scenario restaurant.golden --k 1`. `--frozen` runs only the scenario ids in [`scenarios/frozen.txt`](scenarios/frozen.txt). `--short` runs the twelve in [`scenarios/short.txt`](scenarios/short.txt): each pack's coherence call, which gives most of the reply-time samples, and its interrupt, selectivity and tool-filler scenarios. It is for iterating on a change, not for the trend line.
 
 Results go to `out/<run_id>/`: `report.md`, schema-v3 `summary.json` with a `kind` of `agent`, `stt`, or `tts`, a reproducibility manifest, recordings, timestamped transcripts, judge verdicts, tool logs, world state, and per-call metrics. Compare two runs with:
 
 ```bash
-go run ./cmd/voicebench compare --baseline out/old out/new --mde-v2v-ms 50
+go run ./cmd/voicebench compare --baseline out/old out/new --mde baselines/accelerated/noise-restaurant.json
 # or --baseline accelerated to resolve a local baselines/accelerated/<newest-commit>
 # --store-baseline copies summary.json and manifest.json there after a run (gitignored)
 ```
 
-Score transcripts (raw and normalized WER) or clip health without a live call:
+Benchmark speech-to-text through the router. Each line of the manifest is `{"id", "reference", "audio"}`, with `audio` a 16-bit PCM WAV relative to the manifest. Every clip is streamed to each `--target` over the router's `/v1/stt/stream` socket at the pace a call delivers it, followed by two seconds of room tone:
 
 ```bash
-go run ./cmd/voicebench stt --manifest clips.jsonl
+go run ./cmd/voicebench stt --manifest clips.jsonl --target deepgram/flux-general-en --target deepgram/nova-3
+```
+
+It reports, per target, pooled and mean WER (normalized, with the raw pooled figure beside it), substitutions, insertions and deletions, the share of clips transcribed perfectly and the share that returned anything, and three timings measured on the clock the audio went out on, from the voice in the clip rather than the file's edges: TTFS (last word spoken to the last settled transcript, P50/P95/P99), time to first words (first word spoken to the first transcript of any kind) and the transcripts that arrived while the caller was still speaking. Results go to `out/stt-<time>/`: `clips.jsonl` with every clip's transcript, timings and error, `summary.json` with `kind: stt`, and `report.md`. A clip that ends in an error, from the router or the provider, is kept and counted, and makes the command exit non-zero. The router comes from `STREAM_ACCELERATION_URL`, as for `--target accelerated`. Without `--target`, lines carry a `hypothesis` instead of `audio` and are scored as given.
+
+Score clip health without a live call:
+
+```bash
 go run ./cmd/voicebench tts --wav out/run/agent.wav
 ```
 
@@ -143,6 +150,22 @@ A trial passes only when every hard gate passes. Latency is reported separately,
 
 Not every scripted turn yields a latency sample. A barge-in turn has no reply gap by definition, a turn the caller played while the agent was still speaking has no meaningful one, and a turn the agent never answered has none at all. Those turns are counted and named in `dropped_turns` in each call's `metrics.json` and totalled per pack in the report, so a P50 cannot quietly rest on one measurement. Percentiles are pooled over every measured turn in the pack — not a median of per-call medians — and every reported P50 carries its sample count.
 
+### Reply time
+
+Reply time is the gap from the end of each caller turn to the start of the agent's reply, measured from the recordings. Its headline is the **P50 and P95 over non-tool turns**: a turn that waited on a tool is slower for a reason the conversation loop does not own, so tool turns are reported on their own (`tool_p50_ms`) and stay in the all-turns figures. The **mean** is shown beside the percentiles rather than instead of them, because a few slow turns move it a long way; a mean well above the P50 says the slow turns are worth reading. `summary.json` carries `non_tool_p50_ms`, `non_tool_p95_ms`, `non_tool_mean_ms`, `tool_p50_ms` and `v2v_mean_ms` with their sample counts, and `report.md` has a Reply time table.
+
+`voicebench compare` shows each reply-time statistic with its 95% bootstrap interval and marks a run whose interval lies wholly above the best run's, so a gap the samples cannot tell from noise is not read as a win. Against a baseline it prints the non-tool P50 difference with the interval of that difference, and the smallest detectable difference, half the interval's width: with those samples, a change smaller than that cannot be told from noise. The resampling is seeded, so the same summaries always print the same intervals.
+
+Where the time goes is a diagnostic for our own targets, not a figure to set against LiveKit, which reports nothing comparable. For targets on the router, each call keeps the router's timeline as `timeline.json`, and `metrics.json` lists every caller turn's stages: speech-to-text settling, cadence, the flow controller's decision, model to first text, text to TTS and TTS to audio, which run one after another and make up the roundtrip. `report.md` shows their medians over every timed turn. For the `python` target, the averages the agent session reports about itself (`stt_latency_ms__avg`, `llm_time_to_first_token_ms__avg`, `tts_latency_ms__avg` and the rest) are read just before the session closes and kept as `agent_metrics.json`, with the median across calls in `report.md`.
+
+### Time to first response
+
+Time to first response is the gap from the end of the caller's first utterance to the start of the agent's first audible reply to it, measured from the recordings the same way as voice-to-voice. It is the first reply that has to run speech recognition, the model, and speech synthesis on caller input, so it carries the call's cold-start costs (first model request, connection warm-up) that the pooled V2V numbers average away.
+
+Every target greets first (`serve_webrtc.py`, the LiveKit worker, and the acceleration session greeting), and the caller waits for that greeting before it speaks, so the greeting sits outside this metric. Timing the greeting would measure from the moment the call is joined, which is time to connect, not time to reply. The metric starts when the caller finishes the first utterance the agent has to answer.
+
+Each call contributes at most one sample, stored as `first_response` in its `metrics.json`. If the first caller turn produced no V2V sample (a barge-in, a turn played over the still-speaking greeting, or no reply), the call has no sample; Voicebench never falls back to a later turn, which would mix a steady-state reply into a cold-start metric. A first reply whose gap overlaps a tool call keeps its `tool` flag and is counted, because the scenario and tool delays are identical across targets. `report.md` shows it per call and as a per-pack P50 and P95 with the number of calls measured and how many were tool turns; `summary.json` carries the same numbers as `first_response_p50_ms`, `first_response_p95_ms`, `first_response_samples`, and `first_response_tool_samples`. `voicebench compare` shows P50 and P95 with their sample counts and, against a baseline, the P50 delta.
+
 ## Metrics and Voicebench targets
 
 There is no single industry-standard score across these verticals. Voicebench targets are fixed acceptance thresholds for this suite, defined in [`timing.go`](internal/score/timing.go) and [`board.go`](internal/report/board.go). They are not universal industry standards, compliance certification, or claims of state of the art.
@@ -156,8 +179,9 @@ There is no single industry-standard score across these verticals. Voicebench ta
 | Tool filler | Filler begins before a delayed tool returns | Heard without blocking | Yes |
 | Barge-in | Interruption to agent silence | ≤ 800 ms | Yes |
 | Selectivity | Ignore coughs and side talk; accept real interruptions | Hold on non-directed speech | Yes |
-| Reply gap | Caller end to agent onset, excluding tool turns | P50 300–700 ms | No |
+| Reply time | Caller end to agent onset, non-tool turns; tool turns reported apart | P50 300–700 ms; P95, mean and sample count reported | No |
 | Voice-to-voice | Caller end to agent onset, every measurable turn | P50 300–700 ms; P95 and sample count reported | No |
+| Time to first response | Caller end to agent onset, first caller turn of each call only | P50 and P95 with sample count reported; no target yet | No |
 | Stability | Non-tool gap over 2× that call's P50 | Zero spikes | No |
 | False cutoffs | Agent starts while caller is speaking | Zero | No |
 | Reliability | Repeated runs | `pass^k`; default target 3/3 | Aggregate |
@@ -218,6 +242,39 @@ CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
 ## Comparing runs
 
 A LiveKit column is only comparable when the worker actually received the contract: check the report for zero tool calls and Warnings before reading its score. Trials that produce no verdict are invalid, make scenario reliability incomplete, and fail the run. A comparable run should use matching manifest values: methodology version, scenario and contract hashes, `k`, target and transport, target model and voice, caller configuration, region/network conditions, and evaluator configuration. `summary.json` records these fields without credentials. Voicebench scores are directly comparable to other Voicebench runs under the same setup; they are not directly comparable to EVA, τ²-bench, eot-bench, or other benchmark scores.
+
+Time to first response has one sample per call, so it needs more calls than V2V to settle. Before claiming a gap, measure the noise floor: run the frozen set against the same target at least five times back to back with the same `--network-profile`, then hand those runs to `voicebench noise`:
+
+```bash
+for i in 1 2 3 4 5; do
+  CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
+    --pack restaurant --target accelerated --spawn --frozen --k 3 --network-profile "$PROFILE"
+done
+go run ./cmd/voicebench noise out/<run1> out/<run2> out/<run3> out/<run4> out/<run5>
+```
+
+Repeat for `healthcare` and `telecom`, since `run` takes one pack at a time. It refuses runs that differ in commit, `k`, network profile, scenarios or contracts, and writes `baselines/<target>/noise-<pack>.json`: for pass rate, V2V P50, non-tool P50 and P95, tool-turn P50 and first response P50, the value in each run and the MDE, the largest difference between any two of them. That is the smallest change the bench can detect for that target and pack. A difference between our stack and either LiveKit arm counts as real only if it is bigger than that spread. Store the `accelerated` run you compare against with `--store-baseline`, then pass the file to `compare --mde`: against a baseline it flags each metric that moved by more than its MDE, and says so when the baseline is from another series than the one the noise floor measured.
+
+### Posting to Slack
+
+`voicebench digest` reads run directories, folds each system's per-pack runs into one, and writes a scorecard (`voicebench.png`) and a full report (`voicebench.html`): pass rate, reply time P50 and P95, tool-turn P50 and first response, each with its 95% interval, then every call with what failed it. A row names a winner only when the intervals clear; otherwise it says the gap is within noise. With `--slack` it posts the summary, the scorecard and the report in one message, as a Slack app's bot. The app needs the `chat:write` and `files:write` scopes and has to be in the channel. Put its token and the channel id in `.env`:
+
+```bash
+VOICEBENCH_SLACK_BOT_TOKEN=xoxb-...
+VOICEBENCH_SLACK_CHANNEL=C0...
+```
+
+```bash
+go run ./cmd/voicebench digest --title "Voicebench" --out out/digest --slack out/<ours> out/<livekit>
+```
+
+`scripts/packs.sh` runs every pack at once against one router built from this checkout, each pack with its own agent and world server port. The short set at `k=1` takes about 8 minutes that way, against about 21 minutes one pack after another (`VOICEBENCH_PARALLEL=0`). Running the packs side by side did not move the numbers: on the same router and database, reply time, the turn decision and model-to-first-text all stayed within noise (non-tool reply P50 4,720 ms one at a time, 4,540 ms at once, 95% interval of the difference −600 to +320 ms). `VOICEBENCH_K`, `VOICEBENCH_SET` (`short` or `frozen`) and `VOICEBENCH_PACKS` choose what runs.
+
+`scripts/digest.sh` runs the frozen set for every pack against our stack and LiveKit Inference, then posts the digest: the nightly run. `VOICEBENCH_K=3 VOICEBENCH_LIVEKIT_ARMS="inference realtime"` makes it the weekly one. It builds the router from this checkout unless `STREAM_ACCELERATION_URL` names a hosted one, and `VOICEBENCH_DIGEST_POST=0` writes the digest without posting it.
+
+### CI
+
+[`.github/workflows/voicebench.yml`](../.github/workflows/voicebench.yml) runs the frozen set every night on our stack alone through `scripts/digest.sh`, on a router built from the checkout, with network profile `github-ubuntu-latest`. Its compare against the previous night goes to the job summary, and the digest is posted to Slack once `VOICEBENCH_SLACK_BOT_TOKEN` and `VOICEBENCH_SLACK_CHANNEL` are repository secrets. Run it by hand from the Actions tab. There is no per-PR smoke yet.
 
 ## Public benchmark basis
 

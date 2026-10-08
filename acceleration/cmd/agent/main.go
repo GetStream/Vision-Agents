@@ -23,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent/streamedge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -93,6 +94,10 @@ func main() {
 		"how sure the transcriber must be for the agent to answer rather than check what was meant")
 	flag.BoolVar(&options.demo, "demo", true,
 		"open a browser on a link that joins the call, so there is somebody for the agent to talk to")
+	flag.BoolVar(&options.chatTimings, "chat-timings", false,
+		"for development: show how long each stage of a turn took after the agent's reply in the chat channel")
+	flag.DurationVar(&options.replyHedge, "reply-hedge", config.Defaults().Agent.ReplyHedge,
+		"how long a reply may say nothing before the same request is asked of another candidate as well, 0 asks once")
 	verbose := flag.Bool("verbose", false, "log lifecycle events")
 	flag.Parse()
 
@@ -132,6 +137,8 @@ type options struct {
 	backchannel    bool
 	minConfidence  float64
 	demo           bool
+	chatTimings    bool
+	replyHedge     time.Duration
 
 	number       string
 	vendor       string
@@ -180,17 +187,23 @@ func run(options options, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	routers, cleanup, err := buildRouters(ctx, logger)
+	routers, cleanup, err := buildRouters(ctx, options.replyHedge, logger)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
+	// This demo runs in whichever Stream app its environment names; nothing below reads
+	// the environment for itself.
+	streamKey, streamSecret := os.Getenv("STREAM_API_KEY"), os.Getenv("STREAM_API_SECRET")
 	edge, err := streamedge.New(streamedge.Options{
-		CallID:   options.callID,
-		CallType: options.callType,
-		User:     streamedge.User{ID: options.userID, Name: "Vision Agent"},
-		Logger:   logger,
+		CallID:    options.callID,
+		CallType:  options.callType,
+		User:      streamedge.User{ID: options.userID, Name: "Vision Agent"},
+		APIKey:    streamKey,
+		APISecret: streamSecret,
+		UserToken: os.Getenv("STREAM_USER_TOKEN"),
+		Logger:    logger,
 	})
 	if err != nil {
 		return err
@@ -245,6 +258,7 @@ func run(options options, logger *slog.Logger) error {
 		LanguageHints:  options.languages(),
 		Memory:         remembering,
 		AppID:          options.appID,
+		SessionID:      options.callID,
 		Store:          routers.store,
 		Live:           routers.live,
 		Logger:         logger,
@@ -257,9 +271,12 @@ func run(options options, logger *slog.Logger) error {
 	// A voice call leaves nothing behind, so what was said is stored in a chat channel
 	// named after the agent. Without Stream credentials the conversation just is not kept.
 	transcript, err := chatlog.New(chatlog.Options{
-		AgentID: options.agent(),
-		Agent:   chatlog.User{ID: options.userID, Name: "Vision Agent"},
-		Logger:  logger,
+		AgentID:   options.agent(),
+		Agent:     chatlog.User{ID: options.userID, Name: "Vision Agent"},
+		APIKey:    streamKey,
+		APISecret: streamSecret,
+		Timings:   options.chatTimings,
+		Logger:    logger,
 	})
 	if err != nil {
 		logger.Warn("not storing the transcript", "error", err)
@@ -339,7 +356,9 @@ func buildTelephony(
 	if err != nil {
 		return nil, harness.Tools{}, err
 	}
-	stream, err := phone.NewStream(phone.StreamOptions{})
+	stream, err := phone.NewStream(phone.StreamOptions{
+		APIKey: os.Getenv("STREAM_API_KEY"), APISecret: os.Getenv("STREAM_API_SECRET"),
+	})
 	if err != nil {
 		return nil, harness.Tools{}, err
 	}
@@ -461,7 +480,7 @@ type routers struct {
 
 // buildRouters wires all three routers, using Postgres and Redis when they are configured.
 // The demo is useful without them: it just stops recording usage.
-func buildRouters(ctx context.Context, logger *slog.Logger) (routers, func(), error) {
+func buildRouters(ctx context.Context, replyHedge time.Duration, logger *slog.Logger) (routers, func(), error) {
 	config, err := routing.LoadConfig(os.Getenv(configEnvVar))
 	if err != nil {
 		return routers{}, nil, err
@@ -518,11 +537,12 @@ func buildRouters(ctx context.Context, logger *slog.Logger) (routers, func(), er
 	closers = append(closers, transcriber.Close)
 
 	reasoner, err := llmrouter.New(llmrouter.Options{
-		Config:   config[routing.LLM],
-		Registry: llmrouter.DefaultRegistry(),
-		Store:    pgStore,
-		Live:     liveClient,
-		Logger:   logger,
+		Config:     config[routing.LLM],
+		Registry:   llmrouter.DefaultRegistry(),
+		Store:      pgStore,
+		Live:       liveClient,
+		ReplyHedge: replyHedge,
+		Logger:     logger,
 	})
 	if err != nil {
 		cleanup()

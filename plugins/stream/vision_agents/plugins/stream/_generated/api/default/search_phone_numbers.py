@@ -5,7 +5,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.error import Error
+from ...models.error_response import ErrorResponse
 from ...models.number_search_result import NumberSearchResult
 from ...models.phone_capability import PhoneCapability
 from ...models.phone_number_type import PhoneNumberType
@@ -14,6 +14,7 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     *,
+    limit: int | Unset = 10,
     vendor: str | Unset = UNSET,
     country: str,
     area_code: str | Unset = UNSET,
@@ -23,10 +24,11 @@ def _get_kwargs(
     administrative_area: str | Unset = UNSET,
     number_type: PhoneNumberType | Unset = UNSET,
     features: list[PhoneCapability] | Unset = UNSET,
-    limit: int | Unset = 10,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
+
+    params["limit"] = limit
 
     params["vendor"] = vendor
 
@@ -57,8 +59,6 @@ def _get_kwargs(
 
     params["features"] = json_features
 
-    params["limit"] = limit
-
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
@@ -72,31 +72,36 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | NumberSearchResult | None:
+) -> ErrorResponse | NumberSearchResult | None:
     if response.status_code == 200:
         response_200 = NumberSearchResult.from_dict(response.json())
 
         return response_200
 
     if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
+        response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
 
     if response.status_code == 401:
-        response_401 = Error.from_dict(response.json())
+        response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
 
     if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
+        response_403 = ErrorResponse.from_dict(response.json())
 
         return response_403
 
     if response.status_code == 404:
-        response_404 = Error.from_dict(response.json())
+        response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 500:
+        response_500 = ErrorResponse.from_dict(response.json())
+
+        return response_500
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -106,7 +111,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | NumberSearchResult]:
+) -> Response[ErrorResponse | NumberSearchResult]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -118,6 +123,7 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
+    limit: int | Unset = 10,
     vendor: str | Unset = UNSET,
     country: str,
     area_code: str | Unset = UNSET,
@@ -127,8 +133,7 @@ def sync_detailed(
     administrative_area: str | Unset = UNSET,
     number_type: PhoneNumberType | Unset = UNSET,
     features: list[PhoneCapability] | Unset = UNSET,
-    limit: int | Unset = 10,
-) -> Response[Error | NumberSearchResult]:
+) -> Response[ErrorResponse | NumberSearchResult]:
     """Search for numbers to buy, at one vendor or all of them
 
      Naming a vendor searches only that one. Leaving it out asks every vendor that has its credentials,
@@ -137,27 +142,31 @@ def sync_detailed(
     without it, which would answer a search for one place with numbers from another.
 
     Args:
-        vendor (str | Unset):
-        country (str):
+        limit (int | Unset):  Default: 10.
+        vendor (str | Unset): One vendor to search. Absent searches every usable vendor.
+        country (str): ISO 3166-1 alpha-2 country code.
         area_code (str | Unset):
-        contains (str | Unset):
-        prefix (str | Unset):
-        locality (str | Unset):
-        administrative_area (str | Unset):
+        contains (str | Unset): Digits the number must contain, anywhere in it.
+        prefix (str | Unset): Digits the number must start with, matched after the country dial
+            code. This differs from `contains` in where the digits have to fall.
+        locality (str | Unset): A city, region or rate centre.
+        administrative_area (str | Unset): A US state or Canadian province.
         number_type (PhoneNumberType | Unset): What kind of number it is, which decides who pays
             for the call.
-        features (list[PhoneCapability] | Unset):
-        limit (int | Unset):  Default: 10.
+        features (list[PhoneCapability] | Unset): Capabilities every number must have. Repeat the
+            parameter to require several. A vendor that cannot filter on one still reports what its
+            numbers carry, so these are checked on the results either way.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | NumberSearchResult]
+        Response[ErrorResponse | NumberSearchResult]
     """
 
     kwargs = _get_kwargs(
+        limit=limit,
         vendor=vendor,
         country=country,
         area_code=area_code,
@@ -167,7 +176,6 @@ def sync_detailed(
         administrative_area=administrative_area,
         number_type=number_type,
         features=features,
-        limit=limit,
     )
 
     response = client.get_httpx_client().request(
@@ -180,6 +188,7 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
+    limit: int | Unset = 10,
     vendor: str | Unset = UNSET,
     country: str,
     area_code: str | Unset = UNSET,
@@ -189,8 +198,7 @@ def sync(
     administrative_area: str | Unset = UNSET,
     number_type: PhoneNumberType | Unset = UNSET,
     features: list[PhoneCapability] | Unset = UNSET,
-    limit: int | Unset = 10,
-) -> Error | NumberSearchResult | None:
+) -> ErrorResponse | NumberSearchResult | None:
     """Search for numbers to buy, at one vendor or all of them
 
      Naming a vendor searches only that one. Leaving it out asks every vendor that has its credentials,
@@ -199,28 +207,32 @@ def sync(
     without it, which would answer a search for one place with numbers from another.
 
     Args:
-        vendor (str | Unset):
-        country (str):
+        limit (int | Unset):  Default: 10.
+        vendor (str | Unset): One vendor to search. Absent searches every usable vendor.
+        country (str): ISO 3166-1 alpha-2 country code.
         area_code (str | Unset):
-        contains (str | Unset):
-        prefix (str | Unset):
-        locality (str | Unset):
-        administrative_area (str | Unset):
+        contains (str | Unset): Digits the number must contain, anywhere in it.
+        prefix (str | Unset): Digits the number must start with, matched after the country dial
+            code. This differs from `contains` in where the digits have to fall.
+        locality (str | Unset): A city, region or rate centre.
+        administrative_area (str | Unset): A US state or Canadian province.
         number_type (PhoneNumberType | Unset): What kind of number it is, which decides who pays
             for the call.
-        features (list[PhoneCapability] | Unset):
-        limit (int | Unset):  Default: 10.
+        features (list[PhoneCapability] | Unset): Capabilities every number must have. Repeat the
+            parameter to require several. A vendor that cannot filter on one still reports what its
+            numbers carry, so these are checked on the results either way.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | NumberSearchResult
+        ErrorResponse | NumberSearchResult
     """
 
     return sync_detailed(
         client=client,
+        limit=limit,
         vendor=vendor,
         country=country,
         area_code=area_code,
@@ -230,13 +242,13 @@ def sync(
         administrative_area=administrative_area,
         number_type=number_type,
         features=features,
-        limit=limit,
     ).parsed
 
 
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
+    limit: int | Unset = 10,
     vendor: str | Unset = UNSET,
     country: str,
     area_code: str | Unset = UNSET,
@@ -246,8 +258,7 @@ async def asyncio_detailed(
     administrative_area: str | Unset = UNSET,
     number_type: PhoneNumberType | Unset = UNSET,
     features: list[PhoneCapability] | Unset = UNSET,
-    limit: int | Unset = 10,
-) -> Response[Error | NumberSearchResult]:
+) -> Response[ErrorResponse | NumberSearchResult]:
     """Search for numbers to buy, at one vendor or all of them
 
      Naming a vendor searches only that one. Leaving it out asks every vendor that has its credentials,
@@ -256,27 +267,31 @@ async def asyncio_detailed(
     without it, which would answer a search for one place with numbers from another.
 
     Args:
-        vendor (str | Unset):
-        country (str):
+        limit (int | Unset):  Default: 10.
+        vendor (str | Unset): One vendor to search. Absent searches every usable vendor.
+        country (str): ISO 3166-1 alpha-2 country code.
         area_code (str | Unset):
-        contains (str | Unset):
-        prefix (str | Unset):
-        locality (str | Unset):
-        administrative_area (str | Unset):
+        contains (str | Unset): Digits the number must contain, anywhere in it.
+        prefix (str | Unset): Digits the number must start with, matched after the country dial
+            code. This differs from `contains` in where the digits have to fall.
+        locality (str | Unset): A city, region or rate centre.
+        administrative_area (str | Unset): A US state or Canadian province.
         number_type (PhoneNumberType | Unset): What kind of number it is, which decides who pays
             for the call.
-        features (list[PhoneCapability] | Unset):
-        limit (int | Unset):  Default: 10.
+        features (list[PhoneCapability] | Unset): Capabilities every number must have. Repeat the
+            parameter to require several. A vendor that cannot filter on one still reports what its
+            numbers carry, so these are checked on the results either way.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | NumberSearchResult]
+        Response[ErrorResponse | NumberSearchResult]
     """
 
     kwargs = _get_kwargs(
+        limit=limit,
         vendor=vendor,
         country=country,
         area_code=area_code,
@@ -286,7 +301,6 @@ async def asyncio_detailed(
         administrative_area=administrative_area,
         number_type=number_type,
         features=features,
-        limit=limit,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -297,6 +311,7 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
+    limit: int | Unset = 10,
     vendor: str | Unset = UNSET,
     country: str,
     area_code: str | Unset = UNSET,
@@ -306,8 +321,7 @@ async def asyncio(
     administrative_area: str | Unset = UNSET,
     number_type: PhoneNumberType | Unset = UNSET,
     features: list[PhoneCapability] | Unset = UNSET,
-    limit: int | Unset = 10,
-) -> Error | NumberSearchResult | None:
+) -> ErrorResponse | NumberSearchResult | None:
     """Search for numbers to buy, at one vendor or all of them
 
      Naming a vendor searches only that one. Leaving it out asks every vendor that has its credentials,
@@ -316,29 +330,33 @@ async def asyncio(
     without it, which would answer a search for one place with numbers from another.
 
     Args:
-        vendor (str | Unset):
-        country (str):
+        limit (int | Unset):  Default: 10.
+        vendor (str | Unset): One vendor to search. Absent searches every usable vendor.
+        country (str): ISO 3166-1 alpha-2 country code.
         area_code (str | Unset):
-        contains (str | Unset):
-        prefix (str | Unset):
-        locality (str | Unset):
-        administrative_area (str | Unset):
+        contains (str | Unset): Digits the number must contain, anywhere in it.
+        prefix (str | Unset): Digits the number must start with, matched after the country dial
+            code. This differs from `contains` in where the digits have to fall.
+        locality (str | Unset): A city, region or rate centre.
+        administrative_area (str | Unset): A US state or Canadian province.
         number_type (PhoneNumberType | Unset): What kind of number it is, which decides who pays
             for the call.
-        features (list[PhoneCapability] | Unset):
-        limit (int | Unset):  Default: 10.
+        features (list[PhoneCapability] | Unset): Capabilities every number must have. Repeat the
+            parameter to require several. A vendor that cannot filter on one still reports what its
+            numbers carry, so these are checked on the results either way.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | NumberSearchResult
+        ErrorResponse | NumberSearchResult
     """
 
     return (
         await asyncio_detailed(
             client=client,
+            limit=limit,
             vendor=vendor,
             country=country,
             area_code=area_code,
@@ -348,6 +366,5 @@ async def asyncio(
             administrative_area=administrative_area,
             number_type=number_type,
             features=features,
-            limit=limit,
         )
     ).parsed

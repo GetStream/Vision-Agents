@@ -26,6 +26,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
@@ -35,11 +36,11 @@ const ProviderName = "elevenlabs"
 // DefaultModel is the low-latency model, which is what a live conversation wants.
 const DefaultModel = "eleven_flash_v2_5"
 
-// DefaultVoiceID is George from the public voice library, so the provider works without a
+// DefaultVoiceID is a voice from the public voice library, so the provider works without a
 // voice having been picked. It is deliberately not one of the older premade voices: those
 // are legacy, are absent from accounts made since, and the v3 models reject one with
 // "Invalid argument received." at the point they try to generate rather than on connect.
-const DefaultVoiceID = "JBFqnCBsd6RMkjVDRZzb"
+const DefaultVoiceID = "NOpBlnGInO9m6vDvFkFC"
 
 // DefaultSampleRate is the highest rate the PCM output format offers without paying for
 // bandwidth nobody hears.
@@ -48,6 +49,13 @@ const DefaultSampleRate = 24_000
 // defaultBaseURL is the production endpoint.
 const defaultBaseURL = "wss://api.elevenlabs.io"
 
+// minSpeed and maxSpeed bound voice_settings.speed. A speed outside them is refused rather
+// than clamped, since a caller asking for 1.5 and hearing 1.2 cannot tell it was not honoured.
+const (
+	minSpeed = 0.7
+	maxSpeed = 1.2
+)
+
 // supportedSampleRates are the rates the pcm_* output formats cover.
 var supportedSampleRates = []int{8_000, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000}
 
@@ -55,12 +63,19 @@ var supportedSampleRates = []int{8_000, 16_000, 22_050, 24_000, 32_000, 44_100, 
 // upstream, so it is only sent when it applies.
 var multilingualModels = []string{"eleven_flash_v2_5", "eleven_turbo_v2_5", "eleven_multilingual_v2"}
 
-// dialogueModelPrefix marks the v3 family, which is the only one that acts audio tags.
-// Everything before it reads a bracket out as the word inside it.
-const dialogueModelPrefix = "eleven_v3"
+// dialogueModelPrefixes mark the v3 and v4 families, the only ones that act audio tags.
+// Everything before them reads a bracket out as the word inside it.
+var dialogueModelPrefixes = []string{"eleven_v3", "eleven_v4"}
 
 // Performs reports whether a model acts audio tags rather than reading them out.
-func Performs(model string) bool { return strings.HasPrefix(model, dialogueModelPrefix) }
+func Performs(model string) bool {
+	for _, prefix := range dialogueModelPrefixes {
+		if strings.HasPrefix(model, prefix) {
+			return true
+		}
+	}
+	return false
+}
 
 // AudioTagPrompt is what a model writing for a v3 voice is told about directing it. The
 // tags named are examples rather than a closed set: the voice takes any bracketed
@@ -75,14 +90,15 @@ const AudioTagPrompt = "Your words are spoken by a voice that acts stage directi
 // Options configures the provider. APIKey falls back to ELEVENLABS_API_KEY and VoiceID to
 // ELEVENLABS_VOICE_ID.
 type Options struct {
-	// Speed controls realtime speaking pace (0.7–1.2). Zero uses ELEVENLABS_SPEED or 1.
-	Speed  float64
 	APIKey string
 	// VoiceID is the speaker. The connection is bound to it, so one session is one voice.
 	VoiceID string
 	Model   string
 	// Language is an ISO code. It is only sent for models that accept one.
 	Language string
+	// Speed is the rate of delivery, 1 being the voice's own and zero leaving it there.
+	// ElevenLabs accepts 0.7 to 1.2, and only on this socket: the dialogue models take none.
+	Speed float64
 	// SampleRate is the rate to synthesise at, one of supportedSampleRates.
 	SampleRate int
 	// BaseURL overrides the endpoint, for a proxy or a test server.
@@ -107,9 +123,9 @@ type clientMessage struct {
 }
 
 type voiceSettings struct {
-	Speed           float64 `json:"speed"`
 	Stability       float64 `json:"stability"`
 	SimilarityBoost float64 `json:"similarity_boost"`
+	Speed           float64 `json:"speed,omitempty"`
 }
 
 // generationConf controls how much text the model waits for before generating. The first
@@ -159,25 +175,11 @@ type TTS struct {
 // take the same options, so they settle them the same way and differ only in the model
 // they fall back to.
 func normalize(options Options, fallbackModel string) (Options, *slog.Logger, error) {
-	if options.Speed == 0 {
-		options.Speed = 1
-		if raw := os.Getenv("ELEVENLABS_SPEED"); raw != "" {
-			parsed, err := strconv.ParseFloat(raw, 64)
-			if err != nil {
-				return options, nil, errors.New("elevenlabs: invalid ELEVENLABS_SPEED")
-			}
-			options.Speed = parsed
-		}
-	}
-	if !(options.Speed >= 0.7 && options.Speed <= 1.2) {
-		return options, nil, errors.New("elevenlabs: speed must be between 0.7 and 1.2")
-	}
-
 	if options.APIKey == "" {
 		options.APIKey = os.Getenv("ELEVENLABS_API_KEY")
 	}
 	if options.APIKey == "" {
-		return options, nil, errors.New("elevenlabs: api key is required (set ELEVENLABS_API_KEY)")
+		return options, nil, stack.Wrap(errors.New("elevenlabs: api key is required (set ELEVENLABS_API_KEY)"))
 	}
 	if options.VoiceID == "" {
 		options.VoiceID = os.Getenv("ELEVENLABS_VOICE_ID")
@@ -192,8 +194,8 @@ func normalize(options Options, fallbackModel string) (Options, *slog.Logger, er
 		options.SampleRate = DefaultSampleRate
 	}
 	if !slices.Contains(supportedSampleRates, options.SampleRate) {
-		return options, nil, fmt.Errorf("elevenlabs: sample rate %d is not one of %v",
-			options.SampleRate, supportedSampleRates)
+		return options, nil, stack.Wrap(fmt.Errorf("elevenlabs: sample rate %d is not one of %v",
+			options.SampleRate, supportedSampleRates))
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
@@ -220,8 +222,11 @@ func New(options Options) (*TTS, error) {
 	// The v3 family is not served here at all, so a caller that asked for one would get a
 	// connection the server refuses rather than a voice.
 	if Performs(options.Model) {
-		return nil, fmt.Errorf(
-			"elevenlabs: %s is a dialogue model, open it with NewDialogue", options.Model)
+		return nil, stack.Wrap(fmt.Errorf(
+			"elevenlabs: %s is a dialogue model, open it with NewDialogue", options.Model))
+	}
+	if options.Speed != 0 && (options.Speed < minSpeed || options.Speed > maxSpeed) {
+		return nil, stack.Wrap(fmt.Errorf("elevenlabs: speed %g is outside %g to %g", options.Speed, minSpeed, maxSpeed))
 	}
 
 	return &TTS{
@@ -239,7 +244,7 @@ func (t *TTS) Start(ctx context.Context) error {
 	t.mu.Lock()
 	if t.started {
 		t.mu.Unlock()
-		return errors.New("elevenlabs: already started")
+		return stack.Wrap(errors.New("elevenlabs: already started"))
 	}
 	t.started = true
 	t.mu.Unlock()
@@ -250,9 +255,9 @@ func (t *TTS) Start(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, t.url(), header)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("elevenlabs: dial: %w (http %d)", err, response.StatusCode)
+			return stack.Wrap(fmt.Errorf("elevenlabs: dial: %w (http %d)", err, response.StatusCode))
 		}
-		return fmt.Errorf("elevenlabs: dial: %w", err)
+		return stack.Wrap(fmt.Errorf("elevenlabs: dial: %w", err))
 	}
 	t.conn = conn
 
@@ -265,9 +270,9 @@ func (t *TTS) Start(ctx context.Context) error {
 // the one with Final set closes it so the tail of the audio is generated immediately.
 func (t *TTS) Synthesize(request tts.Request) error {
 	if request.Voice != "" && request.Voice != t.options.VoiceID {
-		return fmt.Errorf(
+		return stack.Wrap(fmt.Errorf(
 			"elevenlabs: the connection is bound to voice %s, open a new session for %s",
-			t.options.VoiceID, request.Voice)
+			t.options.VoiceID, request.Voice))
 	}
 
 	current, opened, err := t.utteranceFor(request.ID)
@@ -294,7 +299,7 @@ func (t *TTS) Synthesize(request tts.Request) error {
 		// across deltas.
 		err := t.send(clientMessage{Text: request.Text + " ", ContextID: current.tracker.ID})
 		if err != nil {
-			return fmt.Errorf("elevenlabs: send text: %w", err)
+			return stack.Wrap(fmt.Errorf("elevenlabs: send text: %w", err))
 		}
 	}
 
@@ -302,7 +307,7 @@ func (t *TTS) Synthesize(request tts.Request) error {
 		// Closing the context flushes the remaining audio and makes the server report
 		// the synthesis as final straight after it.
 		if err := t.send(clientMessage{ContextID: current.tracker.ID, CloseContext: true}); err != nil {
-			return fmt.Errorf("elevenlabs: close context: %w", err)
+			return stack.Wrap(fmt.Errorf("elevenlabs: close context: %w", err))
 		}
 	}
 	return nil
@@ -330,7 +335,7 @@ func (t *TTS) Interrupt() error {
 	}
 
 	if len(failures) > 0 {
-		return fmt.Errorf("elevenlabs: interrupt: %w", errors.Join(failures...))
+		return stack.Wrap(fmt.Errorf("elevenlabs: interrupt: %w", errors.Join(failures...)))
 	}
 	return nil
 }
@@ -377,6 +382,9 @@ func (t *TTS) Provider() string { return ProviderName }
 // Model implements tts.TTS.
 func (t *TTS) Model() string { return t.options.Model }
 
+// Voice is the voice id the connection is bound to.
+func (t *TTS) Voice() string { return t.options.VoiceID }
+
 // Streaming reports true: the model generates from partial text.
 func (t *TTS) Streaming() bool { return true }
 
@@ -417,10 +425,10 @@ func (t *TTS) utteranceFor(id string) (*utterance, bool, error) {
 	defer t.mu.Unlock()
 
 	if t.shutdown {
-		return nil, false, errors.New("elevenlabs: session closed")
+		return nil, false, stack.Wrap(errors.New("elevenlabs: session closed"))
 	}
 	if !t.started || t.conn == nil {
-		return nil, false, errors.New("elevenlabs: not started")
+		return nil, false, stack.Wrap(errors.New("elevenlabs: not started"))
 	}
 
 	if id != "" {
@@ -445,7 +453,7 @@ func (t *TTS) openContext(id string) error {
 		Generation: &generationConf{ChunkLengthSchedule: []int{50, 120, 160, 290}},
 	}
 	if err := t.send(message); err != nil {
-		return fmt.Errorf("elevenlabs: open context: %w", err)
+		return stack.Wrap(fmt.Errorf("elevenlabs: open context: %w", err))
 	}
 	return nil
 }
@@ -453,15 +461,15 @@ func (t *TTS) openContext(id string) error {
 func (t *TTS) send(message clientMessage) error {
 	payload, err := json.Marshal(message)
 	if err != nil {
-		return err
+		return stack.Wrap(err)
 	}
 
 	t.writeMu.Lock()
 	defer t.writeMu.Unlock()
 	if t.conn == nil {
-		return errors.New("not connected")
+		return stack.Wrap(errors.New("not connected"))
 	}
-	return t.conn.WriteMessage(websocket.TextMessage, payload)
+	return stack.Wrap(t.conn.WriteMessage(websocket.TextMessage, payload))
 }
 
 // readLoop translates server frames into events until the connection ends.
