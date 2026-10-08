@@ -1741,6 +1741,13 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A response with images is answered by an agent that has no `vision` skill, as long as its
+  conversation model accepts images. Images always went to the `vision` skill, and the
+  built-in skill set leaves it out, so every agent on the defaults, and every text session,
+  failed with `400 invalid_request` and `harness: skill "vision" is not available`. The
+  conversation model is now shown the images itself, for that one reply: they are not kept
+  in the conversation, so a later turn does not send them again. An agent with a `vision`
+  skill still hands images to it. An agent with neither answers `400 not_configured`.
 - Twilio numbers in a number search have a monthly price. Twilio's search does not send a
   price, so the dashboard showed each Twilio number as "Not quoted". The router now gets
   the price for each number type from Twilio's Pricing API (`current_price`, which

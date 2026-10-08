@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1641,11 +1642,55 @@ func (s *SessionSuite) TestImageToolWithoutVisionReportsFailure() {
 	}, "the failed vision delegation was not reported to the model")
 }
 
-func (s *SessionSuite) TestImagesRequireAVisionSkill() {
+func (s *SessionSuite) TestImagesAreRefusedWhenNeitherASkillNorTheModelCanSeeThem() {
 	s.manages()
 	created := s.joins(Spec{})
 	_, err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{1, 2, 3}}})
-	s.ErrorContains(err, "vision")
+	s.ErrorIs(err, agent.ErrCannotSeeImages)
+}
+
+func (s *SessionSuite) TestAConversationModelThatSeesIsShownImagesWhenThereIsNoVisionSkill() {
+	s.manages()
+	s.model.sees = true
+	created := s.joins(Spec{})
+
+	_, err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool {
+		for _, request := range s.model.requests() {
+			if request.HasImage() {
+				return true
+			}
+		}
+		return false
+	}, "the conversation model was never shown the picture")
+}
+
+func (s *SessionSuite) TestAPictureIsShownOnlyToTheReplyItCameWith() {
+	s.manages()
+	s.model.sees = true
+	created := s.joins(Spec{})
+	events, detach := created.Watch()
+	defer detach()
+
+	_, err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}})
+	s.Require().NoError(err)
+	s.Require().NotEmpty(awaitReply(events), "the picture was never answered")
+	s.says(created, "and what should I do")
+
+	var next llm.ResponseParams
+	s.eventually(func() bool {
+		for _, request := range s.model.requests() {
+			if slices.Contains(handed(request), "user: and what should I do") {
+				next = request
+				return true
+			}
+		}
+		return false
+	}, "the next turn was never asked")
+	s.False(next.HasImage(), "the picture was sent again with a later turn")
+	s.Contains(handed(next), "user: what is this", "the words that came with the picture were forgotten")
 }
 
 // awaitToolCall waits for the model to ask for a tool, skipping the conversation events
