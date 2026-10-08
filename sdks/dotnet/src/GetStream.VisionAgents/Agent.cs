@@ -475,7 +475,7 @@ public sealed class Agent : IAsyncDisposable
             Declare(request, Folder);
         }
         request.Harness = VisionAgentsClient.Blank(harness) ?? request.Harness;
-        request.Subagent = VisionAgentsClient.Blank(subagent) ?? request.Subagent;
+        request.ThinkingLlm = VisionAgentsClient.Blank(subagent) ?? request.ThinkingLlm;
         request.Sandbox = VisionAgentsClient.Blank(sandbox) ?? request.Sandbox;
         if (_options.CostTracking is { Count: > 0 } costs)
         {
@@ -631,7 +631,7 @@ public sealed class Agent : IAsyncDisposable
             Title = VisionAgentsClient.Blank(options.Title),
             Description = VisionAgentsClient.Blank(options.Description),
             ProjectId = VisionAgentsClient.Blank(options.ProjectId),
-            Custom = options.Custom is { Count: > 0 } ? options.Custom : null,
+            Custom = options.Custom is { Count: > 0 } custom ? custom.ToDictionary(pair => pair.Key, pair => pair.Value!) : null,
             ModelOverwrites = options.ModelOverwrites,
             Llm = VisionAgentsClient.Blank(pipeline.Llm),
             Stt = VisionAgentsClient.Blank(pipeline.Stt),
@@ -737,11 +737,11 @@ public sealed class Agent : IAsyncDisposable
         request.Speed = declared.Speed != 0 ? declared.Speed : null;
         request.Llm = VisionAgentsClient.Blank(declared.Llm);
         request.Harness = VisionAgentsClient.Blank(declared.Harness);
-        request.Subagent = VisionAgentsClient.Blank(declared.Subagent);
+        request.ThinkingLlm = VisionAgentsClient.Blank(declared.Subagent);
         request.Search = VisionAgentsClient.Blank(declared.Search);
         request.Greeting = VisionAgentsClient.Blank(declared.Greeting);
         request.Sandbox = VisionAgentsClient.Blank(declared.Sandbox);
-        request.Plugins = declared.Plugins.Count > 0 ? [.. declared.Plugins] : null;
+        request.AgentPlugins = declared.Plugins.Count > 0 ? [.. declared.Plugins] : null;
         request.Keyterms = declared.Keyterms.Count > 0 ? [.. declared.Keyterms] : null;
         request.Tags = declared.Tags.Count > 0 ? new Dictionary<string, string>(declared.Tags) : null;
         request.Video = declared.Video is { } video

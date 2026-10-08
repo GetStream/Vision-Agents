@@ -18,8 +18,8 @@ namespace GetStream.VisionAgents.Tests;
 /// <summary>A request the server received, whole.</summary>
 public sealed record Seen(string Method, string Path, IReadOnlyDictionary<string, string> Query, IReadOnlyDictionary<string, string> Headers, JsonNode? Body);
 
-/// <summary>What to answer with.</summary>
-public sealed record Reply(int Status, object? Body = null);
+/// <summary>What to answer with. A string body is written as it is.</summary>
+public sealed record Reply(int Status, object? Body = null, IReadOnlyDictionary<string, string>? Headers = null);
 
 /// <summary>
 /// A real HTTP and WebSocket server on a loopback port, answering the way the router's
@@ -101,13 +101,9 @@ public sealed class TestRouter : IAsyncDisposable
             body);
         _seen.Enqueue(seen);
 
-        if (context.WebSockets.IsWebSocketRequest)
+        // An upgrade nothing accepts is refused like any request, which is what the router does.
+        if (context.WebSockets.IsWebSocketRequest && _sockets.TryGetValue(seen.Path, out var socket))
         {
-            if (!_sockets.TryGetValue(seen.Path, out var socket))
-            {
-                context.Response.StatusCode = 404;
-                return;
-            }
             using var accepted = await context.WebSockets.AcceptWebSocketAsync();
             await using var peer = new Peer(accepted, seen);
             await socket(peer);
@@ -119,11 +115,15 @@ public sealed class TestRouter : IAsyncDisposable
         var key = $"{seen.Method} {seen.Path}";
         var answer = _routes.TryGetValue(key, out var exact) ? exact
             : _routes.FirstOrDefault(route => route.Key.EndsWith('*') && key.StartsWith(route.Key[..^1], StringComparison.Ordinal)).Value;
-        var reply = answer?.Invoke(seen) ?? new Reply(404, new { error = $"nothing answers {seen.Method} {seen.Path}" });
+        var reply = answer?.Invoke(seen) ?? new Reply(404, Fixtures.Failure("not_found", "not_found", $"nothing answers {seen.Method} {seen.Path}"));
         context.Response.StatusCode = reply.Status;
+        foreach (var (name, value) in reply.Headers ?? new Dictionary<string, string>())
+        {
+            context.Response.Headers[name] = value;
+        }
         if (reply.Body is not null)
         {
-            context.Response.ContentType = "application/json";
+            context.Response.ContentType ??= "application/json";
             await context.Response.WriteAsync(reply.Body as string ?? JsonSerializer.Serialize(reply.Body));
         }
     }
