@@ -448,7 +448,8 @@ func (s *ConnectionTokenOffSuite) TestAnUnknownConnectionIsNotFoundAsItsReadIs()
 }
 
 // TestAConnectionMadeBeforeIsNotExportedAndReadsAsOnBase: a row left from when connectors were
-// on. The base probe answered its read 200 and its validate 200 pending.
+// on. Its read answers 200. Its validate answers as cmd/router does with connectors off, where
+// there is no resolver and so no transports (main.go): errConnectionToolsOff.
 func (s *ConnectionTokenOffSuite) TestAConnectionMadeBeforeIsNotExportedAndReadsAsOnBase() {
 	definition, err := s.store.LatestConnectorDefinition(context.Background(), s.customerID(), "linear")
 	s.Require().NoError(err)
@@ -463,9 +464,9 @@ func (s *ConnectionTokenOffSuite) TestAConnectionMadeBeforeIsNotExportedAndReads
 	s.Contains(string(body), `"code":"not_configured"`)
 	s.Contains(string(body), "connection tokens cannot be exported: connectors are not enabled on this deployment")
 	s.Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+connection.ID, nil, nil))
-	var validation ConnectionValidation
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/connections/"+connection.ID+"/validate", nil, &validation))
-	s.Equal(validationPending, string(validation.Status))
+	status, body = s.serverClient.call(http.MethodPost, "/v1/agents/connections/"+connection.ID+"/validate", nil)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(body), errConnectionToolsOff.Message)
 	rows, err := s.store.ConnectorAuditEvents(context.Background(), s.customerID(), store.AuditFilter{ConnectionID: connection.ID})
 	s.Require().NoError(err)
 	s.Empty(rows)
