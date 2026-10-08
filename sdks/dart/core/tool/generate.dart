@@ -140,7 +140,7 @@ class Kind {
 class Generator {
   Generator(this.document)
     : schemas = (document['components'] as YamlMap)['schemas'] as YamlMap,
-      parameters = (document['components'] as YamlMap)['parameters'] as YamlMap;
+      parameters = (document['components'] as YamlMap)['parameters'] as YamlMap? ?? YamlMap();
 
   final YamlMap document;
   final YamlMap schemas;
