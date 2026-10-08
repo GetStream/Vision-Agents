@@ -12610,6 +12610,52 @@ paths:
           description: The classifier is overloaded or could not be reached. Ask again after a wait.
       summary: Ask a classifier typed questions about a piece of text
   /v1/connectors/events/{connector_id}/{provider_app_id}:
+    get:
+      description: 'Where a provider checks a provider app''s events URL before it delivers to it: Meta''s Verify Token check of a customer''s WhatsApp webhook, for one. Unauthenticated because the provider is not a customer. Only a connector whose manifest declares channel.handshake answers it; the verify token is the provider app''s id, the one in the URL, so nothing is stored for it, and every delivery is still verified with the app''s own secret. With hub.mode subscribe, hub.verify_token the provider app''s id and hub.challenge digits only, the challenge is echoed as text/plain. Any other connector, an unknown provider app, or a deployment without connectors answers 405 as for any method a route does not serve. No SDK wraps it: only a provider calls it.'
+      operationId: answerProviderAppHandshake
+      parameters:
+        - description: The connector the provider app is of, such as whatsapp.
+          in: path
+          name: connector_id
+          required: true
+          schema:
+            type: string
+        - description: The provider's id for the app, such as a Meta app id.
+          in: path
+          name: provider_app_id
+          required: true
+          schema:
+            type: string
+        - description: subscribe.
+          in: query
+          name: hub.mode
+          schema:
+            type: string
+        - description: The provider app's id.
+          in: query
+          name: hub.verify_token
+          schema:
+            type: string
+        - description: Digits to echo.
+          in: query
+          name: hub.challenge
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: The challenge, echoed
+        "404":
+          description: 'The query is not this URL''s handshake: another mode or token, or a challenge that is not digits'
+        "405":
+          description: This connector, or this deployment, answers no handshake here
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Answer a provider app's handshake
     post:
       description: 'Where a provider delivers the events of one customer''s provider app: the Request URL of a customer''s Slack app, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector''s manifest names (channel.verifier) against that app''s own signing secret, so an event signed for another app is refused and changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves the app''s customer''s connections of that account to needs_reauthorization, unless they connected after the event. A message goes to the channel bridge, which writes it into the thread channel of its external thread in Stream Chat; a retried delivery is dropped. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.'
       operationId: receiveProviderAppEvent
