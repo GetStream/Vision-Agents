@@ -66,6 +66,8 @@ Run one unchanged target over the full pack, several times, on a pinned runner a
 
 Until that number exists, "P50 dropped 40 ms" is a claim the instrument cannot support. The MDE decides `k`, the CI wiring, and what `voicebench compare` is allowed to flag. Everything else in this section follows from it.
 
+**The instrument has landed; the study has not.** `voicebench noise` reads repeated runs of one target, refuses any that differ in commit, `k`, network profile, scenarios or contracts, and writes each metric's MDE (the largest gap between any two runs) to `baselines/<target>/noise-<pack>.json`. `voicebench compare --mde` gates a baseline diff on that file, every metric against its own MDE, in place of the hand-typed V2V threshold it had before. What remains is running it on the pinned runner and choosing `k` from what it reports.
+
 ### Choose `k` from the measured variance
 
 Default `k = 3` is defensible for binary `pass^k` gates. It is thin for a latency percentile. The report already prints the sample count next to every P50, which would expose this: a pack P50 sitting on a handful of measured turns cannot move a trend line.
@@ -346,7 +348,7 @@ A missing field makes the run incomparable, the same way a missing judge already
 ### CLI
 
 ```
-voicebench synth | run | report | calibrate | compare | stt | tts
+voicebench synth | run | report | calibrate | compare | noise | stt | tts
 ```
 
 `compare` is the shared cross-run command. `stt` and `tts` produce the same `summary.json` family with `kind` set, so `compare` works on all three pillars.

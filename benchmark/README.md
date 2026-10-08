@@ -87,7 +87,7 @@ CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
 Results go to `out/<run_id>/`: `report.md`, schema-v3 `summary.json` with a `kind` of `agent`, `stt`, or `tts`, a reproducibility manifest, recordings, timestamped transcripts, judge verdicts, tool logs, world state, and per-call metrics. Compare two runs with:
 
 ```bash
-go run ./cmd/voicebench compare --baseline out/old out/new --mde-v2v-ms 50
+go run ./cmd/voicebench compare --baseline out/old out/new --mde baselines/accelerated/noise-restaurant.json
 # or --baseline accelerated to resolve a local baselines/accelerated/<newest-commit>
 # --store-baseline copies summary.json and manifest.json there after a run (gitignored)
 ```
@@ -236,17 +236,17 @@ CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
 
 A LiveKit column is only comparable when the worker actually received the contract: check the report for zero tool calls and Warnings before reading its score. Trials that produce no verdict are invalid, make scenario reliability incomplete, and fail the run. A comparable run should use matching manifest values: methodology version, scenario and contract hashes, `k`, target and transport, target model and voice, caller configuration, region/network conditions, and evaluator configuration. `summary.json` records these fields without credentials. Voicebench scores are directly comparable to other Voicebench runs under the same setup; they are not directly comparable to EVA, τ²-bench, eot-bench, or other benchmark scores.
 
-Time to first response has one sample per call, so it needs more calls than V2V to settle. Before claiming a gap, measure its noise floor: run the frozen set against the same target at least five times back to back with the same `--network-profile`, then read the spread of `First response P50` across those runs:
+Time to first response has one sample per call, so it needs more calls than V2V to settle. Before claiming a gap, measure the noise floor: run the frozen set against the same target at least five times back to back with the same `--network-profile`, then hand those runs to `voicebench noise`:
 
 ```bash
 for i in 1 2 3 4 5; do
   CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
     --pack restaurant --target accelerated --spawn --frozen --k 3 --network-profile "$PROFILE"
 done
-go run ./cmd/voicebench compare out/<run1> out/<run2> out/<run3> out/<run4> out/<run5>
+go run ./cmd/voicebench noise out/<run1> out/<run2> out/<run3> out/<run4> out/<run5>
 ```
 
-Repeat for `healthcare` and `telecom`, since `run` takes one pack at a time. The largest P50 difference between any two of those runs is the smallest change the bench can detect for that target and pack. A difference between our stack and either LiveKit arm counts as real only if it is bigger than that spread. Store the `accelerated` run you compare against with `--store-baseline`.
+Repeat for `healthcare` and `telecom`, since `run` takes one pack at a time. It refuses runs that differ in commit, `k`, network profile, scenarios or contracts, and writes `baselines/<target>/noise-<pack>.json`: for pass rate, V2V P50, non-tool P50 and P95, tool-turn P50 and first response P50, the value in each run and the MDE, the largest difference between any two of them. That is the smallest change the bench can detect for that target and pack. A difference between our stack and either LiveKit arm counts as real only if it is bigger than that spread. Store the `accelerated` run you compare against with `--store-baseline`, then pass the file to `compare --mde`: against a baseline it flags each metric that moved by more than its MDE, and says so when the baseline is from another series than the one the noise floor measured.
 
 ### Posting to Slack
 

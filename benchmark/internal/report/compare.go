@@ -22,7 +22,8 @@ type LabeledRun struct {
 type CompareConfig struct {
 	Runs     []LabeledRun
 	Baseline int
-	MDEV2VMS int
+	// MDE is the target's measured noise floor. Without it, deltas are reported ungated.
+	MDE *NoiseFloor
 }
 
 // LoadSummary reads summary.json from a run directory.
@@ -375,10 +376,13 @@ func baselineSection(cfg CompareConfig) string {
 	base := summarizeRun(cfg.Runs[cfg.Baseline].Summary)
 	var b strings.Builder
 	fmt.Fprintf(&b, "Baseline: `%s`.\n\n", cfg.Runs[cfg.Baseline].Label)
-	if cfg.MDEV2VMS <= 0 {
-		b.WriteString("No V2V MDE is configured, so latency deltas are reported without a regression gate.\n\n")
+	if cfg.MDE == nil {
+		b.WriteString("No noise floor is configured, so deltas are reported without a regression gate.\n\n")
 	} else {
-		fmt.Fprintf(&b, "V2V P50 changes larger than %d ms are flagged.\n\n", cfg.MDEV2VMS)
+		fmt.Fprintf(&b, "Changes bigger than the noise floor measured on `%s` over %d runs are flagged.\n\n", orDash(cfg.MDE.NetworkProfile), len(cfg.MDE.Runs))
+		if err := cfg.MDE.matchesSeries(cfg.Runs[cfg.Baseline].Summary); err != nil {
+			fmt.Fprintf(&b, "The noise floor is from a different series (%v), so its flags are not a gate.\n\n", err)
+		}
 	}
 	b.WriteString("Reply time is non-tool P50. Its interval is the 95% bootstrap interval of the difference, and the smallest detectable difference is half its width: a change smaller than that cannot be told from noise with these samples.\n\n")
 	b.WriteString("| Run | Pass rate delta | V2V P50 delta | Reply time delta (95% CI) | Smallest detectable | First response P50 delta | Flag |\n| --- | ---: | ---: | ---: | ---: | ---: | --- |\n")
@@ -391,12 +395,8 @@ func baselineSection(cfg CompareConfig) string {
 		rate, _, _ := wilson95(st.Passed, st.Valid)
 		v2v := st.V2VP50 - base.V2VP50
 		flag := ""
-		if cfg.MDEV2VMS > 0 && absInt(v2v) >= cfg.MDEV2VMS {
-			if v2v > 0 {
-				flag = "regression"
-			} else {
-				flag = "improvement"
-			}
+		if cfg.MDE != nil {
+			flag = strings.Join(mdeFlags(*cfg.MDE, base, st), "; ")
 		}
 		first := "—"
 		if st.FirstResponseSamples > 0 && base.FirstResponseSamples > 0 {
@@ -411,11 +411,4 @@ func baselineSection(cfg CompareConfig) string {
 		fmt.Fprintf(&b, "| %s | %+.1f pp | %+d ms | %s | %s | %s | %s |\n", run.Label, 100*(rate-baseRate), v2v, reply, detectable, first, flag)
 	}
 	return b.String()
-}
-
-func absInt(v int) int {
-	if v < 0 {
-		return -v
-	}
-	return v
 }
