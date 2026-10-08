@@ -298,3 +298,12 @@ func (s *AppsSuite) TestATransferGivesTheVendorATrunkAddressStreamCanFindByTheCa
 
 	s.Equal("sip:"+s.e164+"@sip.example.test", s.vendor.dialed.Bridge.URI)
 }
+
+func (s *AppsSuite) TestAttachingGivesTheVendorATrunkAddressStreamCanFindByTheNumber() {
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+
+	want := "sip:" + s.e164 + "@sip.example.test"
+	s.Equal(want, s.vendor.inbound.Bridge.URI)
+	s.Equal(want, attached.Bridge.URI, "the api shows the address the vendor was given")
+}

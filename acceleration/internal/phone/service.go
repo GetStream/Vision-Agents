@@ -465,6 +465,11 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		return Attached{}, stack.Wrap(err)
 	}
 
+	bridge, err = bridge.WithNumber(attachment.E164)
+	if err != nil {
+		return Attached{}, stack.Wrap(err)
+	}
+
 	err = provider.ConfigureInbound(ctx, Inbound{E164: attachment.E164, Bridge: bridge})
 	if err != nil {
 		return Attached{}, stack.Wrap(err)

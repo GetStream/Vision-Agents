@@ -521,6 +521,9 @@ type stub struct {
 	// dialed is the last call this vendor was asked to place, so a test can see what the
 	// service passed on rather than only that it passed something.
 	dialed Outbound
+	// inbound is the last number this vendor was told to send to a bridge, so a test can see
+	// the address the service passed on.
+	inbound Inbound
 }
 
 func (s *stub) SearchNumbers(context.Context, Search) ([]Available, error) {
@@ -537,7 +540,10 @@ func (s *stub) BuyNumber(context.Context, Order) (Number, error) {
 
 func (s *stub) ReleaseNumber(context.Context, string) error { return s.err }
 
-func (s *stub) ConfigureInbound(context.Context, Inbound) error { return s.err }
+func (s *stub) ConfigureInbound(_ context.Context, inbound Inbound) error {
+	s.inbound = inbound
+	return s.err
+}
 
 func (s *stub) Dial(_ context.Context, outbound Outbound) (Dialed, error) {
 	s.dialed = outbound
