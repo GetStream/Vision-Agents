@@ -74,7 +74,12 @@ tests/Unit tests/Live tests/Support tests/server/router.php
   are `Enum|string`: an unknown value is kept as the raw string, never refused. Date-times are
   `DateTimeImmutable`, fractional seconds cut to 6 digits (Go sends 9).
 - **Errors.** `RouterException` carries `status` (0 when nothing arrived), `operation`
-  (`METHOD /path`), `said` (the router's `error`), `body`, `retryAfter`. Local misuse is
+  (`METHOD /path`), `said` (the envelope's `error.message`), `body`, `retryAfter`, and `type`,
+  `errorCode` (not `code`: that is `Exception`'s own integer), `docUrl` and `requestId`
+  (`X-Request-Id`), all `?string`. `RouterException::answered` builds every one from a
+  response, HTTP and socket handshake alike; a body that is not the envelope (a proxy's HTML,
+  empty, an older router's `{"error": "..."}` string) is `said` as it came, or the status
+  text, with null type, code and doc URL. Local misuse is
   `ConfigurationException`, raised before a request. Socket `error` frames are
   `RealtimeException`; a failed recording job is `RecordingFailedException`.
 - **Auth is `Backend::headers()`**, minted per request. Server sockets send the same headers

@@ -19,6 +19,10 @@ final readonly class TimelineEntry
         public ?float $cadenceMs = null,
         // Stable turn to the main model request, including flow and queueing.
         public ?float $decisionMs = null,
+        // Last transcript revision to the outgoing track taking the first frame of the reply that was not silence, wh...
+        public ?float $firstAudibleFrameMs = null,
+        // Last transcript revision to the first frame of the reply being queued for the outgoing track. Absent where...
+        public ?float $firstFrameQueuedMs = null,
         // What the caller said, when it can be matched to this exchange.
         public ?string $heard = null,
         // Whether the caller talked over the answer.
@@ -34,6 +38,8 @@ final readonly class TimelineEntry
         public ?float $roundtripMs = null,
         // What the agent answered.
         public ?string $said = null,
+        // Last input audio to the outgoing track taking the first frame of the reply that was not silence, estimated...
+        public ?float $speechEndToAudibleMs = null,
         // Last input audio to first output audio, estimated using provider STT processing time plus roundtrip. It exc...
         public ?float $speechEndToAudioMs = null,
         // The provider's decode time for the transcript that settled the turn.
@@ -58,6 +64,8 @@ final readonly class TimelineEntry
             audioOutMs: array_key_exists('audio_out_ms', $data) && $data['audio_out_ms'] !== null ? Json::float($data, 'audio_out_ms') : null,
             cadenceMs: array_key_exists('cadence_ms', $data) && $data['cadence_ms'] !== null ? Json::float($data, 'cadence_ms') : null,
             decisionMs: array_key_exists('decision_ms', $data) && $data['decision_ms'] !== null ? Json::float($data, 'decision_ms') : null,
+            firstAudibleFrameMs: array_key_exists('first_audible_frame_ms', $data) && $data['first_audible_frame_ms'] !== null ? Json::float($data, 'first_audible_frame_ms') : null,
+            firstFrameQueuedMs: array_key_exists('first_frame_queued_ms', $data) && $data['first_frame_queued_ms'] !== null ? Json::float($data, 'first_frame_queued_ms') : null,
             heard: array_key_exists('heard', $data) && $data['heard'] !== null ? Json::string($data, 'heard') : null,
             interrupted: array_key_exists('interrupted', $data) && $data['interrupted'] !== null ? Json::bool($data, 'interrupted') : null,
             llmTtftMs: array_key_exists('llm_ttft_ms', $data) && $data['llm_ttft_ms'] !== null ? Json::float($data, 'llm_ttft_ms') : null,
@@ -65,6 +73,7 @@ final readonly class TimelineEntry
             modelToFirstTextMs: array_key_exists('model_to_first_text_ms', $data) && $data['model_to_first_text_ms'] !== null ? Json::float($data, 'model_to_first_text_ms') : null,
             roundtripMs: array_key_exists('roundtrip_ms', $data) && $data['roundtrip_ms'] !== null ? Json::float($data, 'roundtrip_ms') : null,
             said: array_key_exists('said', $data) && $data['said'] !== null ? Json::string($data, 'said') : null,
+            speechEndToAudibleMs: array_key_exists('speech_end_to_audible_ms', $data) && $data['speech_end_to_audible_ms'] !== null ? Json::float($data, 'speech_end_to_audible_ms') : null,
             speechEndToAudioMs: array_key_exists('speech_end_to_audio_ms', $data) && $data['speech_end_to_audio_ms'] !== null ? Json::float($data, 'speech_end_to_audio_ms') : null,
             sttLatencyMs: array_key_exists('stt_latency_ms', $data) && $data['stt_latency_ms'] !== null ? Json::float($data, 'stt_latency_ms') : null,
             textToTtsMs: array_key_exists('text_to_tts_ms', $data) && $data['text_to_tts_ms'] !== null ? Json::float($data, 'text_to_tts_ms') : null,
@@ -92,6 +101,12 @@ final readonly class TimelineEntry
         if ($this->decisionMs !== null) {
             $out['decision_ms'] = $this->decisionMs;
         }
+        if ($this->firstAudibleFrameMs !== null) {
+            $out['first_audible_frame_ms'] = $this->firstAudibleFrameMs;
+        }
+        if ($this->firstFrameQueuedMs !== null) {
+            $out['first_frame_queued_ms'] = $this->firstFrameQueuedMs;
+        }
         if ($this->heard !== null) {
             $out['heard'] = $this->heard;
         }
@@ -112,6 +127,9 @@ final readonly class TimelineEntry
         }
         if ($this->said !== null) {
             $out['said'] = $this->said;
+        }
+        if ($this->speechEndToAudibleMs !== null) {
+            $out['speech_end_to_audible_ms'] = $this->speechEndToAudibleMs;
         }
         if ($this->speechEndToAudioMs !== null) {
             $out['speech_end_to_audio_ms'] = $this->speechEndToAudioMs;

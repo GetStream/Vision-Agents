@@ -214,13 +214,7 @@ final readonly class Client
         $status = $response->getStatusCode();
         $text = (string) $response->getBody();
         if ($status >= 400) {
-            $said = '';
-            try {
-                $said = Json::string(Json::asObject(Json::decode($text)), 'error');
-            } catch (JsonException) {
-                $said = trim(substr($text, 0, 200));
-            }
-            throw new RouterException($status, $operation, $said, substr($text, 0, 4096), (int) $response->getHeaderLine('Retry-After'));
+            throw RouterException::answered($status, $operation, $text, $response->getReasonPhrase(), $response->getHeaderLine('X-Request-Id'), (int) $response->getHeaderLine('Retry-After'));
         }
         if ($status === 204 || trim($text) === '') {
             return null;

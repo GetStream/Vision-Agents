@@ -84,6 +84,19 @@ final class LocalRouter
     }
 
     /**
+     * Scripts a body sent as it is rather than as JSON, the way a proxy in front answers.
+     *
+     * @param array<string, string> $headers
+     */
+    public function answerRaw(string $method, string $path, int $status, string $body, array $headers = []): self
+    {
+        $script = $this->script();
+        $script["{$method} {$path}"][] = ['status' => $status, 'body' => $body, 'raw' => true, 'headers' => $headers];
+        file_put_contents("{$this->state}/script.json", Json::encode($script));
+        return $this;
+    }
+
+    /**
      * Everything received so far, oldest first.
      *
      * @return list<Received>

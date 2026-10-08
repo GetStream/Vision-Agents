@@ -22,6 +22,9 @@ final readonly class CreateSessionRequest
         public ?string $callType = null,
         // An agent config to start from. Everything else in this request overrides what the config says, so a caller...
         public ?string $configId = null,
+        // The connection to use for each of the agent config's connector bindings chosen per session (connection.type...
+        /** @var list<SessionConnectorBinding>|null */
+        public ?array $connectorBindings = null,
         // Older history was omitted from the model context.
         public ?bool $contextTruncated = null,
         // Stream Chat CID to resume; returned for persistent text sessions.
@@ -33,10 +36,14 @@ final readonly class CreateSessionRequest
         public ?string $description = null,
         // Said on joining without going through the model. Empty means the agent waits to be spoken to.
         public ?string $greeting = null,
+        // The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlive...
+        /** @var list<HistoryMessage>|null */
+        public ?array $history = null,
         // The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody...
         public ?string $id = null,
         // Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream C...
         public ?bool $incognito = null,
+        // The system prompt, over what the config says. Server-side only: a device sending it is refused with a 403,...
         public ?string $instructions = null,
         // Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cann...
         /** @var list<string>|null */
@@ -67,7 +74,7 @@ final readonly class CreateSessionRequest
         public ?array $tags = null,
         // Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no...
         public ?bool $text = null,
-        // What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is...
+        // What to call the conversation, for a list a person reads, until the router names a persistent one for what...
         public ?string $title = null,
         // How long the model waits for a tool result. Zero is the default.
         public ?int $toolTimeoutMs = null,
@@ -96,11 +103,13 @@ final readonly class CreateSessionRequest
             callId: array_key_exists('call_id', $data) && $data['call_id'] !== null ? Json::string($data, 'call_id') : null,
             callType: array_key_exists('call_type', $data) && $data['call_type'] !== null ? Json::string($data, 'call_type') : null,
             configId: array_key_exists('config_id', $data) && $data['config_id'] !== null ? Json::string($data, 'config_id') : null,
+            connectorBindings: array_key_exists('connector_bindings', $data) && $data['connector_bindings'] !== null ? array_map(SessionConnectorBinding::fromArray(...), Json::objects($data, 'connector_bindings')) : null,
             contextTruncated: array_key_exists('context_truncated', $data) && $data['context_truncated'] !== null ? Json::bool($data, 'context_truncated') : null,
             conversationId: array_key_exists('conversation_id', $data) && $data['conversation_id'] !== null ? Json::string($data, 'conversation_id') : null,
             custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::object($data, 'custom') : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
             greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Json::string($data, 'greeting') : null,
+            history: array_key_exists('history', $data) && $data['history'] !== null ? array_map(HistoryMessage::fromArray(...), Json::objects($data, 'history')) : null,
             id: array_key_exists('id', $data) && $data['id'] !== null ? Json::string($data, 'id') : null,
             incognito: array_key_exists('incognito', $data) && $data['incognito'] !== null ? Json::bool($data, 'incognito') : null,
             instructions: array_key_exists('instructions', $data) && $data['instructions'] !== null ? Json::string($data, 'instructions') : null,
@@ -156,6 +165,9 @@ final readonly class CreateSessionRequest
         if ($this->configId !== null) {
             $out['config_id'] = $this->configId;
         }
+        if ($this->connectorBindings !== null) {
+            $out['connector_bindings'] = array_map(static fn (SessionConnectorBinding $each): array => $each->toArray(), $this->connectorBindings);
+        }
         if ($this->contextTruncated !== null) {
             $out['context_truncated'] = $this->contextTruncated;
         }
@@ -170,6 +182,9 @@ final readonly class CreateSessionRequest
         }
         if ($this->greeting !== null) {
             $out['greeting'] = $this->greeting;
+        }
+        if ($this->history !== null) {
+            $out['history'] = array_map(static fn (HistoryMessage $each): array => $each->toArray(), $this->history);
         }
         if ($this->id !== null) {
             $out['id'] = $this->id;

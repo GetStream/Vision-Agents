@@ -8,10 +8,16 @@ namespace GetStream\VisionAgents\Generated;
 
 use GetStream\VisionAgents\Json;
 
-final readonly class Error
+/**
+ * One thing to do with a plugin's provider before its OAuth client can be set.
+ */
+final readonly class PluginSetupStep
 {
     public function __construct(
-        public string $error,
+        // How to do it with the provider.
+        public string $description,
+        // What the step does, in a few words.
+        public string $title,
     ) {
     }
 
@@ -21,7 +27,8 @@ final readonly class Error
     public static function fromArray(array $data): self
     {
         return new self(
-            error: Json::string($data, 'error'),
+            description: Json::string($data, 'description'),
+            title: Json::string($data, 'title'),
         );
     }
 
@@ -33,7 +40,8 @@ final readonly class Error
     public function toArray(): array
     {
         $out = [];
-        $out['error'] = $this->error;
+        $out['description'] = $this->description;
+        $out['title'] = $this->title;
         return $out;
     }
 }

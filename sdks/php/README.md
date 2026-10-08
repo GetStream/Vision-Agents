@@ -274,7 +274,9 @@ Also `get`, `list`, `update`, `delete`, and `runs->list`, `runs->cancel`.
 
 Request and response shapes are generated into `GetStream\VisionAgents\Generated` from
 `acceleration/api/openapi.yaml`. A failure raises `RouterException` with the status (0 when
-the router was never reached), the operation, and what the router said.
+the router was never reached), the operation, and what the router said; `type` and `errorCode`
+are what to branch on (an unknown code is expected), `docUrl` explains it, and `requestId` is
+what to quote to support, since a 500 says only "something went wrong".
 
 ## Developing
 

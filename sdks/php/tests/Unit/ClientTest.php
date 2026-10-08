@@ -8,12 +8,14 @@ use GetStream\VisionAgents\Backend;
 use GetStream\VisionAgents\Client;
 use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Exception\RouterException;
+use GetStream\VisionAgents\Generated\ErrorType;
 use GetStream\VisionAgents\Generated\SimulationRequest;
 use GetStream\VisionAgents\Json;
 use GetStream\VisionAgents\Tests\Support\LocalRouter;
 use GetStream\VisionAgents\Tests\Support\Rows;
 use GuzzleHttp\Client as Guzzle;
 use GuzzleHttp\Psr7\HttpFactory;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class ClientTest extends TestCase
@@ -146,7 +148,7 @@ final class ClientTest extends TestCase
 
     public function testFailureCarriesStatusAndWhatTheRouterSaid(): void
     {
-        $this->router->answerWithHeaders('POST', '/v1/agents/sessions', 429, ['error' => 'slow down'], ['Retry-After' => '7']);
+        $this->router->answerWithHeaders('POST', '/v1/agents/sessions', 429, Rows::failure('rate_limited', 'slow down'), ['Retry-After' => '7']);
 
         try {
             $this->router->client()->post('/v1/agents/sessions', body: ['text' => true]);
@@ -154,9 +156,75 @@ final class ClientTest extends TestCase
         } catch (RouterException $refused) {
             self::assertSame(429, $refused->status);
             self::assertSame('slow down', $refused->said);
+            self::assertSame('rate_limited', $refused->type);
             self::assertSame(7, $refused->retryAfter);
             self::assertSame('POST /v1/agents/sessions answered 429: slow down', $refused->getMessage());
         }
+    }
+
+    public function testAFailureCarriesTheEnvelopeAndTheRequestId(): void
+    {
+        $this->router->answerWithHeaders('GET', '/v1/agents/configs', 500, Rows::failure('internal', 'something went wrong'), ['X-Request-Id' => 'req_42']);
+
+        try {
+            $this->router->client()->get('/v1/agents/configs');
+            self::fail('a 500 was returned as success');
+        } catch (RouterException $failed) {
+            self::assertSame(500, $failed->status);
+            self::assertSame('GET /v1/agents/configs', $failed->operation);
+            self::assertSame(ErrorType::Internal->value, $failed->type);
+            self::assertSame('internal', $failed->errorCode);
+            self::assertSame('something went wrong', $failed->said);
+            self::assertSame('https://getstream.io/agents/docs/api/errors/#internal', $failed->docUrl);
+            self::assertSame('req_42', $failed->requestId);
+        }
+    }
+
+    public function testAnUnknownTypeAndCodeAreKeptAsTheyCame(): void
+    {
+        $this->router->answer('POST', '/v1/agents/sessions', 409, Rows::failure('overbooked', 'the calendar is full', 'calendar_full'));
+
+        try {
+            $this->router->client()->post('/v1/agents/sessions', body: ['text' => true]);
+            self::fail('a 409 was returned as success');
+        } catch (RouterException $refused) {
+            self::assertSame('overbooked', $refused->type);
+            self::assertSame('calendar_full', $refused->errorCode);
+            self::assertSame('the calendar is full', $refused->said);
+        }
+    }
+
+    /**
+     * @param array<string, string> $headers
+     */
+    #[DataProvider('notTheEnvelope')]
+    public function testABodyThatIsNotTheEnvelopeIsSaidAsItCame(int $status, string $body, array $headers, string $said): void
+    {
+        $this->router->answerRaw('GET', '/v1/agents/configs', $status, $body, $headers + ['X-Request-Id' => 'req_7']);
+
+        try {
+            $this->router->client()->get('/v1/agents/configs');
+            self::fail("a {$status} was returned as success");
+        } catch (RouterException $failed) {
+            self::assertSame($status, $failed->status);
+            self::assertSame($said, $failed->said);
+            self::assertSame($body, $failed->body);
+            self::assertNull($failed->type);
+            self::assertNull($failed->errorCode);
+            self::assertNull($failed->docUrl);
+            self::assertSame('req_7', $failed->requestId, 'a proxy may still pass the request id on');
+        }
+    }
+
+    /**
+     * @return iterable<string, array{int, string, array<string, string>, string}>
+     */
+    public static function notTheEnvelope(): iterable
+    {
+        yield 'a proxy\'s html' => [502, "<html>bad gateway</html>\n", ['Content-Type' => 'text/html'], '<html>bad gateway</html>'];
+        yield 'an older router\'s string' => [400, '{"error":"no such voice"}', [], 'no such voice'];
+        yield 'json of some other shape' => [400, '{"detail":"nope"}', [], '{"detail":"nope"}'];
+        yield 'nothing at all' => [503, '', [], 'Service Unavailable'];
     }
 
     public function testNoContentIsNull(): void

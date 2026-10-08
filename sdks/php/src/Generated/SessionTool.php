@@ -18,6 +18,7 @@ final readonly class SessionTool
         // What the model is told the tool does, which is the whole of how it decides when to reach for one.
         public string $description,
         public string $name,
+        public ?SessionToolApproval $approval = null,
         // What a call is doing, in words for the people in the conversation, such as "Checking your location". Shown...
         public ?string $displayTitle = null,
         // Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awa...
@@ -36,6 +37,7 @@ final readonly class SessionTool
         return new self(
             description: Json::string($data, 'description'),
             name: Json::string($data, 'name'),
+            approval: array_key_exists('approval', $data) && $data['approval'] !== null ? SessionToolApproval::fromArray(Json::object($data, 'approval')) : null,
             displayTitle: array_key_exists('display_title', $data) && $data['display_title'] !== null ? Json::string($data, 'display_title') : null,
             executor: array_key_exists('executor', $data) && $data['executor'] !== null ? Json::string($data, 'executor') : null,
             parameters: array_key_exists('parameters', $data) && $data['parameters'] !== null ? Json::object($data, 'parameters') : null,
@@ -52,6 +54,9 @@ final readonly class SessionTool
         $out = [];
         $out['description'] = $this->description;
         $out['name'] = $this->name;
+        if ($this->approval !== null) {
+            $out['approval'] = $this->approval->toArray();
+        }
         if ($this->displayTitle !== null) {
             $out['display_title'] = $this->displayTitle;
         }
