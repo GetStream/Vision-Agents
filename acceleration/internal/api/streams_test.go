@@ -59,6 +59,20 @@ func (s *StreamsSuite) TestAudioSentUpComesBackTranscribed() {
 	s.Equal("en", transcript["language"])
 }
 
+func (s *StreamsSuite) TestATargetInTheOptionBlockIsEnoughToRoute() {
+	answering := s.start("/v1/llm/stream", frame{"llm": frame{"target": "echo/echo-model"}})
+
+	started := s.nextFrame(answering)
+	s.Equal("started", started["type"], "the options sent outright name the target, as the SDKs send them")
+}
+
+func (s *StreamsSuite) TestAFrameNamingNothingToRouteToIsRefused() {
+	listening := s.start("/v1/stt/stream", frame{"stt": frame{"interim": true}})
+
+	refused := s.nextFrame(listening)
+	s.Equal("error", refused["type"])
+}
+
 func (s *StreamsSuite) TestAnOptionNothingRecognisesIsRefusedRatherThanIgnored() {
 	listening := s.start("/v1/stt/stream", frame{
 		"target": "en-low-latency", "stt": frame{"mode": "whichever"}})

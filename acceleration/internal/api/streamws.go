@@ -916,10 +916,16 @@ func readStart(connection *websocket.Conn) (start, error) {
 	if opening.Type != "" && opening.Type != "start" {
 		return start{}, errors.New("the first frame must be a start frame")
 	}
-	if opening.Target == "" && opening.ConfigID == "" {
+	if !opening.targeted() && opening.ConfigID == "" {
 		return start{}, errors.New("routing needs a target, either sent or held in a config")
 	}
 	return opening, nil
+}
+
+// targeted reports whether the frame names what to route to, at its top or in an option
+// block. The SDKs send the options outright, so their target arrives in the block.
+func (s start) targeted() bool {
+	return s.Target != "" || s.STT.Target != "" || s.TTS.Target != "" || s.LLM.Target != "" || s.STS.Target != ""
 }
 
 // sttFrame renders a transcription event.
