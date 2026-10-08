@@ -7,10 +7,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -504,6 +506,30 @@ func (s *FakeProviderSuite) TestCommaScopesAnswersInSlackShapeThatTheSlackManife
 	account := s.apply("../core/testdata/manifests/slack.yaml", nil, body)
 	s.Equal(srv.TeamID, account.Metadata["team_id"])
 	s.Equal(srv.UserID, account.Metadata["user_id"])
+}
+
+// The keys are those a live oauth.v2.user.access exchange answered on 2026-10-08
+// (providers/slack.yaml), and the built-in Slack manifest captures the team and the user from
+// them, with the null enterprise as absent.
+func (s *FakeProviderSuite) TestSlackUserTokenAnswersTheLiveKeysThatTheSlackManifestCaptures() {
+	live := []string{"access_token", "app_id", "enterprise", "expires_in", "is_enterprise_install", "ok",
+		"refresh_token", "scope", "team", "token_type", "user_id"}
+	srv := fakeprovider.New(s.T(), fakeprovider.CommaScopes, fakeprovider.SlackUserToken)
+	body := s.connect(srv, url.Values{"scope": {"search:read.public,chat:write"}})
+	s.ElementsMatch(live, slices.Collect(maps.Keys(body)))
+	s.Equal(srv.UserID, body["user_id"])
+	s.Equal(srv.TeamID, body["team"].(map[string]any)["id"])
+	s.Nil(body["enterprise"])
+	s.Equal("search:read.public,chat:write", body["scope"])
+	s.Equal(http.StatusOK, s.call(srv, body["access_token"].(string)).StatusCode)
+
+	account := s.apply("../providers/slack.yaml", nil, body)
+	s.Equal(map[string]string{"team_id": srv.TeamID, "user_id": srv.UserID}, account.Metadata)
+	s.Equal(srv.TeamID+":"+srv.UserID, account.AccountID)
+
+	status, refreshed := s.refresh(srv, body["refresh_token"].(string))
+	s.Require().Equal(http.StatusOK, status)
+	s.ElementsMatch(live, slices.Collect(maps.Keys(refreshed)), "a refresh repeats the keys, which is unverified at Slack")
 }
 
 func (s *FakeProviderSuite) TestClientCredentialsIssuesAnAccessTokenAloneToAnAuthenticatedClient() {

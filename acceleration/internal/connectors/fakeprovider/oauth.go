@@ -538,11 +538,21 @@ func (s *Server) shape(body map[string]any, g *grant) map[string]any {
 // (docs.slack.dev/authentication/using-token-rotation, «Refresh a token»): ok, a bot token
 // with comma scopes, team, enterprise and authed_user. A refresh of a user token answers
 // token_type user with its comma scopes; what else Slack puts beside them is unverified.
+// Under SlackUserToken it is oauth.v2.user.access's user token instead.
 func (s *Server) slackShape(body map[string]any, g *grant) map[string]any {
 	body["ok"] = true
 	body["scope"] = strings.Join(g.scopes, ",")
 	if g.user {
 		body["token_type"] = "user"
+		return body
+	}
+	if s.is(SlackUserToken) {
+		body["token_type"] = "user"
+		body["app_id"] = "A0000APP"
+		body["team"] = map[string]string{"name": "Fake", "id": s.TeamID}
+		body["enterprise"] = nil
+		body["is_enterprise_install"] = false
+		body["user_id"] = g.account
 		return body
 	}
 	body["token_type"] = "bot"
