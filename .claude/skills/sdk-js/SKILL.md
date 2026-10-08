@@ -276,6 +276,12 @@ checked.
 - One error type per failure kind: `RouterError` (status, operation, what the router said),
   `SocketClosedError`, `ConfigurationError`. A request that never arrived is `status: 0`,
   because a caller retrying a network failure and one retrying a 500 are different.
+- Every non-2xx response becomes a `RouterError` through `errorOf`, which reads the envelope
+  into `type` (the generated `ErrorType`, open to one it does not know), `code` and `docUrl`,
+  and `X-Request-Id` into `requestId`. A body that is not the envelope keeps its text as the
+  message and leaves those three undefined rather than throwing a JSON error. A refused socket
+  upgrade is still a `SocketClosedError`: the WebSocket API, in a browser and in Node 22,
+  exposes neither the status nor the body.
 - Do not add a logger. A library that logs is a library deciding where a customer's transcripts
   go.
 

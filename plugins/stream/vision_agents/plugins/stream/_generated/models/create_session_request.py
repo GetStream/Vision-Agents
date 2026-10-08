@@ -67,7 +67,9 @@ class CreateSessionRequest:
             transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it
             simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork
             from. Default: False.
-        instructions (str | Unset):
+        instructions (str | Unset): The system prompt, over what the config says. Server-side only: a device sending it
+            is refused with a 403, as it is on updateSession, because what the agent is told to be is the backend's to
+            decide.
         keyterms (list[str] | Unset): Business-specific words the transcriber would otherwise get wrong. Up to 100
             terms, and providers that cannot be told about vocabulary ignore them.
         languages (list[str] | Unset): Language hints, which narrow the candidates in every modality.

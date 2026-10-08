@@ -354,6 +354,21 @@ func (s *PhoneSuite) TestABridgeMustBeASipAddress() {
 	s.NoError(Bridge{URI: "sip:trunk@sip.stream-io-api.com"}.Validate())
 }
 
+func (s *PhoneSuite) TestABridgeCarriesTheNumberStreamFindsItsTrunkBy() {
+	for uri, want := range map[string]string{
+		"sip:bridge.sip.example.com":               "sip:+15550000301@bridge.sip.example.com",
+		"sip:trunk@bridge.sip.example.com":         "sip:+15550000301@bridge.sip.example.com",
+		"sips:bridge.sip.example.com:5061":         "sips:+15550000301@bridge.sip.example.com:5061",
+		"sip:bridge.sip.example.com;transport=tcp": "sip:+15550000301@bridge.sip.example.com;transport=tcp",
+	} {
+		got, err := Bridge{URI: uri, Username: "stream-user", Password: "stream-pass"}.WithNumber("+15550000301")
+		s.Require().NoError(err, uri)
+		s.Equal(Bridge{URI: want, Username: "stream-user", Password: "stream-pass"}, got, uri)
+	}
+	_, err := Bridge{URI: "tel:+15550000301"}.WithNumber("+15550000301")
+	s.EqualError(err, `phone: "tel:+15550000301" is not a sip uri`)
+}
+
 func (s *PhoneSuite) TestCapabilitiesAreCoveredOnlyWhenEveryOneIsPresent() {
 	s.True(covers([]Capability{Voice, SMS}, []Capability{Voice}))
 	s.True(covers([]Capability{Voice}, nil))
@@ -506,6 +521,9 @@ type stub struct {
 	// dialed is the last call this vendor was asked to place, so a test can see what the
 	// service passed on rather than only that it passed something.
 	dialed Outbound
+	// inbound is the last number this vendor was told to send to a bridge, so a test can see
+	// the address the service passed on.
+	inbound Inbound
 }
 
 func (s *stub) SearchNumbers(context.Context, Search) ([]Available, error) {
@@ -522,7 +540,10 @@ func (s *stub) BuyNumber(context.Context, Order) (Number, error) {
 
 func (s *stub) ReleaseNumber(context.Context, string) error { return s.err }
 
-func (s *stub) ConfigureInbound(context.Context, Inbound) error { return s.err }
+func (s *stub) ConfigureInbound(_ context.Context, inbound Inbound) error {
+	s.inbound = inbound
+	return s.err
+}
 
 func (s *stub) Dial(_ context.Context, outbound Outbound) (Dialed, error) {
 	s.dialed = outbound

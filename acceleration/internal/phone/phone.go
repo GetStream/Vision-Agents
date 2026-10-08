@@ -216,6 +216,21 @@ func (b Bridge) Validate() error {
 	return nil
 }
 
+// WithNumber is the bridge with the number as the user part of its URI. Stream finds the
+// trunk and its routing rule by the number in the To user, so a URI without it reaches
+// nothing.
+func (b Bridge) WithNumber(e164 string) (Bridge, error) {
+	scheme, rest, ok := strings.Cut(b.URI, ":")
+	if !ok || (scheme != "sip" && scheme != "sips") || rest == "" {
+		return Bridge{}, stack.Wrap(fmt.Errorf("phone: %q is not a sip uri", b.URI))
+	}
+	if _, host, hasUser := strings.Cut(rest, "@"); hasUser {
+		rest = host
+	}
+	b.URI = scheme + ":" + e164 + "@" + rest
+	return b, nil
+}
+
 // Inbound points a number at the bridge, so calling it reaches an agent.
 type Inbound struct {
 	// E164 is the number to configure.

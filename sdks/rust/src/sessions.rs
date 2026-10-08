@@ -170,6 +170,7 @@ impl Sessions {
                 state: equals(query.state),
                 agent_id: equals(query.agent_id),
                 text: text.map(|text| types::TextMatch { q: text.into() }),
+                ..Default::default()
             }),
             limit: query.limit,
             cursor: query.cursor,

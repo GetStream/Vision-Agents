@@ -26,6 +26,11 @@ class TimelineEntry:
         audio_out_ms (float | Unset): How much the agent spoke.
         cadence_ms (float | Unset): Last transcript revision to a stable turn ready for the flow controller.
         decision_ms (float | Unset): Stable turn to the main model request, including flow and queueing.
+        first_audible_frame_ms (float | None | Unset): Last transcript revision to the outgoing track taking the first
+            frame of the reply that was not silence, which is when it could first be heard. Unlike roundtrip_ms it does not
+            include the wait for a long first chunk to be queued. Absent where the edge does not report it.
+        first_frame_queued_ms (float | None | Unset): Last transcript revision to the first frame of the reply being
+            queued for the outgoing track. Absent where the edge does not report it.
         heard (str | Unset): What the caller said, when it can be matched to this exchange.
         interrupted (bool | Unset): Whether the caller talked over the answer.
         llm_ttft_ms (float | None | Unset): The wait between asking the model and its first token.
@@ -35,6 +40,9 @@ class TimelineEntry:
             pipeline.
         roundtrip_ms (float | Unset): Last transcript revision to first audio published; includes cadence settling.
         said (str | Unset): What the agent answered.
+        speech_end_to_audible_ms (float | None | Unset): Last input audio to the outgoing track taking the first frame
+            of the reply that was not silence, estimated like speech_end_to_audio_ms. It excludes network transport and
+            playback.
         speech_end_to_audio_ms (float | None | Unset): Last input audio to first output audio, estimated using provider
             STT processing time plus roundtrip. It excludes network transport and playback.
         stt_latency_ms (float | None | Unset): The provider's decode time for the transcript that settled the turn.
@@ -48,6 +56,8 @@ class TimelineEntry:
     audio_out_ms: float | Unset = UNSET
     cadence_ms: float | Unset = UNSET
     decision_ms: float | Unset = UNSET
+    first_audible_frame_ms: float | None | Unset = UNSET
+    first_frame_queued_ms: float | None | Unset = UNSET
     heard: str | Unset = UNSET
     interrupted: bool | Unset = UNSET
     llm_ttft_ms: float | None | Unset = UNSET
@@ -55,6 +65,7 @@ class TimelineEntry:
     model_to_first_text_ms: float | Unset = UNSET
     roundtrip_ms: float | Unset = UNSET
     said: str | Unset = UNSET
+    speech_end_to_audible_ms: float | None | Unset = UNSET
     speech_end_to_audio_ms: float | None | Unset = UNSET
     stt_latency_ms: float | None | Unset = UNSET
     text_to_tts_ms: float | Unset = UNSET
@@ -72,6 +83,18 @@ class TimelineEntry:
         cadence_ms = self.cadence_ms
 
         decision_ms = self.decision_ms
+
+        first_audible_frame_ms: float | None | Unset
+        if isinstance(self.first_audible_frame_ms, Unset):
+            first_audible_frame_ms = UNSET
+        else:
+            first_audible_frame_ms = self.first_audible_frame_ms
+
+        first_frame_queued_ms: float | None | Unset
+        if isinstance(self.first_frame_queued_ms, Unset):
+            first_frame_queued_ms = UNSET
+        else:
+            first_frame_queued_ms = self.first_frame_queued_ms
 
         heard = self.heard
 
@@ -95,6 +118,12 @@ class TimelineEntry:
         roundtrip_ms = self.roundtrip_ms
 
         said = self.said
+
+        speech_end_to_audible_ms: float | None | Unset
+        if isinstance(self.speech_end_to_audible_ms, Unset):
+            speech_end_to_audible_ms = UNSET
+        else:
+            speech_end_to_audible_ms = self.speech_end_to_audible_ms
 
         speech_end_to_audio_ms: float | None | Unset
         if isinstance(self.speech_end_to_audio_ms, Unset):
@@ -132,6 +161,10 @@ class TimelineEntry:
             field_dict["cadence_ms"] = cadence_ms
         if decision_ms is not UNSET:
             field_dict["decision_ms"] = decision_ms
+        if first_audible_frame_ms is not UNSET:
+            field_dict["first_audible_frame_ms"] = first_audible_frame_ms
+        if first_frame_queued_ms is not UNSET:
+            field_dict["first_frame_queued_ms"] = first_frame_queued_ms
         if heard is not UNSET:
             field_dict["heard"] = heard
         if interrupted is not UNSET:
@@ -146,6 +179,8 @@ class TimelineEntry:
             field_dict["roundtrip_ms"] = roundtrip_ms
         if said is not UNSET:
             field_dict["said"] = said
+        if speech_end_to_audible_ms is not UNSET:
+            field_dict["speech_end_to_audible_ms"] = speech_end_to_audible_ms
         if speech_end_to_audio_ms is not UNSET:
             field_dict["speech_end_to_audio_ms"] = speech_end_to_audio_ms
         if stt_latency_ms is not UNSET:
@@ -174,6 +209,28 @@ class TimelineEntry:
 
         decision_ms = d.pop("decision_ms", UNSET)
 
+        def _parse_first_audible_frame_ms(data: object) -> float | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(float | None | Unset, data)
+
+        first_audible_frame_ms = _parse_first_audible_frame_ms(
+            d.pop("first_audible_frame_ms", UNSET)
+        )
+
+        def _parse_first_frame_queued_ms(data: object) -> float | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(float | None | Unset, data)
+
+        first_frame_queued_ms = _parse_first_frame_queued_ms(
+            d.pop("first_frame_queued_ms", UNSET)
+        )
+
         heard = d.pop("heard", UNSET)
 
         interrupted = d.pop("interrupted", UNSET)
@@ -201,6 +258,17 @@ class TimelineEntry:
         roundtrip_ms = d.pop("roundtrip_ms", UNSET)
 
         said = d.pop("said", UNSET)
+
+        def _parse_speech_end_to_audible_ms(data: object) -> float | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(float | None | Unset, data)
+
+        speech_end_to_audible_ms = _parse_speech_end_to_audible_ms(
+            d.pop("speech_end_to_audible_ms", UNSET)
+        )
 
         def _parse_speech_end_to_audio_ms(data: object) -> float | None | Unset:
             if data is None:
@@ -241,6 +309,8 @@ class TimelineEntry:
             audio_out_ms=audio_out_ms,
             cadence_ms=cadence_ms,
             decision_ms=decision_ms,
+            first_audible_frame_ms=first_audible_frame_ms,
+            first_frame_queued_ms=first_frame_queued_ms,
             heard=heard,
             interrupted=interrupted,
             llm_ttft_ms=llm_ttft_ms,
@@ -248,6 +318,7 @@ class TimelineEntry:
             model_to_first_text_ms=model_to_first_text_ms,
             roundtrip_ms=roundtrip_ms,
             said=said,
+            speech_end_to_audible_ms=speech_end_to_audible_ms,
             speech_end_to_audio_ms=speech_end_to_audio_ms,
             stt_latency_ms=stt_latency_ms,
             text_to_tts_ms=text_to_tts_ms,

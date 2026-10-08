@@ -10,15 +10,29 @@ public sealed class AgentsException(message: String, cause: Throwable? = null) :
     Exception(message, cause) {
 
     /**
-     * The router refused the request. [reason] is what it said, not a status phrase.
+     * The router refused the request, or the socket's handshake. [reason] is what it said.
      *
-     * [retryAfterSeconds] is set on a 429, which is a device that has used up its day.
+     * [type] is the kind of failure, which decides the status (`invalid_request`, `permission`,
+     * `not_found`, `rate_limited`, ...), and [code] is what to branch on (`validation_failed`,
+     * `session_not_found`, ...); both are strings, because the router adds values. [docUrl]
+     * explains the code. All three are null when the body was not the router's, such as a
+     * proxy's page, and [reason] is then that body, cut short, or the status phrase.
+     *
+     * [requestId] is the response's `X-Request-Id`, which is what to quote to support: a 500
+     * says only "something went wrong". [retryAfterSeconds] is set on a 429, which is a device
+     * that has used up its day.
      */
     public class Http(
         public val status: Int,
         public val reason: String,
         public val retryAfterSeconds: Long? = null,
-    ) : AgentsException("the router answered $status: $reason")
+        public val type: String? = null,
+        public val code: String? = null,
+        public val docUrl: String? = null,
+        public val requestId: String? = null,
+    ) : AgentsException(
+        "the router answered $status: $reason" + requestId?.let { " (request $it)" }.orEmpty(),
+    )
 
     /** The request never got an answer. */
     public class Transport(cause: Throwable) :

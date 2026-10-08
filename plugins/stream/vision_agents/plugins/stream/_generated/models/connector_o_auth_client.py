@@ -19,20 +19,22 @@ T = TypeVar("T", bound="ConnectorOAuthClient")
 
 @_attrs_define
 class ConnectorOAuthClient:
-    """The OAuth client the app registered with a connector's provider itself. The secret is write-only: no response
-    carries it.
+    """The OAuth client the app registered with a connector's provider itself. The client secret and the signing secret are
+    write-only: no response carries them.
 
         Attributes:
-            client_id (str):
+            client_id (str): Empty for a provider app put without an OAuth client, such as a Linq account.
             connector_id (str):
             created_at (datetime.datetime):
             registration (ConnectorClientRegistrationMethod): operator is this deployment's own client, customer one the app
                 registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one
                 registered on the fly (RFC 7591) and cimd one named by a metadata document.
-            updated_at (datetime.datetime): When the client, its secret or its method last changed.
+            updated_at (datetime.datetime): When the client, its secrets or its method last changed.
             auth_method (ConnectorOAuthClientAuthMethod | Unset): How the app's own OAuth client authenticates at the token
                 endpoint (RFC 7591 section 2): none for a public client, which has no secret, client_secret_basic or
                 client_secret_post.
+            provider_app_id (str | Unset): The provider's id for the app the client belongs to, as put. Absent when none was
+                put.
     """
 
     client_id: str
@@ -41,6 +43,7 @@ class ConnectorOAuthClient:
     registration: ConnectorClientRegistrationMethod
     updated_at: datetime.datetime
     auth_method: ConnectorOAuthClientAuthMethod | Unset = UNSET
+    provider_app_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -58,6 +61,8 @@ class ConnectorOAuthClient:
         if not isinstance(self.auth_method, Unset):
             auth_method = self.auth_method.value
 
+        provider_app_id = self.provider_app_id
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -71,6 +76,8 @@ class ConnectorOAuthClient:
         )
         if auth_method is not UNSET:
             field_dict["auth_method"] = auth_method
+        if provider_app_id is not UNSET:
+            field_dict["provider_app_id"] = provider_app_id
 
         return field_dict
 
@@ -94,6 +101,8 @@ class ConnectorOAuthClient:
         else:
             auth_method = ConnectorOAuthClientAuthMethod(_auth_method)
 
+        provider_app_id = d.pop("provider_app_id", UNSET)
+
         connector_o_auth_client = cls(
             client_id=client_id,
             connector_id=connector_id,
@@ -101,6 +110,7 @@ class ConnectorOAuthClient:
             registration=registration,
             updated_at=updated_at,
             auth_method=auth_method,
+            provider_app_id=provider_app_id,
         )
 
         connector_o_auth_client.additional_properties = d

@@ -10,7 +10,8 @@ use GetStream\VisionAgents\Json;
 
 /**
  * What to change about one session. A field left out is left as it is. Title, description and
- * custom can change on a session that ended; everything else needs it running.
+ * custom can change on a session that ended, and are all an end user's device may change;
+ * everything else needs the session running and a server-side caller.
  */
 final readonly class UpdateSessionRequest
 {

@@ -2768,7 +2768,7 @@ type AttachNumberRequest struct {
 type AttachedNumber struct {
 	RouteId string `json:"route_id"`
 
-	// SipUri Where the vendor sends calls, e.g. sip:trunk@sip.stream-io-api.com.
+	// SipUri Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip.stream-io-api.com.
 	SipUri  string `json:"sip_uri"`
 	TrunkId string `json:"trunk_id"`
 }

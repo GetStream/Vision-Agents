@@ -108,6 +108,13 @@ has no sequence number to resume from. A socket that drops ends the session or `
 `body` and `retry_after`; `SocketClosedError` for writing to a closed socket. A refused
 websocket upgrade is a `RouterError` with the handshake's status. Never `rescue Exception`.
 
+Every refusal, an HTTP answer or a refused upgrade, is read by `RouterError.answered`:
+`error.message` is the message, with `type`, `code` (branch on it; it may be new) and `doc_url`
+beside it, all nil for a body that is not the envelope, whose trimmed text is the message
+instead. `request_id` is the `X-Request-Id` header, what a 500 is quoted to support by; for a
+refused upgrade `Socket` keeps the bytes after the head up to `Content-Length`, since
+websocket-driver reads only the status and the headers.
+
 ## Behaviour that is easy to get wrong
 
 - The session request carries `agent:` (the config name) and only what the code set. The

@@ -178,10 +178,10 @@ class Client:
         if options.custom:
             request.custom = GuestUserRequestCustom.from_dict(options.custom)
 
-        minted = await create_guest_user.asyncio(
-            client=self.backend.client(), body=request
+        return await _unwrapped(
+            create_guest_user.asyncio(client=self.backend.client(), body=request),
+            "minting a guest",
         )
-        return _unwrapped(minted, "minting a guest")
 
     async def claim_guest_user(self, guest_id: str, user_id: str) -> ClaimGuestResult:
         """Move a guest's conversations onto the account they turned out to be.
@@ -200,11 +200,13 @@ class Client:
         if not guest_id or not user_id:
             raise RouterError("claiming a guest needs the guest and the account")
 
-        claimed = await claim_guest_user.asyncio(
-            client=self.backend.client(),
-            body=ClaimGuestRequest(guest_id=guest_id, user_id=user_id),
+        return await _unwrapped(
+            claim_guest_user.asyncio(
+                client=self.backend.client(),
+                body=ClaimGuestRequest(guest_id=guest_id, user_id=user_id),
+            ),
+            f"claiming the guest {guest_id}",
         )
-        return _unwrapped(claimed, f"claiming the guest {guest_id}")
 
 
 class Memories:
@@ -222,10 +224,10 @@ class Memories:
         """
         if not user_id:
             raise ValueError("truncating memories needs a user id")
-        truncated = await truncate_memories.asyncio_detailed(
-            user_id, client=self._backend.client()
+        await _deleted(
+            truncate_memories.asyncio_detailed(user_id, client=self._backend.client()),
+            f"truncating the memories of {user_id}",
         )
-        _deleted(truncated, f"truncating the memories of {user_id}")
 
 
 class Agent:
@@ -264,10 +266,11 @@ class Agent:
 
         Server side only: how an agent is configured is not a device's to read.
         """
-        listed = await list_agent_configs.asyncio(
-            client=self._backend.client(), name=self.name
+        listed = await _unwrapped(
+            list_agent_configs.asyncio(client=self._backend.client(), name=self.name),
+            f"looking up the agent {self.name}",
         )
-        for stored in _unwrapped(listed, f"looking up the agent {self.name}"):
+        for stored in listed:
             if stored.name == self.name:
                 return stored
         return None
@@ -281,7 +284,9 @@ class Agent:
         config = await self.config()
         if config is None:
             raise RouterError(f"there is no agent called {self.name} to update")
-        patched = await patch_agent_config.asyncio(
-            config.id, client=self._backend.client(), body=patch
+        return await _unwrapped(
+            patch_agent_config.asyncio(
+                config.id, client=self._backend.client(), body=patch
+            ),
+            f"updating the agent {self.name}",
         )
-        return _unwrapped(patched, f"updating the agent {self.name}")

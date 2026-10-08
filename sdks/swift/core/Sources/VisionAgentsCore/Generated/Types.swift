@@ -34,7 +34,7 @@ internal protocol APIProtocol: Sendable {
     ///
     /// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
     ///
-    /// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+    /// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
     ///
     /// - Remark: HTTP `PATCH /v1/agents/sessions/{id}`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/patch(updateSession)`.
@@ -162,7 +162,7 @@ extension APIProtocol {
     ///
     /// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
     ///
-    /// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+    /// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
     ///
     /// - Remark: HTTP `PATCH /v1/agents/sessions/{id}`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/patch(updateSession)`.

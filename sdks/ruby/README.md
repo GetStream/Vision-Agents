@@ -78,7 +78,9 @@ on one method per HTTP verb, which looks the path up in a table generated from
 `acceleration/api/openapi.yaml`, so a path, query parameter or body key the spec does not
 have is refused before anything is sent. Answers are the router's JSON as string-keyed
 hashes. A failure raises `RouterError` with the status, the operation id and what the router
-said; status 0 means the request never arrived.
+said; status 0 means the request never arrived. Its `type`, `code` and `doc_url` are the
+router's error envelope (branch on `code`, which may be new), and `request_id` is the
+`X-Request-Id` to quote to support; a refused socket carries the same.
 
 ## Dispatch
 

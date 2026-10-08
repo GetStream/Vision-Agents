@@ -210,7 +210,7 @@ public sealed class Session : IAsyncDisposable
             Title = VisionAgentsClient.Blank(options.Title),
             Description = VisionAgentsClient.Blank(options.Description),
             ProjectId = VisionAgentsClient.Blank(options.ProjectId),
-            Custom = options.Custom,
+            Custom = options.Custom?.ToDictionary(pair => pair.Key, pair => pair.Value!),
             ModelOverwrites = options.ModelOverwrites,
             Instructions = VisionAgentsClient.Blank(options.Instructions),
             Incognito = options.Incognito,

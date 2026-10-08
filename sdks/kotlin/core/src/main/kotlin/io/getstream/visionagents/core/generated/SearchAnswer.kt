@@ -40,7 +40,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param model 
  * @param provider 
  * @param results The sources behind it, most relevant first.
- * @param answer The provider's own summary, where it offers one. It is what a voice agent wants: a sentence to say rather than a page to read. 
+ * @param answer The provider's own summary, where it offers one. It is what a voice agent wants: a sentence to say rather than a page to read.
  */
 @Serializable
 
@@ -56,7 +56,7 @@ internal data class SearchAnswer (
     @SerialName(value = "results")
     val results: kotlin.collections.List<SearchResult>,
 
-    /* The provider's own summary, where it offers one. It is what a voice agent wants: a sentence to say rather than a page to read.  */
+    /* The provider's own summary, where it offers one. It is what a voice agent wants: a sentence to say rather than a page to read. */
     @SerialName(value = "answer")
     val answer: kotlin.String? = null
 

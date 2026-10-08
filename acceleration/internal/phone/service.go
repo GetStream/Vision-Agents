@@ -451,7 +451,9 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 	}
 	callID := attachment.CallID
 	if callID == "" {
-		callID = "phone-" + attachment.E164
+		// Stream allows only a-z, 0-9, _ and - in a call id, so the + of the number cannot
+		// be part of it.
+		callID = "phone-" + strings.TrimPrefix(attachment.E164, "+")
 	}
 
 	routeID, err = stream.CreateRoute(ctx, Route{
@@ -461,6 +463,11 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		CallID:        callID,
 		CallType:      callType,
 	})
+	if err != nil {
+		return Attached{}, stack.Wrap(err)
+	}
+
+	bridge, err = bridge.WithNumber(attachment.E164)
 	if err != nil {
 		return Attached{}, stack.Wrap(err)
 	}
@@ -624,7 +631,10 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		return Placed{}, stack.Wrap(err)
 	}
 
-	outbound.Bridge = bridge
+	outbound.Bridge, err = bridge.WithNumber(request.From)
+	if err != nil {
+		return Placed{}, stack.Wrap(err)
+	}
 	if err := outbound.Validate(); err != nil {
 		return Placed{}, stack.Wrap(err)
 	}
@@ -927,6 +937,11 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 		CallID:        request.CallID,
 		CallType:      callType,
 	})
+	if err != nil {
+		return Dialed{}, stack.Wrap(err)
+	}
+
+	bridge, err = bridge.WithNumber(request.From)
 	if err != nil {
 		return Dialed{}, stack.Wrap(err)
 	}

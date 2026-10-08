@@ -4,6 +4,8 @@ from typing import Any, AsyncIterator, Optional, Union
 
 import aiohttp
 
+from ._errors import refusal
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,11 +36,19 @@ class Socket:
         return self._connection.close_code
 
     async def connect(self) -> None:
-        """Open the socket, raising if the router refuses it."""
+        """Open the socket, raising RouterError if the router refuses it.
+
+        aiohttp releases a refused upgrade without reading it, so the error carries the
+        status and the request id but not what the body said.
+        """
         self._session = aiohttp.ClientSession()
-        self._connection = await self._session.ws_connect(
-            self._url, headers=self._headers, autoping=True
-        )
+        try:
+            self._connection = await self._session.ws_connect(
+                self._url, headers=self._headers, autoping=True
+            )
+        except aiohttp.WSServerHandshakeError as refused:
+            await self.close()
+            raise refusal(refused.status, refused.headers or {}, b"") from refused
 
     async def send(self, frame: dict[str, Any]) -> None:
         """Send one JSON frame."""

@@ -2,8 +2,8 @@ mod support;
 
 use axum::http::Method;
 use serde_json::json;
-use support::{SECRET, Server, claims};
-use vision_agents::{Client, ClientOptions, Error, ListResponsesQuery, types};
+use support::{SECRET, Server, claims, refusal};
+use vision_agents::{Client, ClientOptions, Error, ListResponsesQuery, RouterFailure, types};
 
 #[tokio::test]
 async fn a_router_with_nothing_in_front_is_told_the_customer() {
@@ -158,21 +158,156 @@ async fn a_refusal_carries_the_status_and_what_the_router_said() {
         Method::GET,
         "/v1/agents/sessions/missing",
         404,
-        json!({"error": "no such session"}),
+        refusal("not_found", "session_not_found", "no such session"),
     );
 
     let error = server.client().get_session("missing").await.unwrap_err();
 
     assert_eq!(error.status(), Some(404));
+    assert_eq!(error.to_string(), "getSession: 404: no such session");
     match error {
-        Error::Router {
-            operation, message, ..
-        } => {
-            assert_eq!(operation, "getSession");
-            assert_eq!(message, "no such session");
+        Error::Router(failure) => {
+            assert_eq!(failure.operation, "getSession");
+            assert_eq!(failure.message, "no such session");
         }
         other => panic!("expected a refusal, got {other:?}"),
     }
+}
+
+fn failure(error: Error) -> RouterFailure {
+    match error {
+        Error::Router(failure) => *failure,
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_refusal_carries_the_routers_envelope_and_request_id() {
+    let server = Server::start().await;
+    server.route_raw(
+        Method::POST,
+        "/v1/agents/sessions",
+        503,
+        &[
+            ("content-type", "application/json"),
+            ("x-request-id", "req-7f3a"),
+        ],
+        &refusal(
+            "unavailable",
+            "not_configured",
+            "this deployment has no voice",
+        )
+        .to_string(),
+    );
+
+    let refused = failure(
+        server
+            .client()
+            .create_session(&Default::default())
+            .await
+            .unwrap_err(),
+    );
+
+    assert_eq!(refused.status, 503);
+    assert_eq!(refused.operation, "createSession");
+    assert_eq!(refused.kind, "unavailable");
+    assert_eq!(refused.code, "not_configured");
+    assert_eq!(refused.message, "this deployment has no voice");
+    assert_eq!(
+        refused.doc_url,
+        "https://getstream.io/agents/docs/api/errors/#not_configured"
+    );
+    assert_eq!(refused.request_id, "req-7f3a");
+}
+
+#[tokio::test]
+async fn an_envelope_of_a_type_this_build_does_not_know_is_still_read() {
+    let server = Server::start().await;
+    server.route(
+        Method::GET,
+        "/v1/agents/sessions/s1",
+        418,
+        refusal("teapot", "short_and_stout", "I am a teapot"),
+    );
+
+    let refused = failure(server.client().get_session("s1").await.unwrap_err());
+
+    assert_eq!(
+        (
+            refused.kind.as_str(),
+            refused.code.as_str(),
+            refused.message.as_str()
+        ),
+        ("teapot", "short_and_stout", "I am a teapot")
+    );
+}
+
+#[tokio::test]
+async fn a_body_that_is_not_the_envelope_is_the_message() {
+    let server = Server::start().await;
+    let path = "/v1/agents/sessions/s1";
+    server.route_raw(
+        Method::GET,
+        path,
+        502,
+        &[("content-type", "text/html"), ("x-request-id", "req-proxy")],
+        "<html>bad gateway</html>\n",
+    );
+    server.route(Method::GET, path, 400, json!({"error": "the old shape"}));
+    server.route(Method::GET, path, 503, json!(null));
+    let client = server.client();
+
+    let proxy = failure(client.get_session("s1").await.unwrap_err());
+    let old = failure(client.get_session("s1").await.unwrap_err());
+    let empty = failure(client.get_session("s1").await.unwrap_err());
+
+    assert_eq!(proxy.status, 502);
+    assert_eq!(proxy.message, "<html>bad gateway</html>");
+    assert_eq!(
+        (
+            proxy.kind.as_str(),
+            proxy.code.as_str(),
+            proxy.doc_url.as_str()
+        ),
+        ("", "", "")
+    );
+    assert_eq!(proxy.request_id, "req-proxy");
+    assert_eq!(old.message, r#"{"error":"the old shape"}"#);
+    assert_eq!(old.code, "");
+    assert_eq!(empty.message, "503 Service Unavailable");
+    assert_eq!(empty.request_id, "");
+}
+
+#[tokio::test]
+async fn a_refused_socket_upgrade_carries_the_routers_envelope_and_request_id() {
+    let server = Server::start().await;
+    let path = "/v1/agents/sessions/s1/events";
+    server.route_raw(
+        Method::GET,
+        path,
+        403,
+        &[
+            ("content-type", "application/json"),
+            ("x-request-id", "req-socket"),
+        ],
+        &refusal("permission", "forbidden", "not yours").to_string(),
+    );
+
+    let Err(error) = server.client().socket(path).await else {
+        panic!("the upgrade was refused, yet the socket opened");
+    };
+    let refused = failure(error);
+
+    assert_eq!(refused.status, 403);
+    assert_eq!(refused.operation, format!("GET {path}"));
+    assert_eq!(refused.kind, "permission");
+    assert_eq!(refused.code, "forbidden");
+    assert_eq!(refused.message, "not yours");
+    assert_eq!(
+        refused.doc_url,
+        "https://getstream.io/agents/docs/api/errors/#forbidden"
+    );
+    assert_eq!(refused.request_id, "req-socket");
 }
 
 #[tokio::test]

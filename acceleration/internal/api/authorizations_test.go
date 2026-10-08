@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/cookiejar"
 	"net/netip"
@@ -135,6 +136,26 @@ func (s *AuthorizationsSuite) TestAConsentConnectsTheAccountItWasStartedFor() {
 	s.Equal(s.provider.UserID, connection.Metadata["user_id"])
 	s.NotEmpty(connection.AccountID)
 	s.Equal([]string{"channels:history", "chat:write"}, connection.GrantedScopes)
+}
+
+// TestTheSlackManifestConnectsTheUserOfTheLiveUserTokenResponse runs the built-in Slack
+// manifest's consent through the callback, with the fake answering oauth.v2.user.access as it
+// answered live on 2026-10-08 (SlackUserToken): user_id at the top, enterprise null, no
+// authed_user. Revision 4 read $.authed_user.id, so this consent failed.
+func (s *AuthorizationsSuite) TestTheSlackManifestConnectsTheUserOfTheLiveUserTokenResponse() {
+	s.provider.Use(fakeprovider.CommaScopes, fakeprovider.SlackUserToken)
+	// The suite shares one fake, and another test may have switched its user.
+	user := s.provider.SwitchAccount()
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(s.slackAtFake()), &created))
+
+	s.connect(created.ID)
+
+	connection := s.get(created.ID)
+	s.Equal(ConnectionStatus(store.ConnectionConnected), connection.Status)
+	s.Equal(map[string]string{"team_id": s.provider.TeamID, "user_id": user}, connection.Metadata,
+		"no enterprise_id: a null enterprise is absent")
+	s.Equal(s.provider.TeamID+":"+user, connection.AccountID)
 }
 
 func (s *AuthorizationsSuite) TestTheHandoffBindsTheConsentWithAnHttpOnlySecureLaxCookieOnTheCallbackAlone() {
@@ -560,6 +581,35 @@ sources:
 ` + extra))
 	s.Require().NoError(err)
 	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	return id
+}
+
+// slackAtFake stores the built-in Slack manifest (providers/slack.yaml) as a connector of the
+// test's app, with its endpoints at the fake and the fake's operator client: its scopes,
+// capture and identity are the built-in's own. The channel block is left out, since the
+// consent does not read it.
+func (s *AuthorizationsSuite) slackAtFake() string {
+	raw, err := fs.ReadFile(providers.FS, "slack.yaml")
+	s.Require().NoError(err)
+	manifest, _, found := strings.Cut(string(raw), "\nchannel:\n")
+	s.Require().True(found)
+	id := "custom_slack" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	for from, to := range map[string]string{
+		"\nid: slack\n": "\nid: " + id + "\n",
+		"authorize: https://slack.com/oauth/v2_user/authorize": "authorize: " + s.provider.URL + fakeprovider.PathAuthorize,
+		"token: https://slack.com/api/oauth.v2.user.access":    "token: " + s.provider.URL + fakeprovider.PathToken,
+		"revoke: https://slack.com/api/auth.revoke":            "revoke: " + s.provider.URL + fakeprovider.PathRevoke,
+		"mcp: https://mcp.slack.com/mcp":                       "mcp: " + s.provider.URL + fakeprovider.PathMCP,
+		"resource: https://mcp.slack.com\n":                    "resource: " + s.provider.URL + fakeprovider.PathMCP + "\n",
+		"env: SLACK\n":                                         "env: FAKE\n",
+	} {
+		s.Require().Equal(1, strings.Count(manifest, from), from)
+		manifest = strings.Replace(manifest, from, to, 1)
+	}
+	parsed, err := core.ParseManifest([]byte(manifest))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), parsed)
 	s.Require().NoError(err)
 	return id
 }

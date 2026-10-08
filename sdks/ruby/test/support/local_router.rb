@@ -102,10 +102,18 @@ class LocalRouter
     "http://127.0.0.1:#{@server.addr[1]}"
   end
 
+  # The router's error envelope, which every failure it answers is.
+  def self.failure(type, code, message)
+    { "error" => { "message" => message, "type" => type, "code" => code,
+                   "doc_url" => "https://getstream.io/agents/docs/api/errors/##{code}" } }
+  end
+
   # Answers method and path (a String, or a Regexp matched against the path) with the
-  # block's return: a body, or [status, body].
-  def on(method, path, status: 200, body: nil, &handler)
-    handler ||= ->(_request) { [status, body] }
+  # block's return: a body, [status, body] or [status, body, headers]. A String body is
+  # sent as it is, anything else as JSON. A GET also answers an upgrade no socket is
+  # scripted for, which is how a refused upgrade is scripted.
+  def on(method, path, status: 200, body: nil, headers: {}, &handler)
+    handler ||= ->(_request) { [status, body, headers] }
     @lock.synchronize { @routes.unshift([method.to_s.upcase, path, handler]) }
     self
   end
@@ -167,10 +175,7 @@ class LocalRouter
     rest << io.read(length - rest.bytesize) while rest.bytesize < length
     request = Request.new(method, uri.path, query, headers, rest)
     @lock.synchronize { @requests << request }
-    status, body = answer(request)
-    text = body.nil? ? "" : JSON.generate(body)
-    io.write("HTTP/1.1 #{status} X\r\nContent-Type: application/json\r\nContent-Length: #{text.bytesize}\r\n" \
-             "Connection: close\r\n\r\n#{text}")
+    respond(io, *answer(request))
   rescue IOError, SystemCallError
     nil
   ensure
@@ -179,18 +184,33 @@ class LocalRouter
 
   def answer(request)
     route = @lock.synchronize { @routes.find { |m, path, _| m == request.method && match?(path, request.path) } }
-    return [404, { "error" => "no route for #{request.method} #{request.path}" }] unless route
+    unless route
+      return [404, LocalRouter.failure("not_found", "not_found", "no route for #{request.method} #{request.path}"), {}]
+    end
 
     reply = route[2].call(request)
-    reply.is_a?(Array) && reply.size == 2 && reply[0].is_a?(Integer) ? reply : [200, reply]
+    reply = [200, reply] unless reply.is_a?(Array) && reply.size.between?(2, 3) && reply[0].is_a?(Integer)
+    status, body, headers = reply
+    [status, body, headers || {}]
+  end
+
+  def respond(io, status, body, headers)
+    text = case body
+           when nil then ""
+           when String then body
+           else JSON.generate(body)
+           end
+    type = body.is_a?(String) ? "text/html" : "application/json"
+    fields = headers.map { |name, value| "#{name}: #{value}\r\n" }.join
+    io.write("HTTP/1.1 #{status} X\r\nContent-Type: #{type}\r\nContent-Length: #{text.bytesize}\r\n#{fields}" \
+             "Connection: close\r\n\r\n#{text}")
   end
 
   def upgrade(io, request, head)
     @lock.synchronize { @requests << request }
     script = @lock.synchronize { @sockets.find { |path, _| match?(path, request.path) }&.last }
     unless script
-      io.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-      io.close
+      respond(io, *answer(request))
       return
     end
 

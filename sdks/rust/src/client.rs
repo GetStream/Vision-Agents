@@ -212,22 +212,12 @@ impl Client {
         };
         let response = request.send().await.map_err(transport)?;
         let status = response.status();
-        let bytes = response.bytes().await.map_err(transport)?;
-
         if !status.is_success() {
-            let said = serde_json::from_slice::<types::Error>(&bytes)
-                .map(|error| error.error)
-                .unwrap_or_else(|_| String::from_utf8_lossy(&bytes).trim().to_string());
-            return Err(Error::Router {
-                status: status.as_u16(),
-                operation: operation.to_string(),
-                message: if said.is_empty() {
-                    status.to_string()
-                } else {
-                    said
-                },
-            });
+            let headers = response.headers().clone();
+            let body = response.bytes().await.map_err(transport)?;
+            return Err(Error::refused(operation, status, &headers, &body));
         }
+        let bytes = response.bytes().await.map_err(transport)?;
 
         let answer: &[u8] = if bytes.is_empty() { b"null" } else { &bytes };
         serde_json::from_slice(answer).map_err(|source| Error::Decode {

@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -135,7 +134,7 @@ public sealed class VisionAgentsClient : IDisposable
         {
             Id = Blank(options.Id),
             Name = Blank(options.Name),
-            Custom = options.Custom is { Count: > 0 } ? options.Custom : null,
+            Custom = options.Custom is { Count: > 0 } custom ? custom.ToDictionary(pair => pair.Key, pair => pair.Value!) : null,
         };
         return PostAsync<GuestUser>("/v1/agents/guests", request, cancellationToken);
     }
@@ -238,10 +237,7 @@ public sealed class VisionAgentsClient : IDisposable
             var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                throw new RouterException((int)response.StatusCode, operation, Said(text, response.StatusCode))
-                {
-                    RetryAfter = response.Headers.RetryAfter?.Delta,
-                };
+                throw RouterException.Answered((int)response.StatusCode, operation, text, response.Headers);
             }
             if (typeof(T) == typeof(Nothing))
             {
@@ -266,23 +262,6 @@ public sealed class VisionAgentsClient : IDisposable
     internal static string Escape(string segment) => Uri.EscapeDataString(segment);
 
     internal static string? Blank(string? value) => string.IsNullOrEmpty(value) ? null : value;
-
-    /// <summary>What the router said went wrong, from the error body every refusal shares.</summary>
-    private static string Said(string text, HttpStatusCode status)
-    {
-        try
-        {
-            if (JsonSerializer.Deserialize<Error>(text, Json.Options) is { Error1: { Length: > 0 } said })
-            {
-                return said;
-            }
-        }
-        catch (JsonException)
-        {
-            // Not the error shape, so what arrived is reported as it is below.
-        }
-        return text.Trim() is { Length: > 0 } raw ? raw : $"the router answered {(int)status}";
-    }
 
     private static string QueryString(IReadOnlyDictionary<string, string?>? query)
     {

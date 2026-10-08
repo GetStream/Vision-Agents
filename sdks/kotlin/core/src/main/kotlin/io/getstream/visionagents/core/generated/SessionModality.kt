@@ -34,7 +34,7 @@ import kotlinx.serialization.encoding.Encoder
 
 
 /**
- * How the user took part: text for a conversation held in writing, voice for a call, and video once the agent has seen the user's video. It only moves up, from text or voice to video. 
+ * How the user took part: text for a conversation held in writing, voice for a call, and video once the agent has seen the user's video. It only moves up, from text or voice to video.
  *
  * Values: text,voice,video,unknown_default_open_api
  */

@@ -30,7 +30,9 @@ Every option left null falls back to the environment the other SDKs read:
 `STREAM_ACCELERATION_URL`, `STREAM_ACCELERATION_CUSTOMER_ID`, `STREAM_API_KEY`,
 `STREAM_API_SECRET` and `STREAM_ACCELERATION_AUTHENTICATE`. With no URL at all the client goes
 to Stream's hosted router. A failure raises
-`RouterException`, carrying the status, the operation and what the router said.
+`RouterException`, carrying the `Status`, the `Operation` and what the router `Said`, with its
+`Type` and `Code` to branch on (expect codes this SDK does not know), the `DocUrl` explaining
+the code, and the `RequestId` to quote to support when a 500 says only "something went wrong".
 
 ## An agent
 

@@ -38,7 +38,7 @@ import kotlinx.serialization.encoding.Encoder
  *
  * @param number One of the customer's own numbers, written as +15551234567.
  * @param vendor Who carries an outbound leg.
- * @param vendorCallId The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at. 
+ * @param vendorCallId The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at.
  */
 @Serializable
 
@@ -52,7 +52,7 @@ internal data class SessionPhone (
     @SerialName(value = "vendor")
     val vendor: kotlin.String? = null,
 
-    /* The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at.  */
+    /* The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at. */
     @SerialName(value = "vendor_call_id")
     val vendorCallId: kotlin.String? = null
 

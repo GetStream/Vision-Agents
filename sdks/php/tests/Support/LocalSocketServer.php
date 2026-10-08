@@ -69,7 +69,7 @@ final class LocalSocketServer implements WebsocketClientHandler, WebsocketAccept
         }
         $this->headers[] = $headers;
         if ($this->refuse !== 0) {
-            return new Response($this->refuse, ['content-type' => 'application/json'], Json::encode(['error' => 'not for you']));
+            return new Response($this->refuse, ['content-type' => 'application/json', 'x-request-id' => 'req_socket'], Json::encode(Rows::failure('permission', 'not for you')));
         }
         return $this->acceptor->handleHandshake($request);
     }

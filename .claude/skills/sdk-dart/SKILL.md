@@ -95,11 +95,20 @@ it is wrapped and the SDK's semver is not the schema's.
 
 ## Errors
 
-`sealed class AgentsException implements Exception`: `RouterException` (status, the router's
-`error`, the operation; `isServerSideOnly` on 403), `TransportException` (no answer at all),
+`sealed class AgentsException implements Exception`: `RouterException` (status, message, the
+operation; `isServerSideOnly` on 403), `TransportException` (no answer at all),
 `UnreadableException` (an answer that is not what the spec says), `SocketClosedException`.
 Callers `switch` over it exhaustively. Never classify by parsing a message. Argument mistakes
 are `ArgumentError`, thrown before any I/O.
+
+`RouterException` also carries the envelope `{"error": {"message", "type", "code", "doc_url"}}`
+as `type` (a `RouterErrorType`, `unknown` for one newer than the SDK), `code` (an open string
+to branch on), `docUrl` and `requestId` (the `X-Request-Id` header, what a 500 is quoted by).
+`_refusalOf` in `wire.dart` reads it by hand, since the generator only reaches request and
+success schemas; any other body keeps its trimmed text (at most 1000 characters) or the
+status phrase as the message, with the request id and nothing else. A refused socket
+handshake stays a `TransportException`: `package:web_socket` gives a message only, no status,
+headers or body.
 
 ## Public API
 

@@ -43,8 +43,13 @@ status wherever it is answered: a config, router config or plugin that does not 
 even when the body names it (it was a 400 in some places), and a feature this deployment does not
 offer is a 400 `not_configured` (it was a 404 for sessions and recorded responses, a 410 on the
 10DLC webhook). Every operation
-declares its `500`. Go, Python (`plugins/stream`) and JavaScript read the new shape; the other
-SDKs follow.
+declares its `500`.
+
+Every SDK reads it into its router error, which now carries the status, `type`, `code`,
+`message`, `doc_url` and the `X-Request-Id` as the request id, for a refused socket handshake as
+well. Go returns a `*stream.RouterError` for `errors.As`. Swift's `AgentsError.http` now holds an
+`HTTPFailure`, Rust's `Error::Router` a boxed `RouterFailure`, PHP names the code `errorCode`, and
+Python raises `RouterError` for a refused socket where it raised aiohttp's handshake error.
 
 ### `plugins` is `agent_plugins`, and `plugin_options` moved onto each entry
 
@@ -1762,6 +1767,17 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
   includes the account's discounts), keeps it for 24 hours, and shows it with no change.
   If that call fails, the search still returns the numbers, with no price. A bought Twilio
   number still has no price (AI-931).
+- An outbound call from a bought number connects the person to the agent. The router gave
+  the vendor the address of the call's Stream SIP trunk with no number in it, and Stream
+  finds that trunk by the number, so the person answered and the call ended at once. The
+  router now puts the calling number in that address for every vendor, on calls and on
+  transfers. Calls through your own SIP trunk already did this and work as before.
+- An inbound call to an attached number reaches the agent. The router gave the vendor the
+  address of the number's Stream SIP trunk with no number in it, so Stream refused every
+  inbound call. The router now puts the number in that address, and the `sip_uri` in the
+  attach answer shows it. The call a number's callers join by default is now `phone-` and the
+  number without the `+`, for example `phone-15125551234`, because Stream does not accept a
+  `+` in a call id.
 - A voice agent with tools says what it is about to do before it does it, and the caller hears a
   hold phrase as the wait begins. The instruction that has the reply model call a tool as soon as
   it has what the tool requires also made it skip the read-back an operator's own instructions

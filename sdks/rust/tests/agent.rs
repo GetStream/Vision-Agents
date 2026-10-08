@@ -109,7 +109,7 @@ async fn an_agent_spelled_out_in_code_sends_its_instructions_and_pipeline_but_ne
     assert_eq!(sent["instructions"], "You are Jean.");
     assert_eq!(sent["llm"], "llm-fast");
     assert_eq!(sent["text"], true);
-    for harnessed in ["subagent", "sandbox", "skills", "tasks", "agent"] {
+    for harnessed in ["thinking_llm", "sandbox", "skills", "tasks", "agent"] {
         assert!(sent.get(harnessed).is_none(), "{harnessed} was sent");
     }
 }
@@ -122,7 +122,7 @@ async fn agent_yaml_names_the_harness_and_the_code_its_subagent_and_sandbox() {
     write(
         root.path(),
         "agent.yaml",
-        "name: jean\nharness: default\nspeed: 1.1\nsandbox: daytona\n",
+        "name: jean\nharness: default\nspeed: 1.1\nsandbox: daytona\nplugins: [sentry]\n",
     );
     let agent = Agent::from_folder(root.path())
         .unwrap()
@@ -133,8 +133,9 @@ async fn agent_yaml_names_the_harness_and_the_code_its_subagent_and_sandbox() {
 
     let body = server.request(Method::POST, "/v1/agents/sync").body;
     assert_eq!(body["harness"], "default");
-    assert_eq!(body["subagent"], "openai/gpt-5.6");
+    assert_eq!(body["thinking_llm"], "openai/gpt-5.6");
     assert_eq!(body["sandbox"], "daytona");
+    assert_eq!(body["agent_plugins"], json!(["sentry"]));
     assert_eq!(body["speed"], 1.1);
     assert_ne!(body["hash"], agent.folder().unwrap().hash().as_str());
 }
@@ -534,7 +535,7 @@ async fn an_agent_spelled_out_in_code_is_stored_by_name() {
     assert_eq!(
         server.request(Method::POST, "/v1/agents/configs").body,
         json!({"name": "Ada", "instructions": "You are Ada.", "skills": ["think"], "harness": "default",
-               "subagent": "openai/gpt-5.6", "sandbox": "daytona"})
+               "thinking_llm": "openai/gpt-5.6", "sandbox": "daytona"})
     );
 }
 

@@ -197,7 +197,12 @@ func (b Backend) Client() (*acceleration.ClientWithResponses, error) {
 		return nil, err
 	}
 
+	doer := acceleration.HttpRequestDoer(&http.Client{})
+	if resolved.HTTPClient != nil {
+		doer = resolved.HTTPClient
+	}
 	options := []acceleration.ClientOption{
+		acceleration.WithHTTPClient(readable{doer: doer}),
 		acceleration.WithRequestEditorFn(func(_ context.Context, request *http.Request) error {
 			// Minted per request, so a client left idle longer than a token lasts does not
 			// wake up holding an expired one.
@@ -210,9 +215,6 @@ func (b Backend) Client() (*acceleration.ClientWithResponses, error) {
 			}
 			return nil
 		}),
-	}
-	if resolved.HTTPClient != nil {
-		options = append(options, acceleration.WithHTTPClient(resolved.HTTPClient))
 	}
 	return acceleration.NewClientWithResponses(resolved.URL, options...)
 }

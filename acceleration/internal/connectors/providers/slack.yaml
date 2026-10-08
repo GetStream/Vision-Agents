@@ -17,8 +17,9 @@
 id: slack
 # A new revision for any change to what this file says; see AGENTS.md. 2 adds
 # endpoints.resource. 3 renames client.policy to client.registration. 4 adds the channel
-# block that reads tokens_revoked and app_uninstalled.
-revision: 4
+# block that reads tokens_revoked and app_uninstalled. 5 captures user_id from $.user_id,
+# where the live token response has it.
+revision: 5
 # [proto]:3-5
 name: Slack
 category: Communication
@@ -85,22 +86,31 @@ scopes:
   # (internal/mcp/oauth.go:265-266 at cf62af0d).
   separator: ","
 capture:
-  # team.id and authed_user.id are in [user]'s example response. The prototype read the same
-  # two (internal/mcp/oauth.go:106-116,832-837 at cf62af0d), though its handover says the live
+  # The live token response, not [user]'s example. A consent through a real Slack app with
+  # token rotation on, on 2026-10-08, answered oauth.v2.user.access with these keys (observed
+  # response keys, logged as key:type with no values): access_token:string app_id:string
+  # enterprise:null expires_in:number is_enterprise_install:bool ok:bool refresh_token:string
+  # scope:string team:object team.id:string team.name:string token_type:string user_id:string.
+  # The user is the top-level user_id, and there is no authed_user, which [user]'s example
+  # shows and revisions 1-4 read, so every consent failed with «token_response has no
+  # $.authed_user.id». The prototype read team.id and authed_user.id
+  # (internal/mcp/oauth.go:106-116,832-837 at cf62af0d), and its handover says the live
   # connection gave no stable account id (docs/connector-handover.md:190-192 there).
   - name: team_id
     from: token_response
     path: $.team.id
   - name: user_id
     from: token_response
-    path: $.authed_user.id
+    path: $.user_id
   # Only an Enterprise Grid org install carries it: row 5 («capture: enterprise_id»). [user]'s
-  # example does not show it. # unverified
+  # example does not show it. # unverified. The live response above has enterprise: null,
+  # which capture reads as absent.
   - name: enterprise_id
     from: token_response
     path: $.enterprise.id
     optional: true
-# Team and user: row 5 («identity: $.team.id + $.authed_user.id»).
+# Team and user: row 5 («identity: $.team.id + $.authed_user.id»), the user read from
+# $.user_id as above.
 identity: [team_id, user_id]
 refresh:
   # User tokens rotate too and expire in 43,200 seconds: [rotate]. Its grace is «brief», with

@@ -290,7 +290,10 @@ void main() {
     });
 
     test("reports the router's own words and status, not a status phrase", () async {
-      router.answer('GET /v1/agents/sessions/s1', const Answer(404, {'error': 'no such session'}));
+      router.answer(
+        'GET /v1/agents/sessions/s1',
+        Answer(404, errorJson('not_found', 'session_not_found', 'no such session')),
+      );
 
       await expectLater(
         agents.sessions.get('s1'),
@@ -303,21 +306,114 @@ void main() {
       );
     });
 
-    test('a 403 is a server-side only path, and says so', () async {
-      router.answer('GET /v1/agents/sessions/s1', const Answer(403, {'error': 'server side only'}));
+    test('reads every field of the envelope, and the request id to quote', () async {
+      router.answer(
+        'GET /v1/agents/sessions/s1',
+        Answer(500, errorJson('internal', 'internal_error', 'something went wrong'), {
+          'X-Request-Id': 'req-7f3a',
+        }),
+      );
 
       await expectLater(
         agents.sessions.get('s1'),
-        throwsA(isA<RouterException>().having((e) => e.isServerSideOnly, 'isServerSideOnly', true)),
+        throwsA(
+          isA<RouterException>()
+              .having((e) => e.status, 'status', 500)
+              .having((e) => e.type, 'type', RouterErrorType.internal)
+              .having((e) => e.code, 'code', 'internal_error')
+              .having((e) => e.message, 'message', 'something went wrong')
+              .having(
+                (e) => e.docUrl,
+                'docUrl',
+                Uri.parse('https://getstream.io/agents/docs/api/errors/#internal_error'),
+              )
+              .having((e) => e.requestId, 'requestId', 'req-7f3a'),
+        ),
       );
     });
 
-    test('keeps what a proxy said when the refusal is not JSON', () async {
-      router.answer('GET /v1/agents/sessions/s1', const Answer(502, 'Bad Gateway'));
+    test('a type and a code newer than this SDK are read, not refused', () async {
+      router.answer(
+        'GET /v1/agents/sessions/s1',
+        Answer(418, errorJson('teapot', 'brewing', 'short and stout')),
+      );
 
       await expectLater(
         agents.sessions.get('s1'),
-        throwsA(isA<RouterException>().having((e) => e.message, 'message', 'Bad Gateway')),
+        throwsA(
+          isA<RouterException>()
+              .having((e) => e.type, 'type', RouterErrorType.unknown)
+              .having((e) => e.code, 'code', 'brewing')
+              .having((e) => e.message, 'message', 'short and stout'),
+        ),
+      );
+    });
+
+    test('a 403 is a server-side only path, and says so', () async {
+      router.answer(
+        'GET /v1/agents/sessions/s1',
+        Answer(403, errorJson('permission', 'server_side_only', 'server side only')),
+      );
+
+      await expectLater(
+        agents.sessions.get('s1'),
+        throwsA(
+          isA<RouterException>()
+              .having((e) => e.isServerSideOnly, 'isServerSideOnly', true)
+              .having((e) => e.type, 'type', RouterErrorType.permission)
+              .having((e) => e.code, 'code', 'server_side_only'),
+        ),
+      );
+    });
+
+    test('keeps what a proxy said when the refusal is not the envelope', () async {
+      router.answer(
+        'GET /v1/agents/sessions/s1',
+        const Answer(502, '<html>bad gateway</html>', {'X-Request-Id': 'req-edge'}),
+      );
+
+      await expectLater(
+        agents.sessions.get('s1'),
+        throwsA(
+          isA<RouterException>()
+              .having((e) => e.status, 'status', 502)
+              .having((e) => e.message, 'message', '<html>bad gateway</html>')
+              .having((e) => e.type, 'type', isNull)
+              .having((e) => e.code, 'code', isNull)
+              .having((e) => e.docUrl, 'docUrl', isNull)
+              .having((e) => e.requestId, 'requestId', 'req-edge'),
+        ),
+      );
+    });
+
+    test("an older router's error string is kept as it came, with no code", () async {
+      router.answer('GET /v1/agents/sessions/s1', const Answer(404, {'error': 'no such session'}));
+
+      await expectLater(
+        agents.sessions.get('s1'),
+        throwsA(
+          isA<RouterException>()
+              .having((e) => e.message, 'message', '{"error":"no such session"}')
+              .having((e) => e.type, 'type', isNull)
+              .having((e) => e.code, 'code', isNull)
+              .having((e) => e.requestId, 'requestId', isNull),
+        ),
+      );
+    });
+
+    test('an empty refusal says its status phrase, and a long one is cut short', () async {
+      router.answerInTurn('GET /v1/agents/sessions/s1', [
+        const Answer(503),
+        Answer(502, 'x' * 5000),
+      ]);
+
+      await expectLater(
+        agents.sessions.get('s1'),
+        throwsA(isA<RouterException>().having((e) => e.message, 'message', 'Service Unavailable')),
+      );
+      await expectLater(
+        agents.sessions.get('s1'),
+        throwsA(isA<RouterException>().having((e) => e.message.length, 'length', 1001)),
       );
     });
 
@@ -430,9 +526,14 @@ void main() {
     test('a conversation kept in chat cannot be rewound, and the router says to fork it', () async {
       router.answer(
         'POST /v1/agents/sessions/s1/rewind',
-        const Answer(400, {
-          'error': 'a persistent conversation cannot be rewound; fork it at the response',
-        }),
+        Answer(
+          400,
+          errorJson(
+            'invalid_request',
+            'invalid_request',
+            'a persistent conversation cannot be rewound; fork it at the response',
+          ),
+        ),
       );
 
       await expectLater(

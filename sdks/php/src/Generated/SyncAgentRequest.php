@@ -21,6 +21,18 @@ final readonly class SyncAgentRequest
         public string $hash,
         // What the config is called, which is also the directory's name.
         public string $name,
+        // Plugins the agent reaches with the app's own login: a catalog id, or an object naming it with how it is rea...
+        /** @var list<mixed>|null */
+        public ?array $agentPlugins = null,
+        // The newest change the caller has already seen, as last_change named it. Everything up to it is taken as dec...
+        public ?string $baseChange = null,
+        // Lines this agent answers on besides Stream Chat, each a number the app connected.
+        public ?AgentChannels $channels = null,
+        // Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since...
+        public ?bool $checkChanges = null,
+        // The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stor...
+        /** @var list<AgentConnectorBinding>|null */
+        public ?array $connectors = null,
         public ?AgentDispatch $dispatch = null,
         public ?string $greeting = null,
         // The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Emp...
@@ -35,10 +47,17 @@ final readonly class SyncAgentRequest
         /** @var list<KnowledgeUrlDeclaration>|null */
         public ?array $knowledgeUrls = null,
         public ?string $llm = null,
+        // MCP servers outside the plugin catalog, opened by their URL with no login.
+        /** @var list<McpServer>|null */
+        public ?array $mcpServers = null,
         public AgentMode|string|null $mode = null,
-        /** @var list<string>|null */
-        public ?array $plugins = null,
+        // MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+        /** @var list<PluginEvent>|null */
+        public ?array $pluginEvents = null,
+        // Whether plugin, MCP server and connector tools are offered by a summary, the first call to each returning i...
+        public ?bool $progressiveTools = null,
         public Sandbox|string|null $sandbox = null,
+        public ?SandboxOptions $sandboxOptions = null,
         public ?string $search = null,
         // The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulat...
         /** @var list<SimulationDeclaration>|null */
@@ -50,10 +69,14 @@ final readonly class SyncAgentRequest
         // A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes t...
         public ?string $sts = null,
         public ?string $stt = null,
-        public ?string $subagent = null,
         /** @var array<string, string>|null */
         public ?array $tags = null,
+        // Only a voice agent names one: a text agent runs everything on its llm.
+        public ?string $thinkingLlm = null,
         public ?string $tts = null,
+        // Plugins each end user connects with their own account, from the conversation, the first time the agent need...
+        /** @var list<mixed>|null */
+        public ?array $userPlugins = null,
         public ?SessionVideo $video = null,
         public ?string $voice = null,
     ) {
@@ -67,6 +90,11 @@ final readonly class SyncAgentRequest
         return new self(
             hash: Json::string($data, 'hash'),
             name: Json::string($data, 'name'),
+            agentPlugins: array_key_exists('agent_plugins', $data) && $data['agent_plugins'] !== null ? Json::list($data, 'agent_plugins') : null,
+            baseChange: array_key_exists('base_change', $data) && $data['base_change'] !== null ? Json::string($data, 'base_change') : null,
+            channels: array_key_exists('channels', $data) && $data['channels'] !== null ? AgentChannels::fromArray(Json::object($data, 'channels')) : null,
+            checkChanges: array_key_exists('check_changes', $data) && $data['check_changes'] !== null ? Json::bool($data, 'check_changes') : null,
+            connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
             dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
             greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Json::string($data, 'greeting') : null,
             guardrail: array_key_exists('guardrail', $data) && $data['guardrail'] !== null ? Json::string($data, 'guardrail') : null,
@@ -76,18 +104,22 @@ final readonly class SyncAgentRequest
             knowledge: array_key_exists('knowledge', $data) && $data['knowledge'] !== null ? array_map(KnowledgeDocument::fromArray(...), Json::objects($data, 'knowledge')) : null,
             knowledgeUrls: array_key_exists('knowledge_urls', $data) && $data['knowledge_urls'] !== null ? array_map(KnowledgeUrlDeclaration::fromArray(...), Json::objects($data, 'knowledge_urls')) : null,
             llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
+            mcpServers: array_key_exists('mcp_servers', $data) && $data['mcp_servers'] !== null ? array_map(McpServer::fromArray(...), Json::objects($data, 'mcp_servers')) : null,
             mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::enum($data, 'mode', AgentMode::class) : null,
-            plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::strings($data, 'plugins') : null,
+            pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? array_map(PluginEvent::fromArray(...), Json::objects($data, 'plugin_events')) : null,
+            progressiveTools: array_key_exists('progressive_tools', $data) && $data['progressive_tools'] !== null ? Json::bool($data, 'progressive_tools') : null,
             sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? Json::enum($data, 'sandbox', Sandbox::class) : null,
+            sandboxOptions: array_key_exists('sandbox_options', $data) && $data['sandbox_options'] !== null ? SandboxOptions::fromArray(Json::object($data, 'sandbox_options')) : null,
             search: array_key_exists('search', $data) && $data['search'] !== null ? Json::string($data, 'search') : null,
             simulations: array_key_exists('simulations', $data) && $data['simulations'] !== null ? array_map(SimulationDeclaration::fromArray(...), Json::objects($data, 'simulations')) : null,
             skills: array_key_exists('skills', $data) && $data['skills'] !== null ? array_map(SkillRequest::fromArray(...), Json::objects($data, 'skills')) : null,
             speed: array_key_exists('speed', $data) && $data['speed'] !== null ? Json::float($data, 'speed') : null,
             sts: array_key_exists('sts', $data) && $data['sts'] !== null ? Json::string($data, 'sts') : null,
             stt: array_key_exists('stt', $data) && $data['stt'] !== null ? Json::string($data, 'stt') : null,
-            subagent: array_key_exists('subagent', $data) && $data['subagent'] !== null ? Json::string($data, 'subagent') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
+            thinkingLlm: array_key_exists('thinking_llm', $data) && $data['thinking_llm'] !== null ? Json::string($data, 'thinking_llm') : null,
             tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
+            userPlugins: array_key_exists('user_plugins', $data) && $data['user_plugins'] !== null ? Json::list($data, 'user_plugins') : null,
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
         );
@@ -103,6 +135,21 @@ final readonly class SyncAgentRequest
         $out = [];
         $out['hash'] = $this->hash;
         $out['name'] = $this->name;
+        if ($this->agentPlugins !== null) {
+            $out['agent_plugins'] = $this->agentPlugins;
+        }
+        if ($this->baseChange !== null) {
+            $out['base_change'] = $this->baseChange;
+        }
+        if ($this->channels !== null) {
+            $out['channels'] = $this->channels->toArray();
+        }
+        if ($this->checkChanges !== null) {
+            $out['check_changes'] = $this->checkChanges;
+        }
+        if ($this->connectors !== null) {
+            $out['connectors'] = array_map(static fn (AgentConnectorBinding $each): array => $each->toArray(), $this->connectors);
+        }
         if ($this->dispatch !== null) {
             $out['dispatch'] = $this->dispatch->toArray();
         }
@@ -130,14 +177,23 @@ final readonly class SyncAgentRequest
         if ($this->llm !== null) {
             $out['llm'] = $this->llm;
         }
+        if ($this->mcpServers !== null) {
+            $out['mcp_servers'] = array_map(static fn (McpServer $each): array => $each->toArray(), $this->mcpServers);
+        }
         if ($this->mode !== null) {
             $out['mode'] = Json::enumValue($this->mode);
         }
-        if ($this->plugins !== null) {
-            $out['plugins'] = $this->plugins;
+        if ($this->pluginEvents !== null) {
+            $out['plugin_events'] = array_map(static fn (PluginEvent $each): array => $each->toArray(), $this->pluginEvents);
+        }
+        if ($this->progressiveTools !== null) {
+            $out['progressive_tools'] = $this->progressiveTools;
         }
         if ($this->sandbox !== null) {
             $out['sandbox'] = Json::enumValue($this->sandbox);
+        }
+        if ($this->sandboxOptions !== null) {
+            $out['sandbox_options'] = $this->sandboxOptions->toArray();
         }
         if ($this->search !== null) {
             $out['search'] = $this->search;
@@ -157,14 +213,17 @@ final readonly class SyncAgentRequest
         if ($this->stt !== null) {
             $out['stt'] = $this->stt;
         }
-        if ($this->subagent !== null) {
-            $out['subagent'] = $this->subagent;
-        }
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;
         }
+        if ($this->thinkingLlm !== null) {
+            $out['thinking_llm'] = $this->thinkingLlm;
+        }
         if ($this->tts !== null) {
             $out['tts'] = $this->tts;
+        }
+        if ($this->userPlugins !== null) {
+            $out['user_plugins'] = $this->userPlugins;
         }
         if ($this->video !== null) {
             $out['video'] = $this->video->toArray();

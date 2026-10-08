@@ -143,8 +143,7 @@ func (s *Sessions) Query(ctx context.Context, query Query) (*acceleration.Sessio
 		return nil, fmt.Errorf("client: listing the sessions of %s: %w", s.agent.name, err)
 	}
 	if listed.JSON200 == nil {
-		return nil, failure("listing the sessions of "+s.agent.name, listed.Status(),
-			listed.JSON400, listed.JSON401)
+		return nil, failure("listing the sessions of "+s.agent.name, listed.HTTPResponse, listed.Body)
 	}
 	return listed.JSON200, nil
 }
@@ -165,8 +164,7 @@ func (s *Sessions) Search(ctx context.Context, text string, query Query) (*accel
 		return nil, fmt.Errorf("client: searching the sessions of %s: %w", s.agent.name, err)
 	}
 	if found.JSON200 == nil {
-		return nil, failure("searching the sessions of "+s.agent.name, found.Status(),
-			found.JSON400, found.JSON401)
+		return nil, failure("searching the sessions of "+s.agent.name, found.HTTPResponse, found.Body)
 	}
 	return found.JSON200, nil
 }
@@ -183,8 +181,7 @@ func (s *Sessions) Get(ctx context.Context, id string) (*acceleration.Session, e
 		return nil, fmt.Errorf("client: reading the session %s: %w", id, err)
 	}
 	if got.JSON200 == nil {
-		return nil, failure("reading the session "+id, got.Status(),
-			got.JSON401, got.JSON403, got.JSON404)
+		return nil, failure("reading the session "+id, got.HTTPResponse, got.Body)
 	}
 	return got.JSON200, nil
 }
@@ -206,8 +203,7 @@ func (s *Sessions) Update(ctx context.Context, id string, update SessionUpdate) 
 		return nil, fmt.Errorf("client: updating the session %s: %w", id, err)
 	}
 	if updated.JSON200 == nil {
-		return nil, failure("updating the session "+id, updated.Status(),
-			updated.JSON400, updated.JSON401, updated.JSON403, updated.JSON404)
+		return nil, failure("updating the session "+id, updated.HTTPResponse, updated.Body)
 	}
 	return updated.JSON200, nil
 }
@@ -225,8 +221,7 @@ func (s *Sessions) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("client: deleting session %s: %w", id, err)
 	}
 	if deleted.StatusCode() != http.StatusNoContent {
-		return failure("deleting session "+id, deleted.Status(),
-			deleted.JSON400, deleted.JSON401, deleted.JSON404)
+		return failure("deleting session "+id, deleted.HTTPResponse, deleted.Body)
 	}
 	return nil
 }
@@ -244,8 +239,7 @@ func (s *Sessions) DeleteMemories(ctx context.Context, id string) error {
 		return fmt.Errorf("client: deleting the memories of %s: %w", id, err)
 	}
 	if deleted.StatusCode() != http.StatusNoContent {
-		return failure("deleting the memories of "+id, deleted.Status(),
-			deleted.JSON400, deleted.JSON401, deleted.JSON403, deleted.JSON404)
+		return failure("deleting the memories of "+id, deleted.HTTPResponse, deleted.Body)
 	}
 	return nil
 }
@@ -541,8 +535,7 @@ func (s *Session) Fork(ctx context.Context, options ForkOptions) (*Session, erro
 		return nil, fmt.Errorf("client: forking the session %s: %w", s.ID(), err)
 	}
 	if forked.JSON201 == nil {
-		return nil, failure("forking the session "+s.ID(), forked.Status(),
-			forked.JSON400, forked.JSON401, forked.JSON403, forked.JSON404)
+		return nil, failure("forking the session "+s.ID(), forked.HTTPResponse, forked.Body)
 	}
 
 	functions := options.Tools
