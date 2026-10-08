@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -77,7 +78,7 @@ func (r Router) Search(
 		return nil, fmt.Errorf("stream: searching: %w", err)
 	}
 	if found.JSON200 == nil {
-		return nil, refusal(found.Status(), found.JSON400, found.JSON401, found.JSON404)
+		return nil, refusal(found.HTTPResponse, found.Body)
 	}
 	return found.JSON200, nil
 }
@@ -111,7 +112,7 @@ func (d Drawing) Generate(
 		return nil, fmt.Errorf("stream: drawing: %w", err)
 	}
 	if drawn.JSON200 == nil {
-		return nil, refusal(drawn.Status(), drawn.JSON400, drawn.JSON401, drawn.JSON403, drawn.JSON404)
+		return nil, refusal(drawn.HTTPResponse, drawn.Body)
 	}
 
 	generation := drawn.JSON200
@@ -181,7 +182,7 @@ func (t Transcribing) Recording(
 		return nil, fmt.Errorf("stream: sending the recording: %w", err)
 	}
 	if accepted.JSON202 == nil {
-		return nil, refusal(accepted.Status(), accepted.JSON400, accepted.JSON401, accepted.JSON404)
+		return nil, refusal(accepted.HTTPResponse, accepted.Body)
 	}
 
 	job := accepted.JSON202
@@ -199,7 +200,7 @@ func (t Transcribing) Recording(
 			return nil, fmt.Errorf("stream: asking about the recording: %w", err)
 		}
 		if asked.JSON200 == nil {
-			return nil, refusal(asked.Status(), asked.JSON400, asked.JSON401, asked.JSON404)
+			return nil, refusal(asked.HTTPResponse, asked.Body)
 		}
 		job = asked.JSON200
 	}
@@ -261,7 +262,7 @@ func (s Speaking) recording(ctx context.Context, text string, options *accelerat
 		return nil, fmt.Errorf("stream: sending the text: %w", err)
 	}
 	if accepted.JSON202 == nil {
-		return nil, refusal(accepted.Status(), accepted.JSON400, accepted.JSON401, accepted.JSON404)
+		return nil, refusal(accepted.HTTPResponse, accepted.Body)
 	}
 
 	job := accepted.JSON202
@@ -275,7 +276,7 @@ func (s Speaking) recording(ctx context.Context, text string, options *accelerat
 			return nil, fmt.Errorf("stream: asking about the speech: %w", err)
 		}
 		if asked.JSON200 == nil {
-			return nil, refusal(asked.Status(), asked.JSON400, asked.JSON401, asked.JSON404)
+			return nil, refusal(asked.HTTPResponse, asked.Body)
 		}
 		job = asked.JSON200
 	}
@@ -767,14 +768,9 @@ func ended(logger *slog.Logger, modality string, err error) {
 	}
 }
 
-// refusal is what the router said went wrong, whichever field it said it in.
-func refusal(status string, failures ...*acceleration.ErrorResponse) error {
-	for _, failure := range failures {
-		if failure != nil {
-			return fmt.Errorf("stream: %s", failure.Error.Message)
-		}
-	}
-	return fmt.Errorf("stream: the router answered %s", strings.TrimSpace(status))
+// refusal is what the router said went wrong, read off the answer it gave instead.
+func refusal(response *http.Response, body []byte) error {
+	return NewRouterError(response, body, "stream", "", "the router answered "+strings.TrimSpace(response.Status))
 }
 
 // value reads a field that may not have been set.

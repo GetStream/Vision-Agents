@@ -18,6 +18,13 @@ final readonly class SessionFilter
         public mixed $agent = null,
         // The agent id the session was created with, which names its transcript channel.
         public mixed $agentId = null,
+        // The agent config the session ran under. Empty for a session that spelled itself out.
+        public mixed $configId = null,
+        // When the session started.
+        public ?TimeRange $createdAt = null,
+        // The session's custom object holds every one of these pairs, which is how a caller finds again what it label...
+        /** @var array<string, string>|null */
+        public ?array $custom = null,
         // text, voice or video: how the user took part.
         public mixed $modality = null,
         public mixed $projectId = null,
@@ -38,6 +45,9 @@ final readonly class SessionFilter
         return new self(
             agent: $data['agent'] ?? null,
             agentId: $data['agent_id'] ?? null,
+            configId: $data['config_id'] ?? null,
+            createdAt: array_key_exists('created_at', $data) && $data['created_at'] !== null ? TimeRange::fromArray(Json::object($data, 'created_at')) : null,
+            custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::stringMap($data, 'custom') : null,
             modality: $data['modality'] ?? null,
             projectId: $data['project_id'] ?? null,
             state: $data['state'] ?? null,
@@ -59,6 +69,15 @@ final readonly class SessionFilter
         }
         if ($this->agentId !== null) {
             $out['agent_id'] = $this->agentId;
+        }
+        if ($this->configId !== null) {
+            $out['config_id'] = $this->configId;
+        }
+        if ($this->createdAt !== null) {
+            $out['created_at'] = $this->createdAt->toArray();
+        }
+        if ($this->custom !== null) {
+            $out['custom'] = $this->custom;
         }
         if ($this->modality !== null) {
             $out['modality'] = $this->modality;

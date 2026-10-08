@@ -99,7 +99,8 @@ def sync_detailed(
     Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt
     and tts it names or had before. The conversation carries across: a conversation model is handed the
     history on every turn, and a speech-to-speech model is opened with the recent transcript in its
-    instructions.
+    instructions. A session that started with the person's episode cards cannot be moved onto a speech-
+    to-speech model: 400, carded_session_to_native.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -141,7 +142,8 @@ def sync(
     Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt
     and tts it names or had before. The conversation carries across: a conversation model is handed the
     history on every turn, and a speech-to-speech model is opened with the recent transcript in its
-    instructions.
+    instructions. A session that started with the person's episode cards cannot be moved onto a speech-
+    to-speech model: 400, carded_session_to_native.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -178,7 +180,8 @@ async def asyncio_detailed(
     Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt
     and tts it names or had before. The conversation carries across: a conversation model is handed the
     history on every turn, and a speech-to-speech model is opened with the recent transcript in its
-    instructions.
+    instructions. A session that started with the person's episode cards cannot be moved onto a speech-
+    to-speech model: 400, carded_session_to_native.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -218,7 +221,8 @@ async def asyncio(
     Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt
     and tts it names or had before. The conversation carries across: a conversation model is handed the
     history on every turn, and a speech-to-speech model is opened with the recent transcript in its
-    instructions.
+    instructions. A session that started with the person's episode cards cannot be moved onto a speech-
+    to-speech model: 400, carded_session_to_native.
 
     Args:
         id (str): The session, as returned when it was created.

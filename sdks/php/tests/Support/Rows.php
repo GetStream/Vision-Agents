@@ -53,6 +53,18 @@ final class Rows
     }
 
     /**
+     * The envelope every failure is answered with. A code defaults to its type's name, as the
+     * router's does.
+     *
+     * @return array<string, mixed>
+     */
+    public static function failure(string $type, string $message, string $code = ''): array
+    {
+        $code = $code === '' ? $type : $code;
+        return ['error' => ['message' => $message, 'type' => $type, 'code' => $code, 'doc_url' => "https://getstream.io/agents/docs/api/errors/#{$code}"]];
+    }
+
+    /**
      * @param array<string, mixed> $extra
      * @return array<string, mixed>
      */

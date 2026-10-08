@@ -99,7 +99,7 @@ public sealed class Tools
             {
                 Name = pair.Key,
                 Description = pair.Value.Description,
-                Parameters = JsonSerializer.Deserialize<JsonElement>(pair.Value.Parameters.ToJsonString()),
+                Parameters = JsonSerializer.Deserialize<Dictionary<string, object>>(pair.Value.Parameters.ToJsonString()),
                 DisplayTitle = pair.Value.DisplayTitle,
             }).ToList();
         }

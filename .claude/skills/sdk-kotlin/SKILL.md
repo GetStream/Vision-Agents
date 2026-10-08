@@ -100,6 +100,14 @@ One sealed `AgentsException`: `Http` (status, the router's reason, `Retry-After`
 status, a decoded body and a close code distinct; never classify by parsing a message. A 401
 with a `TokenProvider` refreshes once and retries once, single-flighted behind a `Mutex`.
 
+`Http` is read by one function, `refusal` in `Requests.kt`, for a request and a refused socket
+handshake alike: `reason` is the envelope's `message`, beside `type`, `code` and `docUrl` as
+strings (the router adds values), and `requestId` is `X-Request-Id`, what a 500 is quoted by. A
+body that is not the envelope (a proxy's page, an empty one, an older `{"error": "..."}`) keeps
+its trimmed text, or the status phrase, as `reason` with those three null. Ktor drops a refused
+upgrade's response, so `Backend` opens sockets through `Handshakes`, which reads it in OkHttp's
+`onFailure`.
+
 ## Compose
 
 - Slots (`bubble: @Composable (Turn) -> Unit`) for customisation, not a theme object. The views

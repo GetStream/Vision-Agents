@@ -34,7 +34,7 @@ func (s *Settings) App(ctx context.Context) (*AppSettings, error) {
 		return nil, fmt.Errorf("client: reading the app's settings: %w", err)
 	}
 	if read.JSON200 == nil {
-		return nil, failure("reading the app's settings", read.Status(), read.JSON401, read.JSON403, read.JSON503)
+		return nil, failure("reading the app's settings", read.HTTPResponse, read.Body)
 	}
 	return read.JSON200, nil
 }
@@ -100,8 +100,7 @@ func (s *Settings) CheckStream(ctx context.Context) (*acceleration.StreamCheck, 
 		return nil, fmt.Errorf("client: checking the app's Stream app: %w", err)
 	}
 	if checked.JSON200 == nil {
-		return nil, failure("checking the app's Stream app", checked.Status(),
-			checked.JSON400, checked.JSON401, checked.JSON403, checked.JSON503)
+		return nil, failure("checking the app's Stream app", checked.HTTPResponse, checked.Body)
 	}
 	return checked.JSON200, nil
 }
@@ -116,8 +115,7 @@ func (s *Settings) putStream(ctx context.Context, what string, body acceleration
 		return nil, fmt.Errorf("client: %s: %w", what, err)
 	}
 	if written.JSON200 == nil {
-		return nil, failure(what, written.Status(),
-			written.JSON400, written.JSON401, written.JSON403, written.JSON409, written.JSON503)
+		return nil, failure(what, written.HTTPResponse, written.Body)
 	}
 	return written.JSON200, nil
 }

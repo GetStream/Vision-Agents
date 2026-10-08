@@ -38,7 +38,7 @@ import kotlinx.serialization.encoding.Encoder
  * 
  *
  * @param query The question, in the caller's own words.
- * @param configId A stored router config to take the options from. Anything named here as well overrides that one field of it. 
+ * @param configId A stored router config to take the options from. Anything named here as well overrides that one field of it.
  * @param options 
  * @param tags 
  */
@@ -50,7 +50,7 @@ internal data class SearchRequest (
     @SerialName(value = "query")
     val query: kotlin.String,
 
-    /* A stored router config to take the options from. Anything named here as well overrides that one field of it.  */
+    /* A stored router config to take the options from. Anything named here as well overrides that one field of it. */
     @SerialName(value = "config_id")
     val configId: kotlin.String? = null,
 

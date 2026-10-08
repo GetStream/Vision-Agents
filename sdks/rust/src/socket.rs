@@ -81,8 +81,8 @@ pub struct Socket {
 }
 
 impl Socket {
-    /// Opens a socket, sending `headers` on the handshake. A refused upgrade is reported as
-    /// the status and whatever the router said, the way a refused request is.
+    /// Opens a socket, sending `headers` on the handshake. A refused upgrade is reported the
+    /// way a refused request is: the status, the router's envelope and its request id.
     pub async fn connect(url: &str, headers: Vec<(&'static str, String)>) -> Result<Socket> {
         let mut request = url.into_client_request()?;
         for (name, value) in headers {
@@ -97,25 +97,12 @@ impl Socket {
         let (stream, _) = match tokio_tungstenite::connect_async(request).await {
             Ok(connected) => connected,
             Err(tungstenite::Error::Http(response)) => {
-                let status = response.status().as_u16();
-                let body = response
-                    .body()
-                    .as_deref()
-                    .map(String::from_utf8_lossy)
-                    .unwrap_or_default();
-                let message = serde_json::from_str::<Value>(&body)
-                    .ok()
-                    .and_then(|said| {
-                        said.get("error")
-                            .and_then(Value::as_str)
-                            .map(str::to_string)
-                    })
-                    .unwrap_or_else(|| body.trim().to_string());
-                return Err(Error::Router {
-                    status,
-                    operation: format!("GET {path}"),
-                    message,
-                });
+                return Err(Error::refused(
+                    format!("GET {path}"),
+                    response.status(),
+                    response.headers(),
+                    response.body().as_deref().unwrap_or_default(),
+                ));
             }
             Err(error) => return Err(error.into()),
         };

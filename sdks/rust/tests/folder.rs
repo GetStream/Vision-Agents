@@ -228,7 +228,7 @@ fn the_declaration_says_what_the_agent_is_called_and_runs_on() {
     write(
         &root,
         "agent.yaml",
-        "name: receptionist\nllm: openai/gpt-5.6\nsts: \"\"\nkeyterms: [Vision Agents]\nmode: voice\nsandbox: daytona\nvideo:\n  source: camera\n",
+        "name: receptionist\nllm: openai/gpt-5.6\nthinking_llm: openai/gpt-5.6-sol\nsts: \"\"\nkeyterms: [Vision Agents]\nmode: voice\nsandbox: daytona\nvideo:\n  source: camera\n",
     );
 
     let folder = Folder::load(&root).unwrap();
@@ -236,6 +236,7 @@ fn the_declaration_says_what_the_agent_is_called_and_runs_on() {
     assert_eq!(folder.name, "receptionist");
     let settings = &folder.settings;
     assert_eq!(settings.llm, "openai/gpt-5.6");
+    assert_eq!(settings.thinking_llm, "openai/gpt-5.6-sol");
     assert_eq!(settings.keyterms, ["Vision Agents"]);
     assert_eq!(settings.sts.as_deref(), Some(""));
     assert_eq!(settings.mode, Some(types::AgentMode::Voice));
@@ -256,6 +257,7 @@ fn saying_nothing_about_speech_to_speech_is_not_turning_it_off() {
 fn a_declaration_key_nobody_knows_is_refused() {
     for declaration in [
         "name: jean\nlmm: openai/gpt-5.6\n",
+        "subagent: openai/gpt-5.6\n",
         "video:\n  max_frames: 9\n",
         "keyterms: Vision Agents\n",
         "video:\n  frames: 2\n",

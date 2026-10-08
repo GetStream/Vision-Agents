@@ -43,8 +43,13 @@ status wherever it is answered: a config, router config or plugin that does not 
 even when the body names it (it was a 400 in some places), and a feature this deployment does not
 offer is a 400 `not_configured` (it was a 404 for sessions and recorded responses, a 410 on the
 10DLC webhook). Every operation
-declares its `500`. Go, Python (`plugins/stream`) and JavaScript read the new shape; the other
-SDKs follow.
+declares its `500`.
+
+Every SDK reads it into its router error, which now carries the status, `type`, `code`,
+`message`, `doc_url` and the `X-Request-Id` as the request id, for a refused socket handshake as
+well. Go returns a `*stream.RouterError` for `errors.As`. Swift's `AgentsError.http` now holds an
+`HTTPFailure`, Rust's `Error::Router` a boxed `RouterFailure`, PHP names the code `errorCode`, and
+Python raises `RouterError` for a refused socket where it raised aiohttp's handshake error.
 
 ### `plugins` is `agent_plugins`, and `plugin_options` moved onto each entry
 

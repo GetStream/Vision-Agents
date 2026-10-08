@@ -65,6 +65,11 @@ def _parse_response(
 
         return response_500
 
+    if response.status_code == 503:
+        response_503 = ErrorResponse.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -94,6 +99,12 @@ def sync_detailed(
     (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the
     customer's provider app, so its events reach that customer. One customer per app: another customer's
     record of it is a conflict.
+
+    When the provider app is pinned to a Stream app the customer registered, the router then points that
+    app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the
+    hook, or updates the one already there, so the messages written in the app's thread channels reach
+    the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses,
+    the provider app is kept, the answer is a 503, and putting it again points the hook again.
 
     Stream staff only: it needs the ops key.
 
@@ -134,6 +145,12 @@ def sync(
     customer's provider app, so its events reach that customer. One customer per app: another customer's
     record of it is a conflict.
 
+    When the provider app is pinned to a Stream app the customer registered, the router then points that
+    app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the
+    hook, or updates the one already there, so the messages written in the app's thread channels reach
+    the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses,
+    the provider app is kept, the answer is a 503, and putting it again points the hook again.
+
     Stream staff only: it needs the ops key.
 
     Args:
@@ -167,6 +184,12 @@ async def asyncio_detailed(
     (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the
     customer's provider app, so its events reach that customer. One customer per app: another customer's
     record of it is a conflict.
+
+    When the provider app is pinned to a Stream app the customer registered, the router then points that
+    app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the
+    hook, or updates the one already there, so the messages written in the app's thread channels reach
+    the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses,
+    the provider app is kept, the answer is a 503, and putting it again points the hook again.
 
     Stream staff only: it needs the ops key.
 
@@ -204,6 +227,12 @@ async def asyncio(
     (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the
     customer's provider app, so its events reach that customer. One customer per app: another customer's
     record of it is a conflict.
+
+    When the provider app is pinned to a Stream app the customer registered, the router then points that
+    app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the
+    hook, or updates the one already there, so the messages written in the app's thread channels reach
+    the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses,
+    the provider app is kept, the answer is a 503, and putting it again points the hook again.
 
     Stream staff only: it needs the ops key.
 

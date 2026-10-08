@@ -107,8 +107,9 @@ def sync_detailed(
     Model changes are opened before anything changes, so a target that does not route is refused and the
     session carries on as it was. Instructions and models take over from the next turn; a reply being
     spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes
-    it a cascade again. A title or description given here stops the router naming the conversation for
-    what was said.
+    it a cascade again. A session that started with the person's episode cards cannot be moved onto a
+    speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the
+    router naming the conversation for what was said.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -160,8 +161,9 @@ def sync(
     Model changes are opened before anything changes, so a target that does not route is refused and the
     session carries on as it was. Instructions and models take over from the next turn; a reply being
     spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes
-    it a cascade again. A title or description given here stops the router naming the conversation for
-    what was said.
+    it a cascade again. A session that started with the person's episode cards cannot be moved onto a
+    speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the
+    router naming the conversation for what was said.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -208,8 +210,9 @@ async def asyncio_detailed(
     Model changes are opened before anything changes, so a target that does not route is refused and the
     session carries on as it was. Instructions and models take over from the next turn; a reply being
     spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes
-    it a cascade again. A title or description given here stops the router naming the conversation for
-    what was said.
+    it a cascade again. A session that started with the person's episode cards cannot be moved onto a
+    speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the
+    router naming the conversation for what was said.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -259,8 +262,9 @@ async def asyncio(
     Model changes are opened before anything changes, so a target that does not route is refused and the
     session carries on as it was. Instructions and models take over from the next turn; a reply being
     spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes
-    it a cascade again. A title or description given here stops the router naming the conversation for
-    what was said.
+    it a cascade again. A session that started with the person's episode cards cannot be moved onto a
+    speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the
+    router naming the conversation for what was said.
 
     Args:
         id (str): The session, as returned when it was created.

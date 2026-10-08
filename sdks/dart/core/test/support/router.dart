@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'fixtures.dart';
+
 /// A request as it reached the far end.
 final class Arrived {
   Arrived(this.method, this.uri, this.headers, this.body);
@@ -19,12 +21,15 @@ final class Arrived {
 
 /// An answer to script for a route.
 final class Answer {
-  const Answer(this.status, [this.body]);
+  const Answer(this.status, [this.body, this.headers = const {}]);
 
   final int status;
 
   /// Encoded as JSON unless it is already a string.
   final Object? body;
+
+  /// Response headers, such as the `X-Request-Id` the router sends with every answer.
+  final Map<String, String> headers;
 }
 
 /// A router on 127.0.0.1 that records what arrived and answers what a test scripted.
@@ -58,7 +63,8 @@ final class TestRouter {
   void answerInTurn(String route, List<Answer> answers) =>
       _inTurn.putIfAbsent(route, () => []).addAll(answers);
 
-  /// Answers every socket upgrade with a 404, the way a router that lost the session would.
+  /// Answers every socket upgrade with a 404 envelope, the way a router that lost the
+  /// session would.
   bool refuseSockets = false;
 
   /// The socket the SDK opened [index]th, once it has.
@@ -84,7 +90,10 @@ final class TestRouter {
     if (WebSocketTransformer.isUpgradeRequest(request)) {
       upgrades.add(seen);
       if (refuseSockets) {
-        request.response.statusCode = 404;
+        request.response
+          ..statusCode = 404
+          ..headers.contentType = ContentType.json
+          ..write(jsonEncode(errorJson('not_found', 'session_not_found', 'no such session')));
         await request.response.close();
         return;
       }
@@ -98,8 +107,9 @@ final class TestRouter {
     final queued = _inTurn[route];
     final answer = queued != null && queued.isNotEmpty
         ? queued.removeAt(0)
-        : _answers[route] ?? const Answer(404, {'error': 'no route'});
+        : _answers[route] ?? Answer(404, errorJson('not_found', 'not_found', 'no route'));
     request.response.statusCode = answer.status;
+    answer.headers.forEach(request.response.headers.set);
     if (answer.body != null) {
       request.response.headers.contentType = ContentType.json;
       request.response.write(answer.body is String ? answer.body : jsonEncode(answer.body));

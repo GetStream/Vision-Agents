@@ -64,7 +64,12 @@ internal sealed class Socket : IAsyncDisposable
     /// <summary>What the far end said when it closed, or null if it went without saying.</summary>
     public WebSocketCloseStatus? CloseStatus => _socket.CloseStatus;
 
-    /// <summary>Dials the router, reporting what it said if it refused the upgrade.</summary>
+    /// <summary>Dials the router, reporting the status and request id if it refused the upgrade.</summary>
+    /// <remarks>
+    /// <see cref="ClientWebSocket"/> keeps the status and headers of a refused upgrade but not
+    /// its body, so the router's envelope never reaches here: <see cref="RouterException.Type"/>
+    /// and <see cref="RouterException.Code"/> stay null.
+    /// </remarks>
     public static async Task<Socket> ConnectAsync(Backend backend, Uri url, CancellationToken cancellationToken)
     {
         var socket = new ClientWebSocket();
@@ -80,9 +85,12 @@ internal sealed class Socket : IAsyncDisposable
         catch (WebSocketException failure)
         {
             var status = (int)socket.HttpStatusCode;
+            var headers = socket.HttpResponseHeaders;
             socket.Dispose();
-            throw new RouterException(status, $"GET {url.AbsolutePath}",
-                status == 0 ? failure.Message : $"the router refused the socket with {status}", failure);
+            var operation = $"GET {url.AbsolutePath}";
+            throw status == 0
+                ? new RouterException(0, operation, failure.Message, failure)
+                : RouterException.Answered(status, operation, "", headers, failure);
         }
         return new Socket(socket);
     }

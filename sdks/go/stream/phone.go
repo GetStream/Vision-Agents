@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -90,7 +91,7 @@ func (p *Phone) PurchaseAnyNumber(ctx context.Context, search NumberSearch) (acc
 	if err != nil {
 		return bought, fmt.Errorf("stream: searching for a number: %w", err)
 	}
-	offered, err := answer(found.JSON200, found.JSON400, found.JSON401, found.JSON404, found.Status())
+	offered, err := answer(found.JSON200, found.HTTPResponse, found.Body)
 	if err != nil {
 		return bought, err
 	}
@@ -114,7 +115,7 @@ func (p *Phone) PurchaseAnyNumber(ctx context.Context, search NumberSearch) (acc
 	if err != nil {
 		return bought, fmt.Errorf("stream: buying %s: %w", request.E164, err)
 	}
-	number, err := answer(purchased.JSON201, purchased.JSON400, purchased.JSON401, purchased.JSON404, purchased.Status())
+	number, err := answer(purchased.JSON201, purchased.HTTPResponse, purchased.Body)
 	if err != nil {
 		return bought, err
 	}
@@ -127,7 +128,7 @@ func (p *Phone) Numbers(ctx context.Context) ([]acceleration.PhoneNumber, error)
 	if err != nil {
 		return nil, fmt.Errorf("stream: listing numbers: %w", err)
 	}
-	held, err := answer(listed.JSON200, listed.JSON400, listed.JSON401, nil, listed.Status())
+	held, err := answer(listed.JSON200, listed.HTTPResponse, listed.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +141,7 @@ func (p *Phone) ReadyVendor(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("stream: listing vendors: %w", err)
 	}
-	vendors, err := answer(listed.JSON200, nil, listed.JSON401, nil, listed.Status())
+	vendors, err := answer(listed.JSON200, listed.HTTPResponse, listed.Body)
 	if err != nil {
 		return "", err
 	}
@@ -169,7 +170,7 @@ func (p *Phone) Attach(ctx context.Context, number, callID, callType string) (ac
 	if err != nil {
 		return attached, fmt.Errorf("stream: attaching %s: %w", number, err)
 	}
-	result, err := answer(pointed.JSON200, pointed.JSON400, pointed.JSON401, pointed.JSON404, pointed.Status())
+	result, err := answer(pointed.JSON200, pointed.HTTPResponse, pointed.Body)
 	if err != nil {
 		return attached, err
 	}
@@ -241,7 +242,7 @@ func (p *Phone) Place(ctx context.Context, call OutboundCall) (acceleration.Plac
 	if err != nil {
 		return placed, fmt.Errorf("stream: calling %s: %w", call.To, err)
 	}
-	result, err := answer(dialled.JSON202, dialled.JSON400, dialled.JSON401, dialled.JSON404, dialled.Status())
+	result, err := answer(dialled.JSON202, dialled.HTTPResponse, dialled.Body)
 	if err != nil {
 		return placed, err
 	}
@@ -262,14 +263,9 @@ func becauseOf(skipped []acceleration.SkippedVendor) string {
 }
 
 // answer returns what the router sent, raising what it said went wrong instead.
-func answer[T any](ok *T, bad, unauthorized, missing *acceleration.ErrorResponse, status string) (*T, error) {
+func answer[T any](ok *T, response *http.Response, body []byte) (*T, error) {
 	if ok != nil {
 		return ok, nil
 	}
-	for _, failure := range []*acceleration.ErrorResponse{bad, unauthorized, missing} {
-		if failure != nil {
-			return nil, fmt.Errorf("stream: %s", failure.Error.Message)
-		}
-	}
-	return nil, fmt.Errorf("stream: the router answered %s", status)
+	return nil, refusal(response, body)
 }

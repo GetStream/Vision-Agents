@@ -206,6 +206,12 @@ run = await api.simulations.runs.get(run.id)
 
 Lists page by cursor: each returns `items`, `has_more` and `next_cursor`.
 
+Anything the router refuses, a socket included, raises `RouterError` with the router's
+message and `status`, `type`, `code` (what to branch on; new ones appear), `doc_url` and
+`request_id`, the `X-Request-Id` to quote to support. A body that is not the router's own,
+such as a proxy's error page, is the message as it was, with `type`, `code` and `doc_url`
+left None; so is a refused socket, whose body aiohttp never reads.
+
 ## Tools hosted for an agent
 
 A session's own functions run in the process that opened it. `dispatch.host` is the other

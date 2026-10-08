@@ -47,18 +47,8 @@ public struct Responses: Sendable {
         switch output {
         case .accepted(let response):
             return Response(try response.body.json)
-        case .badRequest(let response):
-            throw AgentsError.http(status: 400, message: try response.body.json.error)
-        case .unauthorized(let response):
-            throw AgentsError.http(status: 401, message: try response.body.json.error)
-        case .forbidden(let response):
-            throw AgentsError.http(status: 403, message: try response.body.json.error)
-        case .notFound(let response):
-            throw AgentsError.http(status: 404, message: try response.body.json.error)
-        case .conflict(let response):
-            throw AgentsError.http(status: 409, message: try response.body.json.error)
-        case .undocumented(let status, _):
-            throw AgentsError.http(status: status, message: "unexpected")
+        default:
+            throw AgentsError.undescribedSuccess
         }
     }
 
@@ -77,16 +67,8 @@ public struct Responses: Sendable {
             return Page(
                 items: page.items.map(Response.init), hasMore: page.hasMore,
                 nextCursor: page.nextCursor)
-        case .badRequest(let response):
-            throw AgentsError.http(status: 400, message: try response.body.json.error)
-        case .unauthorized(let response):
-            throw AgentsError.http(status: 401, message: try response.body.json.error)
-        case .forbidden(let response):
-            throw AgentsError.http(status: 403, message: try response.body.json.error)
-        case .notFound(let response):
-            throw AgentsError.http(status: 404, message: try response.body.json.error)
-        case .undocumented(let status, _):
-            throw AgentsError.http(status: status, message: "unexpected")
+        default:
+            throw AgentsError.undescribedSuccess
         }
     }
 
@@ -108,16 +90,8 @@ public struct Responses: Sendable {
             return Page(
                 items: page.items.map(ResponseItem.init), hasMore: page.hasMore,
                 nextCursor: page.nextCursor)
-        case .badRequest(let response):
-            throw AgentsError.http(status: 400, message: try response.body.json.error)
-        case .unauthorized(let response):
-            throw AgentsError.http(status: 401, message: try response.body.json.error)
-        case .forbidden(let response):
-            throw AgentsError.http(status: 403, message: try response.body.json.error)
-        case .notFound(let response):
-            throw AgentsError.http(status: 404, message: try response.body.json.error)
-        case .undocumented(let status, _):
-            throw AgentsError.http(status: status, message: "unexpected")
+        default:
+            throw AgentsError.undescribedSuccess
         }
     }
 

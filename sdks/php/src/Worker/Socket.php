@@ -66,13 +66,7 @@ final class Socket
                 $body = $response->getBody()->buffer();
             } catch (HttpException) {
             }
-            $said = $body;
-            try {
-                $error = Json::string(Json::asObject(Json::decode($body)), 'error');
-                $said = $error === '' ? $body : $error;
-            } catch (JsonException) {
-            }
-            throw new RouterException($response->getStatus(), $operation, $said === '' ? $response->getReason() : $said, $body, 0, $refused);
+            throw RouterException::answered($response->getStatus(), $operation, $body, $response->getReason(), $response->getHeader('X-Request-Id') ?? '', (int) $response->getHeader('Retry-After'), $refused);
         } catch (HttpException | CancelledException $failed) {
             throw new RouterException(0, $operation, $failed->getMessage(), '', 0, $failed);
         }

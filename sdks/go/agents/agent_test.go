@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -304,6 +305,38 @@ func TestSyncStoresTheAgentAndEditsItTheSecondTime(t *testing.T) {
 	}
 	if *router.configs[0].Instructions != "Be briefer." {
 		t.Errorf("the stored config still says %q", *router.configs[0].Instructions)
+	}
+}
+
+func TestASyncTheRouterRefusesCarriesWhatItSaid(t *testing.T) {
+	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(stream.RequestIDHeader, "request-1")
+		reply(w, http.StatusUnauthorized, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+			Message: "the token has expired", Type: acceleration.ErrorTypeAuthentication,
+			Code: "unauthenticated", DocUrl: "https://getstream.io/agents/docs/api/errors/#unauthenticated",
+		}})
+	}))
+	t.Cleanup(router.Close)
+	agent, err := New(Options{Name: "jean", LLM: stream.Accelerated(stream.Config{
+		Backend: stream.Backend{URL: router.URL, CustomerID: "acme"},
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = agent.Sync(t.Context())
+
+	var refused *stream.RouterError
+	if !errors.As(err, &refused) {
+		t.Fatalf("the refusal came back as %v", err)
+	}
+	if refused.Status != http.StatusUnauthorized || refused.Type != "authentication" ||
+		refused.Code != "unauthenticated" || refused.RequestID != "request-1" ||
+		refused.DocURL != "https://getstream.io/agents/docs/api/errors/#unauthenticated" {
+		t.Errorf("the refusal was read as %+v", *refused)
+	}
+	if err.Error() != "agents: the token has expired" {
+		t.Errorf("the refusal says %q", err)
 	}
 }
 

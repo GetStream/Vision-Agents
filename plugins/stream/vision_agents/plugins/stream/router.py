@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 from ._backend import Backend
+from ._errors import RouterError
 from ._generated import AuthenticatedClient
 from ._generated.api.default import (
     get_speech,
@@ -327,7 +328,10 @@ class Router:
         """Ask the router what kind of model a name is."""
         client = self.client()
         for modality in ORDER:
-            response = resolve_target.sync_detailed(modality, target, client=client)
+            try:
+                response = resolve_target.sync_detailed(modality, target, client=client)
+            except RouterError:
+                continue
             candidates = response.parsed
             if isinstance(candidates, list) and candidates:
                 logger.debug("%s routes as %s", target, modality)

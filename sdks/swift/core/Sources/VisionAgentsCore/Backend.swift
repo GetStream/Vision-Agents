@@ -215,6 +215,46 @@ struct CredentialMiddleware: ClientMiddleware {
     }
 }
 
+/// Throws every answer that is not a success as the `HTTPFailure` it reports, before the
+/// generated client reads it.
+///
+/// Every status goes through here, documented or not, because the generated outputs carry no
+/// headers to read `X-Request-Id` from, and because a body that is not the envelope under a
+/// documented status would otherwise fail to decode and read as a transport failure.
+struct FailureMiddleware: ClientMiddleware {
+    func intercept(
+        _ request: HTTPRequest,
+        body: HTTPBody?,
+        baseURL: URL,
+        operationID: String,
+        next: (HTTPRequest, HTTPBody?, URL) async throws -> (HTTPResponse, HTTPBody?)
+    ) async throws -> (HTTPResponse, HTTPBody?) {
+        let (response, answer) = try await next(request, body, baseURL)
+        guard response.status.kind != .successful else { return (response, answer) }
+        throw AgentsError.http(
+            HTTPFailure(
+                status: response.status.code,
+                requestID: response.headerFields[HTTPField.Name("X-Request-Id")!] ?? "",
+                body: try await prefix(of: answer)))
+    }
+
+    private func prefix(of body: HTTPBody?) async throws -> Data {
+        var data = Data()
+        guard let body else { return data }
+        do {
+            for try await chunk in body {
+                data.append(contentsOf: chunk.prefix(maximumFailureBody - data.count))
+                if data.count >= maximumFailureBody { break }
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // A body that breaks off leaves the status as the failure, with what did arrive.
+        }
+        return data
+    }
+}
+
 /// Reads the timestamps the router actually sends.
 ///
 /// Go's `time.Time` marshals to RFC 3339 with however many fractional digits the value needs
@@ -247,6 +287,7 @@ extension Backend {
             configuration: .init(dateTranscoder: RouterDates()),
             transport: transport ?? URLSessionTransport(
                 configuration: .init(session: urlSession)),
-            middlewares: [CredentialMiddleware(backend: self)])
+            // Outermost, so a 401 is a failure only once the credentials have had their retry.
+            middlewares: [FailureMiddleware(), CredentialMiddleware(backend: self)])
     }
 }

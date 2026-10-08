@@ -60,7 +60,37 @@ class Router:
         app.router.add_get("/v1/router/configs", self._list_configs)
         app.router.add_post("/v1/router/configs", self._create_config)
         app.router.add_put("/v1/router/configs/{id}", self._update_config)
+        app.router.add_get("/v1/{modality}/routes/{target}", self._routes)
         return app
+
+    async def _routes(self, request: web.Request) -> web.Response:
+        """gemma4 is a model and nothing else: a proxy fails the tts lookup with a page,
+        and the router answers the rest with the envelope's 404."""
+        modality = request.match_info["modality"]
+        if modality == "tts":
+            return web.Response(status=500, text="<html>internal error</html>")
+        if modality != "llm":
+            return web.json_response(
+                status=404,
+                data={
+                    "error": {
+                        "message": "nothing routes gemma4",
+                        "type": "not_found",
+                        "code": "not_found",
+                        "doc_url": "https://getstream.io/agents/docs/api/errors/#not_found",
+                    }
+                },
+            )
+        health = {
+            "available": True,
+            "error_rate": 0.0,
+            "errors": 0,
+            "latency_ms_avg": 120.0,
+            "requests": 10,
+        }
+        return web.json_response(
+            [{"provider": "baseten", "model": "gemma4", "health": health}]
+        )
 
     async def opening(self, modality: str) -> dict[str, Any]:
         """The start frame a session opened with."""
@@ -338,6 +368,14 @@ class TestRouter:
             "include_domains": ["nice.org.uk"],
         }
         assert backend.searches[0]["config_id"] == "healthcare"
+
+    async def test_a_name_resolves_past_the_modalities_that_refuse_it(
+        self, router: stream.Router
+    ):
+        # resolve asks synchronously, so it runs off the loop the fake answers on.
+        resolved = await asyncio.to_thread(router.resolve, "gemma4")
+
+        assert isinstance(resolved, stream.LLM)
 
     async def test_a_config_is_stored_under_its_name_and_edited_next_time(
         self, backend: Router

@@ -106,8 +106,12 @@ def sync_detailed(
     refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from
     the next refresh of each connection. A new client_id makes the connections consented with the old
     one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749
-    section 6). A connector whose client.registration does not list customer refuses it. The secret is
-    sealed and never returned.
+    section 6). A connector whose client.registration does not list customer refuses it. With
+    provider_app_id and signing_secret it is also the app's own provider app: the provider's events for
+    the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and
+    reach the app alone. Both secrets are sealed and never returned. A connector whose connections take
+    no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret
+    without client_id.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -148,8 +152,12 @@ def sync(
     refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from
     the next refresh of each connection. A new client_id makes the connections consented with the old
     one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749
-    section 6). A connector whose client.registration does not list customer refuses it. The secret is
-    sealed and never returned.
+    section 6). A connector whose client.registration does not list customer refuses it. With
+    provider_app_id and signing_secret it is also the app's own provider app: the provider's events for
+    the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and
+    reach the app alone. Both secrets are sealed and never returned. A connector whose connections take
+    no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret
+    without client_id.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -185,8 +193,12 @@ async def asyncio_detailed(
     refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from
     the next refresh of each connection. A new client_id makes the connections consented with the old
     one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749
-    section 6). A connector whose client.registration does not list customer refuses it. The secret is
-    sealed and never returned.
+    section 6). A connector whose client.registration does not list customer refuses it. With
+    provider_app_id and signing_secret it is also the app's own provider app: the provider's events for
+    the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and
+    reach the app alone. Both secrets are sealed and never returned. A connector whose connections take
+    no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret
+    without client_id.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -225,8 +237,12 @@ async def asyncio(
     refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from
     the next refresh of each connection. A new client_id makes the connections consented with the old
     one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749
-    section 6). A connector whose client.registration does not list customer refuses it. The secret is
-    sealed and never returned.
+    section 6). A connector whose client.registration does not list customer refuses it. With
+    provider_app_id and signing_secret it is also the app's own provider app: the provider's events for
+    the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and
+    reach the app alone. Both secrets are sealed and never returned. A connector whose connections take
+    no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret
+    without client_id.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
