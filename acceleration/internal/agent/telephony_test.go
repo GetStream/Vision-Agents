@@ -550,6 +550,41 @@ func (s *AgentSuite) TestATurnThatSpokeForItselfIsNotGivenPreSpeechEither() {
 	s.False(s.spokenText("Let me pull up your order."), "the agent stacked pre_speech on top of its own words")
 }
 
+func (s *AgentSuite) TestTheHoldPhraseOpeningTheSentenceBeforeACallIsTheOnlyOneInTheWait() {
+	// The sentence the use policy asks for before a call opens with the hold phrase and reads
+	// the details back in one go. That phrase is the wait's own: the agent adds neither its
+	// own filler nor the binding's pre_speech, which would come after the read-back, and the
+	// answer to the result adds none, so the caller hears one hold phrase, and it starts the
+	// wait rather than ending it.
+	s.ownsTools("order 12 ships tomorrow")
+	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{PreSpeech: "Let me pull up your order."} }
+	s.join(false)
+	s.model.reply = []string{"One moment, I have order twelve for Alvarez."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the tool answer never came")
+	spoken := s.voice.spoken()
+	s.Require().NotEmpty(spoken)
+	s.Equal("One moment, I have order twelve for Alvarez.", spoken[0].Text,
+		"the hold phrase and the read-back are one utterance, the first the caller hears")
+	holds, texts := 0, make([]string, 0, len(spoken))
+	for _, request := range spoken {
+		texts = append(texts, request.Text)
+		for _, phrase := range append([]string{"One moment", "Let me pull up your order."}, workingPhrases...) {
+			if strings.Contains(request.Text, phrase) {
+				holds++
+				break
+			}
+		}
+	}
+	s.Equal(1, holds, "one hold phrase to a wait: %q", texts)
+}
+
 func (s *AgentSuite) TestPreSpeechIsTheFirstCallsThatNamesOne() {
 	// Two calls in one reply: the first names no phrase, the second does, so the second's
 	// is said rather than the agent's own.
