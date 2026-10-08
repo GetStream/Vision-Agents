@@ -230,11 +230,19 @@ func transcribeClip(ctx context.Context, client *stream.Client, target string, r
 
 	started := time.Now()
 	arrivals := make(chan heard, 256)
+	// scored stops the reader once the clip is scored, so a provider still talking cannot
+	// leave it blocked on a channel nobody reads.
+	scored := make(chan struct{})
+	defer close(scored)
 	go func() {
 		defer close(arrivals)
 		for t := range transcriber.Transcripts() {
-			arrivals <- heard{AtMs: int(time.Since(started).Milliseconds()), Text: t.Text, Final: t.Final,
-				Provider: t.Provider, Model: t.Model, Error: t.Error}
+			select {
+			case arrivals <- heard{AtMs: int(time.Since(started).Milliseconds()), Text: t.Text, Final: t.Final,
+				Provider: t.Provider, Model: t.Model, Error: t.Error}:
+			case <-scored:
+				return
+			}
 		}
 	}()
 	sent := make(chan error, 1)

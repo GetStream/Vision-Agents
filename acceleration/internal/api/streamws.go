@@ -160,7 +160,7 @@ func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 	connection.SetReadLimit(maxSocketMessage)
 	out := &socket{connection: connection}
 
-	opening, err := readStart(connection)
+	opening, err := readStart(connection, modality)
 	if err != nil {
 		out.failed(err)
 		return
@@ -905,7 +905,7 @@ const defaultSampleRate = 16000
 //
 // A frame naming a config need not name a target, because the config it names may hold
 // one. A frame naming neither is refused: nothing about it says what to route to.
-func readStart(connection *websocket.Conn) (start, error) {
+func readStart(connection *websocket.Conn, modality routing.Modality) (start, error) {
 	connection.SetReadDeadline(time.Now().Add(startWait))
 	defer connection.SetReadDeadline(time.Time{})
 
@@ -916,16 +916,31 @@ func readStart(connection *websocket.Conn) (start, error) {
 	if opening.Type != "" && opening.Type != "start" {
 		return start{}, errors.New("the first frame must be a start frame")
 	}
-	if !opening.targeted() && opening.ConfigID == "" {
+	if !opening.names(modality) && opening.ConfigID == "" {
 		return start{}, errors.New("routing needs a target, either sent or held in a config")
 	}
 	return opening, nil
 }
 
-// targeted reports whether the frame names what to route to, at its top or in an option
-// block. The SDKs send the options outright, so their target arrives in the block.
-func (s start) targeted() bool {
-	return s.Target != "" || s.STT.Target != "" || s.TTS.Target != "" || s.LLM.Target != "" || s.STS.Target != ""
+// names reports whether the frame names what to route to: at its top, or in the option
+// block of the socket's own modality, which is where the SDKs send it. A target in another
+// modality's block says nothing about this socket.
+func (s start) names(modality routing.Modality) bool {
+	if s.Target != "" {
+		return true
+	}
+	switch modality {
+	case routing.STT:
+		return s.STT.Target != ""
+	case routing.TTS:
+		return s.TTS.Target != ""
+	case routing.LLM:
+		return s.LLM.Target != ""
+	case routing.STS:
+		return s.STS.Target != ""
+	default:
+		return false
+	}
 }
 
 // sttFrame renders a transcription event.

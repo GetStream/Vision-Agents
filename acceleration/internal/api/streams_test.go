@@ -67,7 +67,8 @@ func (s *StreamsSuite) TestATargetInTheOptionBlockIsEnoughToRoute() {
 }
 
 func (s *StreamsSuite) TestAFrameNamingNothingToRouteToIsRefused() {
-	listening := s.start("/v1/stt/stream", frame{"stt": frame{"interim": true}})
+	// A target for another modality says nothing about where this socket's audio goes.
+	listening := s.start("/v1/stt/stream", frame{"tts": frame{"target": "en-low-latency"}})
 
 	refused := s.nextFrame(listening)
 	s.Equal("error", refused["type"])
