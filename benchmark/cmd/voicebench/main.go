@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 
@@ -59,7 +60,7 @@ func dispatch(cmd string, args []string) error {
 	case "digest":
 		return cmdDigest(ctx, args)
 	case "stt":
-		return cmdSTT(args)
+		return cmdSTT(ctx, root, args)
 	case "tts":
 		return cmdTTS(args)
 	default:
@@ -384,59 +385,51 @@ func cmdDigest(ctx context.Context, args []string) error {
 	})
 }
 
-func cmdSTT(args []string) error {
+func cmdSTT(ctx context.Context, root string, args []string) error {
 	fs := flag.NewFlagSet("stt", flag.ExitOnError)
-	manifest := fs.String("manifest", "", "JSONL of id, reference, hypothesis")
+	manifest := fs.String("manifest", "", "JSONL of id, reference, and audio (a WAV to stream) or hypothesis (to score as given)")
+	var targets stringList
+	fs.Var(&targets, "target", "provider/model or shortcut to stream each clip to through the router; repeat for several")
+	out := fs.String("out", "", "output directory (default out/stt-<time>)")
+	networkProfile := fs.String("network-profile", os.Getenv("VOICEBENCH_NETWORK_PROFILE"), "stable label for the runner region and network setup")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *manifest == "" {
 		return fmt.Errorf("stt: --manifest is required")
 	}
-	raw, err := os.ReadFile(*manifest)
+	dir := *out
+	if dir == "" {
+		dir = filepath.Join(root, "out", "stt-"+time.Now().UTC().Format("20060102T150405Z"))
+	}
+	sum, err := run.STT(ctx, run.STTConfig{
+		Root:           root,
+		Manifest:       *manifest,
+		Targets:        targets,
+		Out:            dir,
+		NetworkProfile: *networkProfile,
+		Logger:         slog.Default(),
+	})
 	if err != nil {
 		return err
 	}
-	type row struct {
-		ID         string `json:"id"`
-		Reference  string `json:"reference"`
-		Hypothesis string `json:"hypothesis"`
-	}
-	var refWords, errRaw, errNorm int
-	perfect := 0
-	n := 0
-	for i, line := range splitLines(string(raw)) {
-		var rec row
-		if err := json.Unmarshal([]byte(line), &rec); err != nil {
-			return fmt.Errorf("stt: line %d: %w", i+1, err)
+	fmt.Print(report.STTMarkdown(sum))
+	fmt.Printf("\nresults in %s\n", dir)
+	for _, target := range sum.STT {
+		if target.Failed > 0 {
+			return fmt.Errorf("stt: %d clip(s) for %s ended in an error, see clips.jsonl", target.Failed, target.Target)
 		}
-		rawAlign := score.ScoreWER(rec.Reference, rec.Hypothesis, false)
-		normAlign := score.ScoreWER(rec.Reference, rec.Hypothesis, true)
-		n++
-		refWords += rawAlign.Reference
-		errRaw += rawAlign.Errors()
-		errNorm += normAlign.Errors()
-		if normAlign.WER == 0 {
-			perfect++
-		}
-		id := rec.ID
-		if id == "" {
-			id = fmt.Sprintf("%d", i+1)
-		}
-		fmt.Printf("%s\traw=%.3f\tnorm=%.3f\tsub=%d\tins=%d\tdel=%d\n",
-			id, rawAlign.WER, normAlign.WER, normAlign.Substitutions, normAlign.Insertions, normAlign.Deletions)
 	}
-	if n == 0 {
-		return fmt.Errorf("stt: empty manifest")
-	}
-	pooledRaw := 0.0
-	pooledNorm := 0.0
-	if refWords > 0 {
-		pooledRaw = float64(errRaw) / float64(refWords)
-		pooledNorm = float64(errNorm) / float64(refWords)
-	}
-	fmt.Printf("clips=%d perfect_norm=%d pooled_raw=%.3f pooled_norm=%.3f normalizer=%s\n",
-		n, perfect, pooledRaw, pooledNorm, score.NormalizerVersion)
+	return nil
+}
+
+// stringList is a flag that may be given more than once.
+type stringList []string
+
+func (l *stringList) String() string { return strings.Join(*l, ",") }
+
+func (l *stringList) Set(value string) error {
+	*l = append(*l, value)
 	return nil
 }
 
@@ -460,18 +453,6 @@ func cmdTTS(args []string) error {
 	}
 	fmt.Println(string(out))
 	return nil
-}
-
-func splitLines(raw string) []string {
-	var lines []string
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		lines = append(lines, line)
-	}
-	return lines
 }
 
 func loadDotEnv(root string) {

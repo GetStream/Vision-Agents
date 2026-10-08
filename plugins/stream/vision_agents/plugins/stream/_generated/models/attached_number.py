@@ -15,7 +15,8 @@ class AttachedNumber:
     """
     Attributes:
         route_id (str):
-        sip_uri (str): Where the vendor sends calls, e.g. sip:trunk@sip.stream-io-api.com.
+        sip_uri (str): Where the vendor sends calls: the Stream trunk with the number as its user part, e.g.
+            sip:+15125551234@sip.stream-io-api.com.
         trunk_id (str):
     """
 
