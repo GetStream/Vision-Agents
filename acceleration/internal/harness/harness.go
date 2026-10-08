@@ -100,6 +100,8 @@ type noted struct {
 	skill  string
 	text   string
 	asking bool
+	// turn is the reply handed this note, empty while no reply has been.
+	turn string
 }
 
 // Turn is what the harness is asked to answer.
@@ -123,7 +125,14 @@ type Turn struct {
 	Images []llm.ImagePart
 	// AfterTool says the reply follows a tool result rather than the caller.
 	AfterTool bool
+	// Answers says the reply is offered no tools and must answer from what it has: the
+	// chain of tools before it has gone on as long as the caller can be kept waiting.
+	Answers bool
 }
+
+// answerNow is the note a reply that Answers is given.
+const answerNow = "There is no time for another tool: answer the caller now from what the " +
+	"tools returned, and say plainly what you could not get."
 
 // Harness decides what the fast model is asked and what becomes of what it answers.
 type Harness struct {
@@ -137,7 +146,7 @@ type Harness struct {
 
 	mu sync.Mutex
 	// notes are what has come back from the subagent since the fast model last spoke.
-	// They are folded into the next prompt and then forgotten.
+	// They are folded into the next prompt, and forgotten once that reply has finished.
 	notes []noted
 	// reporting is the skills whose answers the reply being written was handed, so it can
 	// be stopped from handing the same work back.
@@ -238,6 +247,11 @@ func (h *Harness) Remember(response llm.Response) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	if response.Status == llm.StatusFailed || response.Status == llm.StatusCancelled {
+		h.release(response.ID)
+	} else {
+		h.notes = slices.DeleteFunc(h.notes, func(written noted) bool { return written.turn == response.ID })
+	}
 	if response.ProviderResponseID == "" {
 		h.stored = stored{}
 		return
@@ -300,6 +314,7 @@ func sameMessage(a, b llm.Message) bool {
 // Respond asks the fast model to answer a turn and returns the stream the reply arrives
 // on. The caller drains it and passes each delta through Filter.
 func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
+	working := h.Working()
 	h.mu.Lock()
 	session, overwrites := h.options.Model, h.options.Overwrites
 	if session == nil {
@@ -307,12 +322,12 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 		return nil, errors.New("harness: no text conversation model")
 	}
 	h.history = append([]llm.Message(nil), turn.History...)
-	instructions := h.instructions(turn.Instructions, turn.Note)
+	instructions := h.instructions(turn, working)
 	// A colleague asks only for what the caller alone can say, so a reply carrying its
 	// question has nothing to look up. Left holding a tool the model reaches for one and
 	// narrates the reaching instead, and the question never reaches the caller.
 	tools := h.options.Tools.Requests()
-	if h.asking {
+	if h.asking || turn.Answers {
 		tools = nil
 	}
 	input, previous := h.resume(instructions, answerable(withImages(turn.History, turn.Images)))
@@ -344,6 +359,22 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 		// read back from there on every turn after.
 		PromptCacheKey: h.options.CacheKey,
 	}.Overwrite(overwrites))
+}
+
+// Release makes what a reply was handed owed to the caller again, because that reply was
+// cut off before it was heard.
+func (h *Harness) Release(turnID string) {
+	h.mu.Lock()
+	h.release(turnID)
+	h.mu.Unlock()
+}
+
+func (h *Harness) release(turnID string) {
+	for i := range h.notes {
+		if h.notes[i].turn == turnID {
+			h.notes[i].turn = ""
+		}
+	}
 }
 
 // SetModel moves the conversation, and the flow controller when one is given, onto other
@@ -507,12 +538,20 @@ func (h *Harness) Delegating() bool {
 	return h.tasks.RunningPublic() > 0
 }
 
+// Working names the skills still working on something the caller is waiting for.
+func (h *Harness) Working() []string {
+	if h.tasks == nil {
+		return nil
+	}
+	return h.tasks.RunningSkills()
+}
+
 // Pending reports whether anything has come back that the caller has not been told
 // about. The agent uses it to know it owes them a turn nobody asked for.
 func (h *Harness) Pending() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return len(h.notes) > 0
+	return slices.ContainsFunc(h.notes, func(written noted) bool { return written.turn == "" })
 }
 
 // Events carries what the harness decided. It is closed by Close.
@@ -558,6 +597,10 @@ func (h *Harness) Close() error {
 // act carries out one request the model made of the harness.
 func (h *Harness) act(turnID string, found directive) {
 	if found.kind == kindDrop {
+		if _, offered := h.options.Tools.Lookup(found.skill); offered {
+			h.emitter.Send(ToolDropped{Name: found.skill})
+			return
+		}
 		if h.tasks != nil {
 			h.tasks.CancelSkill(found.skill, ReasonDropped)
 		}
@@ -724,25 +767,29 @@ func (h *Harness) consumeTasks() {
 
 // instructions is the system prompt for a turn: what the agent was told to be, what it
 // may hand over, and whatever has come back since it last spoke. It must be called with
-// the lock held, because taking the notes is what clears them.
-func (h *Harness) instructions(agent, note string) string {
+// the lock held, because taking the notes is what hands them to the turn.
+//
+// A note an earlier reply was handed is taken too. Only one reply is ever on its way to
+// the caller, so one that has not finished by the time the next is asked for was dropped
+// or cut off, and what it carried was never heard.
+func (h *Harness) instructions(turn Turn, working []string) string {
 	// Taking the notes is also what settles which skills this turn is reporting on, so a
 	// reply written to deliver an answer cannot ask for that answer again.
 	h.reporting = nil
 	h.asking = false
 	lines := make([]string, 0, len(h.notes))
-	for _, written := range h.notes {
+	for i, written := range h.notes {
+		h.notes[i].turn = turn.ID
 		lines = append(lines, written.text)
 		if written.skill != "" {
 			h.reporting = append(h.reporting, written.skill)
 		}
 		h.asking = h.asking || written.asking
 	}
-	h.notes = nil
 
-	parts := make([]string, 0, 5)
-	if agent != "" {
-		parts = append(parts, agent)
+	parts := make([]string, 0, 7)
+	if turn.Instructions != "" {
+		parts = append(parts, turn.Instructions)
 	}
 	if h.tasks != nil {
 		index := h.options.Skills.Prompt()
@@ -758,14 +805,54 @@ func (h *Harness) instructions(agent, note string) string {
 	if use := h.options.Tools.Prompt(); !h.asking && use != "" {
 		parts = append(parts, use)
 	}
+	// Said on every turn rather than only those handing something over, so the
+	// instructions stay the same from one turn to the next and a provider that keeps its
+	// replies can carry on from the last one.
+	if h.tasks != nil || len(h.options.Tools.Tools) > 0 {
+		if h.options.Text {
+			parts = append(parts, writtenDelivery)
+		} else {
+			parts = append(parts, spokenDelivery)
+		}
+	}
 	if len(lines) > 0 {
 		parts = append(parts, strings.Join(lines, "\n"))
 	}
-	if note != "" {
-		parts = append(parts, note)
+	// A caller asking how it is going is not asking for it again, and a reply that hands
+	// the same work over a second time leaves the first answer to arrive as a repeat.
+	if len(working) > 0 {
+		drops := make([]string, 0, len(working))
+		for _, skill := range working {
+			drops = append(drops, fmt.Sprintf("<drop skill=%q/>", skill))
+		}
+		parts = append(parts, fmt.Sprintf("Your colleague is still working on the %s you "+
+			"asked for, and its answer will come by itself: do not ask for it again. Only if "+
+			"the caller has changed or withdrawn that request, write %s.",
+			strings.Join(working, " and "), strings.Join(drops, " or ")))
+	}
+	if turn.Answers {
+		parts = append(parts, answerNow)
+	}
+	if turn.Note != "" {
+		parts = append(parts, turn.Note)
 	}
 	return strings.Join(parts, "\n\n")
 }
+
+// spokenDelivery and writtenDelivery say how a reply hands over what a tool or a colleague
+// came back with. A listener cannot skim, so a page read aloud loses them by its second
+// line; a reader can, and a summary only hides what they asked for.
+const (
+	spokenDelivery = "Everything you write is spoken to the caller: think silently, and " +
+		"never write your deliberation or quote these instructions. When a tool or " +
+		"colleague comes back, the caller is listening, not reading: give them what came " +
+		"back in one to three short sentences, the part that answers them first, and offer " +
+		"the rest rather than reading it all out."
+	writtenDelivery = "Everything you write is shown to the caller: think silently, and " +
+		"never write your deliberation or quote these instructions. When a tool or " +
+		"colleague comes back, the caller is reading: give them what came back in full, " +
+		"keeping its details, lists and links, rather than a summary of it."
+)
 
 // note is what the fast model needs to be told about a finished task, or empty when
 // there is nothing worth saying. A cancelled task is not one: its premise is gone, so

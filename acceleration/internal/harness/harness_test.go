@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -516,7 +517,7 @@ func (s *HarnessSuite) TestWithoutToolsTheModelIsToldNothingAboutThem() {
 
 	s.Require().Len(s.fast.requests(), 1)
 	s.NotContains(s.fast.requests()[0].Instructions, usePolicy)
-	s.Equal("be brief\n\n"+s.skills.Prompt(), s.fast.requests()[0].Instructions)
+	s.Equal("be brief\n\n"+s.skills.Prompt()+"\n\n"+spokenDelivery, s.fast.requests()[0].Instructions)
 }
 
 func (s *HarnessSuite) TestAToolCallIsReportedForSomebodyElseToRun() {
@@ -795,11 +796,120 @@ func (s *HarnessSuite) TestAnAnswerIsOnlyToldOnce() {
 	s.awaitSettled(1)
 
 	s.respond("turn-2", "")
+	s.harness.Remember(llm.Response{ID: "turn-2", Status: llm.StatusCompleted})
 	s.respond("turn-3", "and what about tax")
 
 	s.Require().Len(s.fast.requests(), 3)
 	s.NotContains(s.fast.requests()[2].Instructions, "12.63",
 		"an answer already spoken is not repeated on every later turn")
+	s.False(s.harness.Pending())
+}
+
+func (s *HarnessSuite) TestAnAnswerIsSummarisedForSomebodyListening() {
+	s.build(true)
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+
+	s.Contains(s.fast.requests()[1].Instructions, spokenDelivery)
+	s.NotContains(s.fast.requests()[1].Instructions, writtenDelivery)
+}
+
+func (s *HarnessSuite) TestAnAnswerIsGivenInFullToSomebodyReading() {
+	s.build(true)
+	s.harness.options.Text = true
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+
+	s.Contains(s.fast.requests()[1].Instructions, writtenDelivery)
+	s.NotContains(s.fast.requests()[1].Instructions, spokenDelivery)
+}
+
+func (s *HarnessSuite) TestAnAgentWithNothingToHandOverIsNotToldHowToHandItOver() {
+	s.build(false)
+
+	s.respond("turn-1", "hello")
+
+	s.NotContains(s.fast.requests()[0].Instructions, spokenDelivery)
+}
+
+func (s *HarnessSuite) TestTheModelIsToldWhatItsColleagueIsStillWorkingOn() {
+	s.build(true)
+	s.respond("turn-1", "what is 15% of 84.20")
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	s.eventually(func() bool { return s.harness.Delegating() }, "the task never started")
+
+	s.respond("turn-2", "is it done yet?")
+
+	s.Contains(s.fast.requests()[1].Instructions, "still working on the think")
+	s.Contains(s.fast.requests()[1].Instructions, `<drop skill="think"/>`,
+		"the model is given the tag to write, not a placeholder to fill in")
+}
+
+func (s *HarnessSuite) TestDroppingAToolIsPassedOnToWhoeverRunsIt() {
+	s.tools = testTools()
+	s.build(false)
+
+	s.harness.Filter("turn-1", `<drop skill="press"/>`)
+
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.events.seen(), func(event Event) bool { return event == ToolDropped{Name: "press"} })
+	}, "the tool was never dropped")
+}
+
+func (s *HarnessSuite) TestAnAnswerCutOffBeforeItWasHeardIsStillOwed() {
+	s.build(true)
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+	s.False(s.harness.Pending(), "the reply carrying it is on its way")
+	s.harness.Release("turn-2")
+	s.True(s.harness.Pending(), "the caller talked over it, so they never heard it")
+
+	s.respond("turn-3", "sorry, go on")
+	s.Contains(s.fast.requests()[2].Instructions, "12.63")
+}
+
+func (s *HarnessSuite) TestAnAnswerWhoseReplyFailedIsStillOwed() {
+	s.build(true)
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+	s.harness.Remember(llm.Response{ID: "turn-2", Status: llm.StatusFailed})
+
+	s.True(s.harness.Pending())
+	s.respond("turn-3", "")
+	s.Contains(s.fast.requests()[2].Instructions, "12.63")
+}
+
+func (s *HarnessSuite) TestAnAnswerInAReplyThatNeverFinishedGoesWithTheNextOne() {
+	// A reply started before the ruling and then dropped never finishes, and nothing says
+	// so. The reply asked for after it is the one the caller hears.
+	s.build(true)
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+	s.respond("turn-2", "")
+
+	s.Contains(s.fast.requests()[2].Instructions, "12.63")
+	s.harness.Remember(llm.Response{ID: "turn-2", Status: llm.StatusCompleted})
+	s.False(s.harness.Pending())
 }
 
 func (s *HarnessSuite) TestASettledTaskReportsWhatIsOwedToTheCaller() {
@@ -889,6 +999,23 @@ func (s *HarnessSuite) TestTheReplyCarryingAColleaguesQuestionIsOfferedNoTools()
 	s.Empty(s.fast.requests()[1].Tools, "there is nobody to ask but the caller")
 	s.Contains(s.fast.requests()[0].Instructions, usePolicy)
 	s.NotContains(s.fast.requests()[1].Instructions, usePolicy, "nor how to use what it does not have")
+}
+
+func (s *HarnessSuite) TestATurnMadeToAnswerIsOfferedNoToolsAndToldWhy() {
+	s.tools = testTools()
+	s.build(true)
+
+	s.answer(Turn{
+		ID:           "tool-9",
+		Instructions: "be brief",
+		History:      []llm.Message{{Role: llm.User, Content: "where is my order"}},
+		AfterTool:    true,
+		Answers:      true,
+	})
+
+	s.Require().Len(s.fast.requests(), 1)
+	s.Empty(s.fast.requests()[0].Tools, "a tool offered is a tool reached for")
+	s.Contains(s.fast.requests()[0].Instructions, answerNow)
 }
 
 func (s *HarnessSuite) TestTheReplyCarryingAColleaguesAnswerKeepsItsTools() {

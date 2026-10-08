@@ -400,6 +400,21 @@ func (m *manager) RunningPublic() int {
 	return live
 }
 
+// RunningSkills names the skills of the public tasks still expected to answer.
+func (m *manager) RunningSkills() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var skills []string
+	for _, running := range m.running {
+		if running.live() && !running.private && !slices.Contains(skills, running.skill) {
+			skills = append(skills, running.skill)
+		}
+	}
+	slices.Sort(skills)
+	return skills
+}
+
 // Results carries finished tasks. It is closed by Close.
 func (m *manager) Results() <-chan Result { return m.results.Events() }
 
