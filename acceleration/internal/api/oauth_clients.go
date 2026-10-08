@@ -30,7 +30,7 @@ var errProviderAppTaken = conflict("another customer's record already names this
 type ConnectorOAuthClient struct {
 	ConnectorID  string                            `json:"connector_id" readOnly:"true"`
 	Registration ConnectorClientRegistrationMethod `json:"registration" readOnly:"true" doc:"customer: the app's own client, which every consent and refresh of the connector's connections then uses."`
-	ClientID     string                            `json:"client_id"`
+	ClientID     string                            `json:"client_id" doc:"Empty for a provider app put without an OAuth client, such as a Linq account."`
 	AuthMethod   ConnectorOAuthClientAuthMethod    `json:"auth_method,omitempty"`
 	// Left out when the record names no app, so the answer to a put without one is what it
 	// was before provider apps.
@@ -63,7 +63,7 @@ func (*ConnectorOAuthClient) TransformSchema(_ huma.Registry, schema *huma.Schem
 // (internal/channels/telnyx.go). Both are bounded at client_id's 2048, which is not measured
 // for them either.
 type ConnectorOAuthClientRequest struct {
-	ClientID      string                         `json:"client_id" minLength:"1" maxLength:"2048" pattern:"^[ -~]+$" patternDescription:"printable ASCII, RFC 6749 Appendix A.1"`
+	ClientID      string                         `json:"client_id,omitempty" minLength:"1" maxLength:"2048" pattern:"^[ -~]+$" patternDescription:"printable ASCII, RFC 6749 Appendix A.1" doc:"Required, unless the record is only a provider app: provider_app_id and signing_secret without client_secret or auth_method, for a connector whose connections are not consented through oauth2_code, such as linq."`
 	ClientSecret  string                         `json:"client_secret,omitempty" maxLength:"2048" pattern:"^[ -~]+$" patternDescription:"printable ASCII, RFC 6749 Appendix A.2" writeOnly:"true" doc:"Sealed at rest and never returned. Left out for a public client (auth_method none)."`
 	AuthMethod    ConnectorOAuthClientAuthMethod `json:"auth_method,omitempty" doc:"Overrides the connector's own client.auth_method. Left out, the connector's applies, and failing that the consent picks: none without a secret, else client_secret_basic where the provider accepts it."`
 	ProviderAppID string                         `json:"provider_app_id,omitempty" maxLength:"2048" pattern:"^[A-Za-z0-9._~-]+$" patternDescription:"RFC 3986 section 2.3 unreserved characters, not . or .." doc:"The provider's id for the app the client belongs to, such as a Slack app id (A012ABCD0A0). The app's events then reach POST /v1/connectors/events/{id}/{provider_app_id}. An app serves one customer: another customer's record naming it is a 409."`
@@ -123,7 +123,8 @@ func (s *Server) registerOAuthClients(api huma.API) {
 			"provider_app_id and signing_secret it is also the app's own provider app: the " +
 			"provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, " +
 			"are verified with that secret and reach the app alone. Both secrets are sealed and " +
-			"never returned.\n\n" +
+			"never returned. A connector whose connections take no OAuth client, such as linq, " +
+			"takes the provider app alone: provider_app_id and signing_secret without client_id.\n\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
 			"end user's device.",
 		// Huma describes the body of the default status (200) alone, so 201 names it here.
@@ -253,6 +254,15 @@ func checkOAuthClient(manifest core.Manifest, sent ConnectorOAuthClientRequest) 
 	if !slices.Contains(manifest.Client.Registration, core.ClientCustomer) {
 		return stack.Wrap(fmt.Errorf("%s does not take an app's own OAuth client: its client.registration is %v, which does not list customer",
 			manifest.ID, manifest.Client.Registration))
+	}
+	// A record without a client is only a provider app (AI-863), whose signing secret the events
+	// route reads. oauth2_code reads the client at every consent and refresh (ConnectorClients),
+	// so a connector that lists it needs one, and a client secret or a method is a client's.
+	if sent.ClientID == "" && (sent.SigningSecret == "" || sent.ClientSecret != "" || sent.AuthMethod != "" ||
+		slices.Contains(manifest.Schemes, oauth2code.Name)) {
+		return stack.Wrap(fmt.Errorf("client_id is required: %s takes a record without one only as a provider app, "+
+			"with provider_app_id and signing_secret and no client_secret or auth_method, and only when it does not list %s",
+			manifest.ID, oauth2code.Name))
 	}
 	method := core.ClientAuthMethod(sent.AuthMethod)
 	if method == "" {
