@@ -1,0 +1,82 @@
+# iMessage through the customer's own Linq account (T36, AI-863), on the channel bridge: a
+# channel only, no tools. The customer's Linq webhook subscription posts to the app's own
+# events URL, POST /v1/connectors/events/linq/{provider app id}, which the customer chooses
+# and puts, with the subscription's signing secret, through PUT
+# /v1/agents/connectors/linq/oauth-client; the replies go to the same chat with the account's
+# API key. Linq falls back to RCS or SMS where Apple cannot deliver (internal/channels/linq.go).
+# The core's fixture testdata/manifests/linq.yaml is where it started. Stream-operated lines
+# are out of scope (BYO only, wave 3c Q6).
+# Linq's pages, opened October 8, 2026:
+#   [webhooks] https://docs.linqapp.com/guides/webhooks/index.md
+#   [events]   https://docs.linqapp.com/channel/imessage/guides/webhooks/events/index.md
+#   [send]     https://docs.linqapp.com/channel/imessage/guides/messaging/sending-messages/index.md
+id: linq
+# A new revision for any change to what this file says; see AGENTS.md.
+revision: 1
+name: Linq
+category: Communication
+description: Answer people over iMessage on the customer's own Linq line.
+# [send]: «-H "Authorization: Bearer $LINQ_API_KEY"».
+schemes: [bearer]
+inputs:
+  # The customer's Linq line in E.164, as [events] writes data.chat.owner_handle.handle
+  # («+12025551234»). It is the connection's account (identity below), which the bridge finds
+  # the connection of an event's line by (store.AppConnectionByAccount). The pattern is the
+  # contact map's (omnichannel.e164Digits) behind a +, so a number written another way is
+  # refused at create rather than never matched.
+  - name: phone_number
+    pattern: \+[1-9][0-9]{7,14}
+identity: [phone_number]
+client:
+  # The customer's own Linq account is the provider app: its webhook subscription and that
+  # subscription's signing secret ([webhooks], «your subscription's signing secret») are the
+  # customer's. Linq has no OAuth client, so the record holds the app alone.
+  registration: [customer]
+channel:
+  verifier:
+    # [webhooks]: webhook-id, webhook-timestamp, webhook-signature (v1,{base64}, space
+    # separated), signed content {webhook-id}.{webhook-timestamp}.{body}, a whsec_ secret:
+    # the Standard Webhooks specification. The X-Webhook-* headers T36 first named
+    # (X-Webhook-Signature, hex) are marked deprecated there.
+    kind: standard_webhooks
+    secret: provider_app
+    # [webhooks]: «Reject if the timestamp is more than 5 minutes old».
+    max_age: 5m
+  format: json
+  # [webhooks]: «At-least-once (duplicates possible)», deduplicate «using event_id», which
+  # [events] puts on the envelope. It keys a forward to the customer's event destinations.
+  event_id: [$.event_id]
+  messages:
+    # [events]: message.received is a person's message, data.direction inbound in its
+    # example; message.sent is «Outbound message confirmed as sent from your phone number»,
+    # the agent's own reply, which is not read back. internal/channels/linq.go reads both.
+    match:
+      $.event_type: message.received
+      $.data.direction: inbound
+    # The receiving line, data.chat.owner_handle (is_me: true), of the 2026-02-03 payload in
+    # [events]. The subscription pins that version with ?version=2026-02-03 on its URL
+    # ([webhooks], «Versioning»).
+    provider_unit_id: $.data.chat.owner_handle.handle
+    thread_key:
+      # [events]: data.chat.id. One chat is one external thread (channels doc, «Other
+      # channels», the iMessage row: number ↔ number); a reply goes to the chat, which is also
+      # what answers a group chat (internal/channels/linq.go).
+      - name: chat_id
+        path: $.data.chat.id
+    # [events]: data.sender_handle.handle, «+12025559876»: the contact map keys the person's
+    # episode card by it (channelbridge.episodeSources).
+    author_id: $.data.sender_handle.handle
+    provider_message_id: $.data.id
+    # [send], «Message parts»: text is a part, and [events] shows text and media parts. Only
+    # the first part is read, a limit of a path without filters, so a message whose first part
+    # is media is read without its text. # unverified: how often a person's first part is media
+    text: $.data.parts[0].value
+  reply:
+    # [send]: POST https://api.linqapp.com/api/partner/v3/chats/{chatId}/messages. Linq
+    # answers 200 with the message sent, and 400, 401, 404 or 429 when it is not ([send]).
+    url: https://api.linqapp.com/api/partner/v3/chats/{thread.chat_id}/messages
+    body:
+      message:
+        parts:
+          - type: text
+            value: "{text}"

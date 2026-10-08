@@ -68,10 +68,23 @@ const sendTimeout = 20 * time.Second
 const maxAnswerBytes = 1 << 20
 
 // episodeSources is the episode card source of each connector whose threads get a card in the
-// person's omni-channel (T41). The manifest's channel block does not say what its threads
-// are to the contact map, so each channel adds its connector here: slack_bot is Slack (T35);
-// iMessage (T36), WhatsApp (T51) and SMS (T53) add theirs, keyed by the author's number.
-var episodeSources = map[string]string{"slack_bot": store.EpisodeSlack}
+// person's omni-channel (T41), and how the contact map keys the author of a message in the
+// provider unit. The manifest's channel block does not say what its threads are to the
+// contact map, so each channel adds its connector here: slack_bot is Slack (T35), keyed by
+// the workspace and the user; linq is iMessage (T36), keyed by the sender's number, so an
+// author Linq names by an email address gets no card. WhatsApp (T51) and SMS (T53) add theirs.
+var episodeSources = map[string]episodeSource{
+	"slack_bot": {source: store.EpisodeSlack, person: omnichannel.SlackUser},
+	"linq": {source: store.EpisodeIMessage, person: func(_, author string) (omnichannel.Person, error) {
+		return omnichannel.Phone(author)
+	}},
+}
+
+// episodeSource is one connector's card source and the person its message's author is.
+type episodeSource struct {
+	source string
+	person func(providerUnitID, authorID string) (omnichannel.Person, error)
+}
 
 // Options configures a Bridge.
 type Options struct {
@@ -333,7 +346,7 @@ func (b *Bridge) episode(ctx context.Context, thread store.ChannelThread, config
 	if !carded {
 		return omnichannel.Opened{}, nil
 	}
-	person, err := omnichannel.SlackUser(message.ProviderUnitID, message.AuthorID)
+	person, err := source.person(message.ProviderUnitID, message.AuthorID)
 	if err != nil {
 		b.logger.Info("no episode card for a message whose author the contact map cannot key",
 			"connector", message.ConnectorID, "channel", thread.ChannelID)
@@ -344,7 +357,7 @@ func (b *Bridge) episode(ctx context.Context, thread store.ChannelThread, config
 		AgentConfigID: config.ID,
 		AgentName:     config.Name,
 		Person:        person,
-		Source:        source,
+		Source:        source.source,
 		ThreadChannel: chatlog.ChannelType + ":" + thread.ChannelID,
 		StreamAppPK:   thread.StreamAppPK,
 	})
