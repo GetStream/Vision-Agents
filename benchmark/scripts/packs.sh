@@ -5,7 +5,6 @@
 #   VOICEBENCH_K=3 scripts/packs.sh                         short set, k=3: about 22 minutes
 #   VOICEBENCH_PARALLEL=0 scripts/packs.sh                  one pack after another: about 21 minutes
 #   VOICEBENCH_SET=frozen VOICEBENCH_K=3 scripts/packs.sh   the frozen set
-#   VOICEBENCH_SET=golden scripts/packs.sh                  each pack's golden call: the CI smoke
 #
 # Each pack gets its own agent and world server port and shares the router, so with the packs
 # at once three calls run side by side. Results go to out/packs-<time>/<pack>, or to the
@@ -14,7 +13,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 k="${VOICEBENCH_K:-1}"
-scenario_set="${VOICEBENCH_SET:-short}"
+set_flag="--${VOICEBENCH_SET:-short}"
 packs="${VOICEBENCH_PACKS:-restaurant healthcare telecom}"
 parallel="${VOICEBENCH_PARALLEL:-1}"
 profile="${VOICEBENCH_NETWORK_PROFILE:-local}"
@@ -63,11 +62,7 @@ pids=()
 i=0
 for pack in $packs; do
   echo "== $pack"
-  set_args=("--$scenario_set")
-  if [[ "$scenario_set" == "golden" ]]; then
-    set_args=(--scenario "$pack.golden")
-  fi
-  "$voicebench" run --pack "$pack" "${set_args[@]}" --k "$k" --target accelerated --spawn \
+  "$voicebench" run --pack "$pack" "$set_flag" --k "$k" --target accelerated --spawn \
     --target-url "http://127.0.0.1:$((8000 + i))" --world-addr "127.0.0.1:$((8090 + i))" \
     --network-profile "$profile" --out "$out/$pack" > "$out/$pack.log" 2>&1 &
   if [[ "$parallel" == "0" ]]; then

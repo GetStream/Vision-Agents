@@ -267,7 +267,7 @@ go run ./cmd/voicebench digest --title "Voicebench" --out out/digest --slack out
 
 ### CI
 
-[`.github/workflows/voicebench.yml`](../.github/workflows/voicebench.yml) runs both tiers on a router built from the checkout, with network profile `github-ubuntu-latest`. A pull request touching `benchmark/`, `acceleration/`, the Python SDK or the plugins the agents use runs each pack's golden call at k=1 (`VOICEBENCH_SET=golden scripts/packs.sh`). It fails when a trial produces no verdict, not when the agent fails the scenario. Every night the frozen set runs on our stack alone through `scripts/digest.sh`, its compare against the previous night goes to the job summary, and the digest is posted to Slack once `VOICEBENCH_SLACK_BOT_TOKEN` and `VOICEBENCH_SLACK_CHANNEL` are repository secrets. Run either tier by hand from the Actions tab.
+[`.github/workflows/voicebench.yml`](../.github/workflows/voicebench.yml) runs the frozen set every night on our stack alone through `scripts/digest.sh`, on a router built from the checkout, with network profile `github-ubuntu-latest`. Its compare against the previous night goes to the job summary, and the digest is posted to Slack once `VOICEBENCH_SLACK_BOT_TOKEN` and `VOICEBENCH_SLACK_CHANNEL` are repository secrets. Run it by hand from the Actions tab. There is no per-PR smoke yet.
 
 ## Public benchmark basis
 

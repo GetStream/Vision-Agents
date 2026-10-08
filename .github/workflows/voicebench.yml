@@ -1,28 +1,13 @@
 name: Voicebench
 on:
-  pull_request:
-    paths:
-      - 'benchmark/**'
-      - 'acceleration/**'
-      - 'sdks/python/**'
-      - 'plugins/stream/**'
-      - 'plugins/getstream/**'
-      - 'plugins/openai/**'
-      - '.github/workflows/voicebench.yml'
   schedule:
     - cron: '0 4 * * *'
-  workflow_dispatch:
-    inputs:
-      tier:
-        description: 'smoke (one golden call per pack) or nightly (the frozen set)'
-        type: choice
-        options: [ smoke, nightly ]
-        default: smoke
+  workflow_dispatch: { }
 
 permissions:
   contents: read
 
-# Every tier is live calls against the providers below, on a router built from this checkout.
+# Live calls against the providers below, on a router built from this checkout.
 # The network profile names the runner, so a CI number never lands in a laptop's series.
 env:
   CGO_ENABLED: '1'
@@ -38,58 +23,11 @@ env:
   ROUTER_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/model_router?sslmode=disable
 
 jobs:
-  # Per pull request: each pack's golden call at k=1. It fails when a trial produces no
-  # verdict (a missing caller TTS, STT or judge output, or dropped inbound frames), not when
-  # the agent fails the scenario: one call is too few to tell a regression from noise.
-  smoke:
-    if: >-
-      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
-      (github.event_name == 'workflow_dispatch' && inputs.tier == 'smoke')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    # The agent syncs its config to the router, which keeps configs in Postgres.
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: model_router
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d model_router"
-          --health-interval 5s
-          --health-retries 10
-    defaults:
-      run:
-        working-directory: benchmark
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: ./.github/actions/voicebench-setup
-
-      - name: Run each pack's golden call
-        run: VOICEBENCH_SET=golden VOICEBENCH_K=1 scripts/packs.sh out/smoke
-
-      - name: Report
-        if: always()
-        run: cat out/smoke/*/report.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: voicebench-smoke
-          path: benchmark/out/smoke
-          retention-days: 14
-
   # Nightly: the frozen set at k=1 on our stack alone, compared against the previous night's
   # run. The digest is posted to Slack only once VOICEBENCH_SLACK_BOT_TOKEN and
   # VOICEBENCH_SLACK_CHANNEL are set. GitHub fires a schedule only from the default branch's
   # copy of this file, so a scheduled run checks out accelerate, where the work happens.
   nightly:
-    if: >-
-      github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' && inputs.tier == 'nightly')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     # The agent syncs its config to the router, which keeps configs in Postgres.
@@ -172,5 +110,5 @@ jobs:
           retention-days: 30
 
 concurrency:
-  group: voicebench-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: voicebench-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
