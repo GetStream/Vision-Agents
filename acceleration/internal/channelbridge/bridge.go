@@ -78,7 +78,7 @@ const maxAnswerBytes = 1 << 20
 var episodeSources = map[string]episodeSource{
 	"slack_bot": {source: store.EpisodeSlack, person: omnichannel.SlackUser},
 	"linq":      {source: store.EpisodeIMessage, person: byNumber},
-	"telnyx":    {source: store.EpisodeSMS, person: byNumber, optOuts: dlc.SMS},
+	"telnyx":    {source: store.EpisodeSMS, person: byNumber, optOuts: dlc.SMS, answered: telnyxAnswered},
 }
 
 // episodeSource is one connector's card source and the person its message's author is.
@@ -89,6 +89,9 @@ type episodeSource struct {
 	// answers before the agent and whose opted-out people it neither hands to the agent nor
 	// replies to (keywords.go). Empty for a connector whose messages carry no such keywords.
 	optOuts string
+	// answered is whether the provider answered a keyword itself, read from the raw event, so
+	// the bridge records it without answering it again (keywords.go). Nil is never.
+	answered func(raw []byte) bool
 }
 
 // byNumber is the person an author's E.164 number is to the contact map.
@@ -288,6 +291,14 @@ func (b *Bridge) reply(reply conversation.FinishedReply) error {
 			break
 		}
 		time.Sleep(b.retries[attempt])
+		// Nor after a STOP that came in during the wait.
+		checking, done := context.WithTimeout(context.Background(), sendTimeout)
+		optedOut, checked := b.optedOut(checking, thread)
+		done()
+		if checked != nil || optedOut {
+			err = checked
+			break
+		}
 	}
 	// Not sent, so not claimed: whoever hands it over next sends it.
 	releasing, done := context.WithTimeout(context.Background(), sendTimeout)

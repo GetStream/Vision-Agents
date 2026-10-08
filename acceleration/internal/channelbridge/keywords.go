@@ -2,6 +2,7 @@ package channelbridge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -12,8 +13,9 @@ import (
 )
 
 // The words a texting program obeys whatever the agent would have said (T53, AI-881; wave 3c
-// Q9: STOP, START and HELP are answered on the bridge, before the agent). A message is one of
-// them when it is nothing else, read without its case or punctuation (keywordOf).
+// Q9: STOP, START and HELP are handled on the bridge, before the agent; the bridge answers
+// only the ones the provider did not, episodeSource.answered). A message is one of them when
+// it is nothing else, read without its case or punctuation (keywordOf).
 //
 //   - stopWords: the CTIA Messaging Principles and Best Practices (May 2023), 5.1.3, «stop,
 //     end, unsubscribe, cancel, quit»; the FCC's per se revocation by reply text, «'stop,'
@@ -48,11 +50,13 @@ const optOutSource = "keyword"
 // keyword answers a carrier keyword before any agent sees the message, on a connector whose
 // episode source names an opt-out channel, and keeps the messages of a person who opted out
 // from the agent. handled is whether the message stops here. STOP and START are recorded in
-// the customer's opt-outs (store.OptOut), the record dlc.Gate and the opt-out API read. A store
-// that fails releases the message's claim, so the provider's next delivery of it is taken
-// again: an opt-out is never lost to a retry.
+// the customer's opt-outs (store.OptOut), the record dlc.Gate and the opt-out API read. A
+// keyword the provider answered itself is not answered again. A store that fails releases the
+// message's claim, so the provider's next delivery of it is taken again: an opt-out is never
+// lost to a retry.
 func (b *Bridge) keyword(ctx context.Context, thread store.ChannelThread, message core.InboundMessage) (bool, error) {
-	channel := episodeSources[message.ConnectorID].optOuts
+	source := episodeSources[message.ConnectorID]
+	channel := source.optOuts
 	if channel == "" {
 		return false, nil
 	}
@@ -84,6 +88,9 @@ func (b *Bridge) keyword(ctx context.Context, thread store.ChannelThread, messag
 	if err != nil {
 		return false, b.unclaim(ctx, thread, message, err)
 	}
+	if source.answered != nil && source.answered(message.Raw) {
+		return true, nil
+	}
 	b.working.Add(1)
 	go func() {
 		defer b.working.Done()
@@ -94,6 +101,26 @@ func (b *Bridge) keyword(ctx context.Context, thread store.ChannelThread, messag
 		}
 	}()
 	return true, nil
+}
+
+// telnyxAnswered is whether Telnyx answered a keyword itself: «When a user sends an opt-in,
+// opt-out, or help keyword, the inbound message webhook includes an autoresponse_type field»,
+// «STOP», «START» or «HELP» in the page's examples. Telnyx answers STOP, START and HELP
+// whatever the customer configures («the defaults always remain active») and refuses a send
+// to a number that texted STOP (40300, «Blocked due to STOP message»), so the bridge answers
+// only the words Telnyx does not, such as REVOKE and OPT OUT. Page:
+// https://developers.telnyx.com/docs/messaging/messages/advanced-opt-in-out (opened October 8,
+// 2026). # unverified: whether the field is absent or null on a message Telnyx did not
+// answer; either reads as not answered.
+func telnyxAnswered(raw []byte) bool {
+	var event struct {
+		Data struct {
+			Payload struct {
+				AutoresponseType string `json:"autoresponse_type"`
+			} `json:"payload"`
+		} `json:"data"`
+	}
+	return json.Unmarshal(raw, &event) == nil && event.Data.Payload.AutoresponseType != ""
 }
 
 // unclaim releases a message's inbound claim after err, so its next delivery is taken again.

@@ -238,6 +238,127 @@ func (s *TelnyxChannelSuite) TestAReplyFinishedAfterStopIsNotSent() {
 	s.Equal(telnyxStopped, s.telnyx.sent()[0].text)
 }
 
+// A reply whose first send Telnyx answered 429 is not sent again once the person texted STOP
+// during the wait before the retry (CTIA 5.1.3, as above).
+func (s *TelnyxChannelSuite) TestAReplyRetriedAfterStopIsNotSent() {
+	person := "+13125550001"
+	s.deliver(s.received(s.line, person, "Hi"), time.Now())
+	channel := s.threadChannel(person)
+	s.written(channel, 1)
+	// The first send of the agent's reply waits for the STOP below, then is answered 429.
+	inflight, release := make(chan struct{}), make(chan struct{})
+	var once, released sync.Once
+	free := func() { released.Do(func() { close(release) }) }
+	defer free()
+	original := s.telnyx.server.Config.Handler
+	s.telnyx.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body)
+		s.NoError(err)
+		var sent struct{ Text string }
+		s.NoError(json.Unmarshal(raw, &sent))
+		first := false
+		if sent.Text == "Noted." {
+			once.Do(func() { first = true })
+		}
+		if first {
+			close(inflight)
+			<-release
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		original.ServeHTTP(w, r)
+	})
+
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	select {
+	case <-inflight:
+	case <-time.After(settleFor):
+		s.FailNow("the agent's reply was not sent")
+	}
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, person, "REVOKE"), time.Now()))
+	s.took(1)
+	free()
+
+	s.Never(func() bool { return len(s.telnyx.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Equal(telnyxStopped, s.telnyx.sent()[0].text)
+}
+
+// Each opt-out word (stopWords: CTIA 5.1.3, FCC 24-24 and Telnyx's defaults) records an
+// opt-out, and each opt-in word (startWords, Telnyx's defaults) revokes it.
+func (s *TelnyxChannelSuite) TestEachStopWordRecordsAnOptOutAndEachStartWordRevokesIt() {
+	for i, word := range []string{"STOP", "STOPALL", "STOP ALL", "END", "UNSUBSCRIBE", "CANCEL", "QUIT", "REVOKE", "OPT OUT"} {
+		person := "+1312555" + strconv.Itoa(1000+i)
+		s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, person, word), time.Now()))
+		s.Equal(1, s.liveOptOuts(person), word)
+	}
+	for i, word := range []string{"START", "UNSTOP"} {
+		person := "+1312555" + strconv.Itoa(2000+i)
+		s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, person, "STOP"), time.Now()))
+		s.Require().Equal(1, s.liveOptOuts(person))
+		s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, person, word), time.Now()))
+		s.Zero(s.liveOptOuts(person), word)
+	}
+}
+
+// A message whose opt-out the store fails to read is answered 500, as any store failure of the
+// bridge is (connector_events.go, writeFailure), and reaches no agent: it is never let through
+// to someone who may have opted out. A view in place of opt_outs refuses this customer's rows,
+// as a store that fails would; the person has opted out, so a read let through would drop it.
+func (s *TelnyxChannelSuite) TestAMessageWhoseOptOutCannotBeReadIsAnswered500AndReachesNoAgent() {
+	person := "+13125550078"
+	ctx := context.Background()
+	s.Require().NoError(s.store.OptOut(ctx, &store.OptOut{CustomerID: s.customerID(), Recipient: person, Channel: "sms", Source: "keyword"}))
+	_, err := s.store.DB().ExecContext(ctx, `BEGIN;
+		CREATE FUNCTION telnyx_suite_refuse_read() RETURNS boolean AS $$
+			BEGIN RAISE EXCEPTION 'refused by the test'; END $$ LANGUAGE plpgsql;
+		ALTER TABLE opt_outs RENAME TO telnyx_suite_opt_outs;
+		CREATE VIEW opt_outs AS SELECT * FROM telnyx_suite_opt_outs
+			WHERE CASE WHEN customer_id = '`+s.customerID()+`' THEN telnyx_suite_refuse_read() ELSE true END;
+		COMMIT`)
+	s.Require().NoError(err)
+	defer func() {
+		_, err := s.store.DB().ExecContext(ctx, `BEGIN;
+			DROP VIEW opt_outs;
+			ALTER TABLE telnyx_suite_opt_outs RENAME TO opt_outs;
+			DROP FUNCTION telnyx_suite_refuse_read();
+			COMMIT`)
+		s.Require().NoError(err)
+	}()
+
+	s.Equal(http.StatusInternalServerError, s.deliver(s.received(s.line, person, "Hi"), time.Now()))
+
+	channel := s.threadChannel(person)
+	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.telnyx.sent()) > 0 }, dropped, 20*time.Millisecond)
+}
+
+// Telnyx answers STOP, START and HELP itself, and the event says so in
+// data.payload.autoresponse_type (advanced-opt-in-out, «Track opt-out behavior via webhooks»):
+// the bridge records the opt-out and its revocation, keeps the agent away, and sends nothing.
+func (s *TelnyxChannelSuite) TestKeywordsTelnyxAnsweredAreRecordedAndNotAnsweredAgain() {
+	person := "+13125550001"
+	s.Require().Equal(http.StatusOK, s.deliver(s.autoAnswered(s.line, person, "STOP", "STOP"), time.Now()))
+	s.Equal(1, s.liveOptOuts(person))
+	s.Require().Equal(http.StatusOK, s.deliver(s.autoAnswered(s.line, person, "HELP", "HELP"), time.Now()))
+	s.Require().Equal(http.StatusOK, s.deliver(s.autoAnswered(s.line, person, "Start", "START"), time.Now()))
+	s.Zero(s.liveOptOuts(person))
+
+	channel := s.threadChannel(person)
+	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.telnyx.sent()) > 0 }, dropped, 20*time.Millisecond)
+	s.Zero(s.episodes(), "a keyword opens no card")
+}
+
+// REVOKE is an opt-out word Telnyx does not answer (advanced-opt-in-out, «Operation types»),
+// so its event has no autoresponse_type and the bridge confirms it.
+func (s *TelnyxChannelSuite) TestARevokeTelnyxDidNotAnswerIsConfirmedByTheBridge() {
+	person := "+13125550001"
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, person, "Revoke"), time.Now()))
+
+	s.Equal(telnyxMessage{from: s.line, to: person, text: telnyxStopped}, s.took(1)[0].withoutAuthorization())
+	s.Equal(1, s.liveOptOuts(person))
+}
+
 // A person's opt-out is theirs: another person on the same number is answered.
 func (s *TelnyxChannelSuite) TestAnotherPersonIsAnsweredAfterSomeoneElseOptedOut() {
 	s.deliver(s.received(s.line, "+13125550001", "STOP"), time.Now())
@@ -295,6 +416,15 @@ func (s *TelnyxChannelSuite) received(line, person, text string) []byte {
 	})
 	s.Require().NoError(err)
 	return raw
+}
+
+// autoAnswered is a received message Telnyx answered itself: its payload carries
+// autoresponse_type (advanced-opt-in-out, «Track opt-out behavior via webhooks»).
+func (s *TelnyxChannelSuite) autoAnswered(line, person, text, autoresponse string) []byte {
+	body := s.received(line, person, text)
+	answered := bytes.Replace(body, []byte(`"payload":{`), []byte(`"payload":{"autoresponse_type":"`+autoresponse+`",`), 1)
+	s.Require().NotEqual(body, answered)
+	return answered
 }
 
 func (s *TelnyxChannelSuite) deliver(body []byte, at time.Time) int {

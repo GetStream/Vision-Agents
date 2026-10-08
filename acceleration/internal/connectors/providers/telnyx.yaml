@@ -3,7 +3,8 @@
 # events URL, POST /v1/connectors/events/telnyx/{provider app id}, which the customer chooses
 # and puts, with the account's public key, through PUT /v1/agents/connectors/telnyx/oauth-client;
 # the replies go from the same number with the account's API key. STOP, START and HELP are
-# answered by the bridge before the agent (channelbridge.keywords). internal/channels/telnyx.go
+# kept from the agent by the bridge (channelbridge.keywords), which answers only the ones
+# Telnyx did not answer itself (data.payload.autoresponse_type). internal/channels/telnyx.go
 # is where it started. Twilio is a later ticket (wave 3c Q8).
 # Telnyx's pages, opened October 8, 2026:
 #   [webhooks] https://developers.telnyx.com/docs/messaging/messages/receiving-webhooks
