@@ -717,7 +717,7 @@ components:
         route_id:
           type: string
         sip_uri:
-          description: Where the vendor sends calls, e.g. sip:trunk@sip.stream-io-api.com.
+          description: 'Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip.stream-io-api.com.'
           type: string
         trunk_id:
           type: string
