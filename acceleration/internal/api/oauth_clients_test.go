@@ -223,6 +223,60 @@ func (s *OAuthClientsSuite) TestASigningSecretForAConnectorThatReadsNoAppsEvents
 	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
 }
 
+// AI-863: the customer's Linq account is a provider app with no OAuth client. Its webhook
+// subscription's signing secret is put alone, and the events route opens it.
+func (s *OAuthClientsSuite) TestALinqAccountIsAProviderAppWithoutAClient() {
+	app, signing := "line-"+s.utils.uuid(), "whsec_"+s.utils.uuid()
+
+	var answered ConnectorOAuthClient
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPut, oauthClientPath("linq"),
+		ConnectorOAuthClientRequest{ProviderAppID: app, SigningSecret: signing}, &answered))
+
+	s.Empty(answered.ClientID)
+	s.Equal(app, answered.ProviderAppID)
+	record, secret, err := ProviderApp(context.Background(), s.store, s.sealer, "linq", app)
+	s.Require().NoError(err)
+	s.Equal(signing, secret)
+	s.Equal(s.customerID(), record.CustomerID)
+}
+
+// oauth2_code reads the client at every consent, so slack_bot's provider app is still a client.
+func (s *OAuthClientsSuite) TestAConnectorConsentedThroughOAuth2CodeNeedsAClientID() {
+	status, failure := s.serverClient.failure(http.MethodPut, oauthClientPath("slack_bot"),
+		ConnectorOAuthClientRequest{ProviderAppID: s.slackAppID(), SigningSecret: "signing"})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "client_id is required")
+	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "slack_bot")
+	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
+}
+
+// A record without a client is a provider app, which only its signing secret makes one.
+func (s *OAuthClientsSuite) TestAPutWithNeitherAClientIDNorASigningSecretIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPut, oauthClientPath("linq"),
+		ConnectorOAuthClientRequest{ProviderAppID: "line-" + s.utils.uuid()})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "client_id is required")
+	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "linq")
+	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
+}
+
+// A client secret or a method belongs to a client, so the provider app alone takes neither.
+func (s *OAuthClientsSuite) TestAProviderAppWithoutAClientTakesNoClientSecretOrMethod() {
+	for _, sent := range []ConnectorOAuthClientRequest{
+		{ProviderAppID: "line-" + s.utils.uuid(), SigningSecret: "signing", ClientSecret: "secret"},
+		{ProviderAppID: "line-" + s.utils.uuid(), SigningSecret: "signing", AuthMethod: ConnectorOAuthClientAuthMethod(core.AuthNone)},
+	} {
+		status, failure := s.serverClient.failure(http.MethodPut, oauthClientPath("linq"), sent)
+
+		s.Equal(http.StatusBadRequest, status)
+		s.Contains(failure, "client_id is required")
+	}
+	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "linq")
+	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
+}
+
 func (s *OAuthClientsSuite) TestAProviderAppThatIsADotSegmentIsRefused() {
 	for _, app := range []string{".", ".."} {
 		status, failure := s.serverClient.failure(http.MethodPut, oauthClientPath("slack_bot"), slackApp(app, "signing"))
@@ -663,4 +717,33 @@ func (s *OAuthClientsOffSuite) TestThePutAnswersAsBeforeAndStoresNothing() {
 	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
 	s.Equal(http.StatusNotFound, s.unauthenticatedClient.do(http.MethodPost, providerAppEventsPath+"slack_bot/"+app,
 		map[string]string{"type": "url_verification", "challenge": "c"}, nil))
+}
+
+// AI-863: a put without client_id answers as it did when the schema required it, whatever the
+// connector and whatever else the body carries.
+func (s *OAuthClientsOffSuite) TestAPutWithoutAClientIDIsRefusedAsBeforeProviderApps() {
+	for _, connector := range []string{"slack_bot", "linq", "nope"} {
+		status, body := s.serverClient.call(http.MethodPut, oauthClientPath(connector),
+			ConnectorOAuthClientRequest{ProviderAppID: "line-" + s.utils.uuid(), SigningSecret: "whsec_c2lnbmluZw=="})
+
+		s.Equal(http.StatusBadRequest, status, connector)
+		s.Contains(string(body), `"message":"validation failed: expected required property client_id to be present (body)"`, connector)
+		s.Contains(string(body), `"type":"invalid_request","code":"validation_failed"`, connector)
+	}
+}
+
+// AI-863: Linq's account put alone answers as any put does with connectors off, and its
+// events route takes nothing, as slack_bot's.
+func (s *OAuthClientsOffSuite) TestALinqAccountIsNotStoredAndItsEventsRouteTakesNothing() {
+	app := "line-" + s.utils.uuid()
+
+	status, body := s.serverClient.call(http.MethodPut, oauthClientPath("linq"),
+		ConnectorOAuthClientRequest{ClientID: "client", ProviderAppID: app, SigningSecret: "whsec_c2lnbmluZw=="})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(body), `"code":"not_configured"`)
+	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "linq")
+	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
+	s.Equal(http.StatusNotFound, s.unauthenticatedClient.do(http.MethodPost, providerAppEventsPath+"linq/"+app,
+		map[string]string{"event_type": "message.received"}, nil))
 }

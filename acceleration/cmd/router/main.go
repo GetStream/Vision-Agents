@@ -38,6 +38,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/slackapps"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/standardwebhooks"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	dlctelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/dlc/telnyx"
@@ -364,7 +365,7 @@ func newConnectorRegistry(settings config.Config, clients oauth2code.ClientLooku
 	}
 	// The verifiers a manifest's channel.verifier.kind may name; a new one is one more entry.
 	verifiers := map[string]core.Verifier{}
-	for _, verifier := range []core.Verifier{hmacheader.New()} {
+	for _, verifier := range []core.Verifier{hmacheader.New(), standardwebhooks.New()} {
 		verifiers[verifier.Name()] = verifier
 	}
 	// The tool sources a manifest's sources[].kind may name; a new one is one more entry.

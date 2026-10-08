@@ -1010,7 +1010,7 @@ export type paths = {
         readonly get?: never;
         /**
          * Set the app's own OAuth client for a connector
-         * @description Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned.
+         * @description Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -4809,6 +4809,7 @@ export type components = {
         /** @description The OAuth client the app registered with a connector's provider itself. The client secret and the signing secret are write-only: no response carries them. */
         readonly ConnectorOAuthClient: {
             readonly auth_method?: components["schemas"]["ConnectorOAuthClientAuthMethod"];
+            /** @description Empty for a provider app put without an OAuth client, such as a Linq account. */
             readonly client_id: string;
             readonly connector_id: string;
             /** Format: date-time */
@@ -4832,7 +4833,8 @@ export type components = {
         readonly ConnectorOAuthClientRequest: {
             /** @description Overrides the connector's own client.auth_method. Left out, the connector's applies, and failing that the consent picks: none without a secret, else client_secret_basic where the provider accepts it. */
             readonly auth_method?: components["schemas"]["ConnectorOAuthClientAuthMethod"];
-            readonly client_id: string;
+            /** @description Required, unless the record is only a provider app: provider_app_id and signing_secret without client_secret or auth_method, for a connector whose connections are not consented through oauth2_code, such as linq. */
+            readonly client_id?: string;
             /** @description Sealed at rest and never returned. Left out for a public client (auth_method none). */
             readonly client_secret?: string;
             /** @description The provider's id for the app the client belongs to, such as a Slack app id (A012ABCD0A0). The app's events then reach POST /v1/connectors/events/{id}/{provider_app_id}. An app serves one customer: another customer's record naming it is a 409. */

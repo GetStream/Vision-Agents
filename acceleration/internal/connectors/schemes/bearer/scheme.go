@@ -78,7 +78,9 @@ func (*Scheme) Begin(context.Context, core.BeginInput) (core.BeginOutput, error)
 }
 
 // Complete checks the supplied token and seals it. Its errors name what is wrong, never the
-// value.
+// value. A manifest with no capture rule has an identity made of inputs alone, such as the
+// Linq line a token sends from (AI-863), so its account id is the connection's inputs; one
+// with capture rules has an account only a consent learns, so it gets none here.
 func (*Scheme) Complete(_ context.Context, in core.CompleteInput) (core.StoredCredentials, core.AccountInfo, error) {
 	for name := range in.Supplied {
 		if name != SuppliedToken {
@@ -93,7 +95,16 @@ func (*Scheme) Complete(_ context.Context, in core.CompleteInput) (core.StoredCr
 	if err != nil {
 		return core.StoredCredentials{}, core.AccountInfo{}, err
 	}
-	return core.StoredCredentials{Scheme: Name, Version: payloadVersion, Payload: raw}, core.AccountInfo{}, nil
+	var account core.AccountInfo
+	if len(in.Manifest.Capture) == 0 {
+		// Apply reads nothing from a consent when there is no capture rule to read with.
+		applied, err := in.Manifest.Apply(nil, nil)
+		if err != nil {
+			return core.StoredCredentials{}, core.AccountInfo{}, err
+		}
+		account.AccountID = applied.AccountID
+	}
+	return core.StoredCredentials{Scheme: Name, Version: payloadVersion, Payload: raw}, account, nil
 }
 
 // Retrieve hands the token out with no expiry, and stored as it is, so the resolver has

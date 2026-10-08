@@ -13,11 +13,12 @@ import (
 )
 
 // What an episode came in on, the source field of its card (20261007042100_episodes.sql).
-// The table also takes sms, whatsapp and imessage, which T53, T51 and T36 name here when they
-// put those channels on the bridge.
+// The table also takes sms and whatsapp, which T53 and T51 name here when they put those
+// channels on the bridge.
 const (
-	EpisodeCall  = "call"
-	EpisodeSlack = "slack"
+	EpisodeCall     = "call"
+	EpisodeSlack    = "slack"
+	EpisodeIMessage = "imessage"
 )
 
 // episodeInProgress is an episode not closed yet, the status its card is written with.

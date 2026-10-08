@@ -64,7 +64,7 @@ conversation flush: final text stored (UpdateMessagePartial, no webhook)
 - **One agent per connection.** The agent that answers is the one agent config of the customer that binds the connection as `fixed`. None or two: the message is dropped and logged.
 - **Replies leave only through `core.Transports`**, so the credential, the scheme and the egress checks are the connector layer's. The bridge holds no token.
 - **One card for each thread, in its starter's omni-channel.** The first message of a thread opens its episode; the later ones, anybody's, find it open. Example: Alice starts a thread, Bob replies; the card is in Alice's omni-channel only. Slack has no phone number, so a Slack user's omni-channel is keyed by workspace and user until account linking joins it to a phone's.
-- **A connector gets cards once it has an episode source** (`episodeSources`): only `slack_bot` today. The manifest's `channel` block does not say what its authors are to the contact map; iMessage (T36), WhatsApp (T51) and SMS (T53) add theirs, keyed by the number.
+- **A connector gets cards once it has an episode source** (`episodeSources`): `slack_bot` (`slack`, keyed by workspace and user) and `linq` (`imessage`, keyed by the sender's E.164 number with `omnichannel.Phone`; an author it refuses, such as an email handle, gets no card). The manifest's `channel` block does not say what its authors are to the contact map; WhatsApp (T51) and SMS (T53) add theirs, keyed by the number. Check: `go test -tags integration -run TestLinqChannelSuite/TestAChatIsOneThreadChannelAndOneIMessageCard ./internal/api`.
 - **No text and no author in logs.** They are a person's.
 
 ## Open
