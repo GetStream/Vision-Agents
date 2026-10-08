@@ -31,6 +31,7 @@ type AppsSuite struct {
 	own        *chattest.Server
 	apps       *testApps
 	service    *Service
+	vendor     *stub
 	customer   string
 	e164       string
 }
@@ -57,6 +58,7 @@ func (s *AppsSuite) SetupTest() {
 	s.e164 = "+1512" + uuid.NewString()[:7]
 
 	vendor := &stub{vendor: "twilio"}
+	s.vendor = vendor
 	registry := NewRegistry(s.config())
 	registry.Register(vendor.vendor, func() (Provider, error) { return vendor, nil })
 	for _, name := range s.credentials(vendor.vendor) {
@@ -275,4 +277,15 @@ func (a *testApps) ForAppRemoving(_ context.Context, customer string, app int64)
 		return NewStreamFromClient(server.Client), nil
 	}
 	return NewStreamFromClient(a.deployment.Client), nil
+}
+
+func (s *AppsSuite) TestTheVendorIsGivenATrunkAddressStreamCanFindByTheCallingNumber() {
+	_, err := s.service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550001111",
+	})
+	s.Require().NoError(err)
+
+	trunks := s.deployment.Trunks()
+	s.Require().Len(trunks, 1)
+	s.Equal("sip:"+s.e164+"@sip.example.test", s.vendor.dialed.Bridge.URI)
 }

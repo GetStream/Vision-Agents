@@ -624,7 +624,10 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		return Placed{}, stack.Wrap(err)
 	}
 
-	outbound.Bridge = bridge
+	outbound.Bridge, err = bridge.WithNumber(request.From)
+	if err != nil {
+		return Placed{}, stack.Wrap(err)
+	}
 	if err := outbound.Validate(); err != nil {
 		return Placed{}, stack.Wrap(err)
 	}
