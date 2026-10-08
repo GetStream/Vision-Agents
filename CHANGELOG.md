@@ -1777,7 +1777,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
   inbound call. The router now puts the number in that address, and the `sip_uri` in the
   attach answer shows it. The call a number's callers join by default is now `phone-` and the
   number without the `+`, for example `phone-15125551234`, because Stream does not accept a
-  `+` in a call id. Attach each number again to fix one that you attached before.
+  `+` in a call id.
 - A voice agent with tools says what it is about to do before it does it, and the caller hears a
   hold phrase as the wait begins. The instruction that has the reply model call a tool as soon as
   it has what the tool requires also made it skip the read-back an operator's own instructions
