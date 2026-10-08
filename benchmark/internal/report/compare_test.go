@@ -74,9 +74,11 @@ func TestCompareBaselineFlagsMDE(t *testing.T) {
 			{Label: "new", Summary: newer},
 		},
 		Baseline: 0,
-		MDEV2VMS: 50,
+		MDE: &NoiseFloor{MethodologyVersion: MethodologyVersion, Runs: []string{"a", "b", "c"}, Packs: []string{"restaurant"}, Metrics: []MetricSpread{
+			{Name: "v2v_p50_ms", Unit: "ms", MDE: 50},
+		}},
 	})
-	if !strings.Contains(md, "regression") {
+	if !strings.Contains(md, "v2v_p50_ms regression (+120 ms, MDE 50)") {
 		t.Fatalf("expected regression flag:\n%s", md)
 	}
 }

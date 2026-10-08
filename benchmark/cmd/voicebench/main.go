@@ -35,7 +35,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: voicebench <synth|run|report|calibrate|compare|digest|stt|tts> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: voicebench <synth|run|report|calibrate|compare|noise|digest|stt|tts> [flags]")
 }
 
 func dispatch(cmd string, args []string) error {
@@ -54,6 +54,8 @@ func dispatch(cmd string, args []string) error {
 		return cmdCalibrate(root, args)
 	case "compare":
 		return cmdCompare(root, args)
+	case "noise":
+		return cmdNoise(root, args)
 	case "digest":
 		return cmdDigest(ctx, args)
 	case "stt":
@@ -243,7 +245,7 @@ func cmdReport(root string, args []string) error {
 func cmdCompare(root string, args []string) error {
 	fs := flag.NewFlagSet("compare", flag.ExitOnError)
 	baseline := fs.String("baseline", "", "run directory or stored target name (baselines/<target>/<commit>)")
-	mde := fs.Int("mde-v2v-ms", 0, "flag V2V P50 changes at least this many milliseconds")
+	mde := fs.String("mde", "", "noise floor from voicebench noise; flags changes bigger than it")
 	out := fs.String("out", "", "write the comparison markdown here")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -259,7 +261,14 @@ func cmdCompare(root string, args []string) error {
 	if len(dirs) < 2 {
 		return fmt.Errorf("compare: need at least two run directories")
 	}
-	cfg := report.CompareConfig{Baseline: -1, MDEV2VMS: *mde}
+	cfg := report.CompareConfig{Baseline: -1}
+	if *mde != "" {
+		noise, err := report.LoadNoiseFloor(*mde)
+		if err != nil {
+			return fmt.Errorf("compare: %w", err)
+		}
+		cfg.MDE = &noise
+	}
 	if *baseline != "" {
 		cfg.Baseline = 0
 	}
@@ -283,6 +292,40 @@ func cmdCompare(root string, args []string) error {
 		return os.WriteFile(*out, []byte(md), 0o644)
 	}
 	return nil
+}
+
+func cmdNoise(root string, args []string) error {
+	fs := flag.NewFlagSet("noise", flag.ExitOnError)
+	out := fs.String("out", "", "write the noise floor here (default baselines/<target>/noise-<packs>.json)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	var runs []report.LabeledRun
+	for _, dir := range fs.Args() {
+		sum, err := report.LoadSummary(dir)
+		if err != nil {
+			return fmt.Errorf("noise: %s: %w", dir, err)
+		}
+		runs = append(runs, report.LabeledRun{Label: dir, Summary: sum})
+	}
+	noise, err := report.MeasureNoise(runs)
+	if err != nil {
+		return err
+	}
+	fmt.Print(report.NoiseMarkdown(noise))
+	path := *out
+	if path == "" {
+		path = filepath.Join(root, "baselines", noise.Target, "noise-"+strings.Join(noise.Packs, "+")+".json")
+	}
+	raw, err := json.MarshalIndent(noise, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	fmt.Printf("\nwrote %s\n", path)
+	return os.WriteFile(path, append(raw, '\n'), 0o644)
 }
 
 func cmdDigest(ctx context.Context, args []string) error {
