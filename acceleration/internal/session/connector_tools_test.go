@@ -317,6 +317,33 @@ func (s *AttachConnectorsSuite) TestAFixedBindingNeverPinsAToolGrantedByName() {
 	s.Zero(pins)
 }
 
+// TestAGrantWithADigestOpensAsBeforeAndPinsNothing is the control: every expected value is
+// what the same calls gave on accelerate before tools could be granted by name (89966e26):
+// whoami offered, nothing unavailable, server/discover, tools/list and tools/call sent, and a
+// config with no bindings opening no dispatcher.
+func (s *AttachConnectorsSuite) TestAGrantWithADigestOpensAsBeforeAndPinsNothing() {
+	alice := s.connection("alice", "primary")
+
+	d, tools, unavailable, err := s.attach(s.spec(s.config(s.chosen("crm", "whoami")), "alice", map[string]string{"crm": alice}))
+	s.Require().NoError(err)
+	said, err := s.call(d, "crm__whoami", "{}")
+	s.Require().NoError(err)
+	none, noTools, noneUnavailable, err := s.attach(s.spec(s.config(), "alice", nil))
+	s.Require().NoError(err)
+
+	s.Equal([]string{"crm__whoami"}, names(tools))
+	s.Empty(unavailable)
+	s.Equal("primary", said)
+	s.Equal([]string{"server/discover", "tools/list", "tools/call"}, s.provider.sent("primary"))
+	s.Nil(none)
+	s.Empty(noTools)
+	s.Empty(noneUnavailable)
+	var pins int
+	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+		"SELECT count(*) FROM connector_tool_pins WHERE connection_id = ?", alice).Scan(&pins))
+	s.Zero(pins)
+}
+
 // pinOf is connection's pin of tool, as stored.
 func (s *AttachConnectorsSuite) pinOf(connection, tool string) store.ConnectorToolPin {
 	var pin store.ConnectorToolPin
