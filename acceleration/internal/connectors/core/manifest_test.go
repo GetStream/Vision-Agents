@@ -108,6 +108,13 @@ func (s *ManifestSuite) TestABrokenRevisionNeedsAReason() {
 	s.ErrorContains(err, "broken_revisions[0].reason: is required")
 }
 
+func (s *ManifestSuite) TestABrokenRevisionEntryNeedsRevisions() {
+	_, err := ParseManifest([]byte("id: example\nrevision: 2\nname: Example\nschemes: [oauth2_code]\n" +
+		"broken_revisions:\n  - revisions: []\n    reason: wrong\n"))
+
+	s.ErrorContains(err, "broken_revisions[0].revisions: is empty")
+}
+
 func (s *ManifestSuite) TestABrokenRevisionIsListedOnce() {
 	_, err := ParseManifest([]byte("id: example\nrevision: 3\nname: Example\nschemes: [oauth2_code]\n" +
 		"broken_revisions:\n  - revisions: [1]\n    reason: one\n  - revisions: [1, 2]\n    reason: two\n"))

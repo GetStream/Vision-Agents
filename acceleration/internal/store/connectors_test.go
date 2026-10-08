@@ -176,6 +176,51 @@ func (s *StoreSuite) TestAMarkStaysWhenALaterRevisionDropsItOrGivesAnotherReason
 	s.True(broken)
 }
 
+// TestARestartRestoresAMarkThatWasMissingFromAnAlreadyStoredRevision: the revision is stored
+// already, as when an earlier build stored it, so the seeder finds it unchanged and still
+// records the marks it names.
+func (s *StoreSuite) TestARestartRestoresAMarkThatWasMissingFromAnAlreadyStoredRevision() {
+	s.seed(acmeManifest)
+	s.seed(acmeMarking)
+	_, err := s.store.DB().NewDelete().Model((*ConnectorBrokenRevision)(nil)).Where("connector_id = ?", "acme").Exec(s.ctx)
+	s.Require().NoError(err)
+	_, broken, err := s.store.BrokenConnectorRevision(s.ctx, "acme", 1)
+	s.Require().NoError(err)
+	s.Require().False(broken)
+
+	s.seed(acmeMarking)
+
+	for _, revision := range []int{1, 2} {
+		reason, broken, err := s.store.BrokenConnectorRevision(s.ctx, "acme", revision)
+		s.Require().NoError(err)
+		s.True(broken, "revision %d", revision)
+		s.Equal("the first reason", reason)
+	}
+}
+
+// TestAnotherConnectorsMarkDoesNotBreakAConnectionOnTheSameRevisionNumber: marks are per
+// connector, so acme marking its revision 1 broken leaves a connection on another connector's
+// revision 1 current, in the same listing as acme's own broken one.
+func (s *StoreSuite) TestAnotherConnectorsMarkDoesNotBreakAConnectionOnTheSameRevisionNumber() {
+	s.seed(acmeManifest)
+	s.seed(acmeMarking)
+	other := strings.Replace(acmeManifest, "id: acme", "id: other", 1)
+	s.Require().Contains(other, "id: other")
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, fstest.MapFS{"other.yaml": {Data: []byte(other)}}))
+	mine, theirs := appConnection(), appConnection()
+	theirs.ConnectorID = "other"
+	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, testSchemes, mine))
+	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, testSchemes, theirs))
+
+	statuses, err := s.store.ConnectorDefinitionStatuses(s.ctx, "acme-app", []ConnectorConnection{*mine, *theirs})
+	s.Require().NoError(err)
+
+	s.Equal(map[string]DefinitionStatus{
+		mine.ID:   {Status: DefinitionBroken, Reason: "the first reason"},
+		theirs.ID: {Status: DefinitionCurrent},
+	}, statuses)
+}
+
 func (s *StoreSuite) TestAConnectionsDefinitionIsCurrentOutdatedOrBroken() {
 	s.seed(acmeManifest)
 	s.seed(acmeChanged)

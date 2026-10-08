@@ -314,6 +314,21 @@ func (s *ConnectorLoginSuite) TestAConnectionOnARevisionMarkedBrokenWaitsForALog
 	s.Equal("primary", said, "the login's consent moved it to the latest revision")
 }
 
+// TestAConnectionOnAnOutdatedRevisionStillOpens: a later revision that marks nothing broken
+// leaves the connection's binding open.
+func (s *ConnectorLoginSuite) TestAConnectionOnAnOutdatedRevisionStillOpens() {
+	s.connectorID, s.revision = "crm"+strings.ReplaceAll(uuid.NewString(), "-", ""), 1
+	s.seedCRM(1, "")
+	mine := s.connection("alice", "primary")
+	s.seedCRM(2, "")
+
+	_, tools, unavailable, err := s.attachWithConsents(s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", map[string]string{"crm": mine})))
+
+	s.Require().NoError(err)
+	s.Equal([]string{"crm__whoami"}, names(tools))
+	s.Empty(unavailable)
+}
+
 // seedCRM seeds the test's connector as a built-in at revision, with more manifest YAML in
 // extra, as a router start with that file does.
 func (s *ConnectorLoginSuite) seedCRM(revision int, extra string) {

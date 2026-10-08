@@ -213,6 +213,19 @@ func (s *ResolverSuite) TestAConnectionOnABrokenRevisionGetsNoCredentialAndKeeps
 	s.True(s.f.works(credential))
 }
 
+// TestAConnectionOnAnOutdatedRevisionKeepsWorking: a later revision that marks nothing broken
+// leaves the connection on the revision it was made from resolving.
+func (s *ResolverSuite) TestAConnectionOnAnOutdatedRevisionKeepsWorking() {
+	s.f.builtin(1, "")
+	ref := s.f.connected()
+	s.f.builtin(2, "")
+
+	credential, err := s.f.router(s.f.srv.Client()).Resolve(s.f.ctx, ref, core.CredentialRequest{})
+
+	s.Require().NoError(err)
+	s.True(s.f.works(credential))
+}
+
 func (s *ResolverSuite) TestAReconnectIsHandedOutInsideTheCacheWindow() {
 	ref := s.f.connected()
 	r := s.f.router(s.f.srv.Client())
