@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
+	"slices"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -52,6 +54,10 @@ type SessionOptions struct {
 	// UserID is who the conversation belongs to, for a backend opening one on somebody's
 	// behalf. A client acting for a user leaves it empty: the token already says who.
 	UserID string
+	// ConnectorBindings are the connections to use for the agent's connector bindings chosen
+	// per session, by alias. Each must be the caller's own; a binding with the agent's fixed
+	// connection cannot be given one.
+	ConnectorBindings map[string]string
 
 	// Tools are the caller's own, for this conversation only. Nil uses the agent's, which is
 	// the usual arrangement.
@@ -275,6 +281,13 @@ func (s *Sessions) requestOf(options SessionOptions) acceleration.CreateSessionR
 	if len(options.History) > 0 {
 		history := options.History
 		request.History = &history
+	}
+	if len(options.ConnectorBindings) > 0 {
+		chosen := make([]acceleration.SessionConnectorBinding, 0, len(options.ConnectorBindings))
+		for _, name := range slices.Sorted(maps.Keys(options.ConnectorBindings)) {
+			chosen = append(chosen, acceleration.SessionConnectorBinding{Name: name, ConnectionId: options.ConnectorBindings[name]})
+		}
+		request.ConnectorBindings = &chosen
 	}
 	// Held in writing unless a call was named, which is what the resource surface is mostly
 	// for: a conversation somebody comes back to.

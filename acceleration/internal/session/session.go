@@ -76,6 +76,16 @@ const (
 // types declared in this package are the session's own.
 type Event any
 
+// ConnectorUnavailable is an optional connector binding the session opened without, and why:
+// a stable code, never a credential or another person's connection id. A watcher is sent
+// every one when it attaches, since they say what the session can do for as long as it runs.
+type ConnectorUnavailable struct {
+	// Name is the binding's alias.
+	Name        string
+	ConnectorID string
+	Reason      string
+}
+
 // CommandStopped is how one named command ended after somebody asked for it to stop. It
 // is separate from the receipt a submission returns, because a watcher has to tell a
 // command it asked to stop from a command that was just accepted.
@@ -117,6 +127,14 @@ type Session struct {
 	// created. Kept so the call's row can say what was on offer: the spec carries names
 	// or nothing at all, and nothing at all means the built-in set.
 	skills harness.Skills
+	// carded is whether the session started with the person's episode cards
+	// (callCards.read). Set once, before the session can be reached.
+	carded bool
+	// transcribedInto is the channel a call's transcript is written into: the conversation's,
+	// else the agent id's. Empty when it is written nowhere the call may write, a device's
+	// call under a thread channel's agent id (persistent.Barred). Set once, before the
+	// session can be reached.
+	transcribedInto string
 
 	// Serializes persistent command acceptance/start with command-targeted interruption.
 	commandMu sync.Mutex
@@ -134,6 +152,12 @@ type Session struct {
 	unwatched     *time.Timer
 	state         State
 	modality      string
+	// connectorsUnavailable are the optional connector bindings the session opened without,
+	// fixed when it was created.
+	connectorsUnavailable []ConnectorUnavailable
+	// connectors is the session's connector dispatcher, nil when its config binds none. A
+	// consent finished for one of its logins is handed back to it (ConnectorConsentFinished).
+	connectors *dispatcher
 
 	// said is the conversation as it happens, kept so a finished call can be reviewed
 	// without reading back what was written to chat. It has a lock of its own so
@@ -356,6 +380,9 @@ func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
 		s.unwatched.Stop()
 		s.unwatched = nil
 	}
+	for _, unavailable := range s.connectorsUnavailable {
+		attached.send(unavailable)
+	}
 	if replayVoiceTools && !s.spec.Text && s.persisted == nil && s.tools != nil {
 		for _, pending := range s.tools.Pending() {
 			attached.send(pending)
@@ -481,6 +508,25 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string)
 		return receipt, "", nil
 	}
 	return receipt, s.openTurn(turnID, text), nil
+}
+
+// chose keeps connectionID as the session's selection for the connector binding called name,
+// once a login in its conversation opened it: in the spec, so a fork of the live session
+// (Spec) chooses it again, and on the row, so a fork of an ended one or a reopened chat does.
+// An incognito session has no recorder, so nothing is written.
+func (s *Session) chose(name, connectionID string) {
+	s.labelMu.Lock()
+	kept := make([]ConnectorSelection, 0, len(s.spec.ConnectorSelections)+1)
+	for _, selection := range s.spec.ConnectorSelections {
+		if selection.Name != name {
+			kept = append(kept, selection)
+		}
+	}
+	s.spec.ConnectorSelections = append(kept, ConnectorSelection{Name: name, ConnectionID: connectionID})
+	s.labelMu.Unlock()
+	if s.records != nil {
+		s.records.Chose(s.spec.CustomerID, s.id, name, connectionID)
+	}
 }
 
 // FollowUp answers text the way RespondCommand does with no message of the end user's
@@ -711,6 +757,11 @@ type Settings struct {
 	Verbosity       *string
 }
 
+// ErrCardedToNative refuses moving a session that started with the person's episode cards
+// onto a speech-to-speech model, which is handed the history as a transcript in its
+// instructions with no system message, so the cards would reach it without their note.
+var ErrCardedToNative = errors.New("session: a session that started with episode cards cannot move onto a speech-to-speech model")
+
 // SetSettings moves this session onto other models or another voice, and between the
 // cascade and a speech-to-speech model. The agent config it started from is untouched,
 // and nothing changes when it fails.
@@ -743,6 +794,13 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 	if next.Native() && strings.TrimSpace(next.Guardrail) != "" {
 		return stack.Wrap(errors.New(
 			"session: a speech-to-speech agent answers the caller directly, so a guardrail cannot screen its turns"))
+	}
+	// A speech-to-speech model is handed the history as a transcript in its instructions,
+	// which keeps no system message (agent.openSpeech), so the cards would reach it without
+	// the note that they are context, not authority. A session that read none moves as
+	// before.
+	if next.Native() && s.carded {
+		return stack.Wrap(ErrCardedToNative)
 	}
 	if next.ControllerTarget == "" && !next.Native() {
 		next.ControllerTarget = defaultControllerTarget

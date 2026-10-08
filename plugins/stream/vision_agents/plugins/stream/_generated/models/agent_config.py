@@ -48,6 +48,8 @@ class AgentConfig:
             are none.
         dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
             /v1/dispatch. Omitted settings are disabled.
+        episode_cards (bool | Unset): Whether each phone call under this agent writes an episode card into the caller's
+            omni-channel.
         greeting (str | Unset):
         guardrail (str | Unset):
         harness (Harness | Unset): Which harness the agent's sessions run: what hands work to the subagent, loads
@@ -59,6 +61,8 @@ class AgentConfig:
         llm (str | Unset):
         mcp_servers (list[McpServer] | Unset):
         plugin_events (list[PluginEvent] | Unset):
+        progressive_tools (bool | Unset): Whether tools from plugins, MCP servers and connectors are offered by a
+            summary, the first call to each returning its full description instead of running it.
         sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
             code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
             everything out in its head.
@@ -90,6 +94,7 @@ class AgentConfig:
     channels: AgentChannels | Unset = UNSET
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
+    episode_cards: bool | Unset = UNSET
     greeting: str | Unset = UNSET
     guardrail: str | Unset = UNSET
     harness: Harness | Unset = UNSET
@@ -99,6 +104,7 @@ class AgentConfig:
     llm: str | Unset = UNSET
     mcp_servers: list[McpServer] | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
+    progressive_tools: bool | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     sandbox_options: SandboxOptions | Unset = UNSET
     search: str | Unset = UNSET
@@ -155,6 +161,8 @@ class AgentConfig:
         if not isinstance(self.dispatch, Unset):
             dispatch = self.dispatch.to_dict()
 
+        episode_cards = self.episode_cards
+
         greeting = self.greeting
 
         guardrail = self.guardrail
@@ -186,6 +194,8 @@ class AgentConfig:
             for plugin_events_item_data in self.plugin_events:
                 plugin_events_item = plugin_events_item_data.to_dict()
                 plugin_events.append(plugin_events_item)
+
+        progressive_tools = self.progressive_tools
 
         sandbox: str | Unset = UNSET
         if not isinstance(self.sandbox, Unset):
@@ -257,6 +267,8 @@ class AgentConfig:
             field_dict["connectors"] = connectors
         if dispatch is not UNSET:
             field_dict["dispatch"] = dispatch
+        if episode_cards is not UNSET:
+            field_dict["episode_cards"] = episode_cards
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
         if guardrail is not UNSET:
@@ -275,6 +287,8 @@ class AgentConfig:
             field_dict["mcp_servers"] = mcp_servers
         if plugin_events is not UNSET:
             field_dict["plugin_events"] = plugin_events
+        if progressive_tools is not UNSET:
+            field_dict["progressive_tools"] = progressive_tools
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
         if sandbox_options is not UNSET:
@@ -379,6 +393,8 @@ class AgentConfig:
         else:
             dispatch = AgentDispatch.from_dict(_dispatch)
 
+        episode_cards = d.pop("episode_cards", UNSET)
+
         greeting = d.pop("greeting", UNSET)
 
         guardrail = d.pop("guardrail", UNSET)
@@ -415,6 +431,8 @@ class AgentConfig:
                 plugin_events_item = PluginEvent.from_dict(plugin_events_item_data)
 
                 plugin_events.append(plugin_events_item)
+
+        progressive_tools = d.pop("progressive_tools", UNSET)
 
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
@@ -497,6 +515,7 @@ class AgentConfig:
             channels=channels,
             connectors=connectors,
             dispatch=dispatch,
+            episode_cards=episode_cards,
             greeting=greeting,
             guardrail=guardrail,
             harness=harness,
@@ -506,6 +525,7 @@ class AgentConfig:
             llm=llm,
             mcp_servers=mcp_servers,
             plugin_events=plugin_events,
+            progressive_tools=progressive_tools,
             sandbox=sandbox,
             sandbox_options=sandbox_options,
             search=search,

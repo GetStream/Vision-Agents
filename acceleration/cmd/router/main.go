@@ -38,7 +38,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/slackapps"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/ed25519header"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/standardwebhooks"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	dlctelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/dlc/telnyx"
@@ -52,9 +54,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
@@ -121,6 +125,7 @@ const usage = `usage: router [--config path] [command]
   keys create           mint a credential for an app, printing the secret once
   replicate             copy another deployment's data here and follow its changes
   stream-apps           look after the Stream apps customers registered in app mode
+  plugins migrate       move the plugin rows onto connectors, by hand; --apply writes
 `
 
 func main() {
@@ -202,6 +207,8 @@ func dispatchCommand(command string, args []string, settings config.Config, logg
 		return runReplicate(args, settings, logger)
 	case "stream-apps":
 		return runStreamApps(args, settings, logger)
+	case "plugins":
+		return runPlugins(args, settings, logger)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
@@ -361,7 +368,7 @@ func newConnectorRegistry(settings config.Config, clients oauth2code.ClientLooku
 	}
 	// The verifiers a manifest's channel.verifier.kind may name; a new one is one more entry.
 	verifiers := map[string]core.Verifier{}
-	for _, verifier := range []core.Verifier{hmacheader.New()} {
+	for _, verifier := range []core.Verifier{hmacheader.New(), standardwebhooks.New(), ed25519header.New()} {
 		verifiers[verifier.Name()] = verifier
 	}
 	// The tool sources a manifest's sources[].kind may name; a new one is one more entry.
@@ -475,8 +482,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	// The validate endpoint asks it for a credential, and the session's dispatcher will (T21,
-	// AI-851). The events endpoint revokes through it.
+	// The validate endpoint and the session's dispatcher ask it for a credential. The events
+	// endpoint revokes through it.
 	connectorResolver, err := newConnectorResolver(connectors, pgStore, connectorSecrets)
 	if err != nil {
 		return err
@@ -500,6 +507,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	} else {
 		logger.Warn("no redis configured, routing will not use live health", "setting", "redis.addr")
 	}
+	connectorLimiter := newConnectorLimiter(connectorTransports, liveClient, logger)
 
 	// A daily limit is counted in Redis, so a deployment without one caps nothing. That is
 	// the right way round: the limit protects against a customer's end users spending more
@@ -837,7 +845,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
-	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, streamClients, pluginAuth, logger)
+	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, directory, telephony, base, finding, judging, streamClients, pluginAuth,
+		session.Connectors{Registry: connectors, Transports: connectorTransports,
+			// Nil with connectors off: no secrets to seal an attempt with.
+			Consents: api.ConnectorConsents(pgStore, connectors, connectorSecrets, settings.PublicURL),
+			Limiter:  connectorLimiter}, logger)
 	if err != nil {
 		return err
 	}
@@ -1058,6 +1070,40 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer forwarder.Close()
 		options.EventForwarder = forwarder
 	}
+	// A connection's MCP events are subscribed to on its server, signed with secrets sealed
+	// under the connector keyring, and each opens a conversation, so they need connectors on,
+	// a database, sessions and an https public URL for the callback: the draft refuses any
+	// other («Servers MUST reject events/subscribe with a non-https delivery.url»). Every router
+	// runs the worker that refreshes them; a subscription is taken by one router at a time.
+	if connectorResolver != nil && connectorSecrets != nil && pgStore != nil && sessions != nil &&
+		strings.HasPrefix(settings.PublicURL, "https://") {
+		events, err := mcpevents.New(mcpevents.Options{
+			Store: pgStore, Sessions: sessions, Registry: connectors, Transports: connectorTransports,
+			Secrets: connectorSecrets, PublicURL: settings.PublicURL, Logger: logger,
+		})
+		if err != nil {
+			return err
+		}
+		events.Start()
+		defer events.Close()
+		options.MCPEvents = events
+	}
+	// A person's episodes close and are summarized (T55): a call's when the call hook says it
+	// ended, a thread's by the idle sweeper, which starts only where an episode can be
+	// (startEpisodeSweeper). A summary is an LLM response, so this needs the LLM router too.
+	if pgStore != nil && streams.LLM != nil {
+		closer, err := omnichannel.NewCloser(omnichannel.CloserOptions{
+			Store: pgStore, Stream: streamClients, LLM: streams.LLM, IdleAfter: settings.Episodes.IdleAfter, Logger: logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer closer.Close()
+		options.Episodes = closer
+		if _, err := startEpisodeSweeper(ctx, settings, pgStore, closer); err != nil {
+			logger.Error("could not tell whether any episode can be idle, so none is swept", "error", err)
+		}
+	}
 	if streamClients.PerApp() {
 		// Each registered app signs its own hooks and mints its own tokens, so only work in
 		// the deployment's own app goes without.
@@ -1254,6 +1300,7 @@ func buildSessions(
 	judging *lcmrouter.Router,
 	stream *streamapp.Clients,
 	pluginAuth *plugins.Auth,
+	connectors session.Connectors,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.LLM == nil {
@@ -1316,6 +1363,9 @@ func buildSessions(
 		Configs:            configs,
 		Directory:          directory,
 		PluginAuth:         pluginAuth,
+		// The session's dispatcher shares the validate endpoint's transports, so each
+		// connection has one outbound client in the router.
+		Connectors: connectors,
 
 		ReplySilenceConfident: &settings.Agent.ReplySilenceConfident,
 		ReplyConfidentScore:   &settings.Agent.ReplyConfidentScore,

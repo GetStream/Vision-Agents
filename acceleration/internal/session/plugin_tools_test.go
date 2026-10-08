@@ -33,6 +33,8 @@ type UserPluginsSuite struct {
 	provider *httptest.Server
 	// accepted is the one token the provider's MCP server takes.
 	accepted atomic.Value
+	// refusing makes the provider's token endpoint refuse every refresh.
+	refusing atomic.Bool
 	runner   *userPluginRunner
 	calendar plugins.Plugin
 }
@@ -63,6 +65,14 @@ func (s *UserPluginsSuite) SetupSuite() {
 	mux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"client_id": "registered"})
 	})
+	mux.HandleFunc("/token", func(w http.ResponseWriter, _ *http.Request) {
+		if s.refusing.Load() {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "good-token"})
+	})
 	mux.HandleFunc("/mcp", s.serveMCP)
 	mux.HandleFunc("/open", s.serveMCP)
 	s.provider = httptest.NewServer(mux)
@@ -71,6 +81,7 @@ func (s *UserPluginsSuite) SetupSuite() {
 
 func (s *UserPluginsSuite) SetupTest() {
 	s.accepted.Store("good-token")
+	s.refusing.Store(false)
 	s.calendar = plugins.Plugin{ID: "google_calendar", Name: "Google Calendar", URL: s.provider.URL + "/mcp"}
 	s.runner = &userPluginRunner{
 		customerID: "customer-" + uuid.NewString(),
@@ -149,6 +160,43 @@ func (s *UserPluginsSuite) TestTheAppsLoginToAPluginEachUserConnectsIsNotHandedT
 	s.Nil(runtime)
 	s.Empty(tools)
 	s.Empty(unconnected)
+}
+
+// TestTheAppsLoginToAnAgentPluginIsOpenedUnlessABindingNamesItsProvider: without a connector
+// binding, an app's login to a plugin the config names is opened as before. A binding to the
+// same provider (its connector_id is the plugin's id) wins, and the login is left alone.
+// Shopify is the catalog plugin whose host is the login's own, so the test's server can be it.
+func (s *UserPluginsSuite) TestTheAppsLoginToAnAgentPluginIsOpenedUnlessABindingNamesItsProvider() {
+	shop := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.URL.Path = "/mcp"
+		s.serveMCP(w, r)
+	}))
+	defer shop.Close()
+	shopify, found := plugins.Lookup("shopify")
+	s.Require().True(found)
+	s.login("", shopify, strings.TrimPrefix(shop.URL, "https://"), "good-token")
+	spec := Spec{
+		CustomerID:   s.runner.customerID,
+		ConfigID:     s.runner.configID,
+		AgentPlugins: []store.PluginEntry{{Name: "shopify"}},
+	}
+	open := func(spec Spec) (*plugins.Runtime, []harness.Tool) {
+		runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: shop.Client()}, slog.New(slog.DiscardHandler))
+		if runtime != nil {
+			s.T().Cleanup(runtime.Close)
+		}
+		return runtime, tools
+	}
+
+	runtime, tools := open(spec)
+	spec.ConnectorBindings = []store.ConnectorBinding{{Name: "shop", ConnectorID: "shopify",
+		Connection: store.ConnectionBinding{Type: selectionFixed, ConnectionID: "c1"}}}
+	bound, boundTools := open(spec)
+
+	s.NotNil(runtime)
+	s.Equal([]string{"shopify__list_events"}, toolNames(tools))
+	s.Nil(bound)
+	s.Empty(boundTools)
 }
 
 func (s *UserPluginsSuite) TestAConnectedUserReachesTheirAccount() {
@@ -249,6 +297,33 @@ func (s *UserPluginsSuite) TestAServerThatNeedsALoginIsOpenedWithTheAppsTokenWit
 	s.Equal("standup at 10", answered)
 }
 
+// A token that dies before its known expiry, or that has none, as Salesforce's do, is
+// renewed when the server refuses it, rather than leaving the session without the server.
+func (s *UserPluginsSuite) TestAnAppLoginTheServerRefusesIsRenewedAndOpened() {
+	notes := s.server(store.MCPServer{})
+	s.refreshableLogin(notes, "expired-token")
+
+	runtime, tools, _ := s.attach(store.MCPServer{Name: notes.ID, URL: notes.URL, NeedsLogin: &needsLogin})
+	s.Require().NotNil(runtime, "the renewed token opened the server")
+	defer runtime.Close()
+
+	s.Equal([]string{"notes__list_events"}, toolNames(tools))
+	stored := s.appLogin(notes.ID)
+	s.Equal("good-token", stored.AccessToken, "the renewed token is kept for the next session")
+	s.Equal(store.PluginConnected, stored.Status)
+}
+
+func (s *UserPluginsSuite) TestAnAppLoginTheProviderWillNotRenewIsMarkedFailed() {
+	s.refusing.Store(true)
+	notes := s.server(store.MCPServer{})
+	s.refreshableLogin(notes, "expired-token")
+
+	runtime, _, _ := s.attach(store.MCPServer{Name: notes.ID, URL: notes.URL, NeedsLogin: &needsLogin})
+
+	s.Nil(runtime)
+	s.Equal(store.PluginFailed, s.appLogin(notes.ID).Status, "no longer offered as connected")
+}
+
 func (s *UserPluginsSuite) TestAServerTheAppLoggedIntoOffersOnlyTheToolsTheAgentAllows() {
 	notes := s.server(store.MCPServer{})
 	s.login("", notes, notes.URL, "good-token")
@@ -332,6 +407,29 @@ func (s *UserPluginsSuite) login(userID string, plugin plugins.Plugin, endpoint,
 		CustomerID: s.runner.customerID, ConfigID: s.runner.configID, PluginID: plugin.ID,
 		UserID: userID, InstanceURL: endpoint, Status: store.PluginConnected, AccessToken: token,
 	}))
+}
+
+// refreshableLogin stores the app's login to plugin holding token, with a refresh token the
+// provider's token endpoint renews.
+func (s *UserPluginsSuite) refreshableLogin(plugin plugins.Plugin, token string) {
+	s.Require().NoError(s.store.UpsertPluginConnection(context.Background(), &store.PluginConnection{
+		CustomerID: s.runner.customerID, ConfigID: s.runner.configID, PluginID: plugin.ID,
+		InstanceURL: plugin.URL, Status: store.PluginConnected, AccessToken: token,
+		RefreshToken: "refresh-token", ClientID: "registered", TokenEndpoint: s.provider.URL + "/token",
+	}))
+}
+
+// appLogin is the app's stored login to pluginID.
+func (s *UserPluginsSuite) appLogin(pluginID string) store.PluginConnection {
+	conns, err := s.store.PluginConnections(context.Background(), s.runner.customerID, s.runner.configID)
+	s.Require().NoError(err)
+	for _, conn := range conns {
+		if conn.PluginID == pluginID {
+			return conn
+		}
+	}
+	s.FailNow("the app has no login to " + pluginID)
+	return store.PluginConnection{}
 }
 
 func toolNames(tools []harness.Tool) []string {

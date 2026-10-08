@@ -2,8 +2,10 @@ package core
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
@@ -18,6 +20,41 @@ type ToolSource interface {
 	// matches.
 	Open(ctx context.Context, b ResolvedBinding, grants []ToolGrant) (Toolset, error)
 }
+
+// EventSource is a ToolSource whose server can also deliver events to a webhook the router
+// serves: MCP Events (experimental-ext-triggers-events «Webhook-Based Delivery», at 6682596d).
+// It reaches the server through ResolvedBinding.HTTP, as Discover and Open do.
+type EventSource interface {
+	// Subscribe creates or refreshes the subscription: the server keys it on the
+	// connection's principal, the URL, the event and its arguments, so asking again with
+	// the same four refreshes it. ErrNoEvents is a server that offers no events.
+	Subscribe(ctx context.Context, b ResolvedBinding, sub EventSubscription) (EventGrant, error)
+	// Unsubscribe stops it, named as it was made; Secret is not sent.
+	Unsubscribe(ctx context.Context, b ResolvedBinding, sub EventSubscription) error
+}
+
+// EventSubscription is one event, with its filters, delivered to one URL signed with one
+// secret.
+type EventSubscription struct {
+	Name      string
+	Arguments map[string]any
+	URL       string
+	// Secret is the subscription's own Standard Webhooks secret, whsec_ and base64, which the
+	// client supplies and the server signs every delivery with.
+	Secret string
+}
+
+// EventGrant is what the server granted.
+type EventGrant struct {
+	// ID is the server's id for the subscription, for routing only.
+	ID string
+	// RefreshBefore is when the server stops delivering unless subscribed to again. Nil is a
+	// grant that does not expire.
+	RefreshBefore *time.Time
+}
+
+// ErrNoEvents is a connection's server that offers no events.
+var ErrNoEvents = errors.New("core: the server offers no events")
 
 // Toolset is the tools of one opened ToolSource, for one session.
 type Toolset interface {
@@ -44,6 +81,21 @@ const MaxResultBytes = 32 << 10
 // TruncatedMarker ends a result that was cut at MaxResultBytes, so the model knows it read
 // part of it. The prototype's truncatedToolResultNotice (internal/mcp/mcp.go:27 at cf62af0d).
 const TruncatedMarker = "\n[connector result truncated]"
+
+// CutResult is text when it fits MaxResultBytes, and otherwise as much of it as fits with
+// TruncatedMarker after it, never splitting a UTF-8 sequence. A Toolset cuts its results with
+// it, and the session's dispatcher cuts again whatever a Toolset hands back, so the cap holds
+// for every source.
+func CutResult(text string) string {
+	if len(text) <= MaxResultBytes {
+		return text
+	}
+	kept := text[:MaxResultBytes-len(TruncatedMarker)]
+	for !utf8.ValidString(kept) {
+		kept = kept[:len(kept)-1]
+	}
+	return kept + TruncatedMarker
+}
 
 // ToolError is a tool that ran and reported its own failure, such as an MCP result with
 // isError. Its Message is the tool's, for the model to read and act on; any other error from

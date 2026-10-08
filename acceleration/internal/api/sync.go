@@ -20,6 +20,8 @@ import (
 type SyncAgentRequest struct {
 	Name          string                     `json:"name" doc:"What the config is called, which is also the directory's name."`
 	Hash          string                     `json:"hash" doc:"A fingerprint of the directory. A second sync with the same hash does nothing."`
+	CheckChanges  *bool                      `json:"check_changes,omitempty" doc:"Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants."`
+	BaseChange    *string                    `json:"base_change,omitempty" doc:"The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again."`
 	Instructions  *string                    `json:"instructions,omitempty"`
 	Guardrail     *string                    `json:"guardrail,omitempty" doc:"The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered."`
 	Skills        *[]SkillRequest            `json:"skills,omitempty"`
@@ -48,8 +50,9 @@ type SyncAgentRequest struct {
 	Harness       *Harness                   `json:"harness,omitempty"`
 	Dispatch      *AgentDispatch             `json:"dispatch,omitempty"`
 	// SandboxOptions is how the sandbox is built. Left out keeps what is stored.
-	SandboxOptions *SandboxOptions    `json:"sandbox_options,omitempty"`
-	Tags           *map[string]string `json:"tags,omitempty"`
+	SandboxOptions   *SandboxOptions    `json:"sandbox_options,omitempty"`
+	Tags             *map[string]string `json:"tags,omitempty"`
+	ProgressiveTools *bool              `json:"progressive_tools,omitempty" doc:"Whether plugin, MCP server and connector tools are offered by a summary, the first call to each returning its full description and input schema instead of running it."`
 }
 
 func (*SyncAgentRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -127,12 +130,20 @@ func (s *Server) registerSync(api huma.API) {
 			"knowledge/ is the whole of the knowledge base named after the agent, and simulations/ " +
 			"the whole of its simulations: a file taken out of the directory is taken out of the " +
 			"backend on the next sync.\n\n" +
+			"A directory is not the only thing that writes an agent: somebody may have changed " +
+			"one of the same settings in the dashboard since the last sync. Send " +
+			"`check_changes` and such a sync is refused with `unsynced_changes` instead of " +
+			"writing over them -- only when it really would write over them, so a directory " +
+			"that already holds what the dashboard says syncs without complaint. Read the " +
+			"changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and " +
+			"sync again with `base_change` to go ahead.\n\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
 			"user's device.",
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The config as stored, or as it already was"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
+			http.StatusConflict},
 	}, s.syncAgent)
 }
 
@@ -212,6 +223,30 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		return nil, invalidRequest(message)
 	}
 
+	skills := skillsOf(body.Skills)
+	named := make([]string, 0, len(skills))
+	for _, skill := range skills {
+		named = append(named, strings.TrimSpace(skill.Name))
+	}
+
+	// Before anything is written, and before the knowledge is filled: a caller that asked
+	// to be told is told instead of having its answer half applied. What the sync would
+	// store is worked out first, because the question is what it would write over rather
+	// than whether anything was edited.
+	if found && value(body.CheckChanges) {
+		prospective := config
+		prospective.Instructions = value(body.Instructions)
+		prospective.Guardrail = value(body.Guardrail)
+		prospective.Skills = named
+		refusal, conflicting, err := s.syncConflict(ctx, customerID, existing, prospective, body)
+		if err != nil {
+			return nil, err
+		}
+		if conflicting {
+			return nil, refusal
+		}
+	}
+
 	documents := documentsOf(body.Knowledge)
 	namespace := ""
 	if len(documents) > 0 {
@@ -246,12 +281,6 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		}
 	}
 
-	skills := skillsOf(body.Skills)
-	named := make([]string, 0, len(skills))
-	for _, skill := range skills {
-		named = append(named, strings.TrimSpace(skill.Name))
-	}
-
 	config.Instructions = value(body.Instructions)
 	config.Guardrail = value(body.Guardrail)
 	config.Skills = named
@@ -267,6 +296,11 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 			return nil, invalidRequest(err.Error())
 		}
 	}
+	var was any
+	if found {
+		was = agentConfigOf(existing)
+	}
+	synced := auditDiff(was, agentConfigOf(config))
 
 	// The skills and simulations belong to the config, so they are written after it: a new
 	// agent has no id to hang them off until it has been stored.
@@ -280,6 +314,15 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 			return nil, err
 		}
 	}
+	// Recorded last, after the skills the directory brought with it, because what it marks
+	// is the moment the whole directory and the whole stored agent agreed. An entry written
+	// before the skills would leave each of them looking like an edit made since the sync,
+	// and the next sync would refuse itself over its own writes. It is recorded whether or
+	// not anything moved: the point is the moment, not the diff.
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditAgentConfig, ResourceID: config.ID, ResourceName: config.Name,
+		Action: store.AuditSynced, Changes: synced,
+	})
 	s.pluginEvents.Changed(customerID, config.ID)
 	return &syncAgentResponse{Body: SyncAgentResult{Unchanged: false, Config: agentConfigOf(config), Warnings: warnings}}, nil
 }
@@ -443,6 +486,7 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	if body.McpServers != nil {
 		config.MCPServers = mcpServersOf(body.McpServers)
 	}
+	config.ProgressiveTools = override(config.ProgressiveTools, body.ProgressiveTools)
 	if body.Channels != nil {
 		config.Channels = channelsOf(body.Channels)
 	}
@@ -509,11 +553,20 @@ func (s *Server) upsertSkills(ctx context.Context, customerID, configID string, 
 			if err := s.configs.UpdateSkill(ctx, &row); err != nil {
 				return err
 			}
+			s.audit(ctx, auditRecord{
+				ResourceType: store.AuditSkill, ResourceID: row.ID, ResourceName: row.Name,
+				AgentID: configID, Action: store.AuditUpdated,
+				Changes: auditDiff(skillOf(existing), skillOf(row)),
+			})
 			continue
 		}
 		if err := s.configs.CreateSkill(ctx, &row); err != nil {
 			return err
 		}
+		s.audit(ctx, auditRecord{
+			ResourceType: store.AuditSkill, ResourceID: row.ID, ResourceName: row.Name,
+			AgentID: configID, Action: store.AuditCreated, Changes: auditDiff(nil, skillOf(row)),
+		})
 	}
 	return nil
 }

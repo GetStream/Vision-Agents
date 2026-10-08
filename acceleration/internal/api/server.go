@@ -44,7 +44,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -252,6 +254,14 @@ type Options struct {
 	// destinations, and serves the endpoints that manage them (internal/eventforward). Absent,
 	// nothing is forwarded and the destination endpoints say forwarding is not enabled.
 	EventForwarder *eventforward.Forwarder
+	// MCPEvents subscribes connector bindings to their connection's MCP events and answers
+	// the deliveries (internal/mcpevents). Absent, which it is with connectors off, a validate
+	// subscribes to nothing and the deliveries route answers 410.
+	MCPEvents *mcpevents.Service
+	// Episodes closes the episodes of a call when the call.session_ended hook says it ended,
+	// and summarizes them (internal/omnichannel, T55). Absent, a call's episodes stay in
+	// progress, as before T55.
+	Episodes *omnichannel.Closer
 	// SlackApps creates, updates and deletes the Slack app the router keeps for a customer
 	// (managed, T54). Absent, the provider app paths say connectors are not enabled.
 	SlackApps *slackapps.Client
@@ -321,6 +331,9 @@ type Server struct {
 	eventSecrets      EventSecretLookup
 	channelBridge     ChannelBridge
 	eventForwarder    *eventforward.Forwarder
+	mcpEvents         *mcpevents.Service
+	// episodes ends a call's episodes on call.session_ended.
+	episodes *omnichannel.Closer
 	// slackApps and operatorApps serve the provider app paths.
 	slackApps    *slackapps.Client
 	operatorApps OperatorAppLookup
@@ -442,6 +455,8 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		eventSecrets:      options.ConnectorEventSecrets,
 		channelBridge:     options.ChannelBridge,
 		eventForwarder:    options.EventForwarder,
+		mcpEvents:         options.MCPEvents,
+		episodes:          options.Episodes,
 		slackApps:         options.SlackApps,
 		operatorApps:      options.OperatorProviderApps,
 		trusted:           options.TrustedProxies,
@@ -532,6 +547,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+providerAppEventsPath+"{connector_id}/{provider_app_id}", s.receiveProviderAppEvent)
 	mux.HandleFunc("GET /v1/agents/plugins/{plugin_id}/logo", s.servePluginLogo)
 	mux.HandleFunc("POST "+plugins.EventsPath+"{token}", s.receivePluginEvent)
+	mux.HandleFunc("POST "+mcpevents.Path+"{token}", s.receiveConnectionEvent)
 	mux.HandleFunc("GET "+channels.HookPath+"{token}", s.receiveChannelMessage)
 	mux.HandleFunc("POST "+channels.HookPath+"{token}", s.receiveChannelMessage)
 	mux.HandleFunc("POST "+dlc.HookPath, s.receiveDLCReport)
@@ -855,7 +871,7 @@ func serverSideRoutes(document *huma.OpenAPI) (*http.ServeMux, error) {
 // withServerSide refuses the generated operations only a backend may reach.
 //
 // It sits after withCustomer, because refusing a caller for what it is means having worked
-// out what it is first. The three sockets are left out of the embedded spec by being left
+// out what it is first. The four sockets are left out of the embedded spec by being left
 // out of generation, so socketRoutes puts them back rather than leaving them to be open by
 // omission.
 //
@@ -944,6 +960,7 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 				UserID: principal.UserID,
 				IP:     clientIP(r, s.trusted),
 			})
+			ctx = context.WithValue(ctx, actorContextKey{}, actorOf(r, principal.ServerSide))
 			r = r.WithContext(ctx)
 			s.policies.Join(principal.AppID, principal.OrganizationID)
 			s.recordUser(ctx, principal)
@@ -991,8 +1008,13 @@ func (s *Server) recordUser(ctx context.Context, principal auth.Principal) {
 // A preflight refuses any header it was not asked about, and the browser reports that as a
 // blocked request naming only the header, so a list covering one mode alone fails in a way
 // that looks like the origin was never allowed.
+//
+// The two actor headers are here because the dashboard is a browser app: it is the client
+// that knows which person clicked save, and the audit is only worth reading if that name
+// reaches the router.
 const corsRequestHeaders = "Authorization, " + auth.AuthTypeHeader + ", " + auth.APIKeyHeader +
-	", X-Stream-Client, " + auth.UserHeader + ", " + CustomerHeader + ", Content-Type"
+	", " + clientHeader + ", " + actorIDHeader + ", " + actorNameHeader +
+	", " + auth.UserHeader + ", " + CustomerHeader + ", Content-Type"
 
 // corsMethods are the methods this API serves. PUT belongs here because a live session's
 // instructions are replaced with one; PATCH does not, because the spec serves none.

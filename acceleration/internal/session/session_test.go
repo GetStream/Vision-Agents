@@ -3,11 +3,14 @@ package session
 import (
 	"context"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -19,6 +22,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
@@ -321,6 +325,9 @@ type SessionSuite struct {
 	// identity each edge was built with.
 	apps     *streamapp.Clients
 	edgeApps []streamapp.Identity
+	// plugins is what the manager reaches plugins and MCP servers with, for a test whose
+	// server listens on loopback. Nil is the manager's default, as before.
+	plugins *plugins.Auth
 }
 
 func TestSessionSuite(t *testing.T) {
@@ -337,6 +344,7 @@ func (s *SessionSuite) SetupTest() {
 	s.conversations = nil
 	s.apps = nil
 	s.edgeApps = nil
+	s.plugins = nil
 }
 
 // thinking is what the LLM router routes. A deployment that routes no high-quality model
@@ -417,6 +425,7 @@ func (s *SessionSuite) manages() {
 		Conversations: s.conversations,
 		Stream:        s.apps,
 		DetachedGrace: s.grace,
+		PluginAuth:    s.plugins,
 		Logger:        logger,
 		Edge: func(_ context.Context, _ Spec, stream streamapp.Bound, _ *slog.Logger) (agent.Edge, error) {
 			s.edgeApps = append(s.edgeApps, stream.Identity)
@@ -736,6 +745,35 @@ func (s *SessionSuite) TestAWrittenAnswerIsStoredInTheConversation() {
 	s.records = &stubTranscript{}
 	s.manages()
 	created := s.joins(Spec{CallID: "call-1"})
+
+	_, err := created.Ask(s.ctx, "is my invoice reissuable?")
+
+	s.Require().NoError(err)
+	s.Equal([]string{"Hello."}, s.records.replies())
+}
+
+// TestACallBarredFromAThreadChannelWritesNoTranscriptThere: a device that named a thread
+// channel's agent id (persistent.BarThread) keeps no transcript in that channel.
+func (s *SessionSuite) TestACallBarredFromAThreadChannelWritesNoTranscriptThere() {
+	s.records = &stubTranscript{}
+	s.manages()
+	channel := persistent.ThreadChannelPrefix + "0b6a2f3e-7d4c-4e1a-9f58-2c3d4e5f6a7b"
+	s.ctx = persistent.BarThread(s.ctx, "agent:"+channel)
+	created := s.joins(Spec{CallID: "call-1", AgentID: channel})
+
+	_, err := created.Ask(s.ctx, "is my invoice reissuable?")
+
+	s.Require().NoError(err)
+	s.Empty(s.records.replies())
+}
+
+// TestACallBarredFromAnotherChannelWritesItsTranscript: the bar is for the one channel it
+// names.
+func (s *SessionSuite) TestACallBarredFromAnotherChannelWritesItsTranscript() {
+	s.records = &stubTranscript{}
+	s.manages()
+	s.ctx = persistent.BarThread(s.ctx, "agent:"+persistent.ThreadChannelPrefix+"0b6a2f3e-7d4c-4e1a-9f58-2c3d4e5f6a7b")
+	created := s.joins(Spec{CallID: "call-1", AgentID: persistent.ThreadChannelPrefix + "5e8d1c2b-3a4f-4b6c-8d7e-9f0a1b2c3d4e"})
 
 	_, err := created.Ask(s.ctx, "is my invoice reissuable?")
 
@@ -1638,6 +1676,51 @@ func awaitReply(events <-chan Event) string {
 			return ""
 		}
 	}
+}
+
+// TestAnMCPServersToolRunsAsBeforeWhenTheConfigBindsNoConnector: a session with a plugin and
+// no connector binding. Its tools are the plugin's, its call goes through the plugin's
+// runner and its answer reaches the model, and nothing connector-shaped is said on its
+// events. Every connector hook is a no-op without a binding (AI-851).
+func (s *SessionSuite) TestAnMCPServersToolRunsAsBeforeWhenTheConfigBindsNoConnector() {
+	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "notes", Version: "1"}, nil)
+	server.AddTool(&mcpsdk.Tool{Name: "search", Description: "Finds a note.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}}},
+		func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the note"}}}, nil
+		})
+	provider := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return server },
+		&mcpsdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true}))
+	defer provider.Close()
+	s.plugins = &plugins.Auth{HTTP: provider.Client()}
+	s.manages()
+	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "notes__search", Arguments: "{}"}}
+	needsLogin := false
+	created := s.joins(Spec{MCPServers: []store.MCPServer{{Name: "notes", URL: provider.URL, NeedsLogin: &needsLogin}}})
+
+	events, detach := created.Watch()
+	defer detach()
+	s.says(created, "find my note")
+
+	var ran *agent.ToolRan
+	deadline := time.After(settleFor)
+	for ran == nil {
+		select {
+		case event := <-events:
+			if _, connector := event.(ConnectorUnavailable); connector {
+				s.Fail("a session with no binding says nothing about connectors")
+			}
+			if finished, ok := event.(agent.ToolRan); ok {
+				ran = &finished
+			}
+		case <-deadline:
+			s.Require().FailNow("the plugin's tool never ran")
+		}
+	}
+	s.Equal("notes__search", ran.Tool)
+	s.Equal("the note", ran.Result)
+	s.NoError(ran.Err)
+	s.Contains(created.voiceAgent.Tools(), "notes__search")
 }
 
 func awaitToolCall(events <-chan Event) *ToolCall {

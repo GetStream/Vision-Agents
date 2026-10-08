@@ -80,6 +80,11 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	if request.Body != nil {
 		body = *request.Body
 	}
+	// A fork opens a session as createSession does, so a device is refused there what it is
+	// refused here.
+	if body.Instructions != nil && !ServerSideFrom(ctx) {
+		return nil, errDeviceInstructions
+	}
 
 	// A named agent on the fork replaces the parent's config wholesale, which is the point:
 	// asking the same question of a different agent is the reason to fork.
@@ -91,6 +96,23 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	spec, err := forkSpec(parent, body, config)
 	if err != nil {
 		return nil, invalidRequest(err.Error())
+	}
+	// The connector bindings are the config's as it is now, not as the parent was opened
+	// with. The session re-resolves the parent's selections against them and against the
+	// caller asking for the fork, and drops the ones the config no longer declares. A config
+	// deleted since binds nothing, and its fork goes ahead as a fork did before bindings
+	// existed; a config that cannot be read fails the fork rather than dropping its bindings.
+	if config == nil {
+		spec.ConnectorBindings = nil
+		if s.store != nil && spec.ConfigID != "" {
+			current, err := s.store.AgentConfig(ctx, customerID, spec.ConfigID)
+			switch {
+			case err == nil:
+				spec.ConnectorBindings = current.Connectors
+			case !errors.Is(err, store.ErrNoAgentConfig):
+				return nil, err
+			}
+		}
 	}
 	recalled, err := s.recordedHistory(ctx, parent, body, spec.Recall)
 	switch {
@@ -105,6 +127,8 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 		spec.Recall = &session.Recall{Messages: recalled}
 	}
 	spec.CustomerID = customerID
+	// A voice fork is keyed under the call it joins, which the request names.
+	ctx = s.threadConversation(ctx, customerID, &spec)
 	spec.Caller = CallerFrom(ctx)
 	spec.CallerKind = KindFrom(ctx)
 
@@ -299,10 +323,19 @@ func (s *Server) setSessionSettings(ctx context.Context, request *setSessionSett
 		settings.Verbosity = &verbosity
 	}
 	if err := found.SetSettings(ctx, settings); err != nil {
+		if errors.Is(err, session.ErrCardedToNative) {
+			return nil, errCardedSessionToNative
+		}
 		return nil, invalidRequest(err.Error())
 	}
 	return &setSessionSettingsResponse{Body: sessionOf(found)}, nil
 }
+
+// errCardedSessionToNative is what setSessionSettings and updateSession answer a move onto a
+// speech-to-speech model of a session that started with the person's episode cards
+// (session.ErrCardedToNative).
+var errCardedSessionToNative = APIError{Type: ErrorTypeInvalidRequest, Code: codeCardedSessionToNative,
+	Message: "a session that started with the person's episode cards cannot move onto a speech-to-speech model; start a new session to use one"}
 
 // errUnknownSession is what a caller is told about a session that is not theirs, which is the
 // same thing they are told about one that never existed.
@@ -447,7 +480,19 @@ func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, 
 	spec.Custom = row.Custom
 	spec.ModelOverwrites = row.ModelOverwrites
 	spec.ForkedFrom = row.ForkedFrom
+	// The caller's connections go on with the chat; the session checks each against the
+	// config as it is now and the caller asking, as it did when the chat opened.
+	spec.ConnectorSelections = selectionsOf(*row)
 	return spec, nil
+}
+
+// selectionsOf are the connections a stored session's caller chose for its session bindings.
+func selectionsOf(row store.AgentSession) []session.ConnectorSelection {
+	var chosen []session.ConnectorSelection
+	for _, selection := range row.ConnectorSelections {
+		chosen = append(chosen, session.ConnectorSelection{Name: selection.Name, ConnectionID: selection.ConnectionID})
+	}
+	return chosen
 }
 
 // holdUntilAnswered keeps a watcher on a reopened conversation until its agent settles.
@@ -560,6 +605,10 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	}
 	if request.Keyterms != nil {
 		spec.Keyterms = *request.Keyterms
+	}
+	for _, chosen := range value(request.ConnectorBindings) {
+		spec.ConnectorSelections = append(spec.ConnectorSelections,
+			session.ConnectorSelection{Name: chosen.Name, ConnectionID: chosen.ConnectionId})
 	}
 	// Cost labels are merged rather than replaced: a config labels which agent the spend
 	// belongs to and a call labels which conversation, and both are worth billing on.
@@ -838,6 +887,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 			Custom: row.Custom, ModelOverwrites: row.ModelOverwrites,
 			CallType: row.CallType,
 		}
+		spec.ConnectorSelections = selectionsOf(*row)
 		parentID = row.ID
 		wasText = row.CallID == ""
 		spec.Text = wasText
@@ -846,6 +896,13 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 		}
 	default:
 		return session.Spec{}, stack.Wrap(errors.New("there is nothing to fork"))
+	}
+	// A thread channel's conversation is everyone's in the external thread (Spec.Shared). A
+	// fork would carry their words into a conversation one caller owns, outside the thread
+	// and the shared session's connector rule, so none is made, whoever asks: the backend
+	// carries on in the thread by opening it again by its agent id (threadConversation).
+	if recall != nil && (session.Spec{ConversationID: recall.ConversationID}).Shared() {
+		return session.Spec{}, stack.Wrap(errors.New("a thread channel's conversation is not forked"))
 	}
 
 	// A config named on the fork replaces the parent's models wholesale rather than merging
@@ -857,6 +914,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 		fresh.Title, fresh.Description = spec.Title, spec.Description
 		fresh.Project, fresh.Custom = spec.Project, spec.Custom
 		fresh.CallType = spec.CallType
+		fresh.ConnectorSelections = spec.ConnectorSelections
 		spec = fresh
 	}
 
@@ -1119,7 +1177,9 @@ func (s *Server) registerSessions(api huma.API) {
 			"Naming sts makes the session native, and an empty sts makes it a cascade again, on " +
 			"whatever llm, stt and tts it names or had before. The conversation carries across: a " +
 			"conversation model is handed the history on every turn, and a speech-to-speech model is " +
-			"opened with the recent transcript in its instructions.",
+			"opened with the recent transcript in its instructions. A session that started with the " +
+			"person's episode cards cannot be moved onto a speech-to-speech model: 400, " +
+			"carded_session_to_native.",
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The session, on its new models"},
 		},
@@ -1203,7 +1263,7 @@ type ForkSessionRequest struct {
 	Custom          *map[string]interface{} `json:"custom,omitempty"`
 	Description     *string                 `json:"description,omitempty"`
 	Incognito       *bool                   `json:"incognito,omitempty" doc:"Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept."`
-	Instructions    *string                 `json:"instructions,omitempty"`
+	Instructions    *string                 `json:"instructions,omitempty" doc:"Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession."`
 	Messages        *bool                   `json:"messages,omitempty" doc:"Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants." default:"true"`
 	ModelOverwrites *ModelOverwrites        `json:"model_overwrites,omitempty"`
 	ProjectId       *string                 `json:"project_id,omitempty"`

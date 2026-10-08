@@ -76,6 +76,7 @@ type Config struct {
 	EOT             EOT        `koanf:"eot"`
 	Agent           Agent      `koanf:"agent"`
 	Connectors      Connectors `koanf:"connectors"`
+	Episodes        Episodes   `koanf:"episodes"`
 	Sandbox         Sandbox    `koanf:"sandbox"`
 }
 
@@ -251,6 +252,18 @@ type Connectors struct {
 	Enabled bool `koanf:"enabled"`
 }
 
+// Episodes is how a person's episodes close (T55, AI-884; omnichannel.Closer).
+type Episodes struct {
+	// IdleAfter is how long a text episode goes without a message before it closes and is
+	// summarized. One setting for the whole router.
+	IdleAfter time.Duration `koanf:"idle_after"`
+}
+
+// maxEpisodeIdle bounds IdleAfter from above. It is the only external bound: WhatsApp's
+// customer service window, 24 hours from the person's last message, which AI-884 names as
+// the one a text episode must close inside.
+const maxEpisodeIdle = 24 * time.Hour
+
 // Sandbox holds an app with no approved 10DLC use case to a few numbers and a little
 // traffic. It is for the hosted router: a self-hosted one registers, or not, on its own
 // account, and only opt-outs are enforced there.
@@ -322,6 +335,7 @@ var variables = map[string]string{
 	"agent.chat_timings":            "ROUTER_CHAT_TIMINGS",
 	"auth.proxy_declares_kind":      "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":            "ROUTER_CONNECTORS_ENABLED",
+	"episodes.idle_after":           "ROUTER_EPISODES_IDLE_AFTER",
 
 	"sandbox.enabled":               "ROUTER_SANDBOX_ENABLED",
 	"sandbox.recipients":            "ROUTER_SANDBOX_RECIPIENTS",
@@ -354,8 +368,11 @@ func Defaults() Config {
 			PreviewQuiet:          120 * time.Millisecond,
 			ReplyHedge:            1200 * time.Millisecond,
 		},
-		EOT:     EOT{Endpoint: eotdefaults.HostedDemoEndpoint, Mode: "primary", Threshold: 0.5},
-		Sandbox: Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
+		EOT: EOT{Endpoint: eotdefaults.HostedDemoEndpoint, Mode: "primary", Threshold: 0.5},
+		// One hour is Kanat's decision of 2026-10-07 (D4, wave 3b), not a measurement:
+		// unverified against any traffic. The only external bound is maxEpisodeIdle.
+		Episodes: Episodes{IdleAfter: time.Hour},
+		Sandbox:  Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
 	}
 }
 
@@ -527,6 +544,13 @@ func (c Config) validate() error {
 		c.EOT.Threshold < 0 || c.EOT.Threshold > 1 {
 		return fmt.Errorf("config: eot.threshold must be between 0 and 1, got %v", c.EOT.Threshold)
 	}
+	if c.Episodes.IdleAfter <= 0 || c.Episodes.IdleAfter >= maxEpisodeIdle {
+		return fmt.Errorf("config: episodes.idle_after is more than zero and less than %s, got %s",
+			maxEpisodeIdle, c.Episodes.IdleAfter)
+	}
+	if c.Agent.ReplyHedge < 0 {
+		return fmt.Errorf("config: agent.reply_hedge cannot be negative, got %s", c.Agent.ReplyHedge)
+	}
 	return nil
 }
 
@@ -612,6 +636,7 @@ func (c Config) export() error {
 		"agent.reply_hedge":             c.Agent.ReplyHedge.String(),
 		"agent.chat_timings":            fmt.Sprint(c.Agent.ChatTimings),
 		"connectors.enabled":            fmt.Sprint(c.Connectors.Enabled),
+		"episodes.idle_after":           c.Episodes.IdleAfter.String(),
 		"sandbox.enabled":               fmt.Sprint(c.Sandbox.Enabled),
 		"sandbox.recipients":            fmt.Sprint(c.Sandbox.Recipients),
 		"sandbox.messages_per_day":      fmt.Sprint(c.Sandbox.MessagesPerDay),

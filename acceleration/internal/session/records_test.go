@@ -52,6 +52,8 @@ func (r *heldRecorder) Item(item store.AgentResponseItem) {
 
 func (r *heldRecorder) Described(string, string, string, string, map[string]any) {}
 
+func (r *heldRecorder) Chose(string, string, string, string) {}
+
 func (r *heldRecorder) SawVideo(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

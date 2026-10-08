@@ -518,6 +518,7 @@ Google reports it as a token count rather than streaming it, so there are no
 | `gemini/gemini-3.5-transcribe-live`                        | 85+       | ~$0.54         |
 | `grok/grok-stt`                                            | 25        | $0.20          |
 | `inworld/inworld-stt-1`                                    | 30        | $0.15          |
+| `microsoft/MAI-Transcribe-2-Streaming`                     | 60        | $0.54          |
 | `muse/muse-voice-transcribe-1.0`                           | 25        | $0.18          |
 | `parakeet/parakeet-tdt-0.6b-v3`                            | 25        | $0.079         |
 | `together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b`   | en        | $0.09          |
@@ -1220,8 +1221,9 @@ offered custom voices and the router routes around it for calls that want one.
 | `agent_configs`, `skills`                | Named agent, and a kind of work worth delegating    |
 | `calls`                                  | Conversation that happened, with its summary and score |
 | `campaigns`, `campaign_contacts`         | List of people to ring, and what became of each     |
+| `audit_log`                              | Change somebody made to the app's configuration     |
 
-Three things fall out of this that are worth stating.
+Four things fall out of this that are worth stating.
 
 **Cost tags are the customer's own labels.** Any keys they like, up to sixteen per request,
 carried onto every row a session produces. They get their own rollup tables rather than more
@@ -1266,6 +1268,22 @@ speech-to-audio path.
 **Memory and phone are recorded but not routed.** There is one memory store and one vendor
 per number, so the provider and route paths do not serve those modalities while the
 statistics paths do.
+
+**The audit log holds configuration, not traffic.** `audit_log` keeps one row per change to
+an agent config, skill, knowledge document, knowledge url, router config, plugin or policy:
+the fields that moved with the value on each side, which client the change came from
+(`dashboard`, `cli`, `sdk`, or `api` for a caller that named none) and who was at the
+keyboard. Sessions, simulations, runs and calls are not in it — one agent produces
+thousands a day, and they are read from their own lists. A write that moved nothing is not
+recorded, bookkeeping columns are excluded from every diff, and a plugin's secret is never
+in a row. Read it with `POST /v1/audit/query`, or ask what changed about one agent since
+its directory was last synced with `GET /v1/agents/configs/{id}/changes`. Both are
+server-side only.
+
+Who made a change comes from three headers, read only from a server-side caller:
+`X-Stream-Client`, `X-Stream-Actor-Id` and `X-Stream-Actor-Name`. Nothing signs them: they
+buy a name beside a change somebody already held the credential to make, never permission
+to make it.
 
 ### The request log
 

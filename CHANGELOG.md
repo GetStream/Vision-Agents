@@ -88,6 +88,20 @@ The Go SDK (`agents.PluginSettings`) and the Python folder reader (`PluginSettin
 `plugins/stream`) have moved, and the Python reader now accepts `scopes` and `user` on
 `mcp_servers`. Other SDKs follow.
 
+### `Dispatch.host` takes an agent and hosts its tools
+
+A dispatch worker hosts an agent's own tools under its name, in place of an agent id and a
+registry passed alongside. The router matches a hosted tool on a session's agent id or agent
+name, so the name is enough. In Python (`plugins/stream`), `Dispatch.host(agent_id, functions,
+timeout)` is `Dispatch.host(agent, tool_timeout)`, with `agent` from
+`stream.Client().agent(name)` and its tools registered with `@agent.register()`. In
+JavaScript, `host(agentId, tools, { timeoutMs })` is `host(agent, { toolTimeoutMs })`, hosting
+`client.agent(name).tools`. In Go, `Dispatch.Host(agentID, functions, timeout)` is
+`Dispatch.Host(agent, toolTimeout)`, on both `stream.Dispatch` and `agents.Dispatch`, hosting
+`client.Agent(name).Tools()` or an `agents.Agent`'s. .NET, Ruby, Rust and PHP take the agent
+the same way. The timeout is renamed to say what it is: how long the router waits for one
+tool call, not how long the worker runs.
+
 ### The connector catalog answers `Connector` and `ConnectorPage`
 
 `listConnectors`, `getConnector` and `createConnector` (`/v1/agents/connectors`) answered schemas named `ConnectorDefinition` and `ConnectorDefinitionPage`. They are `Connector` and `ConnectorPage` now; the JSON is unchanged. Go, JavaScript and Python clients use the new type names.
@@ -548,6 +562,51 @@ milliseconds as a `timings` custom field. Reading a conversation back, as the tr
 and the history a bound conversation gives the agent do, leaves the line out, so the agent never
 takes it for something it said.
 
+### A log severity is the least serious level to show, not the only one
+
+`severity` on `GET /v1/agents/logs` was an exact match, so asking for `error` hid the warnings
+next to it and there was no way to ask for both. It now names the floor: `warn` answers with
+warnings and errors, `info` with everything, and `error` is unchanged. `warn` is also a severity
+a log can be written at, which it was in the data but not in the enum.
+
+### The router records who changed the app's configuration
+
+Every change to an agent config, a skill, a knowledge document or url, a router config, a
+plugin credential or a policy is kept, with the fields that moved, who moved them and what
+they used. `queryAudit` (`POST /v1/audit/query`, cursor paged) answers an `AuditPage` of
+`AuditEntry` `{id, resource_type, resource_id, resource_name, agent_id, action, source,
+actor_id, actor_name, request_id, changes, created_at}`, filtered by any of `resource_type`,
+`resource_id`, `agent_id`, `source` and `action`. Only configuration is recorded: a session,
+a simulation and a run are not, because they are traffic rather than setup. A write that
+moves nothing records nothing, and a plugin's secret is never written down.
+
+Who made a change comes from three unsigned headers a server-side caller may send:
+`X-Stream-Client` (`dashboard`, `cli` or `sdk`, and `api` when nothing says), with
+`X-Stream-Actor-Id` and `X-Stream-Actor-Name` naming the person behind a client that signs
+its own users in. They buy a name beside a change somebody already had the credential to
+make, never permission. The router keeps no email addresses, so the name is a person's name.
+Go sends the client header from `Backend.Credentials`; other SDKs follow.
+
+### A sync no longer writes over an edit made since the last one
+
+`SyncAgentRequest` takes `check_changes`: a sync asking to be checked is refused with a 409
+`unsynced_changes`, naming the fields, rather than replacing an edit made in the dashboard
+since that directory last synced. Only the fields the directory declares are compared, and
+only against what is stored, so a sync whose directory already holds the change goes through.
+`getAgentChanges` (`GET /v1/agents/configs/{id}/changes`) answers an `AgentChanges`
+`{items, last_change, synced_at}`: what changed since the last sync, for a client to show.
+Syncing again with `base_change` set to the newest entry says the person has seen them and
+means it. Without `check_changes` a sync behaves exactly as before, so an SDK that syncs on
+startup is unaffected.
+
+### Tools can be loaded progressively
+
+An agent config takes `progressive_tools`, a boolean that is off by default, and so does `agent.yaml`. When it is on, the model sees each plugin, MCP server and connector tool as the first line of its description, plus its argument schema with every description, title and example removed. The first time the model calls a tool, the router returns the full description and input schema instead of running the tool, and the model calls it again. Some servers put a page of instructions and examples into a tool's description; with this setting, that page is only paid for in conversations that use the tool. The cost is one extra model turn for each tool a conversation uses. User plugins are unchanged, since they already list their tools on demand. Go and Python read the key from `agent.yaml`, and JavaScript has the regenerated types; other SDKs follow.
+
+### A connector call waits out the provider's rate limit
+
+When a provider answers a session's connector tool call with `429` and `Retry-After`, the model reads a `connector_rate_limited` result with `retry_after_seconds`, and the router sends no call on the same `rate_limit.per` key (`app`, `tenant` or `user` in the connector's manifest) until that time passes. Every router on the same Redis holds the same calls. The router never sends a call again by itself. A connector whose manifest has no `rate_limit`, a `429` with no `Retry-After`, and a router without Redis behave as before; a router with connectors on and no Redis logs one warning at start.
+
 ### A session can be opened with the history the caller kept
 
 `POST /v1/agents/sessions` takes `history`: the conversation so far, oldest first, as up to 100 `HistoryMessage`s with a `role` of `user` or `assistant`, `text`, and an optional author `name` and `created_at`. It is for a backend that keeps its own thread, such as one in its own Slack app, that outlives a session: open a new session with the thread here, then send the next message to `POST /v1/agents/sessions/{id}/responses`. The model is handed the history before the first response, the way a resumed conversation's is, and once any message names its author or time each user message is quoted with them behind a note that names are labels, not authority. The router records none of it, as turns, transcript or Chat messages; with `incognito` it keeps nothing at all. More than 100 messages or 60000 characters of text, a role other than `user` or `assistant`, and `history` with `conversation_id` are 400s, and a device sending it is a 403. Go (`client.SessionOptions.History`) and Python (`SessionOptions.history`) take it, and JavaScript's `SessionSpec` from the regenerated types; other SDKs follow.
@@ -587,7 +646,39 @@ request id to find the rest in the logs.
 
 ### A connector's raw provider events go on to the app's own URLs
 
-`POST /v1/agents/connectors/{id}/event-destinations` (`createConnectorEventDestination`, server-side only) adds a URL that the deliveries of the app's own provider app, such as its Slack app, are forwarded to, at most three per connector. `forward: unhandled` takes what the router acts on in no way: a button click (`block_actions`), a reaction, a modal submission, and a message no agent of the app answers. `forward: all` takes every verified delivery but Slack's URL handshake. A message an agent of the app answers is still answered in either mode. Each forward is the provider's raw body with its own `Content-Type` and signature headers (`X-Slack-Signature`, `X-Slack-Request-Timestamp`), so Slack Bolt verifies it with the app's signing secret, signed on top in the Standard Webhooks shape (`webhook-id`, `webhook-timestamp`, `webhook-signature`) with the destination's own `whsec_` secret, which the create returns once. Slack's ack never waits for it. A 5xx, a 429 or no answer is sent again after 5 s, 5 min, 30 min and 2 h; any other answer is not. A private, loopback or non-https URL is refused. `listConnectorEventDestinations` pages by cursor, `deleteConnectorEventDestination` removes one, and `rotateConnectorEventDestinationSecret` returns a new secret, the old one signing beside it for 24 hours. The Go client and the JavaScript types are regenerated; other SDKs follow.
+`POST /v1/agents/connectors/{id}/event-destinations` (`createConnectorEventDestination`, server-side only) adds a URL that the deliveries of the app's own provider app, such as its Slack app, are forwarded to, at most three per connector. `forward: unhandled` takes what the router acts on in no way: a button click (`block_actions`), a reaction, a modal submission, and a message no agent of the app answers. `forward: all` takes every verified delivery but Slack's URL handshake. A message an agent of the app answers is still answered in either mode. Each forward is the provider's raw body with its own `Content-Type` and signature headers (`X-Slack-Signature`, `X-Slack-Request-Timestamp`), so Slack Bolt verifies it with the app's signing secret, signed on top in the Standard Webhooks shape (`webhook-id`, `webhook-timestamp`, `webhook-signature`) with the destination's own `whsec_` secret, which the create returns once. Slack's ack never waits for it. A 5xx, a 429 or no answer is sent again after 5 s, 5 min, 30 min and 2 h; any other answer is not. Slack's own signature headers come only until `X-Slack-Request-Timestamp` is 5 minutes old, the age Slack Bolt refuses a request after: a forward sent later, such as the retries after 5 min, 30 min and 2 h, carries none of them, so verify it with `webhook-signature`. `webhook-id` is the same for every delivery of one Slack event (`event_id`, or `trigger_id` for an interaction), and a digest of the body for one that names neither; a manifest's `channel` block names those paths in `event_id`. A message an agent was to answer whose write into its thread channel fails goes to the `unhandled` destinations then. One URL that does not answer holds at most 2 of a router's 16 sends, so other URLs' forwards are not held up. A router with no forward queued looks for them once a minute, not once a second, and a forward a stopped router left is sent by another within about two minutes. A private, loopback or non-https URL is refused. `listConnectorEventDestinations` pages by cursor, `deleteConnectorEventDestination` removes one, and `rotateConnectorEventDestinationSecret` returns a new secret, the old one signing beside it for 24 hours. The Go client and the JavaScript types are regenerated; other SDKs follow.
+
+### A connection's MCP server can send the agent events (#785)
+
+A fixed connector binding takes `events`, a list of `{event, arguments, instructions}`: MCP events its connection is subscribed to (MCP Events, a draft: `experimental-ext-triggers-events` at `6682596d`, webhook delivery). The next `validateConnection` of that connection subscribes to each one on the connection's MCP server, through the connection's own credential, with a callback under `/v1/connectors/mcp-events/{token}` (`receiveConnectionEvent`, `security: []`, not client-accessible) and a Standard Webhooks secret of its own. Each event the server delivers opens a text conversation from the agent config, as the app, with the binding's `instructions` and the event's data as JSON. A delivery not signed with its own subscription's secret is a 401 and opens nothing; a retried one opens nothing more. Deleting the connection stops its subscriptions: a delivery to one is a 410. While the connection waits on a token renewal or a reconnect, a delivery is a 503 and opens nothing, and the subscription stays; a consent that connects it again subscribes again. A session binding that declares `events` is a 400. It needs connectors on and an https `ROUTER_PUBLIC_URL`; without them nothing is subscribed and the route answers 410. The plugin system's `plugin_events` are unchanged. The Go, Python and JavaScript clients are regenerated; other SDKs follow.
+
+### A connection's tool calls and grants are on record, and a user's connections can be deleted
+
+Each connector tool call a session runs leaves one row: the binding, the connection, the tool, the latency and, for a call that failed, an `error_type` of `customer_auth`, `external_server`, `client_timeout`, `outcome_unknown` or `denied`. No row holds what a call was asked or answered, and an incognito session's rows name no session. `GET /v1/agents/connections/{id}/invocations` (`listConnectionInvocations`, server-side only) pages through them, newest first. Each grant a connection gets, renews or loses leaves one audit row (`grant_created` at a consent or a credentials write, `grant_refreshed` when the router renews the credential, `grant_revoked` when the provider refuses or revokes it or the connection is deleted), with the request, session and authorization attempt that caused it; `GET /v1/agents/connector-audit` (`listConnectorAudit`, server-side only) pages through the app's, a deleted connection's included. `Connection` gains `used_by`: the agent config bindings that name it as their fixed connection. `DELETE /v1/agents/users/{user_id}/connections` (`deleteUserConnections`, server-side only) deletes every connection of one user for good, with its pending consents and its tool call log, so the next session for that user attaches none of them. A deployment with connectors off writes none of this. The Go client and the JavaScript types are regenerated; other SDKs follow.
+
+### A connector binding says what its calls do on an interruption, and what the agent says while they run
+
+A connector binding takes `policy`, a `ConnectorBindingPolicy` with three optional fields. `on_interrupt: wait` lets a call finish after the caller interrupts the turn, up to the binding's timeout, and its result goes into the conversation when it comes; until then the call reads as still running, so the next turn does not wait for it; `cancel`, the default, cancels it at the provider as before. `cancellable: false` stops waiting at the interruption but does not send the provider the cancel for it, for a tool that is not safe to stop halfway; its call is logged as `outcome_unknown`. The binding's timeout still ends the call and sends the cancel, whatever the policy. `pre_speech` is what the agent says while one of the binding's tools runs, in place of its own "One moment.", and the session socket's `tool_started` carries it as `pre_speech`. A binding without `policy` behaves, and is stored and read back, as before. The Go client and the JavaScript types are regenerated; other SDKs follow.
+
+### A provider app points its Stream app's message hook at the router
+
+With connectors on, `PUT /v1/agents/connectors/{id}/provider-app` (`setConnectorProviderApp`) and its ops twin `setOperatorProviderApp` point the message hook of the Stream app the provider app is pinned to at `ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}`, when that app is one the customer registered (T48, AI-887). The hook is matched by its URL, so a PUT again updates it rather than adding a second, and the app's other hooks stay. A provider app pinned to the deployment's own app points nothing: those hooks are the operator's, set with `router phone hooks`. A router without `ROUTER_PUBLIC_URL` points none and logs a warning. When Stream refuses, the provider app is kept and the answer is a 503; a PUT again points the hook. With connectors off both PUTs answer as before and ask nothing of Stream. The Go client and the JavaScript types are regenerated; other SDKs follow.
+
+### SMS through the customer's own Telnyx account
+
+A built-in connector, `telnyx`, answers people over SMS on the customer's own Telnyx number through the channel bridge (T53, AI-881). The app's backend puts its Telnyx account as a provider app with `PUT /v1/agents/connectors/telnyx/oauth-client`, `provider_app_id` and the account's base64 Ed25519 public key as `signing_secret`, and no `client_id`; it creates an app-owned connection with its number as `phone_number` (E.164) and the account's API key as a `bearer` token, and binds one agent config to it. Telnyx's webhooks go to `/v1/connectors/events/telnyx/{provider_app_id}` and are verified with a new `ed25519` verifier kind; each person's number is a thread channel, the agent's reply goes to that number from the customer's, and a thread opens an `sms` episode card in the omni-channel of the sender's number. STOP, START and HELP are handled by the bridge before the agent: Telnyx answers its reserved keywords (STOP, START, HELP and their defaults) itself, and the bridge answers only the rest, such as REVOKE and OPT OUT; STOP records an opt-out (`source: keyword`, channel `sms`) and the person's later texts reach no agent, and get no reply, until START. With connectors off, nothing changes.
+
+### iMessage through the customer's own Linq account
+
+A built-in connector, `linq`, answers people over iMessage on the customer's own Linq line through the channel bridge (T36, AI-863). The app's backend puts its Linq account as a provider app with `PUT /v1/agents/connectors/linq/oauth-client`, `provider_app_id` and the webhook subscription's `signing_secret` and no `client_id`, which only a connector not consented through `oauth2_code` takes; it creates an app-owned connection with its line as `phone_number` (E.164) and the line's API key as a `bearer` token, and binds one agent config to it. Linq's events go to `/v1/connectors/events/linq/{provider_app_id}` and are verified as Standard Webhooks; each chat is a thread channel, the agent's reply goes back to the chat with the API key, and a chat opens an `imessage` episode card in the omni-channel of the sender's number. A `bearer` connection whose connector names its account by inputs alone now has that account. With connectors off, nothing changes: a put without `client_id` is still a 400 `validation_failed`. With connectors on, a put without `client_id` that the connector does not take as a provider app (`slack_bot`, `github`) is a 400 `invalid_request` rather than `validation_failed`, and one for an unknown connector is a 404 rather than a 400. The Go client and the JavaScript types are regenerated; Go's `ConnectorOAuthClientRequest.ClientId` is now a `*string`; other SDKs follow.
+
+### Episodes close and their cards hold a summary
+
+A text episode closes once its thread has had no message for `episodes.idle_after` (`ROUTER_EPISODES_IDLE_AFTER`, one hour unless set, refused at 24 hours or more); a call episode closes when the `call.session_ended` hook says its call ended (T55, AI-884). Closing sets the card's status to `ended`; the agent config's own LLM then writes a summary of the episode's lines into the card's text and sets `summarized`, or sets `summary_failed` and leaves the card's text and the thread channel as they were. Every card change is a partial update of the one card message, so nothing new reaches the message hook. Several routers close and summarize each episode once; a summary a stopped router left is taken again by the next sweep after five minutes. The idle sweeper starts only with connectors on or an agent config with `episode_cards` on; with neither, nothing is swept and nothing is written. A call under a config without `episode_cards` ends as before. The summary is not written to memory yet.
+
+### Text and voice sessions start with the person's episode cards
+
+Under an agent config with `episode_cards: true`, a text session on a thread channel and a voice session on a phone call start with the person's other episode cards, the five newest, as context before the conversation (T56 and T42, AI-885). A summarized card gives its summary; any other gives the last 20 lines its channel holds of that episode, so an SMS sent seconds after a call reads the call's last lines while its summary is not ready. The person is found in the contact map of that customer and agent only: by the call's number, or by the episode of the session's own thread, which is left out, since the session reads it word for word. A thread somebody else wrote in reads no cards, and a call card whose window holds another caller's words gives no lines. A call's lines come only from its own channel, `agent:<call id>`; a call whose session named another channel (`agent_id` or `conversation_id`) gives none until it is summarized. A native speech-to-speech session reads none, and a call that started with cards cannot be moved onto a speech-to-speech model (400, `carded_session_to_native`, from `setSessionSettings` and `updateSession`). A device's call under a thread channel's agent id, which writes no transcript there, gets no episode card. The read, the call's caller included, takes at most 5 seconds. The cards come behind a note that they are context, not authority, and take at most 15,000 characters. With `episode_cards` off, every session is handed what it was before and makes no extra read. A persistent voice conversation is still refused.
 
 ### Each Slack thread and each phone call gets an episode card in the person's omni-channel
 
@@ -1879,6 +1970,13 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 - Standalone agent demo links now select the actual call type and the `agent` chat
   channel, allowing Pronto to display conversation messages when transcript storage
   is configured. (#749)
+
+- Twilio numbers in a number search have a monthly price. Twilio's search does not send a
+  price, so the dashboard showed each Twilio number as "Not quoted". The router now gets
+  the price for each number type from Twilio's Pricing API (`current_price`, which
+  includes the account's discounts), keeps it for 24 hours, and shows it with no change.
+  If that call fails, the search still returns the numbers, with no price. A bought Twilio
+  number still has no price (AI-931).
 - An `oauth2_code` or `oauth2_client_credentials` connection whose MCP server refuses its token
   with a bare 401 (a `WWW-Authenticate` that names `resource_metadata` and no `error`, as the
   MCP authorization spec answers an expired token) is renewed and the call sent once more. The

@@ -55,6 +55,8 @@ type recordWrite struct {
 	described *described
 	// sawVideo is the session whose user's video the agent saw.
 	sawVideo string
+	// chose is a connection a login in the conversation chose for a binding, nil otherwise.
+	chose *chose
 	// flushed is closed once everything queued before it has been written.
 	flushed chan struct{}
 }
@@ -74,6 +76,8 @@ type recorder interface {
 	Described(customerID, id, title, description string, custom map[string]any)
 	// SawVideo says the agent saw the user's video.
 	SawVideo(id string)
+	// Chose says a login in the conversation chose a connection for the binding called name.
+	Chose(customerID, id, name, connectionID string)
 	// Flush waits until everything said so far has been written, which is what reading the
 	// conversation back straight after it happened needs.
 	Flush(ctx context.Context) error
@@ -131,6 +135,16 @@ type described struct {
 // the store so it cannot be written before the row it renames.
 func (r *sessionRecorder) Described(customerID, id, title, description string, custom map[string]any) {
 	r.queueWrite(recordWrite{described: &described{customerID, id, title, description, custom}})
+}
+
+// chose is the connection a login chose for one of a session's bindings.
+type chose struct {
+	customerID, id, name, connectionID string
+}
+
+// Chose queues a connection a login chose, behind the row it changes, as Described does.
+func (r *sessionRecorder) Chose(customerID, id, name, connectionID string) {
+	r.queueWrite(recordWrite{chose: &chose{customerID, id, name, connectionID}})
 }
 
 // SawVideo queues that a session became a video one, behind the row it changes.
@@ -266,6 +280,11 @@ func (r *sessionRecorder) write(write recordWrite) {
 		if err := r.store.DescribeSession(ctx, d.customerID, d.id, d.title, d.description, d.custom); err != nil {
 			r.logger.Error("could not record the session's title", "session", d.id, "error", err)
 		}
+	case write.chose != nil:
+		c := write.chose
+		if err := r.store.ChooseSessionConnection(ctx, c.customerID, c.id, c.name, c.connectionID); err != nil {
+			r.logger.Error("could not record the connection a login chose", "session", c.id, "error", err)
+		}
 	case write.sawVideo != "":
 		if err := r.store.SawVideo(ctx, write.sawVideo); err != nil {
 			r.logger.Error("could not record the session's video", "session", write.sawVideo, "error", err)
@@ -320,6 +339,12 @@ func sessionRow(created *Session) store.AgentSession {
 	// would make every session look like it belonged to the agent.
 	row.UserID = spec.Caller.UserID
 	row.CallerKind = string(spec.CallerKind)
+	// Only the alias and the connection's id, so a fork can choose them again: a selection
+	// is a reference, and the credential stays sealed on the connection.
+	for _, selection := range spec.ConnectorSelections {
+		row.ConnectorSelections = append(row.ConnectorSelections,
+			store.SessionConnectorSelection{Name: selection.Name, ConnectionID: selection.ConnectionID})
+	}
 	return row
 }
 

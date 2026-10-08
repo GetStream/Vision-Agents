@@ -42,6 +42,7 @@ class AgentConfigPatch:
                 is the same as leaving them out.
             dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
                 /v1/dispatch. Omitted settings are disabled.
+            episode_cards (bool | Unset):
             greeting (str | Unset):
             guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An
                 empty string removes the guardrail.
@@ -58,6 +59,7 @@ class AgentConfigPatch:
                 speech target and a session created from it needs no call to join.
             name (str | Unset): What the config is called, which is unique among the customer's own.
             plugin_events (list[PluginEvent] | Unset):
+            progressive_tools (bool | Unset):
             sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
                 code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
                 everything out in its head.
@@ -84,6 +86,7 @@ class AgentConfigPatch:
     channels: AgentChannels | Unset = UNSET
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
+    episode_cards: bool | Unset = UNSET
     greeting: str | Unset = UNSET
     guardrail: str | Unset = UNSET
     harness: Harness | Unset = UNSET
@@ -95,6 +98,7 @@ class AgentConfigPatch:
     mode: AgentMode | Unset = UNSET
     name: str | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
+    progressive_tools: bool | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     sandbox_options: SandboxOptions | Unset = UNSET
     search: str | Unset = UNSET
@@ -139,6 +143,8 @@ class AgentConfigPatch:
         if not isinstance(self.dispatch, Unset):
             dispatch = self.dispatch.to_dict()
 
+        episode_cards = self.episode_cards
+
         greeting = self.greeting
 
         guardrail = self.guardrail
@@ -176,6 +182,8 @@ class AgentConfigPatch:
             for plugin_events_item_data in self.plugin_events:
                 plugin_events_item = plugin_events_item_data.to_dict()
                 plugin_events.append(plugin_events_item)
+
+        progressive_tools = self.progressive_tools
 
         sandbox: str | Unset = UNSET
         if not isinstance(self.sandbox, Unset):
@@ -237,6 +245,8 @@ class AgentConfigPatch:
             field_dict["connectors"] = connectors
         if dispatch is not UNSET:
             field_dict["dispatch"] = dispatch
+        if episode_cards is not UNSET:
+            field_dict["episode_cards"] = episode_cards
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
         if guardrail is not UNSET:
@@ -259,6 +269,8 @@ class AgentConfigPatch:
             field_dict["name"] = name
         if plugin_events is not UNSET:
             field_dict["plugin_events"] = plugin_events
+        if progressive_tools is not UNSET:
+            field_dict["progressive_tools"] = progressive_tools
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
         if sandbox_options is not UNSET:
@@ -353,6 +365,8 @@ class AgentConfigPatch:
         else:
             dispatch = AgentDispatch.from_dict(_dispatch)
 
+        episode_cards = d.pop("episode_cards", UNSET)
+
         greeting = d.pop("greeting", UNSET)
 
         guardrail = d.pop("guardrail", UNSET)
@@ -398,6 +412,8 @@ class AgentConfigPatch:
                 plugin_events_item = PluginEvent.from_dict(plugin_events_item_data)
 
                 plugin_events.append(plugin_events_item)
+
+        progressive_tools = d.pop("progressive_tools", UNSET)
 
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
@@ -473,6 +489,7 @@ class AgentConfigPatch:
             channels=channels,
             connectors=connectors,
             dispatch=dispatch,
+            episode_cards=episode_cards,
             greeting=greeting,
             guardrail=guardrail,
             harness=harness,
@@ -484,6 +501,7 @@ class AgentConfigPatch:
             mode=mode,
             name=name,
             plugin_events=plugin_events,
+            progressive_tools=progressive_tools,
             sandbox=sandbox,
             sandbox_options=sandbox_options,
             search=search,

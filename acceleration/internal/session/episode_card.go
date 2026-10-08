@@ -8,6 +8,7 @@ import (
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -52,8 +53,15 @@ func newCallCards(pgStore *store.Store, stream *streamapp.Clients, logger *slog.
 // cards existed. A session in writing, an incognito one, which records nothing, and one with
 // no agent config, whose omni-channel the contact map cannot key, get none either.
 func (c *callCards) started(created *Session, stream streamapp.Bound) {
+	// The spec as the session started, read here, on the caller: the card is written off the
+	// start, while SetSettings may change created.spec.
 	spec := created.spec
 	if c == nil || !spec.EpisodeCards || spec.Text || spec.CallID == "" || spec.Incognito || spec.ConfigID == "" || stream.Client == nil {
+		return
+	}
+	// A call whose transcript is written nowhere it may write has no channel for its card to
+	// name, so it has no episode.
+	if created.transcribedInto == "" {
 		return
 	}
 	c.running.Add(1)
@@ -61,10 +69,61 @@ func (c *callCards) started(created *Session, stream streamapp.Bound) {
 		defer c.running.Done()
 		ctx, cancel := context.WithTimeout(c.ctx, callCardTimeout)
 		defer cancel()
-		if err := c.write(ctx, created, stream); err != nil {
+		if err := c.write(ctx, created, spec, stream); err != nil {
 			c.logger.Error("could not write a call's episode card", "session", created.id, "call", spec.CallID, "error", err)
 		}
 	}()
+}
+
+// read is the person's other episode cards, for a session to start with (T56 and T42,
+// AI-885), when its agent config turned the cards on. Off, which every config is unless it
+// says otherwise, nothing is read: no call, no contact map, no Stream Chat, and the session
+// starts with what it did before the cards existed. On:
+//
+//   - a text session on a thread channel reads the cards of the person its thread's episode
+//     is with, the thread itself left out, since it reads that word for word;
+//   - a voice session reads the cards of the number on its call (calledParty), its own
+//     call's card left out.
+//
+// Any other session reads none: an incognito one, which keeps nothing of the person, one
+// with no agent config, whose contact map the cards are keyed by, a text session on any
+// other channel, whose person the contact map cannot key yet, and a native speech-to-speech
+// one. A native model is handed its history as a transcript in its instructions
+// (agent.openSpeech), which keeps no system note, so the cards would reach it without the
+// note that they are context, not authority, and a new call would read as one carried on.
+//
+// The whole read, the call included, takes at most omnichannel.ReadTimeout: a slow Stream
+// delays a call's join by that and no more, and the call starts with no cards. A card that
+// cannot be read is logged and left out; the session starts all the same.
+func (c *callCards) read(ctx context.Context, spec Spec, stream streamapp.Bound) []llm.Message {
+	if c == nil || !spec.EpisodeCards || spec.Incognito || spec.ConfigID == "" || spec.Native() {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, omnichannel.ReadTimeout)
+	defer cancel()
+	reading := omnichannel.Reading{CustomerID: spec.CustomerID, AgentConfigID: spec.ConfigID, StreamAppPK: spec.StreamApp}
+	switch {
+	case spec.Text && spec.PersistConversation && spec.Shared():
+		reading.Thread = spec.ConversationID
+	case !spec.Text && spec.CallID != "" && stream.Client != nil:
+		number, err := calledParty(ctx, spec, stream)
+		if err != nil {
+			c.logger.Error("could not read who is on a call for its episode cards", "session", spec.ID, "call", spec.CallID, "error", err)
+			return nil
+		}
+		person, err := omnichannel.Phone(number)
+		if err != nil {
+			return nil
+		}
+		reading.Person, reading.SessionID = person, spec.ID
+	default:
+		return nil
+	}
+	cards, err := c.cards.Context(ctx, reading)
+	if err != nil {
+		c.logger.Error("could not read every episode card", "session", spec.ID, "error", err)
+	}
+	return cards
 }
 
 // Close abandons the cards still being written and waits for them to stop.
@@ -76,8 +135,7 @@ func (c *callCards) Close() {
 	c.running.Wait()
 }
 
-func (c *callCards) write(ctx context.Context, created *Session, stream streamapp.Bound) error {
-	spec := created.spec
+func (c *callCards) write(ctx context.Context, created *Session, spec Spec, stream streamapp.Bound) error {
 	number, err := calledParty(ctx, spec, stream)
 	if err != nil || number == "" {
 		return err
@@ -87,12 +145,9 @@ func (c *callCards) write(ctx context.Context, created *Session, stream streamap
 		c.logger.Info("no episode card for a call whose number is not in E.164", "session", created.id)
 		return nil
 	}
-	// The transcript's channel: the conversation the call was held on, else the agent id's
-	// (chatlog: «Without it, the channel id is spec.AgentID»).
-	thread := spec.ConversationID
-	if thread == "" {
-		thread = streamapp.AgentChannelType + ":" + spec.AgentID
-	}
+	// The channel the transcript is written into (Manager.Create): the conversation the call
+	// was held on, else the agent id's.
+	thread := created.transcribedInto
 	opened, err := c.cards.Open(ctx, omnichannel.Episode{
 		CustomerID:    spec.CustomerID,
 		AgentConfigID: spec.ConfigID,

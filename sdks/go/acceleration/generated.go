@@ -57,6 +57,7 @@ func (e AgentConnectorSelectionType) Valid() bool {
 const (
 	AgentLogSeverityError AgentLogSeverity = "error"
 	AgentLogSeverityInfo  AgentLogSeverity = "info"
+	AgentLogSeverityWarn  AgentLogSeverity = "warn"
 )
 
 // Valid indicates whether the value is a known member of the AgentLogSeverity enum.
@@ -65,6 +66,8 @@ func (e AgentLogSeverity) Valid() bool {
 	case AgentLogSeverityError:
 		return true
 	case AgentLogSeverityInfo:
+		return true
+	case AgentLogSeverityWarn:
 		return true
 	default:
 		return false
@@ -164,6 +167,87 @@ func (e AgentResponseItemKind) Valid() bool {
 	case AgentResponseItemKindToolCall:
 		return true
 	case AgentResponseItemKindToolResult:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AuditAction.
+const (
+	Created AuditAction = "created"
+	Deleted AuditAction = "deleted"
+	Synced  AuditAction = "synced"
+	Updated AuditAction = "updated"
+)
+
+// Valid indicates whether the value is a known member of the AuditAction enum.
+func (e AuditAction) Valid() bool {
+	switch e {
+	case Created:
+		return true
+	case Deleted:
+		return true
+	case Synced:
+		return true
+	case Updated:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AuditResourceType.
+const (
+	AuditResourceTypeAgentConfig  AuditResourceType = "agent_config"
+	AuditResourceTypeKnowledge    AuditResourceType = "knowledge"
+	AuditResourceTypeKnowledgeUrl AuditResourceType = "knowledge_url"
+	AuditResourceTypePlugin       AuditResourceType = "plugin"
+	AuditResourceTypePolicy       AuditResourceType = "policy"
+	AuditResourceTypeRouterConfig AuditResourceType = "router_config"
+	AuditResourceTypeSkill        AuditResourceType = "skill"
+)
+
+// Valid indicates whether the value is a known member of the AuditResourceType enum.
+func (e AuditResourceType) Valid() bool {
+	switch e {
+	case AuditResourceTypeAgentConfig:
+		return true
+	case AuditResourceTypeKnowledge:
+		return true
+	case AuditResourceTypeKnowledgeUrl:
+		return true
+	case AuditResourceTypePlugin:
+		return true
+	case AuditResourceTypePolicy:
+		return true
+	case AuditResourceTypeRouterConfig:
+		return true
+	case AuditResourceTypeSkill:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AuditSource.
+const (
+	AuditSourceApi       AuditSource = "api"
+	AuditSourceCli       AuditSource = "cli"
+	AuditSourceDashboard AuditSource = "dashboard"
+	AuditSourceSdk       AuditSource = "sdk"
+)
+
+// Valid indicates whether the value is a known member of the AuditSource enum.
+func (e AuditSource) Valid() bool {
+	switch e {
+	case AuditSourceApi:
+		return true
+	case AuditSourceCli:
+		return true
+	case AuditSourceDashboard:
+		return true
+	case AuditSourceSdk:
 		return true
 	default:
 		return false
@@ -485,6 +569,27 @@ func (e ConnectionValidationStatus) Valid() bool {
 	}
 }
 
+// Defines values for ConnectorAuditAction.
+const (
+	GrantCreated   ConnectorAuditAction = "grant_created"
+	GrantRefreshed ConnectorAuditAction = "grant_refreshed"
+	GrantRevoked   ConnectorAuditAction = "grant_revoked"
+)
+
+// Valid indicates whether the value is a known member of the ConnectorAuditAction enum.
+func (e ConnectorAuditAction) Valid() bool {
+	switch e {
+	case GrantCreated:
+		return true
+	case GrantRefreshed:
+		return true
+	case GrantRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectorClientAlg.
 const (
 	PS256 ConnectorClientAlg = "PS256"
@@ -596,6 +701,24 @@ func (e ConnectorOAuthClientAuthMethod) Valid() bool {
 	}
 }
 
+// Defines values for ConnectorOnInterrupt.
+const (
+	ConnectorOnInterruptCancel ConnectorOnInterrupt = "cancel"
+	ConnectorOnInterruptWait   ConnectorOnInterrupt = "wait"
+)
+
+// Valid indicates whether the value is a known member of the ConnectorOnInterrupt enum.
+func (e ConnectorOnInterrupt) Valid() bool {
+	switch e {
+	case ConnectorOnInterruptCancel:
+		return true
+	case ConnectorOnInterruptWait:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ContactState.
 const (
 	ContactStateCalling ContactState = "calling"
@@ -622,16 +745,16 @@ func (e ContactState) Valid() bool {
 
 // Defines values for CreateOptOutRequestSource.
 const (
-	Api       CreateOptOutRequestSource = "api"
-	Dashboard CreateOptOutRequestSource = "dashboard"
+	CreateOptOutRequestSourceApi       CreateOptOutRequestSource = "api"
+	CreateOptOutRequestSourceDashboard CreateOptOutRequestSource = "dashboard"
 )
 
 // Valid indicates whether the value is a known member of the CreateOptOutRequestSource enum.
 func (e CreateOptOutRequestSource) Valid() bool {
 	switch e {
-	case Api:
+	case CreateOptOutRequestSourceApi:
 		return true
-	case Dashboard:
+	case CreateOptOutRequestSourceDashboard:
 		return true
 	default:
 		return false
@@ -977,6 +1100,33 @@ func (e ImageSourceDetail) Valid() bool {
 	case ImageSourceDetailHigh:
 		return true
 	case ImageSourceDetailLow:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InvocationErrorType.
+const (
+	ClientTimeout  InvocationErrorType = "client_timeout"
+	CustomerAuth   InvocationErrorType = "customer_auth"
+	Denied         InvocationErrorType = "denied"
+	ExternalServer InvocationErrorType = "external_server"
+	OutcomeUnknown InvocationErrorType = "outcome_unknown"
+)
+
+// Valid indicates whether the value is a known member of the InvocationErrorType enum.
+func (e InvocationErrorType) Valid() bool {
+	switch e {
+	case ClientTimeout:
+		return true
+	case CustomerAuth:
+		return true
+	case Denied:
+		return true
+	case ExternalServer:
+		return true
+	case OutcomeUnknown:
 		return true
 	default:
 		return false
@@ -2121,6 +2271,7 @@ func (e VoiceBindingState) Valid() bool {
 const (
 	ListAgentLogsParamsSeverityError ListAgentLogsParamsSeverity = "error"
 	ListAgentLogsParamsSeverityInfo  ListAgentLogsParamsSeverity = "info"
+	ListAgentLogsParamsSeverityWarn  ListAgentLogsParamsSeverity = "warn"
 )
 
 // Valid indicates whether the value is a known member of the ListAgentLogsParamsSeverity enum.
@@ -2129,6 +2280,8 @@ func (e ListAgentLogsParamsSeverity) Valid() bool {
 	case ListAgentLogsParamsSeverityError:
 		return true
 	case ListAgentLogsParamsSeverityInfo:
+		return true
+	case ListAgentLogsParamsSeverityWarn:
 		return true
 	default:
 		return false
@@ -2139,6 +2292,7 @@ func (e ListAgentLogsParamsSeverity) Valid() bool {
 const (
 	StreamAgentLogsParamsSeverityError StreamAgentLogsParamsSeverity = "error"
 	StreamAgentLogsParamsSeverityInfo  StreamAgentLogsParamsSeverity = "info"
+	StreamAgentLogsParamsSeverityWarn  StreamAgentLogsParamsSeverity = "warn"
 )
 
 // Valid indicates whether the value is a known member of the StreamAgentLogsParamsSeverity enum.
@@ -2147,6 +2301,8 @@ func (e StreamAgentLogsParamsSeverity) Valid() bool {
 	case StreamAgentLogsParamsSeverityError:
 		return true
 	case StreamAgentLogsParamsSeverityInfo:
+		return true
+	case StreamAgentLogsParamsSeverityWarn:
 		return true
 	default:
 		return false
@@ -2214,6 +2370,18 @@ type AddTrunkNumberRequest struct {
 	Tags *map[string]string `json:"tags,omitempty"`
 }
 
+// AgentChanges What was changed about an agent since its directory was last synced: the edits a sync of that directory would write over.
+type AgentChanges struct {
+	// Items The changes made since the last sync, newest first, at most 200. Empty when the agent has not been touched since.
+	Items []AuditEntry `json:"items"`
+
+	// LastChange The newest change's id. Send it as base_change on a sync to say these have been seen, and that sync will not be refused for them.
+	LastChange *string `json:"last_change,omitempty"`
+
+	// SyncedAt When the directory was last synced onto this agent. Absent for an agent no directory has ever been synced onto.
+	SyncedAt *time.Time `json:"synced_at,omitempty"`
+}
+
 // AgentChannels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 type AgentChannels struct {
 	// Identity How a sender becomes an end user. phone makes each number an end user of its own, phone:+15551234567, so anybody who writes is answered. link answers only a number somebody tied to an end user with a code from POST /v1/agents/channels/links, which is what an agent reading a person's own calendar or orders needs. Omitted is phone.
@@ -2237,7 +2405,7 @@ type AgentConfig struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EpisodeCards Whether each phone call under this agent writes an episode card into the caller's omni-channel.
+	// EpisodeCards Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards.
 	EpisodeCards *bool   `json:"episode_cards,omitempty"`
 	Greeting     *string `json:"greeting,omitempty"`
 	Guardrail    *string `json:"guardrail,omitempty"`
@@ -2255,6 +2423,9 @@ type AgentConfig struct {
 	Mode         AgentMode      `json:"mode"`
 	Name         string         `json:"name"`
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+
+	// ProgressiveTools Whether tools from plugins, MCP servers and connectors are offered by a summary, the first call to each returning its full description instead of running it.
+	ProgressiveTools *bool `json:"progressive_tools,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -2311,8 +2482,9 @@ type AgentConfigPatch struct {
 	Mode *AgentMode `json:"mode,omitempty"`
 
 	// Name What the config is called, which is unique among the customer's own.
-	Name         *string        `json:"name,omitempty"`
-	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+	Name             *string        `json:"name,omitempty"`
+	PluginEvents     *[]PluginEvent `json:"plugin_events,omitempty"`
+	ProgressiveTools *bool          `json:"progressive_tools,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -2353,7 +2525,7 @@ type AgentConfigRequest struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EpisodeCards Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. Off by default, and then a call runs as it always did. Left out on an update, the stored setting stays.
+	// EpisodeCards Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
 	EpisodeCards *bool   `json:"episode_cards,omitempty"`
 	Greeting     *string `json:"greeting,omitempty"`
 
@@ -2384,6 +2556,9 @@ type AgentConfigRequest struct {
 
 	// PluginEvents MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+
+	// ProgressiveTools Whether the agent is offered its plugin, MCP server and connector tools by the first line of each one's description, with its arguments' descriptions left out, and the first call to a tool returns its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
+	ProgressiveTools *bool `json:"progressive_tools,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -2434,8 +2609,14 @@ type AgentConnectorBinding struct {
 	// ConnectorId A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_.
 	ConnectorId string `json:"connector_id"`
 
+	// Events MCP events the binding's fixed connection is subscribed to, each opening a text conversation from the config when it arrives. Subscribed when the connection is next validated. Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an event arrives with no session open.
+	Events *[]ConnectorBindingEvent `json:"events,omitempty"`
+
 	// Name The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place.
 	Name string `json:"name"`
+
+	// Policy How a binding's tool calls behave around speech and interruptions. Every field is optional, and a field left out keeps today's behaviour.
+	Policy *ConnectorBindingPolicy `json:"policy,omitempty"`
 
 	// Required Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
 	Required *bool `json:"required,omitempty"`
@@ -2585,6 +2766,101 @@ type AttachedNumber struct {
 	SipUri  string `json:"sip_uri"`
 	TrunkId string `json:"trunk_id"`
 }
+
+// AuditAction created, updated or deleted for a change somebody made one at a time. synced is a whole agent directory written at once by POST /v1/agents/sync, and is what a later sync measures the edits made since against.
+type AuditAction string
+
+// AuditChange One field that moved, with what it held before and holds now, each in the shape the resource itself is read in.
+type AuditChange struct {
+	// After What it holds now. Absent when it now holds nothing, which is what a deleted resource's fields all do.
+	After interface{} `json:"after,omitempty"`
+
+	// Before What it held, in the shape the resource is read in. Absent when it held nothing, which is what a created resource's fields all did.
+	Before interface{} `json:"before,omitempty"`
+
+	// Field The field as the resource's own schema names it.
+	Field string `json:"field"`
+}
+
+// AuditEntry One change somebody made to the app's configuration: what changed, who changed it, which client they used, and the before and after of every field that moved. Only configuration is recorded -- agents, skills, knowledge, routers, plugins and policies -- never what an agent did while it ran.
+type AuditEntry struct {
+	// Action created, updated or deleted for a change somebody made one at a time. synced is a whole agent directory written at once by POST /v1/agents/sync, and is what a later sync measures the edits made since against.
+	Action AuditAction `json:"action"`
+
+	// ActorId Who made it, as their client named them. Absent for a change nobody signed, such as a process syncing on startup.
+	ActorId *string `json:"actor_id,omitempty"`
+
+	// ActorName Their name, as their client named them. Never an email address: the router keeps none.
+	ActorName *string `json:"actor_name,omitempty"`
+
+	// AgentId The agent the change was to or under. Absent for a resource that belongs to no agent, such as a router.
+	AgentId *string `json:"agent_id,omitempty"`
+
+	// Changes Every field that moved. A write that moved nothing is not recorded at all, so this is empty only on a synced entry, which marks the moment a directory and an agent agreed whether or not anything moved.
+	Changes   []AuditChange `json:"changes"`
+	CreatedAt time.Time     `json:"created_at"`
+	Id        string        `json:"id"`
+
+	// RequestId The X-Request-Id of the request that made it.
+	RequestId *string `json:"request_id,omitempty"`
+
+	// ResourceId The resource, which may since have been deleted.
+	ResourceId string `json:"resource_id"`
+
+	// ResourceName What it was called when it changed, for a resource that has a name.
+	ResourceName *string `json:"resource_name,omitempty"`
+
+	// ResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead.
+	ResourceType AuditResourceType `json:"resource_type"`
+
+	// Source Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it.
+	Source AuditSource `json:"source"`
+}
+
+// AuditFilter Which changes to list. A field not listed here is refused rather than ignored.
+type AuditFilter struct {
+	// Action created, updated or deleted for a change somebody made one at a time. synced is a whole agent directory written at once by POST /v1/agents/sync, and is what a later sync measures the edits made since against.
+	Action *AuditAction `json:"action,omitempty"`
+
+	// AgentId One agent's history: changes to the agent itself and to the skills and knowledge under it.
+	AgentId *string `json:"agent_id,omitempty"`
+
+	// ResourceId One resource's own history.
+	ResourceId *string `json:"resource_id,omitempty"`
+
+	// ResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead.
+	ResourceType *AuditResourceType `json:"resource_type,omitempty"`
+
+	// Source Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it.
+	Source *AuditSource `json:"source,omitempty"`
+}
+
+// AuditPage defines model for AuditPage.
+type AuditPage struct {
+	HasMore bool         `json:"has_more"`
+	Items   []AuditEntry `json:"items"`
+
+	// NextCursor Pass as cursor for the next page, with the same filter. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// AuditQuery defines model for AuditQuery.
+type AuditQuery struct {
+	// Cursor The next_cursor of the previous page, sent with the same filter. Omitted is the first page.
+	Cursor *string `json:"cursor,omitempty"`
+
+	// Filter Which changes to list. A field not listed here is refused rather than ignored.
+	Filter *AuditFilter `json:"filter,omitempty"`
+
+	// Limit Up to 200. Omitted is 25.
+	Limit *int64 `json:"limit,omitempty"`
+}
+
+// AuditResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead.
+type AuditResourceType string
+
+// AuditSource Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it.
+type AuditSource string
 
 // Authorization A consent in flight for one connection: the page that starts it in a browser and the token that binds it to that browser.
 type Authorization struct {
@@ -3229,6 +3505,9 @@ type Connection struct {
 	// Status pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
 	Status    ConnectionStatus `json:"status"`
 	UpdatedAt *time.Time       `json:"updated_at,omitempty"`
+
+	// UsedBy The agent config bindings that name this connection as their fixed connection, which deleting it would break. A binding a session fills with the caller's own connection names none, so it is never listed.
+	UsedBy *[]ConnectionUse `json:"used_by,omitempty"`
 }
 
 // ConnectionCredentials Credentials for a connection, under the revision the caller last read. An unknown field is refused rather than ignored.
@@ -3238,6 +3517,40 @@ type ConnectionCredentials struct {
 
 	// Values What the connection's auth_scheme takes, write-only. api_key: api_key and header. bearer: token. none: nothing, which activates the connection. oauth2_client_credentials: client_id and client_secret, which are tried at the token endpoint at once. oauth2_code: a grant the provider already issued, as access_token, refresh_token (optional), expires_at (RFC 3339) and scope (the granted scopes joined as the connector's scopes are); its endpoints and client are the connector's, never the caller's.
 	Values *map[string]string `json:"values,omitempty"`
+}
+
+// ConnectionInvocation One connector tool call a session ran through the connection: the binding, the tool, how long it took and how it failed. What the call was asked and answered is never kept.
+type ConnectionInvocation struct {
+	// Binding The alias the config binds the connector under.
+	Binding string `json:"binding"`
+
+	// ConfigId The agent config whose binding the call went through.
+	ConfigId     string `json:"config_id"`
+	ConnectionId string `json:"connection_id"`
+	ConnectorId  string `json:"connector_id"`
+
+	// ErrorType customer_auth: the provider refused the connection's credential, or it had none; reconnect it. external_server: the provider answered with a failure or could not be reached. client_timeout: the router stopped waiting before the provider answered, and nothing says it got the call. outcome_unknown: the call was sent and cut off, by the binding's timeout or an interrupted turn, so it may have been done. denied: the router refused it before anything was sent.
+	ErrorType *InvocationErrorType `json:"error_type,omitempty"`
+	Id        string               `json:"id"`
+
+	// LatencyMs From the call reaching the router to its answer, the router's own checks included.
+	LatencyMs int64 `json:"latency_ms"`
+
+	// SessionId The session that called it. Absent for an incognito session, whose calls are tied to no conversation.
+	SessionId *string   `json:"session_id,omitempty"`
+	StartedAt time.Time `json:"started_at"`
+
+	// Tool The tool's name at the provider, without the alias.
+	Tool string `json:"tool"`
+}
+
+// ConnectionInvocationPage defines model for ConnectionInvocationPage.
+type ConnectionInvocationPage struct {
+	HasMore bool                    `json:"has_more"`
+	Items   *[]ConnectionInvocation `json:"items"`
+
+	// NextCursor Pass as cursor for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // ConnectionOwner Whose a connection is: the app's, which any of its agents may be bound to, or one user's.
@@ -3310,6 +3623,14 @@ type ConnectionTools struct {
 	Tools  *[]ConnectionTool `json:"tools"`
 }
 
+// ConnectionUse defines model for ConnectionUse.
+type ConnectionUse struct {
+	// Binding The alias the config binds the connection under.
+	Binding    string `json:"binding"`
+	ConfigId   string `json:"config_id"`
+	ConfigName string `json:"config_name"`
+}
+
 // ConnectionValidation Whether a connection's credential works, found by asking the provider for its tools.
 type ConnectionValidation struct {
 	// CheckedAt When the tools were listed. Absent until a validate listed them.
@@ -3370,6 +3691,75 @@ type Connector struct {
 
 	// Scopes The scopes a consent asks for.
 	Scopes *[]string `json:"scopes"`
+
+	// Setup What a person does at the provider before the first consent.
+	Setup *ConnectorSetup `json:"setup,omitempty"`
+}
+
+// ConnectorAuditAction grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted.
+type ConnectorAuditAction string
+
+// ConnectorAuditEvent One grant a connection got, renewed or lost, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted.
+type ConnectorAuditEvent struct {
+	// Action grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted.
+	Action ConnectorAuditAction `json:"action"`
+
+	// AttemptId The authorization attempt a consent finished. Absent once the connection's user was deleted.
+	AttemptId *string `json:"attempt_id,omitempty"`
+
+	// ConnectionId The connection, which may since have been deleted.
+	ConnectionId string    `json:"connection_id"`
+	ConnectorId  string    `json:"connector_id"`
+	CreatedAt    time.Time `json:"created_at"`
+	Id           string    `json:"id"`
+
+	// OwnerType app is the app's own account, user one user's.
+	OwnerType ConnectionOwnerType `json:"owner_type"`
+
+	// Reason Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
+	Reason *string `json:"reason,omitempty"`
+
+	// RequestId The X-Request-Id of the API request that caused it. For a change a session's tool call caused, that is the request that created the session, not the one that asked for the turn. Absent for an incognito session's, and once the connection's user was deleted.
+	RequestId *string `json:"request_id,omitempty"`
+
+	// Revision The connection's credential revision once the change was made. Absent when the change names none, as a delete.
+	Revision *int64 `json:"revision,omitempty"`
+
+	// SessionId The session whose tool call caused it. Absent for an incognito session, and once the connection's user was deleted.
+	SessionId *string `json:"session_id,omitempty"`
+}
+
+// ConnectorAuditPage defines model for ConnectorAuditPage.
+type ConnectorAuditPage struct {
+	HasMore bool                   `json:"has_more"`
+	Items   *[]ConnectorAuditEvent `json:"items"`
+
+	// NextCursor Pass as cursor for the next page, with the same connection_id. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// ConnectorBindingEvent One MCP event a binding subscribes to on its fixed connection. Each one that arrives opens a text conversation from the config, as the app, with the event's data as the first thing said to it.
+type ConnectorBindingEvent struct {
+	// Arguments The event's filters, as its inputSchema describes them.
+	Arguments *map[string]interface{} `json:"arguments,omitempty"`
+
+	// Event The event's name, as the server's events/list gives it, such as issue.created.
+	Event string `json:"event"`
+
+	// Instructions What the agent does with the event when it arrives, added to its instructions for that conversation.
+	Instructions *string `json:"instructions,omitempty"`
+}
+
+// ConnectorBindingPolicy How a binding's tool calls behave around speech and interruptions. Every field is optional, and a field left out keeps today's behaviour.
+type ConnectorBindingPolicy struct {
+	// Cancellable Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running after an interruption, for a tool that is not safe to stop halfway, such as a payment; the binding's timeout still ends it and tells the provider to stop it. It only matters with on_interrupt cancel: a wait call is never stopped by an interruption.
+	Cancellable *bool `json:"cancellable,omitempty"`
+
+	// OnInterrupt cancel stops waiting for the call when the turn is interrupted, and tells the provider to stop it unless cancellable is false. wait lets the call finish, up to the binding's timeout, and its result goes into the conversation for the next turn.
+	OnInterrupt *ConnectorOnInterrupt `json:"on_interrupt,omitempty"`
+
+	// PreSpeech What the agent says while one of the binding's tools runs, such as "Let me pull up your calendar.", in place of the phrase it picks itself when the model reached for the tool without a word. A voice session with a separate voice says it; every session reports it on tool_started.
+	PreSpeech *string `json:"pre_speech,omitempty"`
 }
 
 // ConnectorClient How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint.
@@ -3393,7 +3783,7 @@ type ConnectorClientAuthMethod string
 // ConnectorClientRegistrationMethod operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
 type ConnectorClientRegistrationMethod string
 
-// ConnectorEventDestination A URL of the app's own that a connector's raw provider events are forwarded to, such as Slack's block_actions or reaction_added. Each forward is a POST of the provider's body as it came, with the provider's own Content-Type, signature and timestamp headers, signed on top in the Standard Webhooks shape (webhook-id, webhook-timestamp, webhook-signature) with the destination's own secret. A 2xx answer is taken; a 5xx, a 429 or no answer is sent again after 5 s, 5 min, 30 min and 2 h; any other answer is not sent again.
+// ConnectorEventDestination A URL of the app's own that a connector's raw provider events are forwarded to, such as Slack's block_actions or reaction_added. Each forward is a POST of the provider's body as it came, with the provider's own Content-Type, signature and timestamp headers, signed on top in the Standard Webhooks shape (webhook-id, webhook-timestamp, webhook-signature) with the destination's own secret. A 2xx answer is taken; a 5xx, a 429 or no answer is sent again after 5 s, 5 min, 30 min and 2 h; any other answer is not sent again. The provider's signature headers come only while the provider's own check would pass them: for Slack, until X-Slack-Request-Timestamp is 5 minutes old, the age Slack Bolt refuses after. A forward sent later, such as the retries after 5 min, 30 min and 2 h, carries Content-Type alone of them: verify it with webhook-signature. webhook-id is the same for every delivery of one provider event (Slack's event_id, or trigger_id for an interaction), and a digest of the body for one that names no id.
 type ConnectorEventDestination struct {
 	ConnectorId *string    `json:"connector_id,omitempty"`
 	CreatedAt   *time.Time `json:"created_at,omitempty"`
@@ -3430,7 +3820,7 @@ type ConnectorEventDestinationRequest struct {
 
 // ConnectorEventDestinationSecret An event destination and the secret its forwards are signed with, which no other response carries.
 type ConnectorEventDestinationSecret struct {
-	// Destination A URL of the app's own that a connector's raw provider events are forwarded to, such as Slack's block_actions or reaction_added. Each forward is a POST of the provider's body as it came, with the provider's own Content-Type, signature and timestamp headers, signed on top in the Standard Webhooks shape (webhook-id, webhook-timestamp, webhook-signature) with the destination's own secret. A 2xx answer is taken; a 5xx, a 429 or no answer is sent again after 5 s, 5 min, 30 min and 2 h; any other answer is not sent again.
+	// Destination A URL of the app's own that a connector's raw provider events are forwarded to, such as Slack's block_actions or reaction_added. Each forward is a POST of the provider's body as it came, with the provider's own Content-Type, signature and timestamp headers, signed on top in the Standard Webhooks shape (webhook-id, webhook-timestamp, webhook-signature) with the destination's own secret. A 2xx answer is taken; a 5xx, a 429 or no answer is sent again after 5 s, 5 min, 30 min and 2 h; any other answer is not sent again. The provider's signature headers come only while the provider's own check would pass them: for Slack, until X-Slack-Request-Timestamp is 5 minutes old, the age Slack Bolt refuses after. A forward sent later, such as the retries after 5 min, 30 min and 2 h, carries Content-Type alone of them: verify it with webhook-signature. webhook-id is the same for every delivery of one provider event (Slack's event_id, or trigger_id for an interaction), and a digest of the body for one that names no id.
 	Destination ConnectorEventDestination `json:"destination"`
 
 	// Secret The Standard Webhooks signing secret, whsec_ and 32 random bytes in base64. Shown this once: keep it, no later response carries it.
@@ -3453,18 +3843,23 @@ type ConnectorInput struct {
 	Pattern *string `json:"pattern,omitempty"`
 }
 
-// ConnectorOAuthClient The OAuth client the app registered with a connector's provider itself. The secret is write-only: no response carries it.
+// ConnectorOAuthClient The OAuth client the app registered with a connector's provider itself. The client secret and the signing secret are write-only: no response carries them.
 type ConnectorOAuthClient struct {
 	// AuthMethod How the app's own OAuth client authenticates at the token endpoint (RFC 7591 section 2): none for a public client, which has no secret, client_secret_basic or client_secret_post.
-	AuthMethod  *ConnectorOAuthClientAuthMethod `json:"auth_method,omitempty"`
-	ClientId    string                          `json:"client_id"`
-	ConnectorId *string                         `json:"connector_id,omitempty"`
-	CreatedAt   *time.Time                      `json:"created_at,omitempty"`
+	AuthMethod *ConnectorOAuthClientAuthMethod `json:"auth_method,omitempty"`
+
+	// ClientId Empty for a provider app put without an OAuth client, such as a Linq account.
+	ClientId    string     `json:"client_id"`
+	ConnectorId *string    `json:"connector_id,omitempty"`
+	CreatedAt   *time.Time `json:"created_at,omitempty"`
+
+	// ProviderAppId The provider's id for the app the client belongs to, as put. Absent when none was put.
+	ProviderAppId *string `json:"provider_app_id,omitempty"`
 
 	// Registration operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
 	Registration ConnectorClientRegistrationMethod `json:"registration"`
 
-	// UpdatedAt When the client, its secret or its method last changed.
+	// UpdatedAt When the client, its secrets or its method last changed.
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
@@ -3475,11 +3870,22 @@ type ConnectorOAuthClientAuthMethod string
 type ConnectorOAuthClientRequest struct {
 	// AuthMethod How the app's own OAuth client authenticates at the token endpoint (RFC 7591 section 2): none for a public client, which has no secret, client_secret_basic or client_secret_post.
 	AuthMethod *ConnectorOAuthClientAuthMethod `json:"auth_method,omitempty"`
-	ClientId   string                          `json:"client_id"`
+
+	// ClientId Required, unless the record is only a provider app: provider_app_id and signing_secret without client_secret or auth_method, for a connector whose connections are not consented through oauth2_code, such as linq.
+	ClientId *string `json:"client_id,omitempty"`
 
 	// ClientSecret Sealed at rest and never returned. Left out for a public client (auth_method none).
 	ClientSecret *string `json:"client_secret,omitempty"`
+
+	// ProviderAppId The provider's id for the app the client belongs to, such as a Slack app id (A012ABCD0A0). The app's events then reach POST /v1/connectors/events/{id}/{provider_app_id}. An app serves one customer: another customer's record naming it is a 409.
+	ProviderAppId *string `json:"provider_app_id,omitempty"`
+
+	// SigningSecret The secret the provider signs the app's events with, such as a Slack app's signing secret. Needs provider_app_id, and a connector whose events are verified with the app's own secret (channel.verifier.secret provider_app). Sealed at rest and never returned. Putting the client again without it removes it, as it does client_secret.
+	SigningSecret *string `json:"signing_secret,omitempty"`
 }
+
+// ConnectorOnInterrupt cancel stops waiting for the call when the turn is interrupted, and tells the provider to stop it unless cancellable is false. wait lets the call finish, up to the binding's timeout, and its result goes into the conversation for the next turn.
+type ConnectorOnInterrupt string
 
 // ConnectorPage defines model for ConnectorPage.
 type ConnectorPage struct {
@@ -3515,6 +3921,21 @@ type ConnectorProviderAppRequest struct {
 
 	// Name The app's name in the customer's workspace.
 	Name string `json:"name"`
+}
+
+// ConnectorSetup What a person does at the provider before the first consent.
+type ConnectorSetup struct {
+	// Steps In order.
+	Steps []ConnectorSetupStep `json:"steps"`
+
+	// Url Where the steps start, a page of the provider's.
+	Url *string `json:"url,omitempty"`
+}
+
+// ConnectorSetupStep One step of a provider's setup.
+type ConnectorSetupStep struct {
+	Description string `json:"description"`
+	Title       string `json:"title"`
 }
 
 // ConnectorToolGrant One tool a binding allows.
@@ -3614,6 +4035,9 @@ type CreateSessionRequest struct {
 	// ConfigId An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
 	ConfigId *string `json:"config_id,omitempty"`
 
+	// ConnectorBindings The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A required binding left without one fails the session; an optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.
+	ConnectorBindings *[]SessionConnectorBinding `json:"connector_bindings,omitempty"`
+
 	// ContextTruncated Older history was omitted from the model context.
 	ContextTruncated *bool `json:"context_truncated,omitempty"`
 
@@ -3636,7 +4060,9 @@ type CreateSessionRequest struct {
 	Id *string `json:"id,omitempty"`
 
 	// Incognito Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
-	Incognito    *bool   `json:"incognito,omitempty"`
+	Incognito *bool `json:"incognito,omitempty"`
+
+	// Instructions The system prompt, over what the config says. Server-side only: a device sending it is refused with a 403, as it is on updateSession, because what the agent is told to be is the backend's to decide.
 	Instructions *string `json:"instructions,omitempty"`
 
 	// Keyterms Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
@@ -3831,7 +4257,7 @@ type Equals1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -3863,7 +4289,9 @@ type ForkSessionRequest struct {
 	Description *string                 `json:"description,omitempty"`
 
 	// Incognito Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept.
-	Incognito    *bool   `json:"incognito,omitempty"`
+	Incognito *bool `json:"incognito,omitempty"`
+
+	// Instructions Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession.
 	Instructions *string `json:"instructions,omitempty"`
 
 	// Messages Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants.
@@ -4139,6 +4567,9 @@ type InputParts struct {
 type InstructionsRequest struct {
 	Instructions string `json:"instructions"`
 }
+
+// InvocationErrorType customer_auth: the provider refused the connection's credential, or it had none; reconnect it. external_server: the provider answered with a failure or could not be reached. client_timeout: the router stopped waiting before the provider answered, and nothing says it got the call. outcome_unknown: the call was sent and cut off, by the binding's timeout or an interrupted turn, so it may have been done. denied: the router refused it before anything was sent.
+type InvocationErrorType string
 
 // KnowledgeDocument defines model for KnowledgeDocument.
 type KnowledgeDocument struct {
@@ -5231,6 +5662,15 @@ type Session struct {
 	Voice *string `json:"voice,omitempty"`
 }
 
+// SessionConnectorBinding The connection a session uses for one of its agent config's connector bindings chosen per session. Only a reference: the credential stays sealed on the connection.
+type SessionConnectorBinding struct {
+	// ConnectionId The caller's own connection to the binding's connector.
+	ConnectionId string `json:"connection_id"`
+
+	// Name The binding's alias in the agent config.
+	Name string `json:"name"`
+}
+
 // SessionFilter Which sessions to list. A field not listed here is refused rather than ignored.
 type SessionFilter struct {
 	// Agent Matches one value exactly: "value" is short for {"$eq": "value"}.
@@ -6038,8 +6478,14 @@ type SyncAgentRequest struct {
 	// AgentPlugins Plugins the agent reaches with the app's own login: a catalog id, or an object naming it with how it is reached.
 	AgentPlugins *[]PluginEntry `json:"agent_plugins,omitempty"`
 
+	// BaseChange The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again.
+	BaseChange *string `json:"base_change,omitempty"`
+
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
+
+	// CheckChanges Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants.
+	CheckChanges *bool `json:"check_changes,omitempty"`
 
 	// Connectors The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone.
 	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
@@ -6075,6 +6521,9 @@ type SyncAgentRequest struct {
 
 	// PluginEvents MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+
+	// ProgressiveTools Whether plugin, MCP server and connector tools are offered by a summary, the first call to each returning its full description and input schema instead of running it.
+	ProgressiveTools *bool `json:"progressive_tools,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -6926,6 +7375,27 @@ type DeleteConnectionParams struct {
 	Force *bool `form:"force,omitempty" json:"force,omitempty"`
 }
 
+// ListConnectionInvocationsParams defines parameters for ListConnectionInvocations.
+type ListConnectionInvocationsParams struct {
+	// Limit Up to 200. Omitted is 25.
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListConnectorAuditParams defines parameters for ListConnectorAudit.
+type ListConnectorAuditParams struct {
+	// ConnectionId Keeps one connection's rows, deleted or not.
+	ConnectionId *string `form:"connection_id,omitempty" json:"connection_id,omitempty"`
+
+	// Limit Up to 200. Omitted is 25.
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // ListConnectorsParams defines parameters for ListConnectors.
 type ListConnectorsParams struct {
 	// Q Keeps the connectors whose id, name, category or description holds this, ignoring case.
@@ -6980,10 +7450,12 @@ type ListKnowledgeUrlsParams struct {
 
 // ListAgentLogsParams defines parameters for ListAgentLogs.
 type ListAgentLogsParams struct {
-	ConfigId  *string                      `form:"config_id,omitempty" json:"config_id,omitempty"`
-	SessionId *string                      `form:"session_id,omitempty" json:"session_id,omitempty"`
-	UserId    *string                      `form:"user_id,omitempty" json:"user_id,omitempty"`
-	Severity  *ListAgentLogsParamsSeverity `form:"severity,omitempty" json:"severity,omitempty"`
+	ConfigId  *string `form:"config_id,omitempty" json:"config_id,omitempty"`
+	SessionId *string `form:"session_id,omitempty" json:"session_id,omitempty"`
+	UserId    *string `form:"user_id,omitempty" json:"user_id,omitempty"`
+
+	// Severity The least serious level to show, not the only one: warn is warnings and errors.
+	Severity *ListAgentLogsParamsSeverity `form:"severity,omitempty" json:"severity,omitempty"`
 
 	// Source Comma-separated user/agent/tool/system sources.
 	Source *string    `form:"source,omitempty" json:"source,omitempty"`
@@ -6999,10 +7471,12 @@ type ListAgentLogsParamsSeverity string
 
 // StreamAgentLogsParams defines parameters for StreamAgentLogs.
 type StreamAgentLogsParams struct {
-	ConfigId  *string                        `form:"config_id,omitempty" json:"config_id,omitempty"`
-	SessionId *string                        `form:"session_id,omitempty" json:"session_id,omitempty"`
-	UserId    *string                        `form:"user_id,omitempty" json:"user_id,omitempty"`
-	Severity  *StreamAgentLogsParamsSeverity `form:"severity,omitempty" json:"severity,omitempty"`
+	ConfigId  *string `form:"config_id,omitempty" json:"config_id,omitempty"`
+	SessionId *string `form:"session_id,omitempty" json:"session_id,omitempty"`
+	UserId    *string `form:"user_id,omitempty" json:"user_id,omitempty"`
+
+	// Severity The least serious level to show, not the only one: warn is warnings and errors.
+	Severity *StreamAgentLogsParamsSeverity `form:"severity,omitempty" json:"severity,omitempty"`
 
 	// Source Comma-separated user/agent/tool/system sources.
 	Source      *string    `form:"source,omitempty" json:"source,omitempty"`
@@ -7365,6 +7839,9 @@ type PreviewVoiceJSONRequestBody = VoicePreviewRequest
 
 // AddVoiceSampleJSONRequestBody defines body for AddVoiceSample for application/json ContentType.
 type AddVoiceSampleJSONRequestBody = VoiceSampleRequest
+
+// QueryAuditJSONRequestBody defines body for QueryAudit for application/json ContentType.
+type QueryAuditJSONRequestBody = AuditQuery
 
 // ClassifyJSONRequestBody defines body for Classify for application/json ContentType.
 type ClassifyJSONRequestBody = ClassifyRequest
@@ -8087,6 +8564,17 @@ type ClientInterface interface {
 	// Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
 	UpdateAgentConfig(ctx context.Context, id string, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetAgentChanges What was changed about an agent since its directory was last synced
+	//
+	// The edits a sync of the agent's directory would write over: everything changed about the agent, its skills and its knowledge since the last sync, newest first. An agent nobody has touched since answers with an empty list.
+	//
+	// This is what a sync refused with `unsynced_changes` is asking about. Show the changes, let the person decide, and sync again with `base_change` set to `last_change` to say they have been seen -- having either written them into the directory first, or chosen to write over them.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/configs/{id}/changes (the `GetAgentChanges` operationId).
+	GetAgentChanges(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListConfigPlugins The plugin logins this agent holds
 	//
 	// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
@@ -8228,6 +8716,15 @@ type ClientInterface interface {
 	// Corresponds with PUT /v1/agents/connections/{id}/credentials (the `PutConnectionCredentials` operationId).
 	PutConnectionCredentials(ctx context.Context, id string, body PutConnectionCredentialsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListConnectionInvocations List a connection's tool calls
+	//
+	// Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, and an incognito session's calls name no session. Who may read them is who may read the connection.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/connections/{id}/invocations (the `ListConnectionInvocations` operationId).
+	ListConnectionInvocations(ctx context.Context, id string, params *ListConnectionInvocationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListConnectionTools List a connection's tools
 	//
 	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
@@ -8258,6 +8755,15 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/connections/{id}/validate (the `ValidateConnection` operationId).
 	ValidateConnection(ctx context.Context, id string, body ValidateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListConnectorAudit List the connector audit
+	//
+	// Every grant the app's connections got, renewed or lost, newest first, with the request, session and authorization attempt that caused each. A deleted connection's rows stay, and its deletion is one of them.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/connector-audit (the `ListConnectorAudit` operationId).
+	ListConnectorAudit(ctx context.Context, params *ListConnectorAuditParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListConnectors List or search connectors
 	//
@@ -8387,7 +8893,7 @@ type ClientInterface interface {
 
 	// SetConnectorOAuthClientWithBody Set the app's own OAuth client for a connector
 	//
-	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -8398,7 +8904,7 @@ type ClientInterface interface {
 
 	// SetConnectorOAuthClient Set the app's own OAuth client for a connector
 	//
-	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -8420,6 +8926,8 @@ type ClientInterface interface {
 	//
 	// Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
 	//
+	// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
@@ -8430,6 +8938,8 @@ type ClientInterface interface {
 	// SetConnectorProviderApp Create or update the app the router keeps at the connector's provider
 	//
 	// Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
+	//
+	// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -8726,7 +9236,7 @@ type ClientInterface interface {
 	//
 	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
-	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -8741,7 +9251,7 @@ type ClientInterface interface {
 	//
 	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
-	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -8913,7 +9423,7 @@ type ClientInterface interface {
 	// SetSessionSettingsWithBody Change the models and voice of one running session
 	//
 	// Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
-	// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
+	// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -8923,7 +9433,7 @@ type ClientInterface interface {
 	// SetSessionSettings Change the models and voice of one running session
 	//
 	// Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
-	// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
+	// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -9095,6 +9605,8 @@ type ClientInterface interface {
 	//
 	// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
 	//
+	// A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
@@ -9110,12 +9622,25 @@ type ClientInterface interface {
 	//
 	// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
 	//
+	// A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 	SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteUserConnections Delete every connection of one user
+	//
+	// For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. The provider is not asked to revoke what it issued. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
+	//
+	// It deletes connections, not sessions: the tool calls and audit rows of the app's own connections keep the ids of the user's sessions that caused them. Delete those sessions too, and each id names a session that no longer exists.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/agents/users/{user_id}/connections (the `DeleteUserConnections` operationId).
+	DeleteUserConnections(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// TruncateMemories Delete everything remembered about one user
 	//
@@ -9265,6 +9790,32 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
 	AddVoiceSample(ctx context.Context, id string, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// QueryAuditWithBody List the changes made to the app's configuration
+	//
+	// Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+	//
+	// What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
+	QueryAuditWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// QueryAudit List the changes made to the app's configuration
+	//
+	// Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+	//
+	// What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
+	QueryAudit(ctx context.Context, body QueryAuditJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ClassifyWithBody Ask a classifier typed questions about a piece of text
 	//
 	// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
@@ -9293,6 +9844,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/connectors/events/{connector_id}/{provider_app_id} (the `ReceiveProviderAppEvent` operationId).
 	ReceiveProviderAppEvent(ctx context.Context, connectorId string, providerAppId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReceiveConnectionEvent Receive a connection's MCP event
+	//
+	// Where a connection's MCP server delivers the events an agent config's binding subscribed to, signed with Standard Webhooks (MCP Events, a draft). The path is unauthenticated because the server is not a customer: the token names the subscription, and each delivery is checked against that subscription's own secret, never a provider app's. A verification is answered with its challenge, and an event opens a text conversation from the config.
+	//
+	// Corresponds with POST /v1/connectors/mcp-events/{token} (the `ReceiveConnectionEvent` operationId).
+	ReceiveConnectionEvent(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListDataChanges What has happened to this app's rows since a cursor
 	//
@@ -9357,6 +9915,8 @@ type ClientInterface interface {
 	// SetOperatorProviderApp Make Stream's own app a customer's provider app
 	//
 	// Records this deployment's own app for a built-in connector, as its environment holds it (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the customer's provider app, so its events reach that customer. One customer per app: another customer's record of it is a conflict.
+	//
+	// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 	//
 	// Stream staff only: it needs the ops key.
 	//
@@ -10782,6 +11342,27 @@ func (c *Client) UpdateAgentConfig(ctx context.Context, id string, body UpdateAg
 	return c.Client.Do(req)
 }
 
+// GetAgentChanges What was changed about an agent since its directory was last synced
+//
+// The edits a sync of the agent's directory would write over: everything changed about the agent, its skills and its knowledge since the last sync, newest first. An agent nobody has touched since answers with an empty list.
+//
+// This is what a sync refused with `unsynced_changes` is asking about. Show the changes, let the person decide, and sync again with `base_change` set to `last_change` to say they have been seen -- having either written them into the directory first, or chosen to write over them.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/configs/{id}/changes (the `GetAgentChanges` operationId).
+func (c *Client) GetAgentChanges(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAgentChangesRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListConfigPlugins The plugin logins this agent holds
 //
 // The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
@@ -11073,6 +11654,25 @@ func (c *Client) PutConnectionCredentials(ctx context.Context, id string, body P
 	return c.Client.Do(req)
 }
 
+// ListConnectionInvocations List a connection's tool calls
+//
+// Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, and an incognito session's calls name no session. Who may read them is who may read the connection.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/connections/{id}/invocations (the `ListConnectionInvocations` operationId).
+func (c *Client) ListConnectionInvocations(ctx context.Context, id string, params *ListConnectionInvocationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListConnectionInvocationsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListConnectionTools List a connection's tools
 //
 // The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
@@ -11124,6 +11724,25 @@ func (c *Client) ValidateConnectionWithBody(ctx context.Context, id string, cont
 // Corresponds with POST /v1/agents/connections/{id}/validate (the `ValidateConnection` operationId).
 func (c *Client) ValidateConnection(ctx context.Context, id string, body ValidateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewValidateConnectionRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListConnectorAudit List the connector audit
+//
+// Every grant the app's connections got, renewed or lost, newest first, with the request, session and authorization attempt that caused each. A deleted connection's rows stay, and its deletion is one of them.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/connector-audit (the `ListConnectorAudit` operationId).
+func (c *Client) ListConnectorAudit(ctx context.Context, params *ListConnectorAuditParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListConnectorAuditRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -11402,7 +12021,7 @@ func (c *Client) DeleteConnectorOAuthClient(ctx context.Context, id string, reqE
 
 // SetConnectorOAuthClientWithBody Set the app's own OAuth client for a connector
 //
-// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -11423,7 +12042,7 @@ func (c *Client) SetConnectorOAuthClientWithBody(ctx context.Context, id string,
 
 // SetConnectorOAuthClient Set the app's own OAuth client for a connector
 //
-// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -11465,6 +12084,8 @@ func (c *Client) DeleteConnectorProviderApp(ctx context.Context, id string, reqE
 //
 // Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
 //
+// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
@@ -11485,6 +12106,8 @@ func (c *Client) SetConnectorProviderAppWithBody(ctx context.Context, id string,
 // SetConnectorProviderApp Create or update the app the router keeps at the connector's provider
 //
 // Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
+//
+// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -12111,7 +12734,7 @@ func (c *Client) GetSession(ctx context.Context, id string, reqEditors ...Reques
 //
 // A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
-// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes any type of body and a specified content type.
 //
@@ -12136,7 +12759,7 @@ func (c *Client) UpdateSessionWithBody(ctx context.Context, id string, contentTy
 //
 // A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
-// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -12498,7 +13121,7 @@ func (c *Client) SaySession(ctx context.Context, id string, body SaySessionJSONR
 // SetSessionSettingsWithBody Change the models and voice of one running session
 //
 // Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
-// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
+// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native.
 //
 // Takes any type of body and a specified content type.
 //
@@ -12518,7 +13141,7 @@ func (c *Client) SetSessionSettingsWithBody(ctx context.Context, id string, cont
 // SetSessionSettings Change the models and voice of one running session
 //
 // Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
-// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
+// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -12900,6 +13523,8 @@ func (c *Client) UpdateSkill(ctx context.Context, id string, body UpdateSkillJSO
 //
 // knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
 //
+// A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
@@ -12925,6 +13550,8 @@ func (c *Client) SyncAgentWithBody(ctx context.Context, contentType string, body
 //
 // knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
 //
+// A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type.
@@ -12932,6 +13559,27 @@ func (c *Client) SyncAgentWithBody(ctx context.Context, contentType string, body
 // Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 func (c *Client) SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSyncAgentRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteUserConnections Delete every connection of one user
+//
+// For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. The provider is not asked to revoke what it issued. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
+//
+// It deletes connections, not sessions: the tool calls and audit rows of the app's own connections keep the ids of the user's sessions that caused them. Delete those sessions too, and each id names a session that no longer exists.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/agents/users/{user_id}/connections (the `DeleteUserConnections` operationId).
+func (c *Client) DeleteUserConnections(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteUserConnectionsRequest(c.Server, userId)
 	if err != nil {
 		return nil, err
 	}
@@ -13260,6 +13908,52 @@ func (c *Client) AddVoiceSample(ctx context.Context, id string, body AddVoiceSam
 	return c.Client.Do(req)
 }
 
+// QueryAuditWithBody List the changes made to the app's configuration
+//
+// Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+//
+// What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
+func (c *Client) QueryAuditWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewQueryAuditRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// QueryAudit List the changes made to the app's configuration
+//
+// Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+//
+// What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
+func (c *Client) QueryAudit(ctx context.Context, body QueryAuditJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewQueryAuditRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ClassifyWithBody Ask a classifier typed questions about a piece of text
 //
 // The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
@@ -13309,6 +14003,23 @@ func (c *Client) Classify(ctx context.Context, body ClassifyJSONRequestBody, req
 // Corresponds with POST /v1/connectors/events/{connector_id}/{provider_app_id} (the `ReceiveProviderAppEvent` operationId).
 func (c *Client) ReceiveProviderAppEvent(ctx context.Context, connectorId string, providerAppId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReceiveProviderAppEventRequest(c.Server, connectorId, providerAppId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReceiveConnectionEvent Receive a connection's MCP event
+//
+// Where a connection's MCP server delivers the events an agent config's binding subscribed to, signed with Standard Webhooks (MCP Events, a draft). The path is unauthenticated because the server is not a customer: the token names the subscription, and each delivery is checked against that subscription's own secret, never a provider app's. A verification is answered with its challenge, and an event opens a text conversation from the config.
+//
+// Corresponds with POST /v1/connectors/mcp-events/{token} (the `ReceiveConnectionEvent` operationId).
+func (c *Client) ReceiveConnectionEvent(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReceiveConnectionEventRequest(c.Server, token)
 	if err != nil {
 		return nil, err
 	}
@@ -13442,6 +14153,8 @@ func (c *Client) DeleteOperatorProviderApp(ctx context.Context, customerId strin
 // SetOperatorProviderApp Make Stream's own app a customer's provider app
 //
 // Records this deployment's own app for a built-in connector, as its environment holds it (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the customer's provider app, so its events reach that customer. One customer per app: another customer's record of it is a conflict.
+//
+// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 //
 // Stream staff only: it needs the ops key.
 //
@@ -16220,6 +16933,40 @@ func NewUpdateAgentConfigRequestWithBody(server string, id string, contentType s
 	return req, nil
 }
 
+// NewGetAgentChangesRequest constructs an http.Request for the GetAgentChanges method
+func NewGetAgentChangesRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/configs/%s/changes", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListConfigPluginsRequest constructs an http.Request for the ListConfigPlugins method
 func NewListConfigPluginsRequest(server string, id string) (*http.Request, error) {
 	var err error
@@ -16746,6 +17493,79 @@ func NewPutConnectionCredentialsRequestWithBody(server string, id string, conten
 	return req, nil
 }
 
+// NewListConnectionInvocationsRequest constructs an http.Request for the ListConnectionInvocations method
+func NewListConnectionInvocationsRequest(server string, id string, params *ListConnectionInvocationsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connections/%s/invocations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListConnectionToolsRequest constructs an http.Request for the ListConnectionTools method
 func NewListConnectionToolsRequest(server string, id string) (*http.Request, error) {
 	var err error
@@ -16823,6 +17643,84 @@ func NewValidateConnectionRequestWithBody(server string, id string, contentType 
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListConnectorAuditRequest constructs an http.Request for the ListConnectorAudit method
+func NewListConnectorAuditRequest(server string, params *ListConnectorAuditParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connector-audit")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.ConnectionId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "connection_id", *params.ConnectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -20246,6 +21144,40 @@ func NewSyncAgentRequestWithBody(server string, contentType string, body io.Read
 	return req, nil
 }
 
+// NewDeleteUserConnectionsRequest constructs an http.Request for the DeleteUserConnections method
+func NewDeleteUserConnectionsRequest(server string, userId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "user_id", userId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/users/%s/connections", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewTruncateMemoriesRequest constructs an http.Request for the TruncateMemories method
 func NewTruncateMemoriesRequest(server string, userId string) (*http.Request, error) {
 	var err error
@@ -20725,6 +21657,46 @@ func NewAddVoiceSampleRequestWithBody(server string, id string, contentType stri
 	return req, nil
 }
 
+// NewQueryAuditRequest calls the generic QueryAudit builder with application/json body
+func NewQueryAuditRequest(server string, body QueryAuditJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewQueryAuditRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewQueryAuditRequestWithBody constructs an http.Request for the QueryAudit method, with any body, and a specified content type
+func NewQueryAuditRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/audit/query")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewClassifyRequest calls the generic Classify builder with application/json body
 func NewClassifyRequest(server string, body ClassifyJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -20789,6 +21761,40 @@ func NewReceiveProviderAppEventRequest(server string, connectorId string, provid
 	}
 
 	operationPath := fmt.Sprintf("/v1/connectors/events/%s/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReceiveConnectionEventRequest constructs an http.Request for the ReceiveConnectionEvent method
+func NewReceiveConnectionEventRequest(server string, token string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "token", token, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/connectors/mcp-events/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -24238,6 +25244,19 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
 	UpdateAgentConfigWithResponse(ctx context.Context, id string, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAgentConfigResponse, error)
 
+	// GetAgentChangesWithResponse What was changed about an agent since its directory was last synced
+	//
+	// The edits a sync of the agent's directory would write over: everything changed about the agent, its skills and its knowledge since the last sync, newest first. An agent nobody has touched since answers with an empty list.
+	//
+	// This is what a sync refused with `unsynced_changes` is asking about. Show the changes, let the person decide, and sync again with `base_change` set to `last_change` to say they have been seen -- having either written them into the directory first, or chosen to write over them.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/configs/{id}/changes (the `GetAgentChanges` operationId).
+	GetAgentChangesWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAgentChangesResponse, error)
+
 	// ListConfigPluginsWithResponse The plugin logins this agent holds
 	//
 	// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
@@ -24393,6 +25412,17 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /v1/agents/connections/{id}/credentials (the `PutConnectionCredentials` operationId).
 	PutConnectionCredentialsWithResponse(ctx context.Context, id string, body PutConnectionCredentialsJSONRequestBody, reqEditors ...RequestEditorFn) (*PutConnectionCredentialsResponse, error)
 
+	// ListConnectionInvocationsWithResponse List a connection's tool calls
+	//
+	// Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, and an incognito session's calls name no session. Who may read them is who may read the connection.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/connections/{id}/invocations (the `ListConnectionInvocations` operationId).
+	ListConnectionInvocationsWithResponse(ctx context.Context, id string, params *ListConnectionInvocationsParams, reqEditors ...RequestEditorFn) (*ListConnectionInvocationsResponse, error)
+
 	// ListConnectionToolsWithResponse List a connection's tools
 	//
 	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
@@ -24425,6 +25455,17 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/connections/{id}/validate (the `ValidateConnection` operationId).
 	ValidateConnectionWithResponse(ctx context.Context, id string, body ValidateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*ValidateConnectionResponse, error)
+
+	// ListConnectorAuditWithResponse List the connector audit
+	//
+	// Every grant the app's connections got, renewed or lost, newest first, with the request, session and authorization attempt that caused each. A deleted connection's rows stay, and its deletion is one of them.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/connector-audit (the `ListConnectorAudit` operationId).
+	ListConnectorAuditWithResponse(ctx context.Context, params *ListConnectorAuditParams, reqEditors ...RequestEditorFn) (*ListConnectorAuditResponse, error)
 
 	// ListConnectorsWithResponse List or search connectors
 	//
@@ -24574,7 +25615,7 @@ type ClientWithResponsesInterface interface {
 
 	// SetConnectorOAuthClientWithBodyWithResponse Set the app's own OAuth client for a connector
 	//
-	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -24585,7 +25626,7 @@ type ClientWithResponsesInterface interface {
 
 	// SetConnectorOAuthClientWithResponse Set the app's own OAuth client for a connector
 	//
-	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -24609,6 +25650,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
 	//
+	// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -24619,6 +25662,8 @@ type ClientWithResponsesInterface interface {
 	// SetConnectorProviderAppWithResponse Create or update the app the router keeps at the connector's provider
 	//
 	// Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
+	//
+	// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -24955,7 +26000,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
-	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -24970,7 +26015,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
-	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -25154,7 +26199,7 @@ type ClientWithResponsesInterface interface {
 	// SetSessionSettingsWithBodyWithResponse Change the models and voice of one running session
 	//
 	// Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
-	// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
+	// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -25164,7 +26209,7 @@ type ClientWithResponsesInterface interface {
 	// SetSessionSettingsWithResponse Change the models and voice of one running session
 	//
 	// Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
-	// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
+	// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -25360,6 +26405,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
 	//
+	// A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -25375,12 +26422,27 @@ type ClientWithResponsesInterface interface {
 	//
 	// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
 	//
+	// A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 	SyncAgentWithResponse(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*SyncAgentResponse, error)
+
+	// DeleteUserConnectionsWithResponse Delete every connection of one user
+	//
+	// For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. The provider is not asked to revoke what it issued. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
+	//
+	// It deletes connections, not sessions: the tool calls and audit rows of the app's own connections keep the ids of the user's sessions that caused them. Delete those sessions too, and each id names a session that no longer exists.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/users/{user_id}/connections (the `DeleteUserConnections` operationId).
+	DeleteUserConnectionsWithResponse(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*DeleteUserConnectionsResponse, error)
 
 	// TruncateMemoriesWithResponse Delete everything remembered about one user
 	//
@@ -25544,6 +26606,32 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
 	AddVoiceSampleWithResponse(ctx context.Context, id string, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*AddVoiceSampleResponse, error)
 
+	// QueryAuditWithBodyWithResponse List the changes made to the app's configuration
+	//
+	// Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+	//
+	// What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
+	QueryAuditWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*QueryAuditResponse, error)
+
+	// QueryAuditWithResponse List the changes made to the app's configuration
+	//
+	// Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+	//
+	// What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
+	QueryAuditWithResponse(ctx context.Context, body QueryAuditJSONRequestBody, reqEditors ...RequestEditorFn) (*QueryAuditResponse, error)
+
 	// ClassifyWithBodyWithResponse Ask a classifier typed questions about a piece of text
 	//
 	// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
@@ -25574,6 +26662,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/connectors/events/{connector_id}/{provider_app_id} (the `ReceiveProviderAppEvent` operationId).
 	ReceiveProviderAppEventWithResponse(ctx context.Context, connectorId string, providerAppId string, reqEditors ...RequestEditorFn) (*ReceiveProviderAppEventResponse, error)
+
+	// ReceiveConnectionEventWithResponse Receive a connection's MCP event
+	//
+	// Where a connection's MCP server delivers the events an agent config's binding subscribed to, signed with Standard Webhooks (MCP Events, a draft). The path is unauthenticated because the server is not a customer: the token names the subscription, and each delivery is checked against that subscription's own secret, never a provider app's. A verification is answered with its challenge, and an event opens a text conversation from the config.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/connectors/mcp-events/{token} (the `ReceiveConnectionEvent` operationId).
+	ReceiveConnectionEventWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceiveConnectionEventResponse, error)
 
 	// ListDataChangesWithResponse What has happened to this app's rows since a cursor
 	//
@@ -25644,6 +26741,8 @@ type ClientWithResponsesInterface interface {
 	// SetOperatorProviderAppWithResponse Make Stream's own app a customer's provider app
 	//
 	// Records this deployment's own app for a built-in connector, as its environment holds it (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the customer's provider app, so its events reach that customer. One customer per app: another customer's record of it is a conflict.
+	//
+	// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 	//
 	// Stream staff only: it needs the ops key.
 	//
@@ -28470,6 +29569,82 @@ func (r UpdateAgentConfigResponse) ContentType() string {
 	return ""
 }
 
+type GetAgentChangesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AgentChanges
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAgentChangesResponse) GetJSON200() *AgentChanges {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetAgentChangesResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetAgentChangesResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetAgentChangesResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetAgentChangesResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetAgentChangesResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAgentChangesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAgentChangesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAgentChangesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAgentChangesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListConfigPluginsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -29285,6 +30460,82 @@ func (r PutConnectionCredentialsResponse) ContentType() string {
 	return ""
 }
 
+type ListConnectionInvocationsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectionInvocationPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListConnectionInvocationsResponse) GetJSON200() *ConnectionInvocationPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListConnectionInvocationsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListConnectionInvocationsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListConnectionInvocationsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListConnectionInvocationsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListConnectionInvocationsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListConnectionInvocationsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListConnectionInvocationsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListConnectionInvocationsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListConnectionInvocationsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListConnectionToolsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -29431,6 +30682,75 @@ func (r ValidateConnectionResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ValidateConnectionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListConnectorAuditResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorAuditPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListConnectorAuditResponse) GetJSON200() *ConnectorAuditPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListConnectorAuditResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListConnectorAuditResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListConnectorAuditResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListConnectorAuditResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListConnectorAuditResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListConnectorAuditResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListConnectorAuditResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListConnectorAuditResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -34473,6 +35793,8 @@ type SyncAgentResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 }
@@ -34495,6 +35817,11 @@ func (r SyncAgentResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r SyncAgentResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r SyncAgentResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -34525,6 +35852,68 @@ func (r SyncAgentResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r SyncAgentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteUserConnectionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteUserConnectionsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteUserConnectionsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteUserConnectionsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteUserConnectionsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteUserConnectionsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteUserConnectionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteUserConnectionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteUserConnectionsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -35394,6 +36783,75 @@ func (r AddVoiceSampleResponse) ContentType() string {
 	return ""
 }
 
+type QueryAuditResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AuditPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r QueryAuditResponse) GetJSON200() *AuditPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r QueryAuditResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r QueryAuditResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r QueryAuditResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r QueryAuditResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r QueryAuditResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r QueryAuditResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r QueryAuditResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r QueryAuditResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ClassifyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -35512,6 +36970,47 @@ func (r ReceiveProviderAppEventResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ReceiveProviderAppEventResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReceiveConnectionEventResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ReceiveConnectionEventResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ReceiveConnectionEventResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReceiveConnectionEventResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReceiveConnectionEventResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReceiveConnectionEventResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -35908,6 +37407,8 @@ type SetOperatorProviderAppResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35943,6 +37444,11 @@ func (r SetOperatorProviderAppResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r SetOperatorProviderAppResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SetOperatorProviderAppResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -40965,6 +42471,25 @@ func (c *ClientWithResponses) UpdateAgentConfigWithResponse(ctx context.Context,
 	return ParseUpdateAgentConfigResponse(rsp)
 }
 
+// GetAgentChangesWithResponse What was changed about an agent since its directory was last synced
+//
+// The edits a sync of the agent's directory would write over: everything changed about the agent, its skills and its knowledge since the last sync, newest first. An agent nobody has touched since answers with an empty list.
+//
+// This is what a sync refused with `unsynced_changes` is asking about. Show the changes, let the person decide, and sync again with `base_change` set to `last_change` to say they have been seen -- having either written them into the directory first, or chosen to write over them.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/configs/{id}/changes (the `GetAgentChanges` operationId).
+func (c *ClientWithResponses) GetAgentChangesWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAgentChangesResponse, error) {
+	rsp, err := c.GetAgentChanges(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAgentChangesResponse(rsp)
+}
+
 // ListConfigPluginsWithResponse The plugin logins this agent holds
 //
 // The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
@@ -41210,6 +42735,23 @@ func (c *ClientWithResponses) PutConnectionCredentialsWithResponse(ctx context.C
 	return ParsePutConnectionCredentialsResponse(rsp)
 }
 
+// ListConnectionInvocationsWithResponse List a connection's tool calls
+//
+// Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, and an incognito session's calls name no session. Who may read them is who may read the connection.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/connections/{id}/invocations (the `ListConnectionInvocations` operationId).
+func (c *ClientWithResponses) ListConnectionInvocationsWithResponse(ctx context.Context, id string, params *ListConnectionInvocationsParams, reqEditors ...RequestEditorFn) (*ListConnectionInvocationsResponse, error) {
+	rsp, err := c.ListConnectionInvocations(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListConnectionInvocationsResponse(rsp)
+}
+
 // ListConnectionToolsWithResponse List a connection's tools
 //
 // The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
@@ -41259,6 +42801,23 @@ func (c *ClientWithResponses) ValidateConnectionWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseValidateConnectionResponse(rsp)
+}
+
+// ListConnectorAuditWithResponse List the connector audit
+//
+// Every grant the app's connections got, renewed or lost, newest first, with the request, session and authorization attempt that caused each. A deleted connection's rows stay, and its deletion is one of them.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/connector-audit (the `ListConnectorAudit` operationId).
+func (c *ClientWithResponses) ListConnectorAuditWithResponse(ctx context.Context, params *ListConnectorAuditParams, reqEditors ...RequestEditorFn) (*ListConnectorAuditResponse, error) {
+	rsp, err := c.ListConnectorAudit(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListConnectorAuditResponse(rsp)
 }
 
 // ListConnectorsWithResponse List or search connectors
@@ -41493,7 +43052,7 @@ func (c *ClientWithResponses) DeleteConnectorOAuthClientWithResponse(ctx context
 
 // SetConnectorOAuthClientWithBodyWithResponse Set the app's own OAuth client for a connector
 //
-// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -41510,7 +43069,7 @@ func (c *ClientWithResponses) SetConnectorOAuthClientWithBodyWithResponse(ctx co
 
 // SetConnectorOAuthClientWithResponse Set the app's own OAuth client for a connector
 //
-// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -41546,6 +43105,8 @@ func (c *ClientWithResponses) DeleteConnectorProviderAppWithResponse(ctx context
 //
 // Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
 //
+// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -41562,6 +43123,8 @@ func (c *ClientWithResponses) SetConnectorProviderAppWithBodyWithResponse(ctx co
 // SetConnectorProviderAppWithResponse Create or update the app the router keeps at the connector's provider
 //
 // Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
+//
+// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -42096,7 +43659,7 @@ func (c *ClientWithResponses) GetSessionWithResponse(ctx context.Context, id str
 //
 // A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
-// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -42117,7 +43680,7 @@ func (c *ClientWithResponses) UpdateSessionWithBodyWithResponse(ctx context.Cont
 //
 // A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
-// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -42415,7 +43978,7 @@ func (c *ClientWithResponses) SaySessionWithResponse(ctx context.Context, id str
 // SetSessionSettingsWithBodyWithResponse Change the models and voice of one running session
 //
 // Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
-// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
+// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -42431,7 +43994,7 @@ func (c *ClientWithResponses) SetSessionSettingsWithBodyWithResponse(ctx context
 // SetSessionSettingsWithResponse Change the models and voice of one running session
 //
 // Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
-// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
+// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -42753,6 +44316,8 @@ func (c *ClientWithResponses) UpdateSkillWithResponse(ctx context.Context, id st
 //
 // knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
 //
+// A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -42774,6 +44339,8 @@ func (c *ClientWithResponses) SyncAgentWithBodyWithResponse(ctx context.Context,
 //
 // knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
 //
+// A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -42785,6 +44352,25 @@ func (c *ClientWithResponses) SyncAgentWithResponse(ctx context.Context, body Sy
 		return nil, err
 	}
 	return ParseSyncAgentResponse(rsp)
+}
+
+// DeleteUserConnectionsWithResponse Delete every connection of one user
+//
+// For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. The provider is not asked to revoke what it issued. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
+//
+// It deletes connections, not sessions: the tool calls and audit rows of the app's own connections keep the ids of the user's sessions that caused them. Delete those sessions too, and each id names a session that no longer exists.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/users/{user_id}/connections (the `DeleteUserConnections` operationId).
+func (c *ClientWithResponses) DeleteUserConnectionsWithResponse(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*DeleteUserConnectionsResponse, error) {
+	rsp, err := c.DeleteUserConnections(ctx, userId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteUserConnectionsResponse(rsp)
 }
 
 // TruncateMemoriesWithResponse Delete everything remembered about one user
@@ -43051,6 +44637,44 @@ func (c *ClientWithResponses) AddVoiceSampleWithResponse(ctx context.Context, id
 	return ParseAddVoiceSampleResponse(rsp)
 }
 
+// QueryAuditWithBodyWithResponse List the changes made to the app's configuration
+//
+// Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+//
+// What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
+func (c *ClientWithResponses) QueryAuditWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*QueryAuditResponse, error) {
+	rsp, err := c.QueryAuditWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseQueryAuditResponse(rsp)
+}
+
+// QueryAuditWithResponse List the changes made to the app's configuration
+//
+// Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+//
+// What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
+func (c *ClientWithResponses) QueryAuditWithResponse(ctx context.Context, body QueryAuditJSONRequestBody, reqEditors ...RequestEditorFn) (*QueryAuditResponse, error) {
+	rsp, err := c.QueryAudit(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseQueryAuditResponse(rsp)
+}
+
 // ClassifyWithBodyWithResponse Ask a classifier typed questions about a piece of text
 //
 // The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
@@ -43098,6 +44722,21 @@ func (c *ClientWithResponses) ReceiveProviderAppEventWithResponse(ctx context.Co
 		return nil, err
 	}
 	return ParseReceiveProviderAppEventResponse(rsp)
+}
+
+// ReceiveConnectionEventWithResponse Receive a connection's MCP event
+//
+// Where a connection's MCP server delivers the events an agent config's binding subscribed to, signed with Standard Webhooks (MCP Events, a draft). The path is unauthenticated because the server is not a customer: the token names the subscription, and each delivery is checked against that subscription's own secret, never a provider app's. A verification is answered with its challenge, and an event opens a text conversation from the config.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/connectors/mcp-events/{token} (the `ReceiveConnectionEvent` operationId).
+func (c *ClientWithResponses) ReceiveConnectionEventWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceiveConnectionEventResponse, error) {
+	rsp, err := c.ReceiveConnectionEvent(ctx, token, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReceiveConnectionEventResponse(rsp)
 }
 
 // ListDataChangesWithResponse What has happened to this app's rows since a cursor
@@ -43205,6 +44844,8 @@ func (c *ClientWithResponses) DeleteOperatorProviderAppWithResponse(ctx context.
 // SetOperatorProviderAppWithResponse Make Stream's own app a customer's provider app
 //
 // Records this deployment's own app for a built-in connector, as its environment holds it (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the customer's provider app, so its events reach that customer. One customer per app: another customer's record of it is a conflict.
+//
+// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 //
 // Stream staff only: it needs the ops key.
 //
@@ -46126,6 +47767,67 @@ func ParseUpdateAgentConfigResponse(rsp *http.Response) (*UpdateAgentConfigRespo
 	return response, nil
 }
 
+// ParseGetAgentChangesResponse parses an HTTP response from a GetAgentChangesWithResponse call
+func ParseGetAgentChangesResponse(rsp *http.Response) (*GetAgentChangesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAgentChangesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AgentChanges
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListConfigPluginsResponse parses an HTTP response from a ListConfigPluginsWithResponse call
 func ParseListConfigPluginsResponse(rsp *http.Response) (*ListConfigPluginsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -46785,6 +48487,67 @@ func ParsePutConnectionCredentialsResponse(rsp *http.Response) (*PutConnectionCr
 	return response, nil
 }
 
+// ParseListConnectionInvocationsResponse parses an HTTP response from a ListConnectionInvocationsWithResponse call
+func ParseListConnectionInvocationsResponse(rsp *http.Response) (*ListConnectionInvocationsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListConnectionInvocationsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectionInvocationPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListConnectionToolsResponse parses an HTTP response from a ListConnectionToolsWithResponse call
 func ParseListConnectionToolsResponse(rsp *http.Response) (*ListConnectionToolsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -46894,6 +48657,60 @@ func ParseValidateConnectionResponse(rsp *http.Response) (*ValidateConnectionRes
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListConnectorAuditResponse parses an HTTP response from a ListConnectorAuditWithResponse call
+func ParseListConnectorAuditResponse(rsp *http.Response) (*ListConnectorAuditResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListConnectorAuditResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorAuditPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
@@ -50993,6 +52810,63 @@ func ParseSyncAgentResponse(rsp *http.Response) (*SyncAgentResponse, error) {
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteUserConnectionsResponse parses an HTTP response from a DeleteUserConnectionsWithResponse call
+func ParseDeleteUserConnectionsResponse(rsp *http.Response) (*DeleteUserConnectionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteUserConnectionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -51694,6 +53568,60 @@ func ParseAddVoiceSampleResponse(rsp *http.Response) (*AddVoiceSampleResponse, e
 	return response, nil
 }
 
+// ParseQueryAuditResponse parses an HTTP response from a QueryAuditWithResponse call
+func ParseQueryAuditResponse(rsp *http.Response) (*QueryAuditResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &QueryAuditResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AuditPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseClassifyResponse parses an HTTP response from a ClassifyWithResponse call
 func ParseClassifyResponse(rsp *http.Response) (*ClassifyResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -51780,6 +53708,50 @@ func ParseReceiveProviderAppEventResponse(rsp *http.Response) (*ReceiveProviderA
 		break // No content-type
 
 	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case rsp.StatusCode == 413:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReceiveConnectionEventResponse parses an HTTP response from a ReceiveConnectionEventWithResponse call
+func ParseReceiveConnectionEventResponse(rsp *http.Response) (*ReceiveConnectionEventResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReceiveConnectionEventResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		break // No content-type
+
+	case rsp.StatusCode == 202:
+		break // No content-type
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case rsp.StatusCode == 401:
+		break // No content-type
+
+	case rsp.StatusCode == 410:
 		break // No content-type
 
 	case rsp.StatusCode == 413:
@@ -52160,6 +54132,13 @@ func ParseSetOperatorProviderAppResponse(rsp *http.Response) (*SetOperatorProvid
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 

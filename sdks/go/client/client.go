@@ -154,7 +154,9 @@ type Agent struct {
 // Name is what the agent is called, which is what a caller knows it as.
 func (a *Agent) Name() string { return a.name }
 
-// Tools are the ones this agent's conversations offer the model, to add to:
+// Tools are the ones this agent's conversations offer the model, to add to, and what a
+// dispatch worker runs for every session of this agent once it hosts them with
+// dispatch.Host(agent, timeout):
 //
 //	agent.Tools().Add(GetWeather{})
 func (a *Agent) Tools() *tools.Registry { return a.tools }

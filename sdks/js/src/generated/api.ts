@@ -580,6 +580,30 @@ export type paths = {
         readonly patch: operations["patchAgentConfig"];
         readonly trace?: never;
     };
+    readonly "/v1/agents/configs/{id}/changes": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What was changed about an agent since its directory was last synced
+         * @description The edits a sync of the agent's directory would write over: everything changed about the agent, its skills and its knowledge since the last sync, newest first. An agent nobody has touched since answers with an empty list.
+         *
+         *     This is what a sync refused with `unsynced_changes` is asking about. Show the changes, let the person decide, and sync again with `base_change` set to `last_change` to say they have been seen -- having either written them into the directory first, or chosen to write over them.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["getAgentChanges"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/configs/{id}/plugins": {
         readonly parameters: {
             readonly query?: never;
@@ -766,6 +790,28 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/connections/{id}/invocations": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List a connection's tool calls
+         * @description Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, and an incognito session's calls name no session. Who may read them is who may read the connection.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listConnectionInvocations"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/connections/{id}/tools": {
         readonly parameters: {
             readonly query?: never;
@@ -804,6 +850,28 @@ export type paths = {
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["validateConnection"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connector-audit": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List the connector audit
+         * @description Every grant the app's connections got, renewed or lost, newest first, with the request, session and authorization attempt that caused each. A deleted connection's rows stay, and its deletion is one of them.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listConnectorAudit"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -942,7 +1010,7 @@ export type paths = {
         readonly get?: never;
         /**
          * Set the app's own OAuth client for a connector
-         * @description Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+         * @description Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -971,6 +1039,8 @@ export type paths = {
         /**
          * Create or update the app the router keeps at the connector's provider
          * @description Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
+         *
+         *     When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -1495,7 +1565,7 @@ export type paths = {
          *
          *     A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
          *
-         *     Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A title or description given here stops the router naming the conversation for what was said.
+         *     Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
          */
         readonly patch: operations["updateSession"];
         readonly trace?: never;
@@ -1553,13 +1623,15 @@ export type paths = {
          * Watch the conversation and answer the model's tool calls
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a `type` and the fields of that event.
          *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
-         *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
+         *     `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
+         *     `connector_scope_required` says a connector tool call was refused because the caller's own connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes (what the provider asked for, empty for a claims challenge), authorization_id, launch_url, handoff_token and expires_at. A client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. The old grant keeps working until the step-up succeeds, and the same call works afterwards in the same session. While that step-up is open, calls refused for the same access send no second event.
+         *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id.
          *     A respond command carrying command_id emits command_accepted with a nested command receipt (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text returns the existing IDs without invoking the model again; reuse with different text emits an error. Commands with IDs currently accept text only. After restart an interrupted command is reported, not rerun.
          *     An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `command_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
          *     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent. Together they are why the call went the way it did, and they are also written down, so a finished call replays them from `/v1/agents/calls/{id}/events`.
          *     Two frames are only sent when asked for, because they are far more frequent than the rest and most consumers want neither. `interim=true` adds `hearing`, which is a transcript revision as it arrives rather than a settled turn. `decisions=false` drops `decision`.
          *     `replay_pending_tools=true` opts a durable tool host into replay of external tool calls still awaiting results in a live voice session. Completed, cancelled and timed-out requests are excluded at snapshot time. Replays retain their tool and turn IDs and may duplicate live delivery; the host must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers should leave this disabled. Persistent text command recovery is unchanged.
-         *     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt` (optionally naming a `command_id`), `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be answered: everything else is a report. Tool calls made by durable personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by another command or turn.
+         *     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt` (optionally naming a `command_id`), `instructions` or `close` to act on the session. `instructions` is server-side only: from an end user's device it changes nothing and is answered with an `error` frame, `context` `command`, as `updateSession` refuses it. A `tool_call` is the only frame that must be answered: everything else is a report. Tool calls made by durable personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by another command or turn.
          *     A call to a tool declared with an `approval` waits for a person. The client reports their answer with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary` shown when they declined), before it answers the call with `tool_result`.
          *     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`, `low` or `high`. One socket message is at most 5 MB.
          *     `respond` may carry `images: [{url, detail}]`. These schedule the vision skill; the conversation receives the question and later the findings, without raw images. Video capture uses task-correlated `get_video_frames` tool requests and `tool_result` replies. Frames are never attached automatically to conversational turns.
@@ -1780,7 +1852,7 @@ export type paths = {
         /**
          * Change the models and voice of one running session
          * @description Deprecated: use updateSession. Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
-         *     Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
+         *     Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native.
          */
         readonly patch: operations["setSessionSettings"];
         readonly trace?: never;
@@ -2030,6 +2102,30 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/socket": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Hold a voice conversation over the socket itself, with no call
+         * @description A WebSocket, which OpenAPI cannot describe past the upgrade. Text frames are JSON objects carrying a `type`.
+         *     The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes one up for the records. A `text` session is refused, because the socket carries audio. A field that `createSession` refuses from an end user's device is refused here too: `history` and `instructions` are server-side only.
+         *     The server answers `session`, with the `Session` and the `sample_rate` in use. Then binary frames are PCM16 mono at that rate in both directions: the caller's audio in, and the agent's speech out at the pace it would be heard on a call. A `cleared` frame says speech already sent was thrown away because the caller cut in. Tool calls and every other event go over the session's events socket, as they do for a call.
+         *     A refused start is an `error` frame with `error`, the message, and the socket closes. An `error` frame for a field refused from a device also carries `code` and `error_type`, the `code` and `type` that `createSession` answers the same field with.
+         *     The session lasts as long as the socket. Closing the socket, or sending `stop`, ends the conversation. A conversation that ends closes the socket.
+         */
+        readonly get: operations["openSocketSession"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/sync": {
         readonly parameters: {
             readonly query?: never;
@@ -2047,10 +2143,36 @@ export type paths = {
          *
          *     knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
          *
+         *     A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
+         *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["syncAgent"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/users/{user_id}/connections": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete every connection of one user
+         * @description For offboarding and erasure requests: deletes every connection the user owns, live or deleted before, for good, with its credentials, its pending consents and its tool call log, so the user's id and their provider accounts' ids are gone. The next session for the user attaches none of them. The provider is not asked to revoke what it issued. The audit keeps one grant_revoked row for each connection that still held a grant, naming neither the user nor the account, and the audit rows of those connections lose their request, session and attempt ids. A user with no connections is not an error.
+         *
+         *     It deletes connections, not sessions: the tool calls and audit rows of the app's own connections keep the ids of the user's sessions that caused them. Delete those sessions too, and each id names a session that no longer exists.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteUserConnections"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -2250,6 +2372,30 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/audit/query": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * List the changes made to the app's configuration
+         * @description Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+         *
+         *     What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["queryAudit"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/classify": {
         readonly parameters: {
             readonly query?: never;
@@ -2286,6 +2432,26 @@ export type paths = {
          * @description Where a provider delivers the events of one customer's provider app: the Request URL of a customer's Slack app, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector's manifest names (channel.verifier) against that app's own signing secret, so an event signed for another app is refused and changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves the app's customer's connections of that account to needs_reauthorization, unless they connected after the event. A message goes to the channel bridge, which writes it into the thread channel of its external thread in Stream Chat; a retried delivery is dropped. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.
          */
         readonly post: operations["receiveProviderAppEvent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/connectors/mcp-events/{token}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive a connection's MCP event
+         * @description Where a connection's MCP server delivers the events an agent config's binding subscribed to, signed with Standard Webhooks (MCP Events, a draft). The path is unauthenticated because the server is not a customer: the token names the subscription, and each delivery is checked against that subscription's own secret, never a provider app's. A verification is answered with its challenge, and an event opens a text conversation from the config.
+         */
+        readonly post: operations["receiveConnectionEvent"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2415,6 +2581,8 @@ export type paths = {
         /**
          * Make Stream's own app a customer's provider app
          * @description Records this deployment's own app for a built-in connector, as its environment holds it (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the customer's provider app, so its events reach that customer. One customer per app: another customer's record of it is a conflict.
+         *
+         *     When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
          *
          *     Stream staff only: it needs the ops key.
          */
@@ -3381,6 +3549,18 @@ export type components = {
                 readonly [key: string]: string;
             };
         };
+        /** @description What was changed about an agent since its directory was last synced: the edits a sync of that directory would write over. */
+        readonly AgentChanges: {
+            /** @description The changes made since the last sync, newest first, at most 200. Empty when the agent has not been touched since. */
+            readonly items: readonly components["schemas"]["AuditEntry"][];
+            /** @description The newest change's id. Send it as base_change on a sync to say these have been seen, and that sync will not be refused for them. */
+            readonly last_change?: string;
+            /**
+             * Format: date-time
+             * @description When the directory was last synced onto this agent. Absent for an agent no directory has ever been synced onto.
+             */
+            readonly synced_at?: string;
+        };
         /** @description The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is. */
         readonly AgentChannels: {
             readonly identity?: components["schemas"]["ChannelIdentity"];
@@ -3396,7 +3576,7 @@ export type components = {
             /** Format: date-time */
             readonly created_at: string;
             readonly dispatch?: components["schemas"]["AgentDispatch"];
-            /** @description Whether each phone call under this agent writes an episode card into the caller's omni-channel. */
+            /** @description Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards. */
             readonly episode_cards?: boolean;
             readonly greeting?: string;
             readonly guardrail?: string;
@@ -3410,6 +3590,8 @@ export type components = {
             readonly mode: components["schemas"]["AgentMode"];
             readonly name: string;
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            /** @description Whether tools from plugins, MCP servers and connectors are offered by a summary, the first call to each returning its full description instead of running it. */
+            readonly progressive_tools?: boolean;
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             readonly search?: string;
@@ -3454,6 +3636,7 @@ export type components = {
             /** @description What the config is called, which is unique among the customer's own. */
             readonly name?: string;
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            readonly progressive_tools?: boolean;
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             readonly search?: string;
@@ -3485,7 +3668,7 @@ export type components = {
             /** @description The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
-            /** @description Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. Off by default, and then a call runs as it always did. Left out on an update, the stored setting stays. */
+            /** @description Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays. */
             readonly episode_cards?: boolean;
             readonly greeting?: string;
             /** @description A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
@@ -3505,6 +3688,8 @@ export type components = {
             readonly name: string;
             /** @description MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through. */
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            /** @description Whether the agent is offered its plugin, MCP server and connector tools by the first line of each one's description, with its arguments' descriptions left out, and the first call to a tool returns its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays. */
+            readonly progressive_tools?: boolean;
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             /** @description What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way. */
@@ -3541,8 +3726,12 @@ export type components = {
             readonly connection: components["schemas"]["AgentConnectorSelection"];
             /** @description A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_. */
             readonly connector_id: string;
+            /** @description MCP events the binding's fixed connection is subscribed to, each opening a text conversation from the config when it arrives. Subscribed when the connection is next validated. Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an event arrives with no session open. */
+            readonly events?: readonly components["schemas"]["ConnectorBindingEvent"][];
             /** @description The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place. */
             readonly name: string;
+            /** @description How the binding's tool calls behave around speech and interruptions. Omitted, a call is cancelled at the provider when the turn is interrupted, and the agent picks its own words while it runs. */
+            readonly policy?: components["schemas"]["ConnectorBindingPolicy"];
             /**
              * @description Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
              * @default false
@@ -3590,7 +3779,7 @@ export type components = {
             readonly occurred_at: string;
             readonly session_id: string;
             /** @enum {string} */
-            readonly severity: "info" | "error";
+            readonly severity: "info" | "warn" | "error";
             /** @enum {string} */
             readonly source: "user" | "agent" | "tool" | "system";
             readonly user_id?: string;
@@ -3672,6 +3861,79 @@ export type components = {
             /** @description The Stream call type. Omit for "agent". */
             readonly call_type?: string;
         };
+        /**
+         * @description created, updated or deleted for a change somebody made one at a time. synced is a whole agent directory written at once by POST /v1/agents/sync, and is what a later sync measures the edits made since against.
+         * @enum {string}
+         */
+        readonly AuditAction: "created" | "updated" | "deleted" | "synced";
+        /** @description One field that moved, with what it held before and holds now, each in the shape the resource itself is read in. */
+        readonly AuditChange: {
+            /** @description What it holds now. Absent when it now holds nothing, which is what a deleted resource's fields all do. */
+            readonly after?: unknown;
+            /** @description What it held, in the shape the resource is read in. Absent when it held nothing, which is what a created resource's fields all did. */
+            readonly before?: unknown;
+            /** @description The field as the resource's own schema names it. */
+            readonly field: string;
+        };
+        /** @description One change somebody made to the app's configuration: what changed, who changed it, which client they used, and the before and after of every field that moved. Only configuration is recorded -- agents, skills, knowledge, routers, plugins and policies -- never what an agent did while it ran. */
+        readonly AuditEntry: {
+            readonly action: components["schemas"]["AuditAction"];
+            /** @description Who made it, as their client named them. Absent for a change nobody signed, such as a process syncing on startup. */
+            readonly actor_id?: string;
+            /** @description Their name, as their client named them. Never an email address: the router keeps none. */
+            readonly actor_name?: string;
+            /** @description The agent the change was to or under. Absent for a resource that belongs to no agent, such as a router. */
+            readonly agent_id?: string;
+            /** @description Every field that moved. A write that moved nothing is not recorded at all, so this is empty only on a synced entry, which marks the moment a directory and an agent agreed whether or not anything moved. */
+            readonly changes: readonly components["schemas"]["AuditChange"][];
+            /** Format: date-time */
+            readonly created_at: string;
+            readonly id: string;
+            /** @description The X-Request-Id of the request that made it. */
+            readonly request_id?: string;
+            /** @description The resource, which may since have been deleted. */
+            readonly resource_id: string;
+            /** @description What it was called when it changed, for a resource that has a name. */
+            readonly resource_name?: string;
+            readonly resource_type: components["schemas"]["AuditResourceType"];
+            readonly source: components["schemas"]["AuditSource"];
+        };
+        /** @description Which changes to list. A field not listed here is refused rather than ignored. */
+        readonly AuditFilter: {
+            readonly action?: components["schemas"]["AuditAction"];
+            /** @description One agent's history: changes to the agent itself and to the skills and knowledge under it. */
+            readonly agent_id?: string;
+            /** @description One resource's own history. */
+            readonly resource_id?: string;
+            readonly resource_type?: components["schemas"]["AuditResourceType"];
+            readonly source?: components["schemas"]["AuditSource"];
+        };
+        readonly AuditPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["AuditEntry"][];
+            /** @description Pass as cursor for the next page, with the same filter. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        readonly AuditQuery: {
+            /** @description The next_cursor of the previous page, sent with the same filter. Omitted is the first page. */
+            readonly cursor?: string;
+            readonly filter?: components["schemas"]["AuditFilter"];
+            /**
+             * Format: int64
+             * @description Up to 200. Omitted is 25.
+             */
+            readonly limit?: number;
+        };
+        /**
+         * @description What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead.
+         * @enum {string}
+         */
+        readonly AuditResourceType: "agent_config" | "skill" | "knowledge" | "knowledge_url" | "router_config" | "plugin" | "policy";
+        /**
+         * @description Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it.
+         * @enum {string}
+         */
+        readonly AuditSource: "dashboard" | "cli" | "sdk" | "api";
         /** @description A consent in flight for one connection: the page that starts it in a browser and the token that binds it to that browser. */
         readonly Authorization: {
             /**
@@ -4249,6 +4511,8 @@ export type components = {
             readonly status: components["schemas"]["ConnectionStatus"];
             /** Format: date-time */
             readonly updated_at: string;
+            /** @description The agent config bindings that name this connection as their fixed connection, which deleting it would break. A binding a session fills with the caller's own connection names none, so it is never listed. */
+            readonly used_by: readonly components["schemas"]["ConnectionUse"][] | null;
         };
         /** @description Credentials for a connection, under the revision the caller last read. An unknown field is refused rather than ignored. */
         readonly ConnectionCredentials: {
@@ -4261,6 +4525,35 @@ export type components = {
             readonly values?: {
                 readonly [key: string]: string;
             };
+        };
+        /** @description One connector tool call a session ran through the connection: the binding, the tool, how long it took and how it failed. What the call was asked and answered is never kept. */
+        readonly ConnectionInvocation: {
+            /** @description The alias the config binds the connector under. */
+            readonly binding: string;
+            /** @description The agent config whose binding the call went through. */
+            readonly config_id: string;
+            readonly connection_id: string;
+            readonly connector_id: string;
+            /** @description How the call failed. Absent for a call that answered. */
+            readonly error_type?: components["schemas"]["InvocationErrorType"];
+            readonly id: string;
+            /**
+             * Format: int64
+             * @description From the call reaching the router to its answer, the router's own checks included.
+             */
+            readonly latency_ms: number;
+            /** @description The session that called it. Absent for an incognito session, whose calls are tied to no conversation. */
+            readonly session_id?: string;
+            /** Format: date-time */
+            readonly started_at: string;
+            /** @description The tool's name at the provider, without the alias. */
+            readonly tool: string;
+        };
+        readonly ConnectionInvocationPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["ConnectionInvocation"][] | null;
+            /** @description Pass as cursor for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
         };
         /** @description Whose a connection is: the app's, which any of its agents may be bound to, or one user's. */
         readonly ConnectionOwner: {
@@ -4323,6 +4616,12 @@ export type components = {
             readonly digest?: string;
             readonly tools: readonly components["schemas"]["ConnectionTool"][] | null;
         };
+        readonly ConnectionUse: {
+            /** @description The alias the config binds the connection under. */
+            readonly binding: string;
+            readonly config_id: string;
+            readonly config_name: string;
+        };
         /** @description Whether a connection's credential works, found by asking the provider for its tools. */
         readonly ConnectionValidation: {
             /**
@@ -4377,6 +4676,63 @@ export type components = {
             readonly schemes: readonly string[] | null;
             /** @description The scopes a consent asks for. */
             readonly scopes: readonly string[] | null;
+            /** @description What a person does at the provider before the first consent, such as registering an OAuth client. Absent when the manifest says nothing. */
+            readonly setup?: components["schemas"]["ConnectorSetup"];
+        };
+        /**
+         * @description grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted.
+         * @enum {string}
+         */
+        readonly ConnectorAuditAction: "grant_created" | "grant_refreshed" | "grant_revoked";
+        /** @description One grant a connection got, renewed or lost, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted. */
+        readonly ConnectorAuditEvent: {
+            readonly action: components["schemas"]["ConnectorAuditAction"];
+            /** @description The authorization attempt a consent finished. Absent once the connection's user was deleted. */
+            readonly attempt_id?: string;
+            /** @description The connection, which may since have been deleted. */
+            readonly connection_id: string;
+            readonly connector_id: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            readonly id: string;
+            readonly owner_type: components["schemas"]["ConnectionOwnerType"];
+            /** @description Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked. */
+            readonly reason?: string;
+            /** @description The X-Request-Id of the API request that caused it. For a change a session's tool call caused, that is the request that created the session, not the one that asked for the turn. Absent for an incognito session's, and once the connection's user was deleted. */
+            readonly request_id?: string;
+            /**
+             * Format: int64
+             * @description The connection's credential revision once the change was made. Absent when the change names none, as a delete.
+             */
+            readonly revision?: number;
+            /** @description The session whose tool call caused it. Absent for an incognito session, and once the connection's user was deleted. */
+            readonly session_id?: string;
+        };
+        readonly ConnectorAuditPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["ConnectorAuditEvent"][] | null;
+            /** @description Pass as cursor for the next page, with the same connection_id. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        /** @description One MCP event a binding subscribes to on its fixed connection. Each one that arrives opens a text conversation from the config, as the app, with the event's data as the first thing said to it. */
+        readonly ConnectorBindingEvent: {
+            /** @description The event's filters, as its inputSchema describes them. */
+            readonly arguments?: {
+                readonly [key: string]: unknown;
+            };
+            /** @description The event's name, as the server's events/list gives it, such as issue.created. */
+            readonly event: string;
+            /** @description What the agent does with the event when it arrives, added to its instructions for that conversation. */
+            readonly instructions?: string;
+        };
+        /** @description How a binding's tool calls behave around speech and interruptions. Every field is optional, and a field left out keeps today's behaviour. */
+        readonly ConnectorBindingPolicy: {
+            /** @description Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running after an interruption, for a tool that is not safe to stop halfway, such as a payment; the binding's timeout still ends it and tells the provider to stop it. It only matters with on_interrupt cancel: a wait call is never stopped by an interruption. */
+            readonly cancellable?: boolean;
+            /** @description What an interruption of the turn does to a call in flight. Omitted is cancel. */
+            readonly on_interrupt?: components["schemas"]["ConnectorOnInterrupt"];
+            /** @description What the agent says while one of the binding's tools runs, such as "Let me pull up your calendar.", in place of the phrase it picks itself when the model reached for the tool without a word. A voice session with a separate voice says it; every session reports it on tool_started. */
+            readonly pre_speech?: string;
         };
         /** @description How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint. */
         readonly ConnectorClient: {
@@ -4399,7 +4755,7 @@ export type components = {
          * @enum {string}
          */
         readonly ConnectorClientRegistrationMethod: "operator" | "customer" | "managed" | "dcr" | "cimd";
-        /** @description A URL of the app's own that a connector's raw provider events are forwarded to, such as Slack's block_actions or reaction_added. Each forward is a POST of the provider's body as it came, with the provider's own Content-Type, signature and timestamp headers, signed on top in the Standard Webhooks shape (webhook-id, webhook-timestamp, webhook-signature) with the destination's own secret. A 2xx answer is taken; a 5xx, a 429 or no answer is sent again after 5 s, 5 min, 30 min and 2 h; any other answer is not sent again. */
+        /** @description A URL of the app's own that a connector's raw provider events are forwarded to, such as Slack's block_actions or reaction_added. Each forward is a POST of the provider's body as it came, with the provider's own Content-Type, signature and timestamp headers, signed on top in the Standard Webhooks shape (webhook-id, webhook-timestamp, webhook-signature) with the destination's own secret. A 2xx answer is taken; a 5xx, a 429 or no answer is sent again after 5 s, 5 min, 30 min and 2 h; any other answer is not sent again. The provider's signature headers come only while the provider's own check would pass them: for Slack, until X-Slack-Request-Timestamp is 5 minutes old, the age Slack Bolt refuses after. A forward sent later, such as the retries after 5 min, 30 min and 2 h, carries Content-Type alone of them: verify it with webhook-signature. webhook-id is the same for every delivery of one provider event (Slack's event_id, or trigger_id for an interaction), and a digest of the body for one that names no id. */
         readonly ConnectorEventDestination: {
             readonly connector_id: string;
             /** Format: date-time */
@@ -4450,18 +4806,21 @@ export type components = {
             /** @description A regular expression the whole value must match. */
             readonly pattern?: string;
         };
-        /** @description The OAuth client the app registered with a connector's provider itself. The secret is write-only: no response carries it. */
+        /** @description The OAuth client the app registered with a connector's provider itself. The client secret and the signing secret are write-only: no response carries them. */
         readonly ConnectorOAuthClient: {
             readonly auth_method?: components["schemas"]["ConnectorOAuthClientAuthMethod"];
+            /** @description Empty for a provider app put without an OAuth client, such as a Linq account. */
             readonly client_id: string;
             readonly connector_id: string;
             /** Format: date-time */
             readonly created_at: string;
+            /** @description The provider's id for the app the client belongs to, as put. Absent when none was put. */
+            readonly provider_app_id?: string;
             /** @description customer: the app's own client, which every consent and refresh of the connector's connections then uses. */
             readonly registration: components["schemas"]["ConnectorClientRegistrationMethod"];
             /**
              * Format: date-time
-             * @description When the client, its secret or its method last changed.
+             * @description When the client, its secrets or its method last changed.
              */
             readonly updated_at: string;
         };
@@ -4474,10 +4833,20 @@ export type components = {
         readonly ConnectorOAuthClientRequest: {
             /** @description Overrides the connector's own client.auth_method. Left out, the connector's applies, and failing that the consent picks: none without a secret, else client_secret_basic where the provider accepts it. */
             readonly auth_method?: components["schemas"]["ConnectorOAuthClientAuthMethod"];
-            readonly client_id: string;
+            /** @description Required, unless the record is only a provider app: provider_app_id and signing_secret without client_secret or auth_method, for a connector whose connections are not consented through oauth2_code, such as linq. */
+            readonly client_id?: string;
             /** @description Sealed at rest and never returned. Left out for a public client (auth_method none). */
             readonly client_secret?: string;
+            /** @description The provider's id for the app the client belongs to, such as a Slack app id (A012ABCD0A0). The app's events then reach POST /v1/connectors/events/{id}/{provider_app_id}. An app serves one customer: another customer's record naming it is a 409. */
+            readonly provider_app_id?: string;
+            /** @description The secret the provider signs the app's events with, such as a Slack app's signing secret. Needs provider_app_id, and a connector whose events are verified with the app's own secret (channel.verifier.secret provider_app). Sealed at rest and never returned. Putting the client again without it removes it, as it does client_secret. */
+            readonly signing_secret?: string;
         };
+        /**
+         * @description cancel stops waiting for the call when the turn is interrupted, and tells the provider to stop it unless cancellable is false. wait lets the call finish, up to the binding's timeout, and its result goes into the conversation for the next turn.
+         * @enum {string}
+         */
+        readonly ConnectorOnInterrupt: "cancel" | "wait";
         readonly ConnectorPage: {
             readonly has_more: boolean;
             readonly items: readonly components["schemas"]["Connector"][] | null;
@@ -4506,6 +4875,21 @@ export type components = {
             readonly config_refresh_token?: string;
             /** @description The app's name in the customer's workspace. */
             readonly name: string;
+        };
+        /** @description What a person does at the provider before the first consent. */
+        readonly ConnectorSetup: {
+            /** @description In order. */
+            readonly steps: readonly components["schemas"]["ConnectorSetupStep"][];
+            /**
+             * Format: uri
+             * @description Where the steps start, a page of the provider's.
+             */
+            readonly url?: string;
+        };
+        /** @description One step of a provider's setup. */
+        readonly ConnectorSetupStep: {
+            readonly description: string;
+            readonly title: string;
         };
         /** @description One tool a binding allows. */
         readonly ConnectorToolGrant: {
@@ -4580,6 +4964,8 @@ export type components = {
             readonly call_type?: string;
             /** @description An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call. */
             readonly config_id?: string;
+            /** @description The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A required binding left without one fails the session; an optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections again, against the config as it is then and the caller asking for the fork. */
+            readonly connector_bindings?: readonly components["schemas"]["SessionConnectorBinding"][];
             /** @description Older history was omitted from the model context. */
             readonly context_truncated?: boolean;
             /** @description Stream Chat CID to resume; returned for persistent text sessions. */
@@ -4601,6 +4987,7 @@ export type components = {
              * @default false
              */
             readonly incognito?: boolean;
+            /** @description The system prompt, over what the config says. Server-side only: a device sending it is refused with a 403, as it is on updateSession, because what the agent is told to be is the backend's to decide. */
             readonly instructions?: string;
             /** @description Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them. */
             readonly keyterms?: readonly string[];
@@ -4774,7 +5161,7 @@ export type components = {
             readonly $eq: string;
         };
         readonly ErrorDetail: {
-            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know. */
+            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know. */
             readonly code: string;
             /**
              * Format: uri
@@ -4806,6 +5193,7 @@ export type components = {
             readonly description?: string;
             /** @description Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept. */
             readonly incognito?: boolean;
+            /** @description Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession. */
             readonly instructions?: string;
             /**
              * @description Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants.
@@ -5075,6 +5463,11 @@ export type components = {
         readonly InstructionsRequest: {
             readonly instructions: string;
         };
+        /**
+         * @description customer_auth: the provider refused the connection's credential, or it had none; reconnect it. external_server: the provider answered with a failure or could not be reached. client_timeout: the router stopped waiting before the provider answered, and nothing says it got the call. outcome_unknown: the call was sent and cut off, by the binding's timeout or an interrupted turn, so it may have been done. denied: the router refused it before anything was sent.
+         * @enum {string}
+         */
+        readonly InvocationErrorType: "customer_auth" | "external_server" | "client_timeout" | "outcome_unknown" | "denied";
         readonly KnowledgeDocument: {
             /**
              * @description Where the document came from, as a reader would recognise it. Passage ids are keyed by it, so posting the same source again replaces what it wrote before.
@@ -6009,6 +6402,13 @@ export type components = {
             /** @description The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none. */
             readonly voice?: string;
         };
+        /** @description The connection a session uses for one of its agent config's connector bindings chosen per session. Only a reference: the credential stays sealed on the connection. */
+        readonly SessionConnectorBinding: {
+            /** @description The caller's own connection to the binding's connector. */
+            readonly connection_id: string;
+            /** @description The binding's alias in the agent config. */
+            readonly name: string;
+        };
         /** @description Which sessions to list. A field not listed here is refused rather than ignored. */
         readonly SessionFilter: {
             /** @description The agent name the session was opened against. */
@@ -6740,8 +7140,12 @@ export type components = {
         readonly SyncAgentRequest: {
             /** @description Plugins the agent reaches with the app's own login: a catalog id, or an object naming it with how it is reached. */
             readonly agent_plugins?: readonly components["schemas"]["PluginEntry"][];
+            /** @description The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again. */
+            readonly base_change?: string;
             /** @description Lines this agent answers on besides Stream Chat, each a number the app connected. */
             readonly channels?: components["schemas"]["AgentChannels"];
+            /** @description Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants. */
+            readonly check_changes?: boolean;
             /** @description The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
@@ -6764,6 +7168,8 @@ export type components = {
             readonly name: string;
             /** @description MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives. */
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            /** @description Whether plugin, MCP server and connector tools are offered by a summary, the first call to each returning its full description and input schema instead of running it. */
+            readonly progressive_tools?: boolean;
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             readonly search?: string;
@@ -8603,6 +9009,34 @@ export interface operations {
             readonly 500: components["responses"]["InternalError"];
         };
     };
+    readonly getAgentChanges: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The agent config, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The changes since the last sync */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentChanges"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
     readonly listConfigPlugins: {
         readonly parameters: {
             readonly query?: never;
@@ -8951,6 +9385,39 @@ export interface operations {
             readonly 500: components["responses"]["InternalError"];
         };
     };
+    readonly listConnectionInvocations: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The next_cursor of the previous page. Omitted is the first page. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 25. */
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of tool calls */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionInvocationPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
     readonly listConnectionTools: {
         readonly parameters: {
             readonly query?: never;
@@ -9008,6 +9475,37 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly listConnectorAudit: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description Keeps one connection's rows, deleted or not. */
+                readonly connection_id?: string;
+                /** @description The next_cursor of the previous page. Omitted is the first page. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 25. */
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of audit rows */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectorAuditPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
         };
     };
@@ -10003,7 +10501,8 @@ export interface operations {
                 readonly limit?: number;
                 readonly q?: string;
                 readonly session_id?: string;
-                readonly severity?: "info" | "error";
+                /** @description The least serious level to show, not the only one: warn is warnings and errors. */
+                readonly severity?: "info" | "warn" | "error";
                 /** @description Comma-separated user/agent/tool/system sources. */
                 readonly source?: string;
                 readonly to?: string;
@@ -10082,7 +10581,8 @@ export interface operations {
                 readonly from?: string;
                 readonly q?: string;
                 readonly session_id?: string;
-                readonly severity?: "info" | "error";
+                /** @description The least serious level to show, not the only one: warn is warnings and errors. */
+                readonly severity?: "info" | "warn" | "error";
                 /** @description Comma-separated user/agent/tool/system sources. */
                 readonly source?: string;
                 readonly to?: string;
@@ -11300,6 +11800,28 @@ export interface operations {
             readonly 500: components["responses"]["InternalError"];
         };
     };
+    readonly openSocketSession: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The socket is open */
+            readonly 101: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
     readonly syncAgent: {
         readonly parameters: {
             readonly query?: never;
@@ -11321,6 +11843,40 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["SyncAgentResult"];
                 };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deleteUserConnections: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The user whose connections to delete, as owner.user_id named them. */
+                readonly user_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The user's connections are deleted */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
@@ -11667,6 +12223,34 @@ export interface operations {
             readonly 500: components["responses"]["InternalError"];
         };
     };
+    readonly queryAudit: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AuditQuery"];
+            };
+        };
+        readonly responses: {
+            /** @description A page of changes */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AuditPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
     readonly classify: {
         readonly parameters: {
             readonly query?: never;
@@ -11751,6 +12335,62 @@ export interface operations {
                 content?: never;
             };
             /** @description The event is over 256 KiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly receiveConnectionEvent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly token: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A verification's challenge, echoed, or an event already taken */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The event is taken, and a conversation is opening for it */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The delivery is not JSON, or not an event this subscription is for */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The delivery is not signed with the subscription's secret */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description There is no such subscription, or its connection or declaration is gone; stop delivering to it */
+            readonly 410: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The delivery is over 256 KiB */
             readonly 413: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -11980,6 +12620,15 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            /** @description Service Unavailable */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly deleteOperatorProviderApp: {

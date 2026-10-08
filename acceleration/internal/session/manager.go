@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -149,6 +150,10 @@ type ManagerOptions struct {
 	// PluginAuth signs an end user into the plugins an agent names per user, sending the
 	// provider back to this deployment's public URL. Nil sends it to localhost.
 	PluginAuth *plugins.Auth
+	// Connectors is what a session opens its agent config's connector bindings with. Zero,
+	// as on a deployment with connectors off, opens none: a required binding fails the
+	// session, and an optional one is reported unavailable.
+	Connectors Connectors
 	// DetachedGrace is how long a persistent text session outlives its last watcher.
 	// Zero is defaultDetachedGrace.
 	DetachedGrace time.Duration
@@ -176,12 +181,15 @@ type Manager struct {
 	// conversation is read back from. Nil without a store, and never handed an incognito
 	// session.
 	records *sessionRecorder
+	// invocations logs each connector tool call. Nil without a store or with connectors off,
+	// where no session opens a connector.
+	invocations *invocationRecorder
 	// reviews says what a finished call went like, onto the row calls wrote.
 	reviews *reviewer
 	// titles names persistent conversations nobody renamed, on the session row and the channel.
 	titles *titler
-	// cards writes each phone call's episode card into the caller's omni-channel. Nil
-	// without a store or Stream clients.
+	// cards writes each phone call's episode card into the caller's omni-channel, and reads
+	// the person's cards for a session to start with. Nil without a store or Stream clients.
 	cards *callCards
 	// hosts runs the tools workers host for an agent config. Nil offers none.
 	hosts ToolHosts
@@ -225,6 +233,9 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		manager.calls = newCallRecorder(options.Store, options.Logger)
 		manager.records = newSessionRecorder(options.Store, options.Logger)
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
+		if options.Connectors.Transports != nil {
+			manager.invocations = newInvocationRecorder(options.Store, options.Logger)
+		}
 	}
 	manager.titles = newTitler(options.LLM, manager.records, options.Logger)
 	manager.cards = newCallCards(options.Store, options.Stream, options.Logger)
@@ -413,6 +424,18 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	m.supersede(spec)
 	m.think(ctx, &spec)
 
+	// Before the call is joined, so a required connector that cannot be used refuses the
+	// session rather than leaving it without the tools it was configured to need.
+	connectors, connectorTools, connectorsUnavailable, err := m.attachConnectors(ctx, &spec)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if !opened && connectors != nil {
+			connectors.Close()
+		}
+	}()
+
 	skills, err := m.skills(ctx, spec)
 	if err != nil {
 		return nil, stack.Wrap(err)
@@ -500,10 +523,34 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		runner = own
 		created.closers = append(created.closers, own.Close)
 	}
+	// The dispatcher goes in front, so the names it opened are its own whatever else the
+	// session offers. The plugins stay beside it until they move onto connectors (T23).
+	if connectors != nil {
+		if err := connectorCollision(connectorTools, tools); err != nil {
+			return nil, err
+		}
+		tools = append(tools, connectorTools...)
+		connectors.next = runner
+		runner = connectors
+		connectors.askIn(conv, created.chose)
+		connectors.stepUps = newStepUps(m.options.Connectors.Consents, created.broadcast, m.logger)
+		created.connectors = connectors
+		created.closers = append(created.closers, connectors.Close, connectors.closeLogins)
+	}
+	created.connectorsUnavailable = connectorsUnavailable
+	if spec.ProgressiveTools {
+		tools, runner = progressively(tools, slices.Concat(pluginTools, connectorTools), runner)
+	}
 
 	var toolStarted func(agent.ToolStarted)
 	if conv != nil {
 		toolStarted = func(event agent.ToolStarted) { conv.Observe(event) }
+	}
+	// Only a connector binding's policy names a phrase or lets a call go on after an
+	// interruption; a session without one runs its tools as it always has.
+	var toolPolicy func(string) agent.ToolPolicy
+	if connectors != nil {
+		toolPolicy = connectors.toolPolicy
 	}
 	screening, err := m.guardrail(ctx, spec, stream.Identity)
 	if err != nil {
@@ -519,6 +566,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	created.voiceAgent, err = agent.New(agent.Options{
 		OnToolStarted: toolStarted,
+		ToolPolicy:    toolPolicy,
 		Edge:          edge,
 		Text:          spec.Text,
 		Instructions:  spec.prompt(),
@@ -596,7 +644,18 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		})
 	}
 
-	if m.options.Transcript != nil && conv == nil && !spec.Incognito {
+	// A transcript is written into the conversation's channel, else the agent id's
+	// (chatlog.Options.Channel). One a device asked for under a thread channel's agent id is
+	// not written there (persistent.BarThread).
+	written := spec.ConversationID
+	if written == "" {
+		written = streamapp.AgentChannelType + ":" + spec.AgentID
+	}
+	// Where the transcript actually goes, as the transcript factory picks it.
+	if !persistent.Barred(ctx, written) {
+		created.transcribedInto = spec.TranscriptChannel()
+	}
+	if m.options.Transcript != nil && conv == nil && !spec.Incognito && !persistent.Barred(ctx, written) {
 		// A transcript that cannot be opened is not a reason to refuse the call. What was
 		// said is worth keeping; it is not worth not having the conversation for.
 		transcript, err := m.options.Transcript(ctx, spec, stream, m.logger)
@@ -616,7 +675,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			"call", spec.CallID, "conversation", spec.ConversationID,
 			"turns", len(previous), "truncated", spec.ContextTruncated)
 	}
-	created.voiceAgent.RestoreHistory(previous)
+	// The person's other episodes go first, as context before this conversation's own
+	// history, and only to the model: not to the title, the review or the reopened summary.
+	cards := m.cards.read(ctx, spec, stream)
+	created.carded = len(cards) > 0
+	created.voiceAgent.RestoreHistory(append(cards, previous...))
 	// A reopened chat is reviewed again when it ends, and its summary is of all of it.
 	if !spec.Reopened.IsZero() {
 		earlier := spokenOf(previous)
@@ -868,13 +931,27 @@ func (m *Manager) ByAgentWhere(agentID string, admits func(customer string, app 
 	if agentID == "" {
 		return nil, false
 	}
+	return m.newest(func(spec Spec) bool { return spec.AgentID == agentID }, admits)
+}
 
+// ByConversationWhere is the newest running session holding the conversation cid, among the
+// sessions a test admits, by their customer and the Stream app they act in. Unlike an agent
+// id, which any caller may name, a conversation is held only by a session opened on it.
+func (m *Manager) ByConversationWhere(cid string, admits func(customer string, app int64) bool) (*Session, bool) {
+	if cid == "" {
+		return nil, false
+	}
+	return m.newest(func(spec Spec) bool { return spec.ConversationID == cid }, admits)
+}
+
+// newest is the newest running session whose spec matches, among those admits takes.
+func (m *Manager) newest(matches func(Spec) bool, admits func(customer string, app int64) bool) (*Session, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	var newest *Session
 	for _, found := range m.sessions {
-		if found.spec.AgentID != agentID {
+		if !matches(found.spec) {
 			continue
 		}
 		if admits != nil && !admits(found.spec.CustomerID, found.spec.StreamApp) {
@@ -1249,6 +1326,9 @@ func (m *Manager) Shutdown() error {
 		m.calls.Close()
 		m.records.Close()
 		m.logs.close()
+	}
+	if m.invocations != nil {
+		m.invocations.Close()
 	}
 	// A conversation store the caller passed in outlives this manager.
 	if m.conversations != nil && m.options.Conversations == nil {

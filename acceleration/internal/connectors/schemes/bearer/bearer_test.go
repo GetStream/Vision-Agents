@@ -66,6 +66,74 @@ func (s *BearerSuite) TestASuppliedValueItDoesNotTakeIsRefused() {
 	s.NotContains(err.Error(), token)
 }
 
+// AI-863: the Linq line a token sends from is an input, and the manifest's identity, so the
+// bridge finds the connection of a line by it.
+func (s *BearerSuite) TestAnIdentityOfInputsIsTheAccount() {
+	_, account, err := s.scheme.Complete(context.Background(), core.CompleteInput{
+		Manifest: s.resolved(`
+inputs:
+  - name: line
+    pattern: "[+][0-9]+"
+identity: [line]`, map[string]string{"line": "+12025551234"}),
+		Supplied: map[string]string{bearer.SuppliedToken: token},
+	})
+
+	s.Require().NoError(err)
+	s.Equal(core.AccountInfo{AccountID: "+12025551234"}, account)
+}
+
+func (s *BearerSuite) TestAManifestWithoutAnIdentityHasNoAccount() {
+	_, account, err := s.scheme.Complete(context.Background(), core.CompleteInput{
+		Manifest: s.resolved(`
+inputs:
+  - name: line
+    pattern: "[+][0-9]+"`, map[string]string{"line": "+12025551234"}),
+		Supplied: map[string]string{bearer.SuppliedToken: token},
+	})
+
+	s.Require().NoError(err)
+	s.Zero(account)
+}
+
+// A captured value is something only a consent returns, so a token supplied for a connector
+// that captures one learns no account, as before AI-863.
+func (s *BearerSuite) TestAnIdentityACaptureMakesIsNoAccountForASuppliedToken() {
+	_, account, err := s.scheme.Complete(context.Background(), core.CompleteInput{
+		Manifest: s.resolved(`
+inputs:
+  - name: line
+    pattern: "[+][0-9]+"
+capture:
+  - name: team
+    from: token_response
+    path: $.team.id
+identity: [line, team]`, map[string]string{"line": "+12025551234"}),
+		Supplied: map[string]string{bearer.SuppliedToken: token},
+	})
+
+	s.Require().NoError(err)
+	s.Zero(account)
+}
+
+// resolved is a bearer manifest with the inputs, identity and capture rules in rules, resolved
+// with inputs.
+func (s *BearerSuite) resolved(rules string, inputs map[string]string) core.ResolvedManifest {
+	manifest, err := core.ParseManifest([]byte(`
+id: acme_line
+revision: 1
+name: Acme
+endpoints:
+  mcp: https://mcp.acme.example/mcp
+schemes: [bearer]
+sources:
+  - kind: mcp
+    endpoint: mcp` + rules))
+	s.Require().NoError(err)
+	resolved, err := manifest.Resolve(bearer.Name, inputs, nil)
+	s.Require().NoError(err)
+	return resolved
+}
+
 // A 401 without an RFC 6750 challenge still means the token no longer works.
 func (s *BearerSuite) TestABare401IsInvalidGrant() {
 	recorder := httptest.NewRecorder()

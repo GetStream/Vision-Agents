@@ -46,6 +46,9 @@ class AgentConfigRequest:
             connection that is not the app's own or is to another connector, is refused.
         dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
             /v1/dispatch. Omitted settings are disabled.
+        episode_cards (bool | Unset): Whether each phone call under this agent writes an episode card into the caller's
+            omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. Off by
+            default, and then a call runs as it always did. Left out on an update, the stored setting stays.
         greeting (str | Unset):
         guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then
             the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty
@@ -67,6 +70,11 @@ class AgentConfigRequest:
         plugin_events (list[PluginEvent] | Unset): MCP events the agent subscribes to on the plugins it names, with
             every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login
             it came through.
+        progressive_tools (bool | Unset): Whether the agent is offered its plugin, MCP server and connector tools by the
+            first line of each one's description, with its arguments' descriptions left out, and the first call to a tool
+            returns its full description and input schema instead of running it. It saves context on an agent with many
+            tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an
+            update, the stored setting stays.
         sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
             code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
             everything out in its head.
@@ -105,6 +113,7 @@ class AgentConfigRequest:
     channels: AgentChannels | Unset = UNSET
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
+    episode_cards: bool | Unset = UNSET
     greeting: str | Unset = UNSET
     guardrail: str | Unset = UNSET
     harness: Harness | Unset = UNSET
@@ -115,6 +124,7 @@ class AgentConfigRequest:
     mcp_servers: list[McpServer] | Unset = UNSET
     mode: AgentMode | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
+    progressive_tools: bool | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     sandbox_options: SandboxOptions | Unset = UNSET
     search: str | Unset = UNSET
@@ -162,6 +172,8 @@ class AgentConfigRequest:
         if not isinstance(self.dispatch, Unset):
             dispatch = self.dispatch.to_dict()
 
+        episode_cards = self.episode_cards
+
         greeting = self.greeting
 
         guardrail = self.guardrail
@@ -197,6 +209,8 @@ class AgentConfigRequest:
             for plugin_events_item_data in self.plugin_events:
                 plugin_events_item = plugin_events_item_data.to_dict()
                 plugin_events.append(plugin_events_item)
+
+        progressive_tools = self.progressive_tools
 
         sandbox: str | Unset = UNSET
         if not isinstance(self.sandbox, Unset):
@@ -262,6 +276,8 @@ class AgentConfigRequest:
             field_dict["connectors"] = connectors
         if dispatch is not UNSET:
             field_dict["dispatch"] = dispatch
+        if episode_cards is not UNSET:
+            field_dict["episode_cards"] = episode_cards
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
         if guardrail is not UNSET:
@@ -282,6 +298,8 @@ class AgentConfigRequest:
             field_dict["mode"] = mode
         if plugin_events is not UNSET:
             field_dict["plugin_events"] = plugin_events
+        if progressive_tools is not UNSET:
+            field_dict["progressive_tools"] = progressive_tools
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
         if sandbox_options is not UNSET:
@@ -378,6 +396,8 @@ class AgentConfigRequest:
         else:
             dispatch = AgentDispatch.from_dict(_dispatch)
 
+        episode_cards = d.pop("episode_cards", UNSET)
+
         greeting = d.pop("greeting", UNSET)
 
         guardrail = d.pop("guardrail", UNSET)
@@ -421,6 +441,8 @@ class AgentConfigRequest:
                 plugin_events_item = PluginEvent.from_dict(plugin_events_item_data)
 
                 plugin_events.append(plugin_events_item)
+
+        progressive_tools = d.pop("progressive_tools", UNSET)
 
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
@@ -497,6 +519,7 @@ class AgentConfigRequest:
             channels=channels,
             connectors=connectors,
             dispatch=dispatch,
+            episode_cards=episode_cards,
             greeting=greeting,
             guardrail=guardrail,
             harness=harness,
@@ -507,6 +530,7 @@ class AgentConfigRequest:
             mcp_servers=mcp_servers,
             mode=mode,
             plugin_events=plugin_events,
+            progressive_tools=progressive_tools,
             sandbox=sandbox,
             sandbox_options=sandbox_options,
             search=search,

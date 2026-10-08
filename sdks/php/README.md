@@ -205,18 +205,17 @@ model reply on that session, using the worker's server credential acting for the
 
 ### Hosted tools
 
-A worker can also run tools for every session opened under an agent id, including sessions
+A worker can also run an agent's tools for every session opened under it, including sessions
 opened from a browser. Hosting alone is enough to `run()`.
 
 ```php
-use GetStream\VisionAgents\Tools;
-
-$tools = (new Tools())->register('get_weather', 'The weather in a city', [
+$agent = $client->agent('my-agent');
+$agent->tools->register('get_weather', 'The weather in a city', [
     'type' => 'object',
     'properties' => ['city' => ['type' => 'string']],
 ], fn (array $args): string => weatherIn($args['city']));
 
-$dispatch->host('my-agent', $tools, timeoutMs: 0); // 0 takes the router's default
+$dispatch->host($agent, toolTimeoutMs: 0); // 0: the router waits its default two minutes per tool call
 $dispatch->run();
 ```
 

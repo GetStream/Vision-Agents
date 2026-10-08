@@ -23,6 +23,10 @@ import (
 // an agent that set none, on a deployment that has none of its own either.
 var ErrClientRequired = errors.New("needs an OAuth client set for this agent")
 
+// ErrRefreshRefused is a token endpoint answering a refresh with an OAuth error, such as
+// invalid_grant: the login cannot be renewed and has to be made again.
+var ErrRefreshRefused = errors.New("plugins: the provider refused to renew the login")
+
 // Client is an OAuth client registered with a provider in advance.
 type Client struct {
 	ID     string
@@ -209,12 +213,11 @@ func (a *Auth) Exchange(ctx context.Context, owner Owner, pending Pending, code 
 	if body.AccessToken == "" {
 		return Token{}, fmt.Errorf("plugins: token: no access token")
 	}
-	token := Token{AccessToken: body.AccessToken, RefreshToken: body.RefreshToken}
-	if body.ExpiresIn > 0 {
-		at := time.Now().UTC().Add(time.Duration(body.ExpiresIn) * time.Second)
-		token.ExpiresAt = &at
-	}
-	return token, nil
+	return Token{
+		AccessToken:  body.AccessToken,
+		RefreshToken: body.RefreshToken,
+		ExpiresAt:    expiry(pending.PluginID, body.ExpiresIn),
+	}, nil
 }
 
 // Refresh renews an access token. Empty refresh token is a no-op miss.
@@ -247,15 +250,32 @@ func (a *Auth) Refresh(ctx context.Context, owner Owner, pluginID, tokenEndpoint
 	if err := json.Unmarshal(raw, &body); err != nil {
 		return Token{}, stack.Wrap(err)
 	}
+	if body.Error != "" {
+		return Token{}, stack.Wrap(fmt.Errorf("%w: %s", ErrRefreshRefused, or(body.ErrorDesc, body.Error)))
+	}
 	if body.AccessToken == "" {
 		return Token{}, stack.Wrap(fmt.Errorf("plugins: refresh: %s", or(body.ErrorDesc, "no access token")))
 	}
-	token := Token{AccessToken: body.AccessToken, RefreshToken: or(body.RefreshToken, refreshToken)}
-	if body.ExpiresIn > 0 {
-		at := time.Now().UTC().Add(time.Duration(body.ExpiresIn) * time.Second)
-		token.ExpiresAt = &at
+	return Token{
+		AccessToken:  body.AccessToken,
+		RefreshToken: or(body.RefreshToken, refreshToken),
+		ExpiresAt:    expiry(pluginID, body.ExpiresIn),
+	}, nil
+}
+
+// expiry is when a token the provider issued for pluginID expires: by its expires_in, else
+// by the catalog's access_ttl, else never known.
+func expiry(pluginID string, expiresIn int) *time.Time {
+	lifetime := time.Duration(expiresIn) * time.Second
+	if lifetime <= 0 {
+		plugin, _ := Lookup(pluginID)
+		lifetime = plugin.AccessTTL
 	}
-	return token, nil
+	if lifetime <= 0 {
+		return nil
+	}
+	at := time.Now().UTC().Add(lifetime)
+	return &at
 }
 
 // DashboardRedirect is where the browser should land after the callback. plugin_connected

@@ -74,6 +74,28 @@ type ToolRunner interface {
 	Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error)
 }
 
+// ToolPolicy is what one tool asks of the agent (Options.ToolPolicy). The zero value asks
+// for nothing.
+type ToolPolicy struct {
+	// PreSpeech is what to say while the tool runs, in place of a phrase the agent picks
+	// itself (workingPhrases), and what ToolStarted carries. Empty says the agent's own.
+	PreSpeech string
+	// Waits is set for a tool its runner lets finish after an interruption. The call is
+	// answered at the interruption with stillRunning, and its result, when it comes, is
+	// added as a message of its own (lateResult).
+	Waits bool
+}
+
+// stillRunning answers a call that goes on after an interruption (ToolPolicy.Waits). A
+// provider refuses a conversation that replays a call without its result right after it,
+// and the next turn must not wait for the call.
+const stillRunning = "This is still running. Its result will follow in a later message."
+
+// lateResult introduces the result of a call answered with stillRunning. It comes after
+// other turns, where a tool result answering an earlier call is refused, so it is the
+// caller's message, which every provider takes anywhere.
+const lateResult = "The %s call (%s) that was still running has finished. Its result:"
+
 // telephonyTool reports whether a tool is one of the two this package runs itself.
 func telephonyTool(name string) bool {
 	return name == toolTransfer || name == toolPress
@@ -125,11 +147,13 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	defer func() { cancel(); a.mu.Lock(); delete(a.toolCancels, requested.Call.ID); a.mu.Unlock() }()
 	started := ToolStarted{ID: requested.Call.ID, TurnID: requested.TurnID, Tool: requested.Call.Name, Arguments: requested.Call.Arguments, StartedAt: time.Now().UTC()}
 	started.Product, started.SDK = toolScope(requested.Call)
+	started.PreSpeech = a.preSpeech([]llm.ToolCall{requested.Call})
 	if a.options.OnToolStarted != nil {
 		a.options.OnToolStarted(started)
 	}
 	a.emitter.Send(started)
 	requested.Call.TurnID = requested.TurnID
+	hold := a.holdOnInterrupt(ctx, requested.Call)
 	parts, left, err := a.callTool(ctx, requested.Call)
 	// Visual tool results go to the vision worker in both native and cascade calls.
 	if err == nil && a.harness != nil && llm.HasImage([]llm.Message{{Parts: parts}}) {
@@ -142,7 +166,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		parts = llm.TextParts(fmt.Sprintf("That did not work: %s. Tell the caller, in your own words.", err))
 	}
 	result := llm.TextOf(parts)
-	a.resolveTool(requested.Call, parts)
+	a.resolveTool(requested.Call, parts, hold)
 
 	a.emitter.Send(ToolRan{
 		ID:        requested.Call.ID,
@@ -374,19 +398,93 @@ func (a *Agent) press(ctx context.Context, call llm.ToolCall) (string, bool, err
 // The result is a message rather than a note because the model asked for it by name: a
 // provider matches every call against a result, and a conversation that replays the call
 // without one is refused.
-func (a *Agent) resolveTool(call llm.ToolCall, parts []llm.ContentPart) {
+//
+// A call answered with stillRunning at an interruption (hold) has its result added as the
+// caller's message instead (lateResult). While the history ends in calls not all answered
+// (callsOpen), that message is held back, so it never comes between a call and its
+// result, and added once they are.
+func (a *Agent) resolveTool(call llm.ToolCall, parts []llm.ContentPart, hold *toolHold) {
 	a.mu.Lock()
 	message := llm.Message{
 		Role:       llm.ToolResult,
 		ToolCallID: call.ID,
+	}
+	late := false
+	if hold != nil {
+		hold.resolved = true
+		if hold.answered {
+			message = llm.Message{Role: llm.User}
+			parts = append(llm.TextParts(fmt.Sprintf(lateResult, call.Name, call.ID)), parts...)
+			late = true
+		}
 	}
 	if llm.HasImage([]llm.Message{{Parts: parts}}) {
 		message.Parts = parts
 	} else {
 		message.Content = llm.TextOf(parts)
 	}
-	a.history = append(a.history, message)
+	if late {
+		a.lateResults = append(a.lateResults, message)
+	} else {
+		a.history = append(a.history, message)
+	}
+	if !callsOpen(a.history) {
+		a.history = append(a.history, a.lateResults...)
+		a.lateResults = nil
+	}
 	a.mu.Unlock()
+}
+
+// callsOpen reports whether history ends in an assistant message with a tool call that no
+// result after it answers yet.
+func callsOpen(history []llm.Message) bool {
+	answered := map[string]bool{}
+	i := len(history) - 1
+	for ; i >= 0 && history[i].Role == llm.ToolResult; i-- {
+		answered[history[i].ToolCallID] = true
+	}
+	if i < 0 || history[i].Role != llm.Assistant {
+		return false
+	}
+	for _, call := range history[i].ToolCalls {
+		if !answered[call.ID] {
+			return true
+		}
+	}
+	return false
+}
+
+// toolHold is one call whose tool goes on after an interruption (ToolPolicy.Waits). Its
+// fields are guarded by Agent.mu.
+type toolHold struct {
+	// answered is set once the call was answered with stillRunning.
+	answered bool
+	// resolved is set once its result went into the history.
+	resolved bool
+}
+
+// holdOnInterrupt answers call with stillRunning the moment ctx ends, when its tool goes on
+// after an interruption, so the next turn replays it answered. Nil for any other tool,
+// which an interruption cancels as it always has.
+func (a *Agent) holdOnInterrupt(ctx context.Context, call llm.ToolCall) *toolHold {
+	if a.options.ToolPolicy == nil || !a.options.ToolPolicy(call.Name).Waits {
+		return nil
+	}
+	hold := &toolHold{}
+	context.AfterFunc(ctx, func() {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if hold.resolved {
+			return
+		}
+		hold.answered = true
+		a.history = append(a.history, llm.Message{Role: llm.ToolResult, ToolCallID: call.ID, Content: stillRunning})
+		if !callsOpen(a.history) {
+			a.history = append(a.history, a.lateResults...)
+			a.lateResults = nil
+		}
+	})
+	return hold
 }
 
 // heardSoFar is who the agent has opened a transcription session for, which is everyone it

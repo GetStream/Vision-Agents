@@ -113,16 +113,7 @@ var responseDescriptions = map[string]string{
 func init() {
 	huma.NewError = func(status int, message string, errs ...error) huma.StatusError {
 		details := make([]string, 0, len(errs))
-		for _, err := range errs {
-			// A detail names the value it refused. The value of a secret is the secret, and
-			// for a field missing or unexpected the value is the whole object around it,
-			// whatever else it carries. Only a single value at a field that is not a
-			// secret is repeated back.
-			var detail *huma.ErrorDetail
-			if errors.As(err, &detail) && (strings.Contains(strings.ToLower(detail.Location), "secret") || !scalar(detail.Value)) {
-				details = append(details, detail.Message+" ("+detail.Location+")")
-				continue
-			}
+		for _, err := range withoutRefusedValues(errs) {
 			details = append(details, err.Error())
 		}
 		if len(details) > 0 {
@@ -138,6 +129,23 @@ func init() {
 		return statusError(status, message)
 	}
 	huma.NewErrorWithContext = answerFailure
+}
+
+// withoutRefusedValues is errs as an answer or the request log may repeat them. A detail names
+// the value it refused. The value of a secret is the secret, and for a field missing or
+// unexpected the value is the whole object around it, whatever else it carries. Only a single
+// value at a field that is not a secret is repeated back.
+func withoutRefusedValues(errs []error) []error {
+	kept := make([]error, 0, len(errs))
+	for _, err := range errs {
+		var detail *huma.ErrorDetail
+		if errors.As(err, &detail) && (strings.Contains(strings.ToLower(detail.Location), "secret") || !scalar(detail.Value)) {
+			kept = append(kept, errors.New(detail.Message+" ("+detail.Location+")"))
+			continue
+		}
+		kept = append(kept, err)
+	}
+	return kept
 }
 
 // scalar reports whether a value is one thing rather than an object or a list of them.
@@ -289,6 +297,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerPlugins(api)
 	s.registerConfigPatch(api)
 	s.registerSync(api)
+	s.registerAudit(api)
 	s.registerConnectors(api)
 	s.registerOAuthClients(api)
 	s.registerConnectorProviderApps(api)
@@ -296,6 +305,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerConnections(api)
 	s.registerAuthorizations(api)
 	s.registerConnectionTools(api)
+	s.registerConnectionRecords(api)
 	s.registerChannels(api)
 	s.registerDLC(api)
 	return api

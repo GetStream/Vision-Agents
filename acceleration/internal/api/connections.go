@@ -13,6 +13,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -50,6 +51,15 @@ type Connection struct {
 	ExpiresAt          *time.Time        `json:"expires_at,omitempty" readOnly:"true" doc:"When the current credential expires. Absent when there is none or it does not."`
 	CreatedAt          time.Time         `json:"created_at" readOnly:"true"`
 	UpdatedAt          time.Time         `json:"updated_at" readOnly:"true"`
+	UsedBy             []ConnectionUse   `json:"used_by" readOnly:"true" doc:"The agent config bindings that name this connection as their fixed connection, which deleting it would break. A binding a session fills with the caller's own connection names none, so it is never listed."`
+}
+
+// ConnectionUse is one binding of an agent config that names a connection as its fixed
+// connection.
+type ConnectionUse struct {
+	ConfigID   string `json:"config_id"`
+	ConfigName string `json:"config_name"`
+	Binding    string `json:"binding" doc:"The alias the config binds the connection under."`
 }
 
 func (*Connection) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -280,7 +290,8 @@ func (s *Server) createConnection(ctx context.Context, request *createConnection
 	if err != nil {
 		return nil, err
 	}
-	return &connectionResponse{Body: connectionOf(connection)}, nil
+	// A new connection is bound by nothing yet.
+	return &connectionResponse{Body: connectionOf(connection, nil)}, nil
 }
 
 // listConnections lists one owner's connections, a page at a time.
@@ -315,9 +326,18 @@ func (s *Server) listConnections(ctx context.Context, request *listConnectionsRe
 	}
 
 	kept, more := page(found, store.ConnectionLimit(request.Limit))
+	ids := make([]string, 0, len(kept))
+	for _, connection := range kept {
+		ids = append(ids, connection.ID)
+	}
+	// One read for the whole page.
+	uses, err := s.store.ConnectorConnectionUses(ctx, customerID, ids)
+	if err != nil {
+		return nil, err
+	}
 	listed := ConnectionPage{Items: make([]Connection, 0, len(kept)), HasMore: more}
 	for _, connection := range kept {
-		listed.Items = append(listed.Items, connectionOf(connection))
+		listed.Items = append(listed.Items, connectionOf(connection, uses[connection.ID]))
 	}
 	if more {
 		last := kept[len(kept)-1]
@@ -332,7 +352,11 @@ func (s *Server) getConnection(ctx context.Context, request *connectionRequest) 
 	if err != nil {
 		return nil, err
 	}
-	return &connectionResponse{Body: connectionOf(connection)}, nil
+	uses, err := s.store.ConnectorConnectionUses(ctx, connection.CustomerID, []string{connection.ID})
+	if err != nil {
+		return nil, err
+	}
+	return &connectionResponse{Body: connectionOf(connection, uses[connection.ID])}, nil
 }
 
 // deleteConnection soft deletes one connection the caller may have, unless an
@@ -362,7 +386,42 @@ func (s *Server) deleteConnection(ctx context.Context, request *deleteConnection
 	if err != nil {
 		return nil, err
 	}
+	// Its outbound client goes too. A session holding a copy is refused by the resolver, and
+	// by its dispatcher's check before every call.
+	if s.connectorTransports != nil {
+		s.connectorTransports.Close(core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID})
+	}
+	// So do its MCP event subscriptions: a delivery to one is answered 410 from here on. The
+	// connection is deleted whatever happens here, so a failure is logged, not answered with a
+	// 500 a retry would turn into a 404: a row left behind goes at its next delivery or its
+	// next look, which comes a day later at most (mcpevents.refreshAt, retryWait, waitUntil).
+	if s.mcpEvents != nil {
+		if err := s.mcpEvents.Stop(ctx, connection.CustomerID, connection.ID); err != nil {
+			s.logger.Error("could not drop a deleted connection's MCP event subscriptions", "connection", connection.ID, "error", err)
+		}
+	}
+	// The delete dropped its credentials. One that held none, pending since it was made, had
+	// no grant to revoke.
+	if len(connection.CredentialsSealed) > 0 {
+		s.auditGrant(ctx, connection.CustomerID, connection.ID, connection.ConnectorID, connection.OwnerType,
+			store.AuditGrantRevoked, store.AuditReasonDeleted, 0, "")
+	}
 	return nil, nil
+}
+
+// auditGrant records one grant the API created or revoked (T47), with the request's id
+// (core.CorrelationOf). The change is committed when it is called, so a row that cannot be
+// written is logged and the change stands. revision is the connection's once it committed, 0
+// when the change names none.
+func (s *Server) auditGrant(ctx context.Context, customerID, connectionID, connectorID, ownerType, action, reason string, revision int, attemptID string) {
+	err := s.store.RecordConnectorAudit(ctx, &store.ConnectorAuditEvent{
+		CustomerID: customerID, ConnectionID: connectionID, ConnectorID: connectorID, OwnerType: ownerType,
+		Action: action, Reason: reason, Revision: revision, RequestID: core.CorrelationOf(ctx).RequestID,
+		AttemptID: attemptID,
+	})
+	if err != nil {
+		s.logger.Error("could not record a connector audit row", "connection", connectionID, "action", action, "error", err)
+	}
 }
 
 // reachableConnection is the live connection id names, if the caller may have it, and
@@ -433,8 +492,13 @@ func actingUser(ctx context.Context) string {
 // connectionOf is the part of a stored connection a caller is shown. Each field is
 // copied by name, so a column added to the row stays hidden until it is added here. Sealed
 // credentials, cached tools and last_error are left out: the first is never shown, and the
-// other two are for the operations that write them (T18, T12).
-func connectionOf(connection store.ConnectorConnection) Connection {
+// other two are for the operations that write them (T18, T12). uses are the bindings that
+// name it (store.ConnectorConnectionUses).
+func connectionOf(connection store.ConnectorConnection, uses []store.ConnectionUse) Connection {
+	usedBy := make([]ConnectionUse, 0, len(uses))
+	for _, use := range uses {
+		usedBy = append(usedBy, ConnectionUse{ConfigID: use.ConfigID, ConfigName: use.ConfigName, Binding: use.Binding})
+	}
 	return Connection{
 		ID:                 connection.ID,
 		ConnectorID:        connection.ConnectorID,
@@ -454,5 +518,6 @@ func connectionOf(connection store.ConnectorConnection) Connection {
 		ExpiresAt:     connection.ExpiresAt,
 		CreatedAt:     connection.CreatedAt,
 		UpdatedAt:     connection.UpdatedAt,
+		UsedBy:        usedBy,
 	}
 }

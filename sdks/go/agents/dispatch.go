@@ -10,7 +10,6 @@ import (
 
 	"github.com/GetStream/Vision-Agents/sdks/go/client"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
-	"github.com/GetStream/Vision-Agents/sdks/go/tools"
 )
 
 // InboundCall is a call the router could not answer itself.
@@ -155,10 +154,14 @@ func (d *Dispatch) OnCall(handler func(context.Context, InboundCall) error) {
 	d.dispatch.OnCall(handler)
 }
 
-// Host runs these functions for every session opened under an agent id, whoever opened it,
-// giving the router timeout for each call. See stream.Dispatch.Host.
-func (d *Dispatch) Host(agentID string, functions *tools.Registry, timeout time.Duration) {
-	d.dispatch.Host(agentID, functions, timeout)
+// Host runs an agent's tools for every session opened under it, whoever opened it, with
+// toolTimeout as how long the router waits for each tool call. See stream.Dispatch.Host.
+//
+//	agent := api.Agent("my-agent")
+//	agent.Tools().Add(LookupOrder{})
+//	dispatch.Host(agent, time.Minute)
+func (d *Dispatch) Host(agent stream.HostedAgent, toolTimeout time.Duration) {
+	d.dispatch.Host(agent, toolTimeout)
 }
 
 // WorkerID is what the router calls this connection.

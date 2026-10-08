@@ -20,7 +20,11 @@ class ConnectorEventDestination:
     reaction_added. Each forward is a POST of the provider's body as it came, with the provider's own Content-Type,
     signature and timestamp headers, signed on top in the Standard Webhooks shape (webhook-id, webhook-timestamp,
     webhook-signature) with the destination's own secret. A 2xx answer is taken; a 5xx, a 429 or no answer is sent again
-    after 5 s, 5 min, 30 min and 2 h; any other answer is not sent again.
+    after 5 s, 5 min, 30 min and 2 h; any other answer is not sent again. The provider's signature headers come only
+    while the provider's own check would pass them: for Slack, until X-Slack-Request-Timestamp is 5 minutes old, the age
+    Slack Bolt refuses after. A forward sent later, such as the retries after 5 min, 30 min and 2 h, carries Content-
+    Type alone of them: verify it with webhook-signature. webhook-id is the same for every delivery of one provider
+    event (Slack's event_id, or trigger_id for an interaction), and a digest of the body for one that names no id.
 
         Attributes:
             connector_id (str):

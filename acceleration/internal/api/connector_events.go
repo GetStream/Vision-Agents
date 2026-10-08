@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"sync"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
@@ -72,11 +74,14 @@ func ConnectorEventSecrets(getenv func(string) string) EventSecretLookup {
 // which names no customer. An error makes the endpoint answer 500, so the provider delivers
 // again; a bridge drops a retried message by its ProviderMessageID. answered is whether an
 // agent answers at least one of the messages; a delivery none of whose messages is answered is
-// one the router did not handle, which the customer's event destinations may take. Replies do
-// not pass here: the conversation on a thread channel hands its finished replies to the bridge
-// itself (conversation.Service.OnFinishedReply).
+// one the router did not handle, which the customer's event destinations may take. An answer
+// is counted before the message is written into its thread channel, after the ack; unanswered,
+// when not nil, is called once, off the request, when that write fails, so the delivery goes
+// on to the destinations of unhandled events then. Replies do not pass here: the conversation
+// on a thread channel hands its finished replies to the bridge itself
+// (conversation.Service.OnFinishedReply).
 type ChannelBridge interface {
-	Deliver(ctx context.Context, app store.ConnectorOAuthClient, messages []core.InboundMessage) (answered bool, err error)
+	Deliver(ctx context.Context, app store.ConnectorOAuthClient, messages []core.InboundMessage, unanswered func()) (answered bool, err error)
 }
 
 // droppingBridge is the bridge of a deployment without one: it logs that messages came and
@@ -85,7 +90,7 @@ type droppingBridge struct {
 	logger *slog.Logger
 }
 
-func (b droppingBridge) Deliver(_ context.Context, _ store.ConnectorOAuthClient, messages []core.InboundMessage) (bool, error) {
+func (b droppingBridge) Deliver(_ context.Context, _ store.ConnectorOAuthClient, messages []core.InboundMessage, _ func()) (bool, error) {
 	if len(messages) > 0 {
 		b.logger.Info("dropped inbound connector messages: no channel bridge",
 			"connector", messages[0].ConnectorID, "messages", len(messages))
@@ -243,28 +248,57 @@ func (s *Server) receiveEvent(w http.ResponseWriter, r *http.Request, body []byt
 		}
 	}
 	handled := len(event.Signals) > 0
+	// Only a provider app's delivery is forwarded: its route names the customer whose
+	// destinations take it. A connector's own route is the operator's app, whose events are
+	// no one customer's. Forward queues and returns, so the ack does not wait on a customer.
+	forwarding := s.eventForwarder != nil && app.CustomerID != ""
+	var forward eventforward.Event
+	if forwarding {
+		forward = eventforward.ProviderEvent(manifest, r.Header, body)
+		forward.CustomerID = app.CustomerID
+	}
 	if len(event.Messages) > 0 {
-		answered, err := s.channelBridge.Deliver(r.Context(), app, event.Messages)
+		var unanswered func()
+		if forwarding && !handled {
+			unanswered = s.forwardUnanswered(forward)
+		}
+		answered, err := s.channelBridge.Deliver(r.Context(), app, event.Messages, unanswered)
 		if err != nil {
 			writeFailure(w, r, err)
 			return
 		}
 		handled = handled || answered
 	}
-	// Only a provider app's delivery is forwarded: its route names the customer whose
-	// destinations take it. A connector's own route is the operator's app, whose events are
-	// no one customer's. Forward queues and returns, so the ack does not wait on a customer.
-	if s.eventForwarder != nil && app.CustomerID != "" {
-		err := s.eventForwarder.Forward(r.Context(), eventforward.Event{
-			CustomerID: app.CustomerID, ConnectorID: manifest.ID,
-			Headers: eventforward.ProviderHeaders(manifest, r.Header), Body: body, Handled: handled,
-		})
-		if err != nil {
+	if forwarding {
+		forward.Handled = handled
+		if err := s.eventForwarder.Forward(r.Context(), forward); err != nil {
 			writeFailure(w, r, err)
 			return
 		}
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// lateForwardTimeout bounds queueing a delivery whose message's write failed after the ack,
+// one Postgres insert off the request: the 10 s chatlog gives one write (chatlog
+// writeTimeout). A choice, not a measured value.
+const lateForwardTimeout = 10 * time.Second
+
+// forwardUnanswered is the bridge's unanswered for one delivery: it queues the delivery for the
+// customer's destinations of unhandled events, once however many of its messages were not
+// written. The request is over by then, so it has a deadline of its own.
+func (s *Server) forwardUnanswered(event eventforward.Event) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), lateForwardTimeout)
+			defer cancel()
+			if err := s.eventForwarder.ForwardUnanswered(ctx, event); err != nil {
+				s.logger.Error("could not forward a delivery no agent got", "connector", event.ConnectorID,
+					"customer", event.CustomerID, "error", err)
+			}
+		})
+	}
 }
 
 // revokeAccount moves every connection of the account a signal names to

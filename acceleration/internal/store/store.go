@@ -14,6 +14,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"maps"
+	"slices"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -78,6 +83,64 @@ func (s *Store) Migrate(ctx context.Context) error {
 	return s.WatchDataChanges(ctx)
 }
 
+// MigrationDrift compares the migrations this binary carries with the ones the database applied,
+// and writes nothing: unlike goose, which creates its version table when it is missing, it only
+// reads. pending are the carried versions not applied, oldest first; a database goose never
+// touched has every version pending. unknown are the applied versions this binary does not
+// carry, oldest first: a newer build migrated the database. Version 0 is goose's own first row,
+// not a migration. An applied version is the newest goose_db_version row of that version with
+// is_applied set, as goose reads its own table (Provider.ListMigrations, v3).
+func (s *Store) MigrationDrift(ctx context.Context) (pending, unknown []int64, err error) {
+	carried, err := fs.Glob(migrations.FS, "*.sql")
+	if err != nil {
+		return nil, nil, stack.Wrap(err)
+	}
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, "SELECT to_regclass('goose_db_version') IS NOT NULL").Scan(&exists); err != nil {
+		return nil, nil, stack.Wrap(fmt.Errorf("store: migration drift: %w", err))
+	}
+	applied := map[int64]bool{}
+	if exists {
+		rows, err := s.db.QueryContext(ctx, "SELECT version_id, is_applied FROM goose_db_version ORDER BY id DESC")
+		if err != nil {
+			return nil, nil, stack.Wrap(fmt.Errorf("store: migration drift: %w", err))
+		}
+		defer rows.Close()
+		seen := map[int64]bool{}
+		for rows.Next() {
+			var version int64
+			var isApplied bool
+			if err := rows.Scan(&version, &isApplied); err != nil {
+				return nil, nil, stack.Wrap(fmt.Errorf("store: migration drift: %w", err))
+			}
+			if !seen[version] {
+				seen[version], applied[version] = true, isApplied
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, nil, stack.Wrap(fmt.Errorf("store: migration drift: %w", err))
+		}
+	}
+	carries := map[int64]bool{}
+	for _, name := range carried {
+		prefix, _, _ := strings.Cut(name, "_")
+		version, err := strconv.ParseInt(prefix, 10, 64)
+		if err != nil {
+			return nil, nil, stack.Wrap(fmt.Errorf("store: migration %s has no version: %w", name, err))
+		}
+		carries[version] = true
+		if !applied[version] {
+			pending = append(pending, version)
+		}
+	}
+	for _, version := range slices.Sorted(maps.Keys(applied)) {
+		if applied[version] && version != 0 && !carries[version] {
+			unknown = append(unknown, version)
+		}
+	}
+	return pending, unknown, nil
+}
+
 // RecordRequest stores one request. Latency is optional because a request that failed
 // before reaching the provider has none.
 func (s *Store) RecordRequest(ctx context.Context, request *Request) error {
@@ -96,6 +159,18 @@ func (s *Store) RecordRequest(ctx context.Context, request *Request) error {
 		return fmt.Errorf("store: record request: %w", err)
 	}
 	return nil
+}
+
+// ErrorCancelled is the error code of a request its caller gave up on, whether before the
+// provider answered or by closing the stream it had opened. It is not a success, but it is no
+// failure either, so the rollups count it as a request and for what it cost and leave it out
+// of errors, uptime and latency.
+const ErrorCancelled = "cancelled"
+
+// notCancelled is the SQL condition that a request was not cancelled, on the request row the
+// prefix names.
+func notCancelled(prefix string) string {
+	return prefix + "error_code IS DISTINCT FROM '" + ErrorCancelled + "'"
 }
 
 // Rollup aggregates the requests in [from, to) into the rollup tables for the given
@@ -128,7 +203,7 @@ func (s *Store) Rollup(ctx context.Context, granularity Granularity, from, to ti
 
 func (s *Store) rollupProviders(ctx context.Context, granularity Granularity, from, to time.Time) (int64, error) {
 	query := fmt.Sprintf(`
-INSERT INTO %s (
+INSERT INTO %[1]s (
     modality, customer_id, provider, model, bucket,
     audio_ms_total, characters_total,
     input_tokens_total, cached_input_tokens_total, output_tokens_total,
@@ -142,7 +217,7 @@ SELECT
     customer_id,
     provider,
     model,
-    date_trunc('%s', started_at) AS bucket,
+    date_trunc('%[2]s', started_at) AS bucket,
     COALESCE(SUM(audio_ms), 0),
     COALESCE(SUM(characters), 0),
     COALESCE(SUM(input_tokens), 0),
@@ -151,9 +226,9 @@ SELECT
     COALESCE(SUM(images), 0),
     COALESCE(SUM(cost_micros), 0),
     COUNT(*),
-    COUNT(*) FILTER (WHERE NOT success),
-    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms),
-    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)
+    COUNT(*) FILTER (WHERE NOT success AND %[3]s),
+    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE %[3]s),
+    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE %[3]s)
 FROM requests
 WHERE started_at >= ? AND started_at < ?
 GROUP BY modality, customer_id, provider, model, bucket
@@ -169,7 +244,7 @@ ON CONFLICT (modality, customer_id, provider, model, bucket) DO UPDATE SET
     error_count = EXCLUDED.error_count,
     latency_p50_ms = EXCLUDED.latency_p50_ms,
     latency_p95_ms = EXCLUDED.latency_p95_ms`,
-		granularity.table(), granularity.truncateUnit())
+		granularity.table(), granularity.truncateUnit(), notCancelled(""))
 
 	result, err := s.db.ExecContext(ctx, query, from, to)
 	if err != nil {
@@ -188,7 +263,7 @@ ON CONFLICT (modality, customer_id, provider, model, bucket) DO UPDATE SET
 // towards both breakdowns.
 func (s *Store) rollupTags(ctx context.Context, granularity Granularity, from, to time.Time) (int64, error) {
 	query := fmt.Sprintf(`
-INSERT INTO %s (
+INSERT INTO %[1]s (
     modality, customer_id, tag_key, tag_value, bucket,
     audio_ms_total, characters_total,
     input_tokens_total, cached_input_tokens_total, output_tokens_total,
@@ -202,7 +277,7 @@ SELECT
     r.customer_id,
     tag.key,
     tag.value,
-    date_trunc('%s', r.started_at) AS bucket,
+    date_trunc('%[2]s', r.started_at) AS bucket,
     COALESCE(SUM(r.audio_ms), 0),
     COALESCE(SUM(r.characters), 0),
     COALESCE(SUM(r.input_tokens), 0),
@@ -211,9 +286,9 @@ SELECT
     COALESCE(SUM(r.images), 0),
     COALESCE(SUM(r.cost_micros), 0),
     COUNT(*),
-    COUNT(*) FILTER (WHERE NOT r.success),
-    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY r.latency_ms),
-    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY r.latency_ms)
+    COUNT(*) FILTER (WHERE NOT r.success AND %[3]s),
+    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY r.latency_ms) FILTER (WHERE %[3]s),
+    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY r.latency_ms) FILTER (WHERE %[3]s)
 FROM requests AS r
 CROSS JOIN LATERAL jsonb_each_text(r.tags) AS tag(key, value)
 WHERE r.started_at >= ? AND r.started_at < ?
@@ -230,7 +305,7 @@ ON CONFLICT (modality, customer_id, tag_key, tag_value, bucket) DO UPDATE SET
     error_count = EXCLUDED.error_count,
     latency_p50_ms = EXCLUDED.latency_p50_ms,
     latency_p95_ms = EXCLUDED.latency_p95_ms`,
-		granularity.tagTable(), granularity.truncateUnit())
+		granularity.tagTable(), granularity.truncateUnit(), notCancelled("r."))
 
 	result, err := s.db.ExecContext(ctx, query, from, to)
 	if err != nil {
@@ -405,7 +480,7 @@ SELECT
     customer_id,
     provider,
     model,
-    date_trunc('%s', started_at) AS bucket,
+    date_trunc('%[1]s', started_at) AS bucket,
     COALESCE(SUM(audio_ms), 0) AS audio_ms_total,
     COALESCE(SUM(characters), 0) AS characters_total,
     COALESCE(SUM(input_tokens), 0) AS input_tokens_total,
@@ -414,17 +489,17 @@ SELECT
     COALESCE(SUM(images), 0) AS images_total,
     COALESCE(SUM(cost_micros), 0) AS cost_micros_total,
     COUNT(*) AS request_count,
-    COUNT(*) FILTER (WHERE NOT success) AS error_count,
-    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms) AS latency_p50_ms,
-    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms) AS latency_p95_ms,
-    (COUNT(*) - COUNT(*) FILTER (WHERE NOT success))::double precision
+    COUNT(*) FILTER (WHERE NOT success AND %[2]s) AS error_count,
+    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE %[2]s) AS latency_p50_ms,
+    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE %[2]s) AS latency_p95_ms,
+    (COUNT(*) - COUNT(*) FILTER (WHERE NOT success AND %[2]s))::double precision
         / NULLIF(COUNT(*), 0) AS uptime
 FROM requests
 WHERE modality = ? AND customer_id = ?
   AND started_at >= ? AND started_at < ?
   AND tags @> ?::jsonb
 GROUP BY modality, customer_id, provider, model, bucket
-ORDER BY bucket ASC, provider ASC, model ASC`, granularity.truncateUnit())
+ORDER BY bucket ASC, provider ASC, model ASC`, granularity.truncateUnit(), notCancelled(""))
 
 	var buckets []Bucket
 	if err := s.db.NewRaw(query, modality, customerID, from, to, string(filter)).Scan(ctx, &buckets); err != nil {

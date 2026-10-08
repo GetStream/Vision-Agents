@@ -57,6 +57,113 @@ func (s *SpecSuite) TestAConfigsPluginsBecomeTheSessions() {
 	s.Equal([]store.PluginEntry{{Name: "slack"}, {Name: "calendly"}}, spec.AgentPlugins)
 }
 
+func (s *SpecSuite) TestAConfigsConnectorBindingsBecomeTheSessions() {
+	bindings := []store.ConnectorBinding{{Name: "tracker", ConnectorID: "linear",
+		Connection: store.ConnectionBinding{Type: selectionSession}}}
+
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Connectors: bindings})
+
+	s.Equal(bindings, spec.ConnectorBindings)
+}
+
+// TestAConnectorBindingWinsOverAPluginEntryForTheSameProvider: the same provider is a
+// binding's connector_id equal to a plugin entry's name, the id the built-in connectors share
+// with the plugin catalog. The binding's alias plays no part.
+func (s *SpecSuite) TestAConnectorBindingWinsOverAPluginEntryForTheSameProvider() {
+	spec := FromConfig(store.AgentConfig{
+		CustomerID:   "acme",
+		AgentPlugins: []store.PluginEntry{{Name: "linear"}, {Name: "calendly"}},
+		UserPlugins:  []store.PluginEntry{{Name: "linear"}, {Name: "gong"}},
+		Connectors: []store.ConnectorBinding{{Name: "tracker", ConnectorID: "linear",
+			Connection: store.ConnectionBinding{Type: selectionSession}}},
+	})
+	spec.CallID = "call-1"
+
+	s.Require().NoError(spec.Normalize())
+
+	s.Equal([]store.PluginEntry{{Name: "calendly"}}, spec.AgentPlugins)
+	s.Equal([]store.PluginEntry{{Name: "gong"}}, spec.UserPlugins)
+}
+
+// TestAVoiceSessionIsKeyedUnderTheAgentIDItNamesBeforeNormalize: KeyedAgentID is what
+// Normalize keys a voice session under, its call id when it names no agent id, trimmed as
+// Normalize trims it.
+func (s *SpecSuite) TestAVoiceSessionIsKeyedUnderTheAgentIDItNamesBeforeNormalize() {
+	spec := Spec{CustomerID: "acme", CallID: "call-1"}
+	padded := Spec{CustomerID: "acme", CallID: " call-1 \n"}
+	keyed, paddedKeyed := spec.KeyedAgentID(), padded.KeyedAgentID()
+
+	s.Require().NoError(spec.Normalize())
+	s.Require().NoError(padded.Normalize())
+
+	s.Equal("call-1", keyed)
+	s.Equal(keyed, spec.AgentID)
+	s.Equal("call-1", paddedKeyed)
+	s.Equal(paddedKeyed, padded.AgentID)
+}
+
+// TestATextSessionNamingNoAgentIDIsKeyedUnderNoneACallerNamed: Normalize gives it a new id.
+func (s *SpecSuite) TestATextSessionNamingNoAgentIDIsKeyedUnderNoneACallerNamed() {
+	spec := Spec{CustomerID: "acme", Text: true}
+
+	s.Empty(spec.KeyedAgentID())
+	s.Require().NoError(spec.Normalize())
+	s.NotEmpty(spec.AgentID)
+}
+
+// TestWithoutABindingThePluginsAreLeftExactlyAsConfigured: Normalize's same-provider rule
+// is a no-op for a config that binds no connector, down to an empty list staying empty.
+func (s *SpecSuite) TestWithoutABindingThePluginsAreLeftExactlyAsConfigured() {
+	spec := FromConfig(store.AgentConfig{
+		CustomerID:   "acme",
+		AgentPlugins: []store.PluginEntry{{Name: "linear"}, {Name: "slack"}},
+		UserPlugins:  []store.PluginEntry{},
+	})
+	spec.CallID = "call-1"
+
+	s.Require().NoError(spec.Normalize())
+
+	s.Equal([]store.PluginEntry{{Name: "linear"}, {Name: "slack"}}, spec.AgentPlugins)
+	s.NotNil(spec.UserPlugins)
+	s.Empty(spec.UserPlugins)
+}
+
+func (s *SpecSuite) TestAPluginOfAnotherProviderStaysBesideABinding() {
+	spec := FromConfig(store.AgentConfig{
+		CustomerID:   "acme",
+		AgentPlugins: []store.PluginEntry{{Name: "slack"}},
+		Connectors: []store.ConnectorBinding{{Name: "slack", ConnectorID: "custom_slack",
+			Connection: store.ConnectionBinding{Type: selectionFixed, ConnectionID: "c1"}}},
+	})
+	spec.CallID = "call-1"
+
+	s.Require().NoError(spec.Normalize())
+
+	s.Equal([]store.PluginEntry{{Name: "slack"}}, spec.AgentPlugins)
+}
+
+// A call's transcript goes into the conversation's agent channel, else the agent id's, as
+// chatlog.New picks it from the Channel the transcript factory passes: a conversation_id of
+// another channel type, or none at all, is the agent id's.
+func (s *SpecSuite) TestATranscriptGoesIntoTheConversationsAgentChannelElseTheAgentIds() {
+	for conversation, want := range map[string][2]string{
+		"agent:support-0199": {"support-0199", "agent:support-0199"},
+		"messaging:X":        {"", "agent:front-desk"},
+		"X":                  {"", "agent:front-desk"},
+		"":                   {"", "agent:front-desk"},
+	} {
+		spec := Spec{ConversationID: conversation, AgentID: "front-desk"}
+		s.Equal(want[0], spec.ConversationChannel(), conversation)
+		s.Equal(want[1], spec.TranscriptChannel(), conversation)
+	}
+}
+
+func (s *SpecSuite) TestAThreadChannelIsAConversationSeveralPeopleShare() {
+	s.True(Spec{ConversationID: "agent:" + persistent.ThreadChannelPrefix + "0199"}.Shared())
+	s.False(Spec{ConversationID: "agent:support-0199"}.Shared())
+	s.False(Spec{}.Shared())
+}
+
 func (s *SpecSuite) TestAConfigsSandboxBecomesTheSessions() {
 	spec := FromConfig(store.AgentConfig{
 		CustomerID: "acme",

@@ -27,11 +27,14 @@ import (
 // tool_calling ones, the same attachment a Chat channel's copy of the message carries.
 func (m Message) MarshalJSON() ([]byte, error) {
 	type plain Message
-	attachments := make([]any, 0, len(m.Tools)+len(m.Authorizations))
+	attachments := make([]any, 0, len(m.Tools)+len(m.Authorizations)+len(m.ConnectorAuthorizations))
 	for _, tool := range m.Tools {
 		attachments = append(attachments, tool)
 	}
 	for _, authorization := range m.Authorizations {
+		attachments = append(attachments, authorization)
+	}
+	for _, authorization := range m.ConnectorAuthorizations {
 		attachments = append(attachments, authorization)
 	}
 	return json.Marshal(struct {
@@ -119,10 +122,11 @@ func (c *Conversation) BeginFollowUp(text string) (CommandReceipt, error) {
 // rememberAsked keeps a finished reply that asked for a login, to mark it once the login is
 // made. Only the latest few are kept: an older button is one nobody is waiting on.
 func (c *Conversation) rememberAsked(m Message) {
-	if len(m.Authorizations) == 0 {
+	if len(m.Authorizations) == 0 && len(m.ConnectorAuthorizations) == 0 {
 		return
 	}
 	m.Authorizations = append([]plugins.Authorization{}, m.Authorizations...)
+	m.ConnectorAuthorizations = append([]ConnectorAuthorization{}, m.ConnectorAuthorizations...)
 	c.asked = append(c.asked, m)
 	if len(c.asked) > maxAsked {
 		c.asked = c.asked[len(c.asked)-maxAsked:]

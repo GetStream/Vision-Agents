@@ -80,6 +80,12 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 		_ = writeFrame(frame{"type": "error", "error": message})
 		_ = write(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, ""))
 	}
+	// refuseWith also names the failure's code and type, which are what
+	// POST /v1/agents/sessions answers the same failure with.
+	refuseWith := func(failure APIError) {
+		_ = writeFrame(frame{"type": "error", "error": failure.Message, "code": failure.Code, "error_type": failure.Type})
+		_ = write(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, ""))
+	}
 
 	_ = connection.SetReadDeadline(time.Now().Add(startWait))
 	var start socketStart
@@ -88,6 +94,13 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = connection.SetReadDeadline(time.Time{})
+
+	// The start frame carries POST /v1/agents/sessions's body, so a device is refused here
+	// what it is refused there.
+	if failure, refused := refuseServerSideFields(ctx, start.Session); refused {
+		refuseWith(failure)
+		return
+	}
 
 	config, failure := s.configFor(ctx, customerID, start.Session.ConfigId, start.Session.Agent)
 	if failure != nil {
@@ -110,6 +123,7 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 		Cleared:    func() { _ = writeFrame(frame{"type": "cleared"}) },
 	})
 	spec := specOf(start.Session, customerID, config)
+	ctx = s.threadConversation(ctx, customerID, &spec)
 	spec.Caller = CallerFrom(ctx)
 	spec.CallerKind = KindFrom(ctx)
 	spec.Edge = edge

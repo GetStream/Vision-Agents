@@ -156,6 +156,10 @@ plugins:
     logo: salesforce.svg
     scopes: [mcp_api, refresh_token]
     scopes_supported: [mcp_api, refresh_token]
+    # Its token response has no expires_in, and a token lives as long as the org's session
+    # timeout, 15 minutes at the shortest: access_ttl in
+    # internal/connectors/providers/salesforce.yaml, which cites Salesforce's range.
+    access_ttl: 15m
   # https://mcp.sentry.dev, opened October 3, 2026. OAuth with dynamic client registration,
   # advertised at /.well-known/oauth-protected-resource/mcp.
   - id: sentry

@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::fmt::Display;
+use std::fmt::{self, Display};
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 
@@ -120,5 +120,13 @@ impl Tools {
             Value::String(text) => Ok(Value::String(text)),
             other => Ok(Value::String(other.to_string())),
         }
+    }
+}
+
+impl fmt::Debug for Tools {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list()
+            .entries(self.registered.lock().expect("tools").keys())
+            .finish()
     }
 }

@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.create_session_request_tags import CreateSessionRequestTags
     from ..models.history_message import HistoryMessage
     from ..models.model_overwrites import ModelOverwrites
+    from ..models.session_connector_binding import SessionConnectorBinding
     from ..models.session_memory import SessionMemory
     from ..models.session_phone import SessionPhone
     from ..models.session_tool import SessionTool
@@ -37,6 +38,13 @@ class CreateSessionRequest:
         call_type (str | Unset):  Default: 'default'.
         config_id (str | Unset): An agent config to start from. Everything else in this request overrides what the
             config says, so a caller can reuse a configuration and still change one thing about this call.
+        connector_bindings (list[SessionConnectorBinding] | Unset): The connection to use for each of the agent config's
+            connector bindings chosen per session (connection.type session), by its alias. Each must be the verified
+            caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-
+            User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here,
+            and an alias the config does not declare is refused. A required binding left without one fails the session; an
+            optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections
+            again, against the config as it is then and the caller asking for the fork.
         context_truncated (bool | Unset): Older history was omitted from the model context.
         conversation_id (str | Unset): Stream Chat CID to resume; returned for persistent text sessions.
         custom (CreateSessionRequestCustom | Unset): Anything the caller wants to remember about the session, handed
@@ -109,6 +117,7 @@ class CreateSessionRequest:
     call_id: str | Unset = UNSET
     call_type: str | Unset = "default"
     config_id: str | Unset = UNSET
+    connector_bindings: list[SessionConnectorBinding] | Unset = UNSET
     context_truncated: bool | Unset = UNSET
     conversation_id: str | Unset = UNSET
     custom: CreateSessionRequestCustom | Unset = UNSET
@@ -155,6 +164,13 @@ class CreateSessionRequest:
         call_type = self.call_type
 
         config_id = self.config_id
+
+        connector_bindings: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.connector_bindings, Unset):
+            connector_bindings = []
+            for connector_bindings_item_data in self.connector_bindings:
+                connector_bindings_item = connector_bindings_item_data.to_dict()
+                connector_bindings.append(connector_bindings_item)
 
         context_truncated = self.context_truncated
 
@@ -261,6 +277,8 @@ class CreateSessionRequest:
             field_dict["call_type"] = call_type
         if config_id is not UNSET:
             field_dict["config_id"] = config_id
+        if connector_bindings is not UNSET:
+            field_dict["connector_bindings"] = connector_bindings
         if context_truncated is not UNSET:
             field_dict["context_truncated"] = context_truncated
         if conversation_id is not UNSET:
@@ -338,6 +356,9 @@ class CreateSessionRequest:
         )
         from ..models.history_message import HistoryMessage
         from ..models.model_overwrites import ModelOverwrites
+        from ..models.session_connector_binding import (
+            SessionConnectorBinding,
+        )
         from ..models.session_memory import SessionMemory
         from ..models.session_phone import SessionPhone
         from ..models.session_tool import SessionTool
@@ -355,6 +376,17 @@ class CreateSessionRequest:
         call_type = d.pop("call_type", UNSET)
 
         config_id = d.pop("config_id", UNSET)
+
+        _connector_bindings = d.pop("connector_bindings", UNSET)
+        connector_bindings: list[SessionConnectorBinding] | Unset = UNSET
+        if _connector_bindings is not UNSET:
+            connector_bindings = []
+            for connector_bindings_item_data in _connector_bindings:
+                connector_bindings_item = SessionConnectorBinding.from_dict(
+                    connector_bindings_item_data
+                )
+
+                connector_bindings.append(connector_bindings_item)
 
         context_truncated = d.pop("context_truncated", UNSET)
 
@@ -471,6 +503,7 @@ class CreateSessionRequest:
             call_id=call_id,
             call_type=call_type,
             config_id=config_id,
+            connector_bindings=connector_bindings,
             context_truncated=context_truncated,
             conversation_id=conversation_id,
             custom=custom,

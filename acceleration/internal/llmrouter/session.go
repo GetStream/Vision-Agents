@@ -24,6 +24,12 @@ var tracer = tracing.Tracer("llmrouter")
 // errClosed is what a session answers once it has been closed.
 var errClosed = errors.New("llmrouter: session is closed")
 
+// statRecorder is where a session writes the stat row of each response. It is the router's
+// recorder, and a test's stand-in where the row itself is under test.
+type statRecorder interface {
+	Record(routing.ProviderConfig, routing.Stat)
+}
+
 // Session is a live model attached to one customer. It hands out the provider's streams
 // untouched apart from recording a stat row per response on the way past.
 type Session struct {
@@ -41,7 +47,7 @@ type Session struct {
 	// so a provider registered under a different name still aggregates coherently.
 	config   routing.ProviderConfig
 	owner    routing.Owner
-	recorder *routing.Recorder
+	recorder statRecorder
 	// quota caps what the owner's end user may spend in a day. Nil caps nothing.
 	quota *quota.Limiter
 	// admit asks the owner's policies before each response, and screen judges what each
@@ -82,6 +88,7 @@ func (s *Session) create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	span.End()
 	if err != nil {
 		durationMs := float64(time.Since(startedAt).Microseconds()) / 1000
+		code := createErrorCode(ctx)
 		s.recorder.Record(s.config, routing.Stat{
 			Owner:        s.owner,
 			StartedAt:    startedAt,
@@ -90,7 +97,7 @@ func (s *Session) create(ctx context.Context, params llm.ResponseParams) (*llm.S
 			TurnID:       params.TurnID,
 			DurationMs:   durationMs,
 			Success:      false,
-			ErrorCode:    "create_failed",
+			ErrorCode:    code,
 			ErrorMessage: err.Error(),
 		})
 		slog.Info("model call timing", "call", s.owner.CallID, "operation", params.ID,
@@ -207,18 +214,40 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 		},
 		// Time to first token is what the caller actually waited for; the rest of the
 		// answer arrives while they are already reading or hearing it.
-		LatencyMs: ttftMs,
-		Success:   response.Status != llm.StatusFailed,
+		LatencyMs: measuredLatency(response, ttftMs),
+		Success:   served(response),
 		ErrorCode: errorCode(response),
 	})
 }
 
-// errorCode says why a response failed, or nothing for one that did not.
+// served reports whether a response ran to its end as asked. One the caller closed first
+// did not, and neither did one that failed.
+func served(response llm.Response) bool {
+	return response.Status != llm.StatusFailed && response.Status != llm.StatusCancelled
+}
+
+// errorCode says why a response did not run to its end: the provider failing it, or its
+// caller closing the stream first, which is no fault of the provider's. A response that
+// ended as asked has none.
 func errorCode(response llm.Response) string {
-	if response.Status != llm.StatusFailed {
-		return ""
+	switch response.Status {
+	case llm.StatusFailed:
+		return "provider_error"
+	case llm.StatusCancelled:
+		return routing.ErrorCancelled
 	}
-	return "provider_error"
+	return ""
+}
+
+// measuredLatency is the time the caller waited for the first token, or nothing when none
+// ever came. A response that produced nothing reports no time to first token, and the wait
+// for its headers alone is not one: counted as such, a stream closed the moment it opened
+// would look like the fastest the provider ever answered.
+func measuredLatency(response llm.Response, ttftMs float64) float64 {
+	if response.TimeToFirstTokenMs <= 0 {
+		return 0
+	}
+	return ttftMs
 }
 
 // Only requests that have not started streaming can be replayed safely. A partial
@@ -295,4 +324,13 @@ func (s *Session) releaseChild(child *Session) {
 	s.mu.Lock()
 	delete(s.children, child)
 	s.mu.Unlock()
+}
+
+// createErrorCode says why a request ended before the provider answered it: the caller
+// cancelling it, which is no fault of the provider's, or the provider failing it.
+func createErrorCode(ctx context.Context) string {
+	if ctx.Err() != nil {
+		return routing.ErrorCancelled
+	}
+	return "create_failed"
 }

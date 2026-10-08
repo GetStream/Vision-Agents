@@ -115,6 +115,45 @@ func (s *EventForwardingSuite) TestAMessageAnAgentAnswersGoesOnlyToADestinationO
 		"the agent's thread channel still gets the message")
 }
 
+// An answer is counted before the bridge writes the message into its thread channel, after
+// the ack. When that write fails no agent got the message, so a destination of unhandled
+// events gets it then (AI-924), not neither of them.
+func (s *EventForwardingSuite) TestAMessageWhoseThreadChannelWriteFailsGoesToADestinationOfUnhandledEvents() {
+	s.answering(s.connectedBot())
+	target := newDestination(s.T())
+	s.createDestination("slack_bot", target.URL, store.ForwardUnhandled)
+	// Stream refuses every write of the customer's: its app is read only, as app mode leaves
+	// the deployment's app once the fallback is off.
+	s.setApps(s.customerID(), func(apps *suiteApps) { apps.readOnly[s.customerID()] = true })
+	body := s.message("U0000ALICE", "Can you check the build?", "1759740000.000100")
+
+	status, _ := s.deliver(body, 0)
+
+	s.Equal(http.StatusOK, status)
+	s.Equal(body, s.forwardedTo(target, 1)[0].body)
+	s.Empty(s.chat.Stored(s.threadChannel()), "the thread channel did not get it")
+}
+
+// Slack's event_id is «A unique identifier for this specific event»
+// (https://docs.slack.dev/apis/events-api/), and slack_bot.yaml keys a forward by it: two
+// deliveries of one event are one forward even when their bodies differ.
+func (s *EventForwardingSuite) TestTwoDeliveriesOfOneSlackEventAreOneForward() {
+	target := newDestination(s.T())
+	release := target.holding()
+	s.createDestination("slack_bot", target.URL, store.ForwardUnhandled)
+	first := s.reaction()
+	again := []byte(strings.Replace(string(first), `"type":"event_callback"`, `"type":"event_callback","is_ext_shared_channel":false`, 1))
+	s.Require().NotEqual(first, again)
+
+	s.deliver(first, 0)
+	s.Require().Eventually(func() bool { return len(target.requests()) == 1 }, settleFor, 10*time.Millisecond)
+	s.deliver(again, 1)
+	release()
+
+	s.Require().Eventually(func() bool { return s.pendingForwards() == 0 }, settleFor, 10*time.Millisecond)
+	s.Len(target.requests(), 1)
+}
+
 // Mode C: the customer runs its own agent, so no agent config binds the bot connection, and a
 // message is one the router answers in no way.
 func (s *EventForwardingSuite) TestAMessageNoAgentAnswersIsUnhandled() {

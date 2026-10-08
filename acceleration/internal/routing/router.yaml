@@ -669,6 +669,101 @@ stt:
       price:
         per_audio_hour: 0.45
 
+    # Microsoft's MAI-Transcribe-2-Streaming, launched 2026-10-01 in public preview, so
+    # without an SLA. Reached over the OpenAI Realtime-compatible socket of a Foundry
+    # resource, which is AZURE_MAI_ENDPOINT, and the deployment named by
+    # AZURE_MAI_DEPLOYMENT_NAME, which defaults to the model id.
+    #
+    # The languages are the 60 Microsoft list for it. A request with one language hint
+    # pins the session to it; otherwise the model detects the language.
+    #
+    # The server has no turn detection - null is the only value it takes - so nothing
+    # settles until the client commits. This provider commits once the words have stopped
+    # changing for 1.2 seconds, which is what the settle time here is made of, not the
+    # 128 ms Artificial Analysis measured by committing the moment speech ended.
+    #
+    # $0.54 an audio hour through 2026-12-31, per Microsoft's model card.
+    - provider: microsoft
+      model: MAI-Transcribe-2-Streaming
+      description: "Microsoft's MAI-Transcribe-2-Streaming, in preview: the most accurate live transcriber on the board, in 60 languages."
+      benchmark: { word_error_rate: 0.025, latency_ms: 128 }
+      languages:
+        [
+          af,
+          ar,
+          as,
+          az,
+          bg,
+          bn,
+          bs,
+          ca,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          et,
+          fa,
+          fi,
+          fil,
+          fr,
+          gl,
+          gu,
+          he,
+          hi,
+          hu,
+          hy,
+          id,
+          is,
+          it,
+          ja,
+          kk,
+          kn,
+          ko,
+          lt,
+          lv,
+          mk,
+          ml,
+          mr,
+          ms,
+          nb,
+          ne,
+          nl,
+          or,
+          pa,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sl,
+          sv,
+          sw,
+          ta,
+          te,
+          th,
+          tr,
+          uk,
+          ur,
+          vi,
+          yue,
+          zh,
+        ]
+      realtime: true
+      tier: low-latency
+      # A Foundry model sold by Azure: prompts and outputs are "NOT used to train any
+      # generative AI foundation models without your permission". Retention is the gap.
+      # Abuse monitoring may store flagged content for human review with no published
+      # duration, modified abuse monitoring is by application, and Microsoft say models in
+      # preview "may employ different privacy practices". So it serves no request that
+      # names a retention until our resource is approved and ContentLogging reads false.
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+      price:
+        per_audio_hour: 0.54
+
     # Nova-3 on the batch listen endpoint, which is the recording path rather than the
     # live one. It is not a Flux model: Flux exists to decide where a turn ended while
     # somebody is still talking, and a recording has the whole file in front of it, which
@@ -2156,6 +2251,66 @@ llm:
         per_million_input_tokens: 4.00
         per_million_cached_input_tokens: 0.20
         per_million_output_tokens: 20.00
+
+    # Anthropic's middle model, second on the Artificial Analysis Intelligence Index at 56 -
+    # at max effort. The provider reaches it over Anthropic's OpenAI-compatible endpoint,
+    # which ignores reasoning_effort, so it thinks at the high effort it defaults to, where
+    # that index puts it at 47. Thinking is adaptive and counts against max_output_tokens.
+    # Forced tool use is a 400 on this model, so a request with tool_choice required fails
+    # if it is routed here.
+    #
+    # Cache reads are 5% of input since Anthropic halved them on 7 October 2026, but the
+    # compatibility endpoint does not cache, so that rate is what Anthropic bill rather than
+    # one this route reaches.
+    - provider: anthropic
+      model: claude-sonnet-5-5
+      description: "Anthropic's Sonnet 5.5, faster than Opus 5.5 at half the price. Reads images."
+      benchmark: { intelligence_index: 47, output_tokens_per_second: 107 }
+      context_window: 1000000
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      # Anthropic's Commercial Terms say they "may not train models on Customer Content",
+      # and API inputs and outputs are deleted "within 30 days of receipt or generation".
+      # Sonnet 5.5 is not one of the Covered Models that require 30-day retention, so a zero
+      # retention agreement would make this none; nothing in this deployment says we have one.
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
+      price:
+        per_million_input_tokens: 2.00
+        per_million_cached_input_tokens: 0.10
+        per_million_output_tokens: 10.00
+
+    # Anthropic's fastest model, and the first Haiku with an effort setting. It is not on the
+    # Artificial Analysis Intelligence Index yet. The provider reaches it over Anthropic's
+    # OpenAI-compatible endpoint, which ignores reasoning_effort, so it thinks at the medium
+    # effort it defaults to; low effort, or thinking off, which Haiku allows at high effort
+    # and below, cannot be asked for from here. Thinking counts against max_output_tokens.
+    #
+    # Prompts over 100k tokens are billed at five times these rates for the whole request,
+    # cache reads included. The compatibility endpoint does not cache, so the cached rate is
+    # what Anthropic bill rather than one this route reaches.
+    - provider: anthropic
+      model: claude-haiku-5-5
+      description: "Anthropic's Haiku 5.5, their fastest and cheapest model. Reads images, and thinks before it answers."
+      context_window: 1000000
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      input_modalities: [image]
+      # Anthropic's Commercial Terms say they "may not train models on Customer Content",
+      # and API inputs and outputs are deleted "within 30 days of receipt or generation".
+      # Haiku 5.5 is not one of the Covered Models that require 30-day retention, so a zero
+      # retention agreement would make this none; nothing in this deployment says we have one.
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
+      price:
+        per_million_input_tokens: 0.10
+        per_million_cached_input_tokens: 0.01
+        per_million_output_tokens: 0.50
 
     # xAI's Grok 4.7 over their OpenAI-compatible chat completions, with a 500k context.
     # It cannot be told not to think: none is a 400, and xAI default it to high, so the

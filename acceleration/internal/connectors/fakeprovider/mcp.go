@@ -3,6 +3,7 @@ package fakeprovider
 import (
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"reflect"
 	"slices"
@@ -107,7 +108,11 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var request rpcRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+	body, err := io.ReadAll(r.Body)
+	if err == nil {
+		err = json.Unmarshal(body, &request)
+	}
+	if err != nil {
 		writeRPCError(w, http.StatusBadRequest, nil, codeParseError, "parse error")
 		return
 	}
@@ -140,9 +145,14 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case modern && request.Method == "server/discover":
 		// MCP 2026-07-28 «Discovery».
+		capabilities := map[string]any{"tools": map[string]any{}}
+		if s.is(MCPEvents) {
+			// The draft's «Capability Declaration».
+			capabilities["events"] = map[string]any{"listChanged": false}
+		}
 		result = map[string]any{
 			"supportedVersions": []string{modernVersion, legacyVersion},
-			"capabilities":      map[string]any{"tools": map[string]any{}},
+			"capabilities":      capabilities,
 			"_meta":             map[string]any{"io.modelcontextprotocol/serverInfo": serverInfo()},
 			"ttlMs":             0, "cacheScope": "public",
 		}
@@ -152,6 +162,20 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 			"protocolVersion": legacyVersion,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      serverInfo(),
+		}
+	case modern && s.is(MCPEvents) && (request.Method == "events/subscribe" || request.Method == "events/unsubscribe"):
+		var envelope struct {
+			Params json.RawMessage `json:"params"`
+		}
+		_ = json.Unmarshal(body, &envelope)
+		var answered bool
+		if request.Method == "events/subscribe" {
+			result, answered = s.subscribeEvent(w, request.ID, token, envelope.Params)
+		} else {
+			result, answered = s.unsubscribeEvent(w, request.ID, token, envelope.Params)
+		}
+		if !answered {
+			return
 		}
 	case request.Method == "ping":
 		result = map[string]any{}

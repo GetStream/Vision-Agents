@@ -6,10 +6,11 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/danielgtaylor/huma/v2"
 )
 
-// documentHandWritten declares the routes served by hand rather than by Huma: the three
+// documentHandWritten declares the routes served by hand rather than by Huma: the four
 // sockets, which an operation cannot express past the upgrade, the logs, exports and imports,
 // which stream, and the plugin callback, which a browser arrives at from the provider. They
 // are in the spec so a reader and a client generator know they exist, and so withServerSide
@@ -42,6 +43,22 @@ func documentHandWritten(api huma.API) {
 			"`task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, " +
 			"`backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, " +
 			"`models_changed`, `error` and `left`.\n" +
+			"`connector_unavailable` names an optional connector binding the session opened " +
+			"without: name (its alias), connector_id and reason, one of no_selection, " +
+			"shared_session, caller_unverified, connection_unavailable, provider_mismatch, " +
+			"needs_reauthorization, not_connected, open_failed, tool_unavailable and " +
+			"selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer " +
+			"declares). " +
+			"Every watcher is sent each one when it attaches.\n" +
+			"`connector_scope_required` says a connector tool call was refused because the caller's " +
+			"own connection lacks access the provider asked for (insufficient_scope or a claims " +
+			"challenge), and a step-up consent was begun for it: name (the binding's alias), " +
+			"connector_id, connection_id, scopes (what the provider asked for, empty for a claims " +
+			"challenge), authorization_id, launch_url, handoff_token and expires_at. A client opens " +
+			"launch_url in a popup and posts it handoff_token, as for createAuthorization. The old " +
+			"grant keeps working until the step-up succeeds, and the same call works afterwards in " +
+			"the same session. While that step-up is open, calls refused for the same access send " +
+			"no second event.\n" +
 			"Persistent text sessions also emit `conversation_updated` with conversation_id and a " +
 			"complete message snapshot: id, command_id, question_id, role, text, state, " +
 			"response_started_at, state_started_at, finished_at, duration_ms, saved, " +
@@ -50,8 +67,15 @@ func documentHandWritten(api huma.API) {
 			"and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin " +
 			"the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: " +
 			"a client shows it as a button opening authorize_url. Once the user finishes that login " +
-			"the message is sent again with the attachment's status set to connected. Activity states are thinking, queued, tools, writing, completed, " +
-			"failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; " +
+			"the message is sent again with the attachment's status set to connected. " +
+			"A connector_authorization attachment asks the end user to connect a connector binding " +
+			"the reply needed with their own account, with name (the binding's alias), connector_id, " +
+			"connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a " +
+			"client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. " +
+			"Once the user finishes that login the message is sent again with status connected and " +
+			"no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, " +
+			"failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and " +
+			"pre_speech when the tool's connector binding sets one in its policy; " +
 			"tool_ran also includes tool_call_id.\n" +
 			"A respond command carrying command_id emits command_accepted with a nested command " +
 			"receipt (command_id, user_message_id, assistant_message_id, state, duplicate). Personal " +
@@ -79,7 +103,9 @@ func documentHandWritten(api huma.API) {
 			"command recovery is unchanged.\n" +
 			"The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, " +
 			"`interrupt` (optionally naming a `command_id`), `instructions` or `close` to act on the " +
-			"session. A `tool_call` is the only frame that must be answered: everything else is a " +
+			"session. `instructions` is server-side only: from an end user's device it changes " +
+			"nothing and is answered with an `error` frame, `context` `command`, as `updateSession` " +
+			"refuses it. A `tool_call` is the only frame that must be answered: everything else is a " +
 			"report. Tool calls made by durable personal commands carry `command_id` and `turn_id`; " +
 			"their result must repeat both values so a result cannot be adopted by another command " +
 			"or turn.\n" +
@@ -104,6 +130,38 @@ func documentHandWritten(api huma.API) {
 			"101": {Description: "The socket is open"},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"404": {Ref: "#/components/responses/NotFound"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
+		OperationID: "openSocketSession",
+		// A device holds a voice conversation over this socket when there is no call, as it
+		// creates one with POST /v1/agents/sessions, which is client-accessible too.
+		Extensions: map[string]any{clientAccessibleExtension: true},
+		Method:     http.MethodGet,
+		Path:       "/v1/agents/socket",
+		Summary:    "Hold a voice conversation over the socket itself, with no call",
+		Description: "A WebSocket, which OpenAPI cannot describe past the upgrade. Text frames are JSON " +
+			"objects carrying a `type`.\n" +
+			"The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an " +
+			"optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes " +
+			"one up for the records. A `text` session is refused, because the socket carries audio. " +
+			"A field that `createSession` refuses from an end user's device is refused here too: " +
+			"`history` and `instructions` are server-side only.\n" +
+			"The server answers `session`, with the `Session` and the `sample_rate` in use. Then " +
+			"binary frames are PCM16 mono at that rate in both directions: the caller's audio in, " +
+			"and the agent's speech out at the pace it would be heard on a call. A `cleared` frame " +
+			"says speech already sent was thrown away because the caller cut in. Tool calls and " +
+			"every other event go over the session's events socket, as they do for a call.\n" +
+			"A refused start is an `error` frame with `error`, the message, and the socket closes. " +
+			"An `error` frame for a field refused from a device also carries `code` and " +
+			"`error_type`, the `code` and `type` that `createSession` answers the same field with.\n" +
+			"The session lasts as long as the socket. Closing the socket, or sending `stop`, ends " +
+			"the conversation. A conversation that ends closes the socket.",
+		Responses: map[string]*huma.Response{
+			"101": {Description: "The socket is open"},
+			"400": {Ref: "#/components/responses/BadRequest"},
+			"401": {Ref: "#/components/responses/Unauthorized"},
+			"403": {Ref: "#/components/responses/Forbidden"},
 		},
 	})
 	document.AddOperation(&huma.Operation{
@@ -398,6 +456,30 @@ func documentHandWritten(api huma.API) {
 		},
 	})
 	document.AddOperation(&huma.Operation{
+		OperationID: "receiveConnectionEvent",
+		Method:      http.MethodPost,
+		Path:        mcpevents.Path + "{token}",
+		Summary:     "Receive a connection's MCP event",
+		Description: "Where a connection's MCP server delivers the events an agent config's binding " +
+			"subscribed to, signed with Standard Webhooks (MCP Events, a draft). The path is " +
+			"unauthenticated because the server is not a customer: the token names the subscription, " +
+			"and each delivery is checked against that subscription's own secret, never a provider " +
+			"app's. A verification is answered with its challenge, and an event opens a text " +
+			"conversation from the config.",
+		Security: []map[string][]string{},
+		Parameters: []*huma.Param{
+			{Name: "token", In: "path", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "A verification's challenge, echoed, or an event already taken"},
+			"202": {Description: "The event is taken, and a conversation is opening for it"},
+			"400": {Description: "The delivery is not JSON, or not an event this subscription is for"},
+			"401": {Description: "The delivery is not signed with the subscription's secret"},
+			"410": {Description: "There is no such subscription, or its connection or declaration is gone; stop delivering to it"},
+			"413": {Description: "The delivery is over 256 KiB"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
 		OperationID: "verifyChannelHook",
 		Method:      http.MethodGet,
 		Path:        channels.HookPath + "{token}",
@@ -467,7 +549,7 @@ func documentHandWritten(api huma.API) {
 			{Name: "config_id", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "session_id", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "user_id", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
-			{Name: "severity", In: "query", Schema: &huma.Schema{Type: huma.TypeString, Enum: []any{"info", "error"}}},
+			{Name: "severity", In: "query", Description: "The least serious level to show, not the only one: warn is warnings and errors.", Schema: &huma.Schema{Type: huma.TypeString, Enum: []any{"info", "warn", "error"}}},
 			{Name: "source", In: "query", Description: "Comma-separated user/agent/tool/system sources.", Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "q", In: "query", Schema: &huma.Schema{Type: huma.TypeString, MaxLength: itemLimit(256)}},
 			{Name: "from", In: "query", Schema: &huma.Schema{Type: huma.TypeString, Format: "date-time"}},
@@ -511,7 +593,7 @@ func documentHandWritten(api huma.API) {
 			{Name: "config_id", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "session_id", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "user_id", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
-			{Name: "severity", In: "query", Schema: &huma.Schema{Type: huma.TypeString, Enum: []any{"info", "error"}}},
+			{Name: "severity", In: "query", Description: "The least serious level to show, not the only one: warn is warnings and errors.", Schema: &huma.Schema{Type: huma.TypeString, Enum: []any{"info", "warn", "error"}}},
 			{Name: "source", In: "query", Description: "Comma-separated user/agent/tool/system sources.", Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "q", In: "query", Schema: &huma.Schema{Type: huma.TypeString, MaxLength: itemLimit(256)}},
 			{Name: "from", In: "query", Schema: &huma.Schema{Type: huma.TypeString, Format: "date-time"}},

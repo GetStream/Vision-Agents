@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -105,6 +106,11 @@ type Spec struct {
 	// have kept should not have to trust that a "hidden" flag is honoured everywhere.
 	//
 	// It forces PersistConversation off, because a channel in Stream Chat is a record.
+	//
+	// One exception: each connector tool call still leaves its row in the connection's call
+	// log (store.ConnectorInvocation), with no session id, no arguments and no results, and
+	// the grant changes it causes are audited with no request or session id. The row is the
+	// use of a credential, which its owner is owed; nothing in it names the conversation.
 	Incognito bool
 	// Title and Description are the caller's own names for the conversation, for a list a
 	// person reads. Never shown to the model: what a conversation is called is a label on
@@ -184,8 +190,12 @@ type Spec struct {
 	// than the model, from the agent's config. The model answers only the server.
 	DispatchText bool
 	// EpisodeCards has a phone call write its episode card into the caller's omni-channel,
-	// from the agent's config. Off, the call does what it did before the cards existed.
+	// and a session on a thread channel or a phone call start with the person's other cards,
+	// from the agent's config. Off, the session does what it did before the cards existed.
 	EpisodeCards bool
+	// ProgressiveTools offers plugin, MCP server and connector tools by a summary, and
+	// answers the first call to each with its full description instead of running it.
+	ProgressiveTools bool
 
 	// SkillNames are the skills the voice model may hand to the subagent: the agent
 	// config's own, or one of the built-in think, recall and explain. Empty means the
@@ -200,6 +210,14 @@ type Spec struct {
 	// MCPServers are MCP servers outside the catalog, opened by their URL with no login, the
 	// app's, or each caller's own.
 	MCPServers []store.MCPServer
+	// ConnectorBindings are the agent config's connector bindings: which connector's tools
+	// the session may call, through which connection, and exactly which tools. A binding
+	// wins over a plugin entry for the same provider (withoutBoundPlugins).
+	ConnectorBindings []store.ConnectorBinding
+	// ConnectorSelections are the connections the caller picked for the config's session
+	// bindings, one per alias. Only references: the session checks each against the
+	// binding and the verified Caller when it opens, and again on every call.
+	ConnectorSelections []ConnectorSelection
 	// ServerInstructions are what those servers said at initialize about using their
 	// tools, added after Instructions. The session fills it in once they are open.
 	ServerInstructions string
@@ -238,6 +256,13 @@ type Spec struct {
 	// scheduled.
 	CampaignID string
 	ContactID  string
+}
+
+// ConnectorSelection is the connection a caller picked for one session binding, by the
+// binding's alias. It never carries a credential.
+type ConnectorSelection struct {
+	Name         string
+	ConnectionID string
 }
 
 // MemorySpec is the caller's memory filter: who the memories are about, and what narrows
@@ -291,6 +316,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		AgentPlugins:       config.AgentPlugins,
 		UserPlugins:        config.UserPlugins,
 		MCPServers:         config.MCPServers,
+		ConnectorBindings:  config.Connectors,
 		Keyterms:           config.Keyterms,
 		VisibleTools:       config.VisibleTools,
 		KnowledgeNamespace: config.KnowledgeNamespace,
@@ -299,6 +325,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		Harness:            config.Harness,
 		DispatchText:       config.DispatchText,
 		EpisodeCards:       config.EpisodeCards,
+		ProgressiveTools:   config.ProgressiveTools,
 		Tags:               routing.Tags(config.Tags),
 	}
 }
@@ -356,7 +383,7 @@ func (s *Spec) Normalize() error {
 		}
 	}
 
-	s.CallID = strings.TrimSpace(s.CallID)
+	s.CallID = joinedCallID(s.CallID)
 	switch {
 	case !s.Reopened.IsZero() && !(s.Text && s.PersistConversation && s.ConversationID != ""):
 		return stack.Wrap(errors.New("session: only a persistent text conversation is reopened"))
@@ -386,7 +413,7 @@ func (s *Spec) Normalize() error {
 	// it, and a second id minted here would not match, so the conversation is asked for
 	// the one it was written under instead.
 	if s.AgentID == "" && !(s.Text && s.PersistConversation && s.ConversationID != "") {
-		s.AgentID = s.CallID
+		s.AgentID = s.KeyedAgentID()
 		if s.Text {
 			s.AgentID = newID()
 		}
@@ -417,6 +444,11 @@ func (s *Spec) Normalize() error {
 			s.TTSTarget = defaultTTSTarget
 		}
 	}
+
+	// A connector binding wins over a plugin entry for the same provider, so the session
+	// does not reach one account by two paths, the second with the plugin's own login.
+	s.AgentPlugins = s.withoutBoundPlugins(s.AgentPlugins)
+	s.UserPlugins = s.withoutBoundPlugins(s.UserPlugins)
 
 	s.Keyterms = stt.CleanKeyterms(s.Keyterms)
 	if len(s.Keyterms) > stt.MaxKeyterms {
@@ -470,6 +502,81 @@ func checkHistory(lines []persistent.HistoryLine, conversationID string) error {
 			size, persistent.MaxHistoryRunes))
 	}
 	return nil
+}
+
+// KeyedAgentID is the agent id a caller's spec names for the session, before Normalize: its
+// own, else a voice session's call id, which Normalize gives it. A text session without one
+// is given a new id, which no caller names, so it names none.
+func (s Spec) KeyedAgentID() string {
+	if s.AgentID != "" || s.Text {
+		return s.AgentID
+	}
+	return joinedCallID(s.CallID)
+}
+
+// joinedCallID is a call id as the session joins it and is keyed under: without the spaces
+// around it. Normalize and KeyedAgentID both read a call id through it.
+func joinedCallID(id string) string {
+	return strings.TrimSpace(id)
+}
+
+// ConversationChannel is the id, without its type, of the agent channel ConversationID names:
+// the channel a call's transcript is written into (chatlog.Options.Channel). Empty for a
+// ConversationID that names no agent channel, whose transcript goes into the agent id's.
+func (s Spec) ConversationChannel() string {
+	channel := strings.TrimPrefix(s.ConversationID, streamapp.AgentChannelType+":")
+	if channel == s.ConversationID {
+		return ""
+	}
+	return channel
+}
+
+// TranscriptChannel is the cid of the channel a call's transcript is written into: the
+// conversation's agent channel, else the agent id's, as chatlog.New picks it from
+// ConversationChannel. Example: conversation_id "messaging:X" under agent id "front-desk" is
+// written into agent:front-desk.
+func (s Spec) TranscriptChannel() string {
+	channel := s.ConversationChannel()
+	if channel == "" {
+		channel = s.AgentID
+	}
+	return streamapp.AgentChannelType + ":" + channel
+}
+
+// Shared reports whether more than one verified person writes in the conversation: a thread
+// channel (persistent.ThreadChannelPrefix), where everyone in the external thread does, such
+// as a thread in a Slack channel. Such a session uses the app's connections only, never one
+// person's: the multi-person rule (architecture doc on connectors/planning, «One-way doors»
+// row 7).
+func (s Spec) Shared() bool {
+	return strings.HasPrefix(s.ConversationID, streamapp.AgentChannelType+":"+persistent.ThreadChannelPrefix)
+}
+
+// boundProvider reports whether a connector binding names the provider id. A connector id
+// is the provider's id: the built-in connectors share theirs with the plugin catalog (slack
+// is in both internal/plugins/plugins.yaml and internal/connectors/providers/slack.yaml).
+func (s Spec) boundProvider(id string) bool {
+	for _, binding := range s.ConnectorBindings {
+		if binding.ConnectorID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// withoutBoundPlugins is entries less those for a provider a connector binding names.
+func (s Spec) withoutBoundPlugins(entries []store.PluginEntry) []store.PluginEntry {
+	// Without a binding the entries are left exactly as they were, the same slice.
+	if len(s.ConnectorBindings) == 0 {
+		return entries
+	}
+	var kept []store.PluginEntry
+	for _, entry := range entries {
+		if !s.boundProvider(entry.Name) {
+			kept = append(kept, entry)
+		}
+	}
+	return kept
 }
 
 // Native reports whether this session is held by one speech-to-speech model rather than

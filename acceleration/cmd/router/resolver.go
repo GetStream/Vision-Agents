@@ -1,10 +1,13 @@
 package main
 
 import (
+	"log/slog"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -31,4 +34,19 @@ func newConnectorTransports(connectors *resolver.Resolver) (*core.Transports, er
 		return nil, nil
 	}
 	return core.NewTransports(core.TransportsConfig{Resolver: connectors, Timeout: connectorHTTPTimeout})
+}
+
+// newConnectorLimiter keeps the providers' rate limits in Redis (core.Limiter), so every
+// router holds the same calls after a provider's 429. It is nil when connectors are off (no
+// transports), and when there is no Redis, which is warned of once: as for the daily limits,
+// nothing is limited then (Kanat, 2026-10-07, D7).
+func newConnectorLimiter(transports *core.Transports, redis *live.Client, logger *slog.Logger) *core.Limiter {
+	if transports == nil {
+		return nil
+	}
+	if redis == nil {
+		logger.Warn("no redis configured, connector calls will not wait out a provider's rate limit", "setting", "redis.addr")
+		return nil
+	}
+	return core.NewLimiter(redis.Redis(), nil)
 }

@@ -263,6 +263,7 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		}
 		body.McpServers = &servers
 	}
+	body.ProgressiveTools = settings.ProgressiveTools
 	if settings.Channels != nil {
 		declared := acceleration.AgentChannels{
 			Whatsapp: channelLine(settings.Channels.WhatsApp),

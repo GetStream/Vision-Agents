@@ -14,6 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -113,8 +114,13 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if err := s.configs.CreateAgentConfig(ctx, &config); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
+	stored := agentConfigOf(config)
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditAgentConfig, ResourceID: config.ID, ResourceName: config.Name,
+		Action: store.AuditCreated, Changes: auditDiff(nil, stored),
+	})
 	s.pluginEvents.Changed(customerID, config.ID)
-	return &createAgentConfigResponse{Body: agentConfigOf(config)}, nil
+	return &createAgentConfigResponse{Body: stored}, nil
 }
 
 // getAgentConfig returns one config.
@@ -191,6 +197,9 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if request.Body.EpisodeCards == nil {
 		config.EpisodeCards = existing.EpisodeCards
 	}
+	if request.Body.ProgressiveTools == nil {
+		config.ProgressiveTools = existing.ProgressiveTools
+	}
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -200,8 +209,13 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
+	stored := agentConfigOf(config)
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditAgentConfig, ResourceID: config.ID, ResourceName: config.Name,
+		Action: store.AuditUpdated, Changes: auditDiff(agentConfigOf(existing), stored),
+	})
 	s.pluginEvents.Changed(customerID, config.ID)
-	return &updateAgentConfigResponse{Body: agentConfigOf(config)}, nil
+	return &updateAgentConfigResponse{Body: stored}, nil
 }
 
 // deleteAgentConfig stops a config being usable.
@@ -214,9 +228,18 @@ func (s *Server) deleteAgentConfig(ctx context.Context, request *deleteAgentConf
 		return nil, errNoConfigs
 	}
 
+	// Read before it goes, so the entry recording the deletion can say what was deleted.
+	existing, err := s.configs.AgentConfig(ctx, customerID, request.Id)
+	if err != nil {
+		return nil, errUnknownConfig
+	}
 	if err := s.configs.DeleteAgentConfig(ctx, customerID, request.Id); err != nil {
 		return nil, errUnknownConfig
 	}
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditAgentConfig, ResourceID: existing.ID, ResourceName: existing.Name,
+		Action: store.AuditDeleted, Changes: auditDiff(agentConfigOf(existing), nil),
+	})
 	return nil, nil
 }
 
@@ -266,7 +289,12 @@ func (s *Server) createSkill(ctx context.Context, request *createSkillRequest) (
 	if err := s.configs.CreateSkill(ctx, &skill); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
-	return &createSkillResponse{Body: skillOf(skill)}, nil
+	stored := skillOf(skill)
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditSkill, ResourceID: skill.ID, ResourceName: skill.Name,
+		AgentID: skill.ConfigID, Action: store.AuditCreated, Changes: auditDiff(nil, stored),
+	})
+	return &createSkillResponse{Body: stored}, nil
 }
 
 // getSkill returns one skill.
@@ -316,7 +344,13 @@ func (s *Server) updateSkill(ctx context.Context, request *updateSkillRequest) (
 	if err := s.configs.UpdateSkill(ctx, &skill); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
-	return &updateSkillResponse{Body: skillOf(skill)}, nil
+	stored := skillOf(skill)
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditSkill, ResourceID: skill.ID, ResourceName: skill.Name,
+		AgentID: skill.ConfigID, Action: store.AuditUpdated,
+		Changes: auditDiff(skillOf(existing), stored),
+	})
+	return &updateSkillResponse{Body: stored}, nil
 }
 
 // deleteSkill stops a skill being usable.
@@ -329,9 +363,20 @@ func (s *Server) deleteSkill(ctx context.Context, request *deleteSkillRequest) (
 		return nil, errNoConfigs
 	}
 
+	// Read before it goes, so the entry recording the deletion can say what was deleted and
+	// which agent it was under.
+	existing, err := s.store.Skill(ctx, customerID, request.Id)
+	if err != nil {
+		return nil, errUnknownSkill
+	}
 	if err := s.configs.DeleteSkill(ctx, customerID, request.Id); err != nil {
 		return nil, errUnknownSkill
 	}
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditSkill, ResourceID: existing.ID, ResourceName: existing.Name,
+		AgentID: existing.ConfigID, Action: store.AuditDeleted,
+		Changes: auditDiff(skillOf(existing), nil),
+	})
 	return nil, nil
 }
 
@@ -423,6 +468,21 @@ func connectorBindingsComplaint(bindings *[]AgentConnectorBinding) (string, bool
 				return fmt.Sprintf("connector binding %q is chosen per session, so its connection is picked "+
 					"when a session is created and connection.connection_id is not set here", alias), false
 			}
+		}
+		if binding.Events != nil && len(*binding.Events) > 0 && binding.Connection.Type != AgentConnectorSelectionTypeFixed {
+			return fmt.Sprintf("connector binding %q declares events, and only a fixed binding may: a session "+
+				"binding's connection is picked when a session opens, and an event arrives with none open", alias), false
+		}
+		events := map[string]bool{}
+		for _, event := range value(binding.Events) {
+			if strings.TrimSpace(event.Event) == "" {
+				return fmt.Sprintf("connector binding %q declares an event with no name", alias), false
+			}
+			key := mcpevents.Key(strings.TrimSpace(event.Event), value(event.Arguments))
+			if events[key] {
+				return fmt.Sprintf("connector binding %q declares event %q with the same arguments twice", alias, event.Event), false
+			}
+			events[key] = true
 		}
 		tools := make(map[string]bool, len(binding.Tools))
 		for _, tool := range binding.Tools {
@@ -535,9 +595,38 @@ func storedBindings(bindings []AgentConnectorBinding) []store.ConnectorBinding {
 			Tools:     tools,
 			Required:  value(binding.Required),
 			TimeoutMs: value(binding.TimeoutMs),
+			Events:    bindingEventsOf(binding.Events),
+			Policy:    bindingPolicyOf(binding.Policy),
 		})
 	}
 	return stored
+}
+
+// bindingPolicyOf reads the policy a caller wrote on a binding, or nil for none, so a binding
+// without one is stored as it was before policies existed.
+func bindingPolicyOf(policy *ConnectorBindingPolicy) *store.BindingPolicy {
+	if policy == nil {
+		return nil
+	}
+	return &store.BindingPolicy{
+		PreSpeech:   value(policy.PreSpeech),
+		OnInterrupt: string(value(policy.OnInterrupt)),
+		Cancellable: policy.Cancellable,
+	}
+}
+
+// bindingEventsOf reads the events a caller declared on a binding, or nothing for none, so a
+// binding without events is stored as it was before they existed.
+func bindingEventsOf(events *[]ConnectorBindingEvent) []store.BindingEvent {
+	var read []store.BindingEvent
+	for _, event := range value(events) {
+		read = append(read, store.BindingEvent{
+			Event:        strings.TrimSpace(event.Event),
+			Arguments:    value(event.Arguments),
+			Instructions: strings.TrimSpace(value(event.Instructions)),
+		})
+	}
+	return read
 }
 
 // bindingsOf renders a config's bindings for the wire.
@@ -562,6 +651,27 @@ func bindingsOf(bindings []store.ConnectorBinding) []AgentConnectorBinding {
 		if binding.TimeoutMs > 0 {
 			timeout := binding.TimeoutMs
 			one.TimeoutMs = &timeout
+		}
+		if len(binding.Events) > 0 {
+			events := make([]ConnectorBindingEvent, 0, len(binding.Events))
+			for _, event := range binding.Events {
+				declared := ConnectorBindingEvent{Event: event.Event}
+				if len(event.Arguments) > 0 {
+					declared.Arguments = &event.Arguments
+				}
+				if event.Instructions != "" {
+					declared.Instructions = &event.Instructions
+				}
+				events = append(events, declared)
+			}
+			one.Events = &events
+		}
+		if policy := binding.Policy; policy != nil {
+			one.Policy = &ConnectorBindingPolicy{PreSpeech: optional(policy.PreSpeech), Cancellable: policy.Cancellable}
+			if policy.OnInterrupt != "" {
+				onInterrupt := ConnectorOnInterrupt(policy.OnInterrupt)
+				one.Policy.OnInterrupt = &onInterrupt
+			}
 		}
 		rendered = append(rendered, one)
 	}
@@ -1136,6 +1246,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	}
 	applyDispatch(&config, request.Dispatch)
 	config.EpisodeCards = value(request.EpisodeCards)
+	config.ProgressiveTools = value(request.ProgressiveTools)
 	return config
 }
 
@@ -1195,6 +1306,8 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	rendered.Dispatch = dispatchOf(config)
 	episodeCards := config.EpisodeCards
 	rendered.EpisodeCards = &episodeCards
+	progressiveTools := config.ProgressiveTools
+	rendered.ProgressiveTools = &progressiveTools
 	if len(config.Skills) > 0 {
 		skills := config.Skills
 		rendered.Skills = &skills
@@ -1430,7 +1543,7 @@ type deleteAgentConfigRequest struct {
 // AgentConfigRequest is the AgentConfigRequest schema.
 type AgentConfigRequest struct {
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
-	EpisodeCards       *bool                    `json:"episode_cards,omitempty" doc:"Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. Off by default, and then a call runs as it always did. Left out on an update, the stored setting stays."`
+	EpisodeCards       *bool                    `json:"episode_cards,omitempty" doc:"Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays."`
 	Greeting           *string                  `json:"greeting,omitempty"`
 	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered."`
 	Harness            *Harness                 `json:"harness,omitempty"`
@@ -1440,6 +1553,7 @@ type AgentConfigRequest struct {
 	Llm                *string                  `json:"llm,omitempty" doc:"The model holding the conversation."`
 	Mode               *AgentMode               `json:"mode,omitempty"`
 	Name               string                   `json:"name" doc:"What the config is called, which is unique among the customer's own."`
+	ProgressiveTools   *bool                    `json:"progressive_tools,omitempty" doc:"Whether the agent is offered its plugin, MCP server and connector tools by the first line of each one's description, with its arguments' descriptions left out, and the first call to a tool returns its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays."`
 	AgentPlugins       *[]PluginEntry           `json:"agent_plugins,omitempty" doc:"Hosted MCP servers this agent may reach with the app's own login, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for."`
 	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32" doc:"MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through."`
 	McpServers         *[]McpServer             `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>."`
@@ -1465,7 +1579,7 @@ type AgentConfigRequest struct {
 type AgentConfig struct {
 	CreatedAt          time.Time                `json:"created_at"`
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
-	EpisodeCards       *bool                    `json:"episode_cards,omitempty" doc:"Whether each phone call under this agent writes an episode card into the caller's omni-channel."`
+	EpisodeCards       *bool                    `json:"episode_cards,omitempty" doc:"Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards."`
 	Greeting           *string                  `json:"greeting,omitempty"`
 	Guardrail          *string                  `json:"guardrail,omitempty"`
 	Harness            *Harness                 `json:"harness,omitempty"`
@@ -1476,6 +1590,7 @@ type AgentConfig struct {
 	Llm                *string                  `json:"llm,omitempty"`
 	Mode               AgentMode                `json:"mode"`
 	Name               string                   `json:"name"`
+	ProgressiveTools   *bool                    `json:"progressive_tools,omitempty" doc:"Whether tools from plugins, MCP servers and connectors are offered by a summary, the first call to each returning its full description instead of running it."`
 	AgentPlugins       *[]PluginEntry           `json:"agent_plugins,omitempty"`
 	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty"`
 	McpServers         *[]McpServer             `json:"mcp_servers,omitempty"`
@@ -1511,12 +1626,57 @@ type AgentConfig struct {
 // (internal/api/connectors.go:1176 at cf62af0d), and nothing there says why 30 seconds; it is
 // unverified.
 type AgentConnectorBinding struct {
-	Name        string                  `json:"name" pattern:"^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$" doc:"The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place."`
-	ConnectorId string                  `json:"connector_id" doc:"A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_."`
-	Connection  AgentConnectorSelection `json:"connection"`
-	Tools       []ConnectorToolGrant    `json:"tools" maxItems:"128" nullable:"false" doc:"The exact tools allowed, each named once. There is no wildcard, and an empty list grants none."`
-	Required    *bool                   `json:"required,omitempty" default:"false" doc:"Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it."`
-	TimeoutMs   *int                    `json:"timeout_ms,omitempty" minimum:"1" maximum:"30000" doc:"How long one tool call may take, in milliseconds. Omitted, the session's default applies."`
+	Name        string                   `json:"name" pattern:"^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$" doc:"The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place."`
+	ConnectorId string                   `json:"connector_id" doc:"A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_."`
+	Connection  AgentConnectorSelection  `json:"connection"`
+	Tools       []ConnectorToolGrant     `json:"tools" maxItems:"128" nullable:"false" doc:"The exact tools allowed, each named once. There is no wildcard, and an empty list grants none."`
+	Required    *bool                    `json:"required,omitempty" default:"false" doc:"Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it."`
+	TimeoutMs   *int                     `json:"timeout_ms,omitempty" minimum:"1" maximum:"30000" doc:"How long one tool call may take, in milliseconds. Omitted, the session's default applies."`
+	Events      *[]ConnectorBindingEvent `json:"events,omitempty" maxItems:"32" doc:"MCP events the binding's fixed connection is subscribed to, each opening a text conversation from the config when it arrives. Subscribed when the connection is next validated. Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an event arrives with no session open."`
+	Policy      *ConnectorBindingPolicy  `json:"policy,omitempty" doc:"How the binding's tool calls behave around speech and interruptions. Omitted, a call is cancelled at the provider when the turn is interrupted, and the agent picks its own words while it runs."`
+}
+
+// ConnectorBindingPolicy is a binding's policy envelope, read back as it was written.
+type ConnectorBindingPolicy struct {
+	PreSpeech   *string               `json:"pre_speech,omitempty" minLength:"1" doc:"What the agent says while one of the binding's tools runs, such as \"Let me pull up your calendar.\", in place of the phrase it picks itself when the model reached for the tool without a word. A voice session with a separate voice says it; every session reports it on tool_started."`
+	OnInterrupt *ConnectorOnInterrupt `json:"on_interrupt,omitempty" doc:"What an interruption of the turn does to a call in flight. Omitted is cancel."`
+	Cancellable *bool                 `json:"cancellable,omitempty" doc:"Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running after an interruption, for a tool that is not safe to stop halfway, such as a payment; the binding's timeout still ends it and tells the provider to stop it. It only matters with on_interrupt cancel: a wait call is never stopped by an interruption."`
+}
+
+func (*ConnectorBindingPolicy) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "How a binding's tool calls behave around speech and interruptions. Every field is " +
+		"optional, and a field left out keeps today's behaviour."
+	return schema
+}
+
+// ConnectorOnInterrupt is what an interruption does to a binding's call in flight.
+type ConnectorOnInterrupt string
+
+const (
+	ConnectorOnInterruptCancel ConnectorOnInterrupt = store.InterruptCancel
+	ConnectorOnInterruptWait   ConnectorOnInterrupt = store.InterruptWait
+)
+
+func (ConnectorOnInterrupt) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "ConnectorOnInterrupt", "cancel stops waiting for the call when the turn "+
+		"is interrupted, and tells the provider to stop it unless cancellable is false. wait lets the call "+
+		"finish, up to the binding's timeout, and its result goes into the conversation for the next turn.",
+		string(ConnectorOnInterruptCancel), string(ConnectorOnInterruptWait))
+}
+
+// ConnectorBindingEvent is one MCP event a binding subscribes to on its connection's server.
+// The cap of 32 on a binding's events is plugin_events', a choice that is unverified.
+type ConnectorBindingEvent struct {
+	Event        string          `json:"event" minLength:"1" doc:"The event's name, as the server's events/list gives it, such as issue.created."`
+	Arguments    *map[string]any `json:"arguments,omitempty" doc:"The event's filters, as its inputSchema describes them."`
+	Instructions *string         `json:"instructions,omitempty" doc:"What the agent does with the event when it arrives, added to its instructions for that conversation."`
+}
+
+func (*ConnectorBindingEvent) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "One MCP event a binding subscribes to on its fixed connection. Each one that " +
+		"arrives opens a text conversation from the config, as the app, with the event's data as the " +
+		"first thing said to it."
+	return schema
 }
 
 func (*AgentConnectorBinding) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

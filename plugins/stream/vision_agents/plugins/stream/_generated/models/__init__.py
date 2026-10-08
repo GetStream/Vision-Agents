@@ -4,6 +4,7 @@ from .activity_bucket import ActivityBucket
 from .activity_granularity import ActivityGranularity
 from .add_trunk_number_request import AddTrunkNumberRequest
 from .add_trunk_number_request_tags import AddTrunkNumberRequestTags
+from .agent_changes import AgentChanges
 from .agent_channels import AgentChannels
 from .agent_config import AgentConfig
 from .agent_config_patch import AgentConfigPatch
@@ -31,6 +32,14 @@ from .agent_response_status import AgentResponseStatus
 from .app_settings import AppSettings
 from .attach_number_request import AttachNumberRequest
 from .attached_number import AttachedNumber
+from .audit_action import AuditAction
+from .audit_change import AuditChange
+from .audit_entry import AuditEntry
+from .audit_filter import AuditFilter
+from .audit_page import AuditPage
+from .audit_query import AuditQuery
+from .audit_resource_type import AuditResourceType
+from .audit_source import AuditSource
 from .authorization import Authorization
 from .authorization_kind import AuthorizationKind
 from .authorize_plugin_request import AuthorizePluginRequest
@@ -90,6 +99,8 @@ from .connection import Connection
 from .connection_credentials import ConnectionCredentials
 from .connection_credentials_values import ConnectionCredentialsValues
 from .connection_inputs import ConnectionInputs
+from .connection_invocation import ConnectionInvocation
+from .connection_invocation_page import ConnectionInvocationPage
 from .connection_metadata import ConnectionMetadata
 from .connection_owner import ConnectionOwner
 from .connection_owner_type import ConnectionOwnerType
@@ -100,10 +111,16 @@ from .connection_status import ConnectionStatus
 from .connection_tool import ConnectionTool
 from .connection_tool_input_schema import ConnectionToolInputSchema
 from .connection_tools import ConnectionTools
+from .connection_use import ConnectionUse
 from .connection_validation import ConnectionValidation
 from .connection_validation_request import ConnectionValidationRequest
 from .connection_validation_status import ConnectionValidationStatus
 from .connector import Connector
+from .connector_audit_action import ConnectorAuditAction
+from .connector_audit_event import ConnectorAuditEvent
+from .connector_audit_page import ConnectorAuditPage
+from .connector_binding_event import ConnectorBindingEvent
+from .connector_binding_event_arguments import ConnectorBindingEventArguments
 from .connector_client import ConnectorClient
 from .connector_client_alg import ConnectorClientAlg
 from .connector_client_auth_method import ConnectorClientAuthMethod
@@ -120,6 +137,8 @@ from .connector_o_auth_client_request import ConnectorOAuthClientRequest
 from .connector_page import ConnectorPage
 from .connector_provider_app import ConnectorProviderApp
 from .connector_provider_app_request import ConnectorProviderAppRequest
+from .connector_setup import ConnectorSetup
+from .connector_setup_step import ConnectorSetupStep
 from .connector_tool_grant import ConnectorToolGrant
 from .contact import Contact
 from .contact_state import ContactState
@@ -185,6 +204,7 @@ from .ingest_knowledge_request import IngestKnowledgeRequest
 from .ingested_knowledge import IngestedKnowledge
 from .input_parts import InputParts
 from .instructions_request import InstructionsRequest
+from .invocation_error_type import InvocationErrorType
 from .knowledge_document import KnowledgeDocument
 from .knowledge_passage import KnowledgePassage
 from .knowledge_url import KnowledgeUrl
@@ -273,6 +293,7 @@ from .search_request import SearchRequest
 from .search_request_tags import SearchRequestTags
 from .search_result import SearchResult
 from .session import Session
+from .session_connector_binding import SessionConnectorBinding
 from .session_custom import SessionCustom
 from .session_filter import SessionFilter
 from .session_filter_custom import SessionFilterCustom
@@ -402,6 +423,7 @@ __all__ = (
     "ActivityGranularity",
     "AddTrunkNumberRequest",
     "AddTrunkNumberRequestTags",
+    "AgentChanges",
     "AgentChannels",
     "AgentConfig",
     "AgentConfigPatch",
@@ -429,6 +451,14 @@ __all__ = (
     "AppSettings",
     "AttachNumberRequest",
     "AttachedNumber",
+    "AuditAction",
+    "AuditChange",
+    "AuditEntry",
+    "AuditFilter",
+    "AuditPage",
+    "AuditQuery",
+    "AuditResourceType",
+    "AuditSource",
     "Authorization",
     "AuthorizationKind",
     "AuthorizePluginRequest",
@@ -484,6 +514,8 @@ __all__ = (
     "ConnectionCredentials",
     "ConnectionCredentialsValues",
     "ConnectionInputs",
+    "ConnectionInvocation",
+    "ConnectionInvocationPage",
     "ConnectionMetadata",
     "ConnectionOwner",
     "ConnectionOwnerType",
@@ -494,10 +526,16 @@ __all__ = (
     "ConnectionTool",
     "ConnectionToolInputSchema",
     "ConnectionTools",
+    "ConnectionUse",
     "ConnectionValidation",
     "ConnectionValidationRequest",
     "ConnectionValidationStatus",
     "Connector",
+    "ConnectorAuditAction",
+    "ConnectorAuditEvent",
+    "ConnectorAuditPage",
+    "ConnectorBindingEvent",
+    "ConnectorBindingEventArguments",
     "ConnectorClient",
     "ConnectorClientAlg",
     "ConnectorClientAuthMethod",
@@ -514,6 +552,8 @@ __all__ = (
     "ConnectorPage",
     "ConnectorProviderApp",
     "ConnectorProviderAppRequest",
+    "ConnectorSetup",
+    "ConnectorSetupStep",
     "ConnectorToolGrant",
     "Contact",
     "ContactState",
@@ -577,6 +617,7 @@ __all__ = (
     "IngestedKnowledge",
     "InputParts",
     "InstructionsRequest",
+    "InvocationErrorType",
     "KnowledgeDocument",
     "KnowledgePassage",
     "KnowledgeUrl",
@@ -665,6 +706,7 @@ __all__ = (
     "SearchRequestTags",
     "SearchResult",
     "Session",
+    "SessionConnectorBinding",
     "SessionCustom",
     "SessionFilter",
     "SessionFilterCustom",

@@ -52,6 +52,20 @@ func (s *ConnectorsSuite) TestABuiltInShowsItsSchemesInputsScopesAndClientRegist
 	s.Equal(ConnectorClientAuthMethod("client_secret_post"), slack.Client.AuthMethod)
 }
 
+// TestAMovedPluginShowsItsSetupSteps: the steps the plugin catalog shows before a client is
+// pasted in come with its connector (T58), and a connector whose manifest has none shows none.
+func (s *ConnectorsSuite) TestAMovedPluginShowsItsSetupSteps() {
+	calendar := s.get("google_calendar")
+	calcom := s.get("calcom")
+
+	s.Require().NotNil(calendar.Setup)
+	s.Equal("https://console.cloud.google.com/auth/clients", calendar.Setup.URL)
+	s.Len(calendar.Setup.Steps, 5)
+	s.Equal("Enable the API", calendar.Setup.Steps[0].Title)
+	s.Equal([]ConnectorClientRegistrationMethod{"operator", "customer"}, calendar.Client.Registration)
+	s.Nil(calcom.Setup)
+}
+
 func (s *ConnectorsSuite) TestWhatTheRouterReadsToConnectIsNeverShown() {
 	// slack.yaml has endpoints, capture and identity rules, a refresh and a rate limit,
 	// sources, and client.env naming the operator's variables.

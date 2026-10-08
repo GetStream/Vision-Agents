@@ -210,3 +210,38 @@ func (s *LiveSuite) TestNewRequiresAnAddress() {
 	_, err := New(Options{})
 	s.ErrorContains(err, "redis address is required")
 }
+
+func (s *LiveSuite) TestACancelledRequestIsSpentButNotMeasured() {
+	s.Require().NoError(s.client.RecordRequest(s.ctx, s.usage(100, 1000, true)))
+	cancelled := s.usage(5, 0, false)
+	cancelled.Cancelled = true
+	cancelled.InputTokens, cancelled.OutputTokens, cancelled.CostMicros = 10, 4, 18
+	s.Require().NoError(s.client.RecordRequest(s.ctx, cancelled))
+
+	health, err := s.client.Health(s.ctx, "stt", "deepgram", s.model)
+	s.Require().NoError(err)
+	s.EqualValues(1, health.Requests, "a request nobody answered says nothing about the provider")
+	s.Zero(health.Errors, "and it is no failure")
+	s.InDelta(100, health.LatencyMsAvg, 0.001, "nor is the time it ran a latency")
+
+	usage, err := s.client.Usage(s.ctx, "stt", s.customer)
+	s.Require().NoError(err)
+	s.EqualValues(1, usage.Requests)
+	s.Zero(usage.Errors)
+	s.EqualValues(10, usage.InputTokens, "what it generated before it was cut off was spent")
+	s.EqualValues(4, usage.OutputTokens)
+	s.EqualValues(18, usage.CostMicros)
+}
+
+func (s *LiveSuite) TestACancelledRequestThatSpentNothingIsLeftOut() {
+	cancelled := s.usage(5, 0, false)
+	cancelled.Cancelled = true
+	s.Require().NoError(s.client.RecordRequest(s.ctx, cancelled))
+
+	health, err := s.client.Health(s.ctx, "stt", "deepgram", s.model)
+	s.Require().NoError(err)
+	s.Zero(health.Requests)
+	usage, err := s.client.Usage(s.ctx, "stt", s.customer)
+	s.Require().NoError(err)
+	s.Zero(usage.Requests)
+}

@@ -77,6 +77,8 @@ func (s *AuthorizationsSuite) SetupSuite() {
 		}},
 	}
 	s.publicURL, s.dashboardURL = consentPublicURL, consentDashboard
+	// So a reconnect's MCP events can be seen restored (TestAReconnectRestoresTheEventSubscriptionsItsBindingsDeclare).
+	s.mcpEventsOn = true
 	s.RouterSuite.SetupSuite()
 }
 
@@ -288,6 +290,61 @@ func (s *AuthorizationsSuite) TestAReconnectForTheSameAccountReplacesTheGrant() 
 	s.Equal(AuthorizationKind(store.AttemptReconnect), reconnect.Kind)
 	s.Equal(s.landing(id, consentConnected), finished.Header.Get("Location"))
 	s.Equal(3, s.get(id).Revision, "new credentials")
+}
+
+// TestAReconnectRestoresTheEventSubscriptionsItsBindingsDeclare: a connection whose
+// subscription went (dropped while it was disconnected) gets it back when a consent connects it
+// again, with no validate. The connector offers no events source here, so the subscription
+// fails at the server, which is not this test's concern: that the row is made again is.
+func (s *AuthorizationsSuite) TestAReconnectRestoresTheEventSubscriptionsItsBindingsDeclare() {
+	id := s.connection("")
+	s.connect(id)
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "watcher-" + s.utils.uuid(), "connectors": []map[string]any{{"name": "crm", "connector_id": s.get(id).ConnectorID,
+			"connection": map[string]any{"type": "fixed", "connection_id": id}, "tools": []map[string]any{},
+			"events": []map[string]any{{"event": "issue.created"}}}},
+	}, nil))
+	_, err := s.store.DB().ExecContext(context.Background(), "DELETE FROM connection_event_subscriptions WHERE connection_id = ?", id)
+	s.Require().NoError(err)
+
+	reconnect := s.start(id)
+	alice := s.browser()
+	finished := alice.finish(s.consent(alice.handOff(reconnect)))
+
+	s.Require().Equal(s.landing(id, consentConnected), finished.Header.Get("Location"))
+	var held int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM connection_event_subscriptions WHERE connection_id = ?", id).Scan(&held))
+	s.Equal(1, held)
+}
+
+// TestAConsentLeavesOneGrantCreatedRowNamingItsAttempt: T47's audit of a grant created at the
+// callback.
+func (s *AuthorizationsSuite) TestAConsentLeavesOneGrantCreatedRowNamingItsAttempt() {
+	id := s.connection("")
+	started := s.start(id)
+
+	alice := s.browser()
+	alice.finish(s.consent(alice.handOff(started)))
+
+	rows := s.connectorAudit(id)
+	s.Require().Len(rows, 1)
+	s.Equal(ConnectorAuditAction(store.AuditGrantCreated), rows[0].Action)
+	s.Equal(store.AuditReasonConsent, rows[0].Reason)
+	s.Equal(started.ID, rows[0].AttemptID)
+	s.Equal(2, rows[0].Revision)
+	s.NotEmpty(rows[0].RequestID, "the callback's own request")
+}
+
+func (s *AuthorizationsSuite) TestAConsentForAnotherAccountLeavesNoNewRow() {
+	id := s.connection("")
+	s.connect(id)
+	s.provider.SwitchAccount()
+
+	alice := s.browser()
+	alice.finish(s.consent(alice.handOff(s.start(id))))
+
+	s.Len(s.connectorAudit(id), 1, "only the first consent's grant")
 }
 
 func (s *AuthorizationsSuite) TestAReconnectForAnotherAccountKeepsTheOldGrantAndSaysSo() {
@@ -550,16 +607,22 @@ func (s *AuthorizationsSuite) body(response *http.Response) string {
 // browser is one person's browser: a cookie jar of its own, redirects not followed, and
 // router.example reached at the suite's listener.
 type browser struct {
-	suite  *AuthorizationsSuite
-	jar    *cookiejar.Jar
-	client *http.Client
+	suite    *RouterSuite
+	provider *fakeprovider.Server
+	jar      *cookiejar.Jar
+	client   *http.Client
 }
 
 func (s *AuthorizationsSuite) browser() *browser {
+	return newBrowser(&s.RouterSuite, s.provider)
+}
+
+// newBrowser is a browser for a suite whose consents go to provider.
+func newBrowser(s *RouterSuite, provider *fakeprovider.Server) *browser {
 	jar, err := cookiejar.New(nil)
 	s.Require().NoError(err)
 	listener := s.server.Listener.Addr().String()
-	return &browser{suite: s, jar: jar, client: &http.Client{
+	return &browser{suite: s, provider: provider, jar: jar, client: &http.Client{
 		Jar: jar,
 		Transport: roundTripper(func(r *http.Request) (*http.Response, error) {
 			sent := r.Clone(r.Context())
@@ -578,8 +641,9 @@ func (b *browser) handOff(started Authorization) string {
 	var answered struct {
 		AuthorizationURL string `json:"authorization_url"`
 	}
-	b.suite.Require().NoError(json.Unmarshal([]byte(b.suite.body(response)), &answered))
-	b.suite.Require().True(strings.HasPrefix(answered.AuthorizationURL, b.suite.provider.URL+fakeprovider.PathAuthorize+"?"))
+	defer response.Body.Close()
+	b.suite.Require().NoError(json.NewDecoder(response.Body).Decode(&answered))
+	b.suite.Require().True(strings.HasPrefix(answered.AuthorizationURL, b.provider.URL+fakeprovider.PathAuthorize+"?"))
 	return answered.AuthorizationURL
 }
 

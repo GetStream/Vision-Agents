@@ -29,6 +29,7 @@ from ._generated.models import (
     HistoryMessage,
     ModelOverwrites,
     Session as SessionRow,
+    SessionConnectorBinding,
     SessionFilter,
     SessionPage,
     SessionQuery,
@@ -109,6 +110,9 @@ class SessionOptions:
         instructions: Overrides the agent's own system prompt for this conversation.
         user_id: Who the conversation belongs to, for a backend opening one on somebody's
             behalf. A client acting for a user leaves it empty: the token already says who.
+        connector_bindings: The connection to use for each of the agent's connector
+            bindings chosen per session, by alias. Each must be the caller's own connection;
+            a binding with the agent's fixed connection cannot be given one.
         interim: Also report what the caller is part way through saying.
         decisions: Report the router's own routing decisions. Off here by default, because it
             is the router explaining itself several times a second.
@@ -128,6 +132,7 @@ class SessionOptions:
     history: Optional[list[HistoryMessage]] = None
     instructions: str = ""
     user_id: str = ""
+    connector_bindings: Optional[dict[str, str]] = None
 
     interim: bool = False
     decisions: bool = False
@@ -339,6 +344,11 @@ class Sessions:
             request.history = options.history
         if options.user_id:
             request.user_id = options.user_id
+        if options.connector_bindings:
+            request.connector_bindings = [
+                SessionConnectorBinding(name=name, connection_id=connection_id)
+                for name, connection_id in options.connector_bindings.items()
+            ]
         if options.model_overwrites is not None:
             request.model_overwrites = options.model_overwrites
         if options.custom:

@@ -129,6 +129,75 @@ func (s *TransportsSuite) TestAResolverRefusalSendsNothing() {
 	s.Empty(s.provider.received())
 }
 
+func (s *TransportsSuite) TestAnExchangeRecordsARequestThatLeftAndItsStatus() {
+	ctx, exchange := core.WithExchange(context.Background())
+
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.True(exchange.Sent())
+	s.Equal(http.StatusOK, exchange.Status())
+	s.NoError(exchange.CredentialError())
+	s.False(exchange.TimedOut())
+}
+
+func (s *TransportsSuite) TestAnExchangeRecordsTheResolversRefusalAndNothingSent() {
+	s.resolver.disconnect()
+	ctx, exchange := core.WithExchange(context.Background())
+
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().Error(err)
+	s.False(exchange.Sent())
+	s.ErrorIs(exchange.CredentialError(), errNotConnected)
+}
+
+func (s *TransportsSuite) TestAnExchangeRecordsTheProvidersRefusal() {
+	s.provider.refuse("token-1")
+	ctx, exchange := core.WithExchange(context.Background())
+
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusUnauthorized, exchange.Status())
+}
+
+// TestAnExchangeRecordsTheWaitA429AskedFor: the scheme reads the 429's Retry-After, and the
+// caller still reads the whole body.
+func (s *TransportsSuite) TestAnExchangeRecordsTheWaitA429AskedFor() {
+	s.provider.limit("30")
+	ctx, exchange := core.WithExchange(context.Background())
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusTooManyRequests, exchange.Status())
+	s.Equal(30*time.Second, exchange.RetryAfter())
+	s.Equal("slow down", s.read(response))
+}
+
+// TestAnExchangeForgetsTheWaitOnceAnotherRequestIsAnswered: the wait is the last answer's.
+func (s *TransportsSuite) TestAnExchangeForgetsTheWaitOnceAnotherRequestIsAnswered() {
+	s.provider.limit("30")
+	ctx, exchange := core.WithExchange(context.Background())
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+	s.provider.limit("")
+
+	_, err = s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, exchange.Status())
+	s.Zero(exchange.RetryAfter())
+}
+
+func (s *TransportsSuite) TestACorrelationIsWhatTheContextCarries() {
+	ctx := core.WithCorrelation(context.Background(), core.Correlation{RequestID: "request", SessionID: "session"})
+
+	s.Equal(core.Correlation{RequestID: "request", SessionID: "session"}, core.CorrelationOf(ctx))
+	s.Zero(core.CorrelationOf(context.Background()))
+}
+
 // TestARefusedCredentialIsRenewedAndTheRequestSentOnceMore: the provider ended token-1
 // before the expiry the router knows (its clock runs ahead, or it revoked the access token
 // alone). The grant still works, so the resolver renews past token-1 and the request goes
@@ -261,6 +330,84 @@ func (s *TransportsSuite) TestA401TheSchemeFindsNothingInLeavesTheConnectionAlon
 	s.Equal(http.StatusUnauthorized, response.StatusCode)
 	s.True(s.resolver.isConnected())
 	s.Len(s.provider.received(), 1)
+}
+
+// TestAScopeChallengeIsRecordedAndLeavesTheGrantAlone: a 403 insufficient_scope (RFC 6750
+// section 3.1) is the provider asking for more access, which a renewed token of the same grant
+// does not have. Nothing is sent again, the grant stays connected for what it covers, and the
+// call's Exchange carries the scopes to ask for.
+func (s *TransportsSuite) TestAScopeChallengeIsRecordedAndLeavesTheGrantAlone() {
+	s.resolver.refresh = "token-2"
+	s.provider.accept("token-2")
+	s.provider.challenge(http.StatusForbidden, `Bearer error="insufficient_scope", scope="files:read files:write"`)
+	ctx, exchange := core.WithExchange(context.Background())
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusForbidden, response.StatusCode)
+	s.Equal("challenged", s.read(response), "the caller reads the provider's whole answer")
+	asked, found := exchange.ScopeRequired()
+	s.True(found)
+	s.Equal(core.Outcome{Kind: core.OutcomeScopeRequired, Scopes: []string{"files:read", "files:write"}}, asked)
+	s.Equal([]string{"token-1"}, s.provider.tokens(), "sent once, never renewed")
+	s.True(s.resolver.isConnected(), "the old grant keeps working")
+}
+
+// TestAClaimsChallengeIsRecordedAndLeavesTheGrantAlone: Microsoft's 401 insufficient_claims
+// asks for a consent with those claims, which a refresh does not give.
+func (s *TransportsSuite) TestAClaimsChallengeIsRecordedAndLeavesTheGrantAlone() {
+	s.resolver.refresh = "token-2"
+	s.provider.accept("token-2")
+	s.provider.challenge(http.StatusUnauthorized, `Bearer error="insufficient_claims", claims="e30="`)
+	ctx, exchange := core.WithExchange(context.Background())
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusUnauthorized, response.StatusCode)
+	asked, found := exchange.ScopeRequired()
+	s.True(found)
+	s.Equal(core.Outcome{Kind: core.OutcomeScopeRequired, Claims: "{}"}, asked)
+	s.Equal([]string{"token-1"}, s.provider.tokens(), "sent once, never renewed")
+	s.True(s.resolver.isConnected(), "the old grant keeps working")
+}
+
+// TestARefusalThatAsksForNoAccessRecordsNoScopeChallenge: a 403 with no challenge and an
+// invalid_token 401 are not asks for access.
+func (s *TransportsSuite) TestARefusalThatAsksForNoAccessRecordsNoScopeChallenge() {
+	s.provider.challenge(http.StatusForbidden, "")
+	ctx, exchange := core.WithExchange(context.Background())
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+	_, found := exchange.ScopeRequired()
+	s.False(found)
+	s.True(s.resolver.isConnected())
+
+	s.provider.challenge(0, "")
+	s.provider.refuse("token-1")
+	ctx, exchange = core.WithExchange(context.Background())
+	_, err = s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+	_, found = exchange.ScopeRequired()
+	s.False(found)
+}
+
+// TestA403ThatRefusesTheCredentialIsTheAnswer: only a 401 refuses the credential (RFC 6750
+// section 3.1). A 403 with error="invalid_token" is answered as is: sent once, never renewed,
+// and the connection stays connected.
+func (s *TransportsSuite) TestA403ThatRefusesTheCredentialIsTheAnswer() {
+	s.resolver.refresh = "token-2"
+	s.provider.accept("token-2")
+	s.provider.challenge(http.StatusForbidden, `Bearer error="invalid_token"`)
+
+	response, err := s.post(s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusForbidden, response.StatusCode)
+	s.Equal("challenged", s.read(response), "the caller reads the provider's whole answer")
+	s.Equal([]string{"token-1"}, s.provider.tokens(), "sent once, never renewed")
+	s.True(s.resolver.isConnected())
 }
 
 // TestACrossOriginRedirectNeverCarriesTheCredential: the egress client's redirect policy
@@ -583,10 +730,26 @@ func (s *signingScheme) Wrap(base http.RoundTripper, c core.AccessCredential) ht
 }
 
 // Classify finds a refused credential where RFC 6750 section 3.1 puts it: a Bearer challenge
-// with error="invalid_token".
+// with error="invalid_token". A 429 is RateLimited (RFC 6585 section 4) with its Retry-After in
+// delay-seconds (RFC 9110 section 10.2.3), the only form the provider sends. It reads an ask for
+// more access as oauth2code does, from the test's own fixed challenges: insufficient_scope with
+// files:read and files:write, and insufficient_claims with the claims request {}.
 func (*signingScheme) Classify(resp *http.Response, _ []byte, _ error) core.Outcome {
-	if resp != nil && strings.Contains(resp.Header.Get("WWW-Authenticate"), `error="invalid_token"`) {
+	if resp == nil {
+		return core.Outcome{Kind: core.OutcomeOK}
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		seconds, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
+		return core.Outcome{Kind: core.OutcomeRateLimited, RetryAfter: time.Duration(seconds) * time.Second}
+	}
+	challenge := resp.Header.Get("WWW-Authenticate")
+	switch {
+	case strings.Contains(challenge, `error="invalid_token"`):
 		return core.Outcome{Kind: core.OutcomeInvalidGrant}
+	case strings.Contains(challenge, `error="insufficient_scope"`):
+		return core.Outcome{Kind: core.OutcomeScopeRequired, Scopes: []string{"files:read", "files:write"}}
+	case strings.Contains(challenge, `error="insufficient_claims"`):
+		return core.Outcome{Kind: core.OutcomeScopeRequired, Claims: "{}"}
 	}
 	return core.Outcome{Kind: core.OutcomeOK}
 }
@@ -610,15 +773,21 @@ func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { r
 // connection it saw.
 type provider struct {
 	*httptest.Server
-	mu        sync.Mutex
-	accepted  map[string]bool
-	refused   map[string]bool
-	noReason  bool
-	moveTo    string
-	before    func()
-	requests  []receivedRequest
-	connsSeen map[net.Conn]bool
-	connsGone int
+	mu       sync.Mutex
+	accepted map[string]bool
+	refused  map[string]bool
+	noReason bool
+	// challengeStatus, when set, answers every request with that status and challengeHeader
+	// as its WWW-Authenticate.
+	challengeStatus int
+	challengeHeader string
+	// retryAfter, when set, answers every request with 429 and it as Retry-After.
+	retryAfter string
+	moveTo     string
+	before     func()
+	requests   []receivedRequest
+	connsSeen  map[net.Conn]bool
+	connsGone  int
 }
 
 type receivedRequest struct {
@@ -653,12 +822,24 @@ func (p *provider) serve(w http.ResponseWriter, r *http.Request) {
 	p.requests = append(p.requests, receivedRequest{token: token, body: string(raw), contentLength: r.ContentLength,
 		signatureMatches: r.Header.Get(sha256Header) == digest(raw)})
 	before, moveTo, refused, noReason, accepted := p.before, p.moveTo, p.refused[token], p.noReason, p.accepted[token]
+	challengeStatus, challengeHeader := p.challengeStatus, p.challengeHeader
+	retryAfter := p.retryAfter
 	p.moveTo = ""
 	p.mu.Unlock()
 	if before != nil {
 		before()
 	}
 	switch {
+	case challengeStatus != 0:
+		if challengeHeader != "" {
+			w.Header().Set("WWW-Authenticate", challengeHeader)
+		}
+		w.WriteHeader(challengeStatus)
+		_, _ = w.Write([]byte("challenged"))
+	case retryAfter != "":
+		w.Header().Set("Retry-After", retryAfter)
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte("slow down"))
 	case moveTo != "":
 		// RFC 9110 section 15.4.8: 307 keeps the method and the body.
 		http.Redirect(w, r, moveTo, http.StatusTemporaryRedirect)
@@ -692,6 +873,21 @@ func (p *provider) refuseWithoutReason() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.noReason = true
+}
+
+// challenge answers every request with status and header as its WWW-Authenticate, whatever
+// token it carries; a status of 0 stops.
+func (p *provider) challenge(status int, header string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.challengeStatus, p.challengeHeader = status, header
+}
+
+// limit answers every request with 429 and retryAfter, until it is set to "".
+func (p *provider) limit(retryAfter string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.retryAfter = retryAfter
 }
 
 // redirect answers the next request with a 307 to url.

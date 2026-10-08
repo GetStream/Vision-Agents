@@ -253,6 +253,35 @@ func (s *STTRouterSuite) TestNemotronsTurnGraceIsTheRoutersOwnWait() {
 		"this provider has no server-side endpointer, so it cannot be asked for one")
 }
 
+// TestMAIsTurnGraceIsTheRoutersOwnWait is the same overwrite for the same reason:
+// MAI-Transcribe-2-Streaming only takes null for turn detection.
+func (s *STTRouterSuite) TestMAIsTurnGraceIsTheRoutersOwnWait() {
+	var settings microsoftSettings
+	s.Require().NoError(routing.Spec{
+		Overwrites: json.RawMessage(`{"turn_grace_ms":400}`),
+	}.Settings(&settings))
+	s.Equal(400, settings.TurnGraceMs)
+
+	registry := DefaultRegistry()
+	s.T().Setenv("AZURE_MAI_API_KEY", "test-key")
+	s.T().Setenv("AZURE_MAI_ENDPOINT", "https://example.services.ai.azure.com")
+
+	_, err := registry.Build("microsoft", routing.Spec{
+		Model:      "MAI-Transcribe-2-Streaming",
+		Overwrites: json.RawMessage(`{"silence_ms":400}`),
+	})
+	s.ErrorContains(err, "silence_ms",
+		"this provider has no server-side endpointer, so it cannot be asked for one")
+}
+
+// TestMAIIsPinnedToALanguageOnlyWhenOneIsNamed is because the session takes one code or
+// none: the first of several hints would turn detection off for the rest.
+func (s *STTRouterSuite) TestMAIIsPinnedToALanguageOnlyWhenOneIsNamed() {
+	s.Equal("fr", onlyLanguage([]string{"fr"}))
+	s.Empty(onlyLanguage([]string{"fr", "de"}))
+	s.Empty(onlyLanguage(nil))
+}
+
 func (s *STTRouterSuite) TestRegistryReadsInk2sTurnThresholdsFromOverwrites() {
 	var settings cartesiaSettings
 	spec := routing.Spec{

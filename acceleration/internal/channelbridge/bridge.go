@@ -30,6 +30,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -68,10 +69,35 @@ const sendTimeout = 20 * time.Second
 const maxAnswerBytes = 1 << 20
 
 // episodeSources is the episode card source of each connector whose threads get a card in the
-// person's omni-channel (T41). The manifest's channel block does not say what its threads
-// are to the contact map, so each channel adds its connector here: slack_bot is Slack (T35);
-// iMessage (T36), WhatsApp (T51) and SMS (T53) add theirs, keyed by the author's number.
-var episodeSources = map[string]string{"slack_bot": store.EpisodeSlack}
+// person's omni-channel (T41), and how the contact map keys the author of a message in the
+// provider unit. The manifest's channel block does not say what its threads are to the
+// contact map, so each channel adds its connector here: slack_bot is Slack (T35), keyed by
+// the workspace and the user; linq is iMessage (T36), keyed by the sender's number, so an
+// author Linq names by an email address gets no card; telnyx is SMS (T53), keyed by the
+// sender's number, with the carriers' keywords (keywords.go). WhatsApp (T51) adds its own.
+var episodeSources = map[string]episodeSource{
+	"slack_bot": {source: store.EpisodeSlack, person: omnichannel.SlackUser},
+	"linq":      {source: store.EpisodeIMessage, person: byNumber},
+	"telnyx":    {source: store.EpisodeSMS, person: byNumber, optOuts: dlc.SMS, answered: telnyxAnswered},
+}
+
+// episodeSource is one connector's card source and the person its message's author is.
+type episodeSource struct {
+	source string
+	person func(providerUnitID, authorID string) (omnichannel.Person, error)
+	// optOuts is the opt-out channel (dlc.OptOutChannels) whose carrier keywords the bridge
+	// answers before the agent and whose opted-out people it neither hands to the agent nor
+	// replies to (keywords.go). Empty for a connector whose messages carry no such keywords.
+	optOuts string
+	// answered is whether the provider answered a keyword itself, read from the raw event, so
+	// the bridge records it without answering it again (keywords.go). Nil is never.
+	answered func(raw []byte) bool
+}
+
+// byNumber is the person an author's E.164 number is to the contact map.
+func byNumber(_, author string) (omnichannel.Person, error) {
+	return omnichannel.Phone(author)
+}
 
 // Options configures a Bridge.
 type Options struct {
@@ -169,8 +195,10 @@ func (b *Bridge) Close() {
 // answered is whether an agent answers at least one of the messages, now or already for a
 // delivery the provider retried. When it is false the bridge handled none of them, and the
 // events route hands the delivery to the customer's event destinations that take what the
-// router does not handle (internal/eventforward, T46).
-func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, messages []core.InboundMessage) (answered bool, err error) {
+// router does not handle (internal/eventforward, T46). A message whose write into its thread
+// channel fails after the ack reaches no agent after all, so unanswered, when not nil, is
+// called then, for those destinations to have it (AI-924).
+func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, messages []core.InboundMessage, unanswered func()) (answered bool, err error) {
 	for _, message := range messages {
 		thread, config, fresh, err := b.take(ctx, app, message)
 		if err != nil {
@@ -179,6 +207,15 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 		// take links a thread only for a message an agent answers.
 		answered = answered || thread.ChannelID != ""
 		if !fresh {
+			continue
+		}
+		// After the claim, so a retried keyword is answered once; before the episode, so a
+		// keyword opens no card.
+		handled, err := b.keyword(ctx, thread, message)
+		if err != nil {
+			return false, err
+		}
+		if handled {
 			continue
 		}
 		// After the claim, so a retried delivery opens nothing. A store that fails here
@@ -192,7 +229,9 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 		b.working.Add(1)
 		go func() {
 			defer b.working.Done()
-			b.write(thread, config, episode, message)
+			if !b.write(thread, config, episode, message) && unanswered != nil {
+				unanswered()
+			}
 		}()
 	}
 	return answered, nil
@@ -231,6 +270,11 @@ func (b *Bridge) reply(reply conversation.FinishedReply) error {
 	if thread.CustomerID != reply.Customer {
 		return stack.Wrap(fmt.Errorf("channelbridge: %s is another customer's thread channel", reply.CID))
 	}
+	// Nothing follows an opt-out's confirmation (keywords.go), not even a reply the agent
+	// was writing when the person texted STOP.
+	if optedOut, err := b.optedOut(ctx, thread); err != nil || optedOut {
+		return err
+	}
 	fresh, err := b.store.ClaimChannelThreadMessage(ctx, thread.ChannelID, store.ClaimReply, reply.MessageID)
 	if err != nil || !fresh {
 		return err
@@ -247,6 +291,14 @@ func (b *Bridge) reply(reply conversation.FinishedReply) error {
 			break
 		}
 		time.Sleep(b.retries[attempt])
+		// Nor after a STOP that came in during the wait.
+		checking, done := context.WithTimeout(context.Background(), sendTimeout)
+		optedOut, checked := b.optedOut(checking, thread)
+		done()
+		if checked != nil || optedOut {
+			err = checked
+			break
+		}
 	}
 	// Not sent, so not claimed: whoever hands it over next sends it.
 	releasing, done := context.WithTimeout(context.Background(), sendTimeout)
@@ -329,7 +381,7 @@ func (b *Bridge) episode(ctx context.Context, thread store.ChannelThread, config
 	if !carded {
 		return omnichannel.Opened{}, nil
 	}
-	person, err := omnichannel.SlackUser(message.ProviderUnitID, message.AuthorID)
+	person, err := source.person(message.ProviderUnitID, message.AuthorID)
 	if err != nil {
 		b.logger.Info("no episode card for a message whose author the contact map cannot key",
 			"connector", message.ConnectorID, "channel", thread.ChannelID)
@@ -340,7 +392,7 @@ func (b *Bridge) episode(ctx context.Context, thread store.ChannelThread, config
 		AgentConfigID: config.ID,
 		AgentName:     config.Name,
 		Person:        person,
-		Source:        source,
+		Source:        source.source,
 		ThreadChannel: chatlog.ChannelType + ":" + thread.ChannelID,
 		StreamAppPK:   thread.StreamAppPK,
 	})
@@ -372,14 +424,16 @@ func (b *Bridge) threadParts(ctx context.Context, connection store.ConnectorConn
 
 // write writes one claimed message into its thread channel as its author, creating the
 // channel the first time, with the agent config that answers it. One thread's messages are
-// written one at a time, in the order they were taken as far as the lock keeps it.
-func (b *Bridge) write(thread store.ChannelThread, config store.AgentConfig, episode omnichannel.Opened, message core.InboundMessage) {
+// written one at a time, in the order they were taken as far as the lock keeps it. It reports
+// whether the message was written.
+func (b *Bridge) write(thread store.ChannelThread, config store.AgentConfig, episode omnichannel.Opened, message core.InboundMessage) bool {
 	release := b.hold(thread.ChannelID)
 	defer release()
 	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 	defer cancel()
 
-	if err := b.writeInto(ctx, thread, config, message); err != nil {
+	err := b.writeInto(ctx, thread, config, message)
+	if err != nil {
 		b.logger.Error("could not write an inbound message into its thread channel",
 			"connector", thread.ConnectorID, "channel", thread.ChannelID, "error", err)
 	}
@@ -387,6 +441,7 @@ func (b *Bridge) write(thread store.ChannelThread, config store.AgentConfig, epi
 		b.logger.Error("could not write the episode card of a thread",
 			"connector", thread.ConnectorID, "channel", thread.ChannelID, "error", err)
 	}
+	return err == nil
 }
 
 func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, config store.AgentConfig, message core.InboundMessage) error {
@@ -397,8 +452,8 @@ func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, conf
 	author := authorUserID(thread.CustomerID, thread.ConnectorID, thread.ProviderUnitID, message.AuthorID)
 	name, agentName := message.AuthorID, config.Name
 	// The agent of a thread channel writes as a user of the channel's own id: the
-	// conversation held on the channel writes as support_agent_id, and the message hook
-	// finds the session answering in the channel by that agent id (Manager.ByAgentWhere).
+	// conversation held on the channel writes as support_agent_id. The message hook finds
+	// the session answering in the channel by its conversation (Manager.ByConversationWhere).
 	if err := conversation.CreateMissingUsers(ctx, bound.Client, map[string]getstream.UserRequest{
 		author:           {ID: author, Name: &name},
 		thread.ChannelID: {ID: thread.ChannelID, Name: &agentName},

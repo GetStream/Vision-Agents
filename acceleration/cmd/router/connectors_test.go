@@ -52,6 +52,28 @@ func (s *ConnectorRegistrySuite) TestWithConnectorsOnTheFiveSchemesAreRegistered
 	s.Len(registry.Schemes, 5)
 }
 
+// AI-863: Linq's events are Standard Webhooks, which a manifest names as standard_webhooks.
+// AI-881: Telnyx's are Ed25519, ed25519.
+func (s *ConnectorRegistrySuite) TestWithConnectorsOnEveryVerifierIsRegisteredByKind() {
+	s.settings.Connectors.Enabled = true
+
+	registry, err := newConnectorRegistry(s.settings, nil)
+
+	s.Require().NoError(err)
+	for _, kind := range []core.VerifierKind{core.VerifierHMACHeader, core.VerifierStandardWebhooks, core.VerifierEd25519} {
+		s.Require().Contains(registry.Verifiers, string(kind))
+		s.Equal(string(kind), registry.Verifiers[string(kind)].Name())
+	}
+	s.Len(registry.Verifiers, 3)
+}
+
+func (s *ConnectorRegistrySuite) TestWithConnectorsOffNoVerifierIsRegistered() {
+	registry, err := newConnectorRegistry(s.settings, nil)
+
+	s.Require().NoError(err)
+	s.Empty(registry.Verifiers, "no event of any connector is verified, so none is acted on")
+}
+
 // TestAnHTTPSPublicURLIsTheClientIDUnderCIMD pins the client_id the router hands an
 // authorization server that supports CIMD: the URL the API serves the client metadata
 // document at under that public URL (api.ConnectorClientMetadataPath).

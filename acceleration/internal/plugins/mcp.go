@@ -38,6 +38,9 @@ type Connection struct {
 	PluginID    string
 	Endpoint    string
 	AccessToken string
+	// Renew mints a new access token when the server refuses the one held, and the request
+	// is sent once more with it. Nil leaves the refusal as ErrUnauthorized.
+	Renew func(ctx context.Context) (string, error)
 	// Tools offer only the server's tools matching these names or path.Match patterns.
 	// Empty offers every tool.
 	Tools []string
@@ -53,6 +56,7 @@ type client struct {
 	pluginID string
 	endpoint string
 	token    string
+	renew    func(ctx context.Context) (string, error)
 	http     *http.Client
 	nextID   int
 	// session is the Mcp-Session-Id the server gave at initialize, sent back on every
@@ -208,6 +212,7 @@ func dial(ctx context.Context, conn Connection, transport *http.Client) (*client
 		pluginID: conn.PluginID,
 		endpoint: conn.Endpoint,
 		token:    conn.AccessToken,
+		renew:    conn.Renew,
 		http:     transport,
 		nextID:   1,
 	}
@@ -397,7 +402,22 @@ func (c *client) notify(ctx context.Context, method string, params any) error {
 	return err
 }
 
+// roundTrip sends body, and once more with a renewed token when the server refuses the one
+// held. A renewal that fails is joined to the refusal, which still reads as ErrUnauthorized.
 func (c *client) roundTrip(ctx context.Context, body []byte) ([]byte, error) {
+	raw, err := c.send(ctx, body)
+	if c.renew == nil || !errors.Is(err, ErrUnauthorized) {
+		return raw, err
+	}
+	token, renewErr := c.renew(ctx)
+	if renewErr != nil {
+		return nil, errors.Join(err, renewErr)
+	}
+	c.token = token
+	return c.send(ctx, body)
+}
+
+func (c *client) send(ctx context.Context, body []byte) ([]byte, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, stack.Wrap(err)

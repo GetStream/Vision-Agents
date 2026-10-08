@@ -421,9 +421,14 @@ type AgentConfig struct {
 	DispatchIncomingCall bool `bun:"dispatch_incoming_call,notnull"`
 	DispatchText         bool `bun:"dispatch_text,notnull"`
 	// EpisodeCards has each phone call under the config write an episode card into the
-	// caller's omni-channel (20261007042200_agent_config_episode_cards.sql). Off unless a
-	// config turns it on.
+	// caller's omni-channel (20261007042200_agent_config_episode_cards.sql), and each session
+	// on a thread channel or a phone call under it start with the person's other cards. Off
+	// unless a config turns it on.
 	EpisodeCards bool `bun:"episode_cards,notnull"`
+	// ProgressiveTools offers plugin, MCP server and connector tools by a summary, and
+	// sends a tool's full description the first time it is called instead of running it
+	// (20261008130000_agent_config_progressive_tools.sql). Off unless a config turns it on.
+	ProgressiveTools bool `bun:"progressive_tools,notnull"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
 	SyncHash  string     `bun:"sync_hash,notnull"`
@@ -450,6 +455,45 @@ type ConnectorBinding struct {
 	Required    bool              `json:"required"`
 	// TimeoutMs is how long one tool call may take. Zero leaves the session's default.
 	TimeoutMs int `json:"timeout_ms,omitempty"`
+	// Events are the MCP events the binding's fixed connection is subscribed to, each opening
+	// a conversation of its own when it arrives (internal/mcpevents). Empty subscribes to none.
+	Events []BindingEvent `json:"events,omitempty"`
+	// Policy is how the binding's calls behave around speech and interruptions. Nil is a
+	// binding written before it existed, or without one, and behaves as one always has.
+	Policy *BindingPolicy `json:"policy,omitempty"`
+}
+
+// The values of BindingPolicy.OnInterrupt. Empty is InterruptCancel.
+const (
+	// InterruptCancel stops waiting for the call when the turn is interrupted: today's
+	// behaviour, and Pipecat's default (cancel_on_interruption=True).
+	InterruptCancel = "cancel"
+	// InterruptWait lets the call finish after an interruption, as LiveKit does for a tool
+	// not flagged CANCELLABLE; its result goes into the history.
+	InterruptWait = "wait"
+)
+
+// BindingPolicy is a binding's policy envelope, as it was written: a field left out is
+// stored empty and means its default.
+type BindingPolicy struct {
+	// PreSpeech is what the agent says while one of the binding's tools runs, in place of
+	// the phrase it would pick itself. Empty leaves the agent's own.
+	PreSpeech string `json:"pre_speech,omitempty"`
+	// OnInterrupt is InterruptCancel or InterruptWait. Empty is InterruptCancel.
+	OnInterrupt string `json:"on_interrupt,omitempty"`
+	// Cancellable is whether the provider is told to stop a call the session stopped
+	// waiting for. Nil is true.
+	Cancellable *bool `json:"cancellable,omitempty"`
+}
+
+// BindingEvent is one MCP event a binding subscribes to on its connection's server.
+type BindingEvent struct {
+	// Event is the event's name, as the server's events/list gives it.
+	Event string `json:"event"`
+	// Arguments are the event's filters, as its inputSchema describes them.
+	Arguments map[string]any `json:"arguments,omitempty"`
+	// Instructions say what the agent does with the event when it arrives.
+	Instructions string `json:"instructions,omitempty"`
 }
 
 // ConnectionBinding selects the connection a binding's tools are called through: "fixed",
@@ -1507,7 +1551,10 @@ type AgentSession struct {
 	CallType        string          `bun:"call_type,nullzero"`
 	// ForkedFrom is the session this one continued from, empty for one opened fresh.
 	ForkedFrom string `bun:"forked_from,nullzero"`
-	State      string `bun:"state,notnull"`
+	// ConnectorSelections are the connections the caller picked for the config's session
+	// bindings, which a fork re-resolves. References only, never a credential.
+	ConnectorSelections []SessionConnectorSelection `bun:"connector_selections,type:jsonb,notnull"`
+	State               string                      `bun:"state,notnull"`
 	// Modality is ModalityText, ModalityVoice or ModalityVideo.
 	Modality  string    `bun:"modality,notnull"`
 	CreatedAt time.Time `bun:"created_at,notnull"`
@@ -1517,6 +1564,13 @@ type AgentSession struct {
 	LastResponseAt *time.Time `bun:"last_response_at"`
 	// Rank is how well a search matched, zero outside a search.
 	Rank float32 `bun:"rank,scanonly"`
+}
+
+// SessionConnectorSelection is the connection a session's caller picked for one session
+// binding of its config, by the binding's alias.
+type SessionConnectorSelection struct {
+	Name         string `json:"name"`
+	ConnectionID string `json:"connection_id"`
 }
 
 // SessionPosition is the last session of a page, by every key the list is sorted on.

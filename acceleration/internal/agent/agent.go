@@ -136,6 +136,9 @@ type Options struct {
 	// which is how a caller outside this process owns its own tools.
 	ToolRunner    ToolRunner
 	OnToolStarted func(ToolStarted)
+	// ToolPolicy is what the tool named asks of the agent (its connector binding's policy).
+	// Nil, or the zero ToolPolicy for a tool, is how every tool has always run.
+	ToolPolicy func(tool string) ToolPolicy
 	// Tools are what the voice model may do rather than say. Each is only offered when
 	// something on this call can run it: the telephony pair needs Telephony, and every
 	// other tool needs a ToolRunner.
@@ -392,6 +395,9 @@ type Agent struct {
 	// history is the conversation so far. It lives here rather than in a provider so a
 	// failover between providers mid-conversation loses nothing.
 	history []llm.Message
+	// lateResults are lateResult messages held back while the history ends in a call not
+	// yet answered (callsOpen), in the order they came.
+	lateResults []llm.Message
 	// listeners holds one transcription session per participant, because a speech-to-text
 	// stream is bound to a single speaker.
 	listeners map[string]*sttrouter.Session
@@ -2990,7 +2996,10 @@ func (a *Agent) finish(response llm.Response) {
 		// been cut off. Prompting for it is not enough: the models that do it reliably
 		// are not the ones fast enough to hold a conversation.
 		if fillsPause(response.ID, calls) && strings.TrimSpace(a.spoken.String()) == "" {
-			filler := a.duplex.Working()
+			filler := a.preSpeech(calls)
+			if filler == "" {
+				filler = a.duplex.Working()
+			}
 			a.spoken.WriteString(filler)
 			a.mu.Lock()
 			if a.speakingTurn == response.ID {
@@ -3108,6 +3117,20 @@ func (a *Agent) claimModelBuffers(turnID string) bool {
 		a.resetTurn()
 	}
 	return true
+}
+
+// preSpeech is what the first of calls that names one asks to be said while it runs
+// (ToolPolicy.PreSpeech), or empty for none.
+func (a *Agent) preSpeech(calls []llm.ToolCall) string {
+	if a.options.ToolPolicy == nil {
+		return ""
+	}
+	for _, call := range calls {
+		if phrase := a.options.ToolPolicy(call.Name).PreSpeech; phrase != "" {
+			return phrase
+		}
+	}
+	return ""
 }
 
 // fillsPause reports whether a turn that said nothing should say something before the
