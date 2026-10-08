@@ -574,6 +574,7 @@ const (
 	GrantCreated   ConnectorAuditAction = "grant_created"
 	GrantRefreshed ConnectorAuditAction = "grant_refreshed"
 	GrantRevoked   ConnectorAuditAction = "grant_revoked"
+	TokenExport    ConnectorAuditAction = "token_export"
 )
 
 // Valid indicates whether the value is a known member of the ConnectorAuditAction enum.
@@ -584,6 +585,8 @@ func (e ConnectorAuditAction) Valid() bool {
 	case GrantRefreshed:
 		return true
 	case GrantRevoked:
+		return true
+	case TokenExport:
 		return true
 	default:
 		return false
@@ -3595,6 +3598,20 @@ type ConnectionRequest struct {
 // ConnectionStatus pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
 type ConnectionStatus string
 
+// ConnectionToken A connection's access credential, for the app's backend to call the provider with directly. It holds no refresh token.
+type ConnectionToken struct {
+	ConnectionId string `json:"connection_id"`
+
+	// ExpiresAt When it stops working. Absent when the provider gave no expiry. Export again for a fresh one.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+
+	// Header The HTTP field to send it in: Authorization for an OAuth access token, the connection's own header for an API key.
+	Header string `json:"header"`
+
+	// Value The whole field value: Bearer and the access token for an OAuth access token (RFC 6750 section 2.1), the key for an API key.
+	Value string `json:"value"`
+}
+
 // ConnectionTool defines model for ConnectionTool.
 type ConnectionTool struct {
 	Description string `json:"description"`
@@ -3696,12 +3713,12 @@ type Connector struct {
 	Setup *ConnectorSetup `json:"setup,omitempty"`
 }
 
-// ConnectorAuditAction grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted.
+// ConnectorAuditAction grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential.
 type ConnectorAuditAction string
 
-// ConnectorAuditEvent One grant a connection got, renewed or lost, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted.
+// ConnectorAuditEvent One grant a connection got, renewed or lost, or one export of its access credential, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted.
 type ConnectorAuditEvent struct {
-	// Action grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted.
+	// Action grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential.
 	Action ConnectorAuditAction `json:"action"`
 
 	// AttemptId The authorization attempt a consent finished. Absent once the connection's user was deleted.
@@ -8734,6 +8751,15 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/agents/connections/{id}/invocations (the `ListConnectionInvocations` operationId).
 	ListConnectionInvocations(ctx context.Context, id string, params *ListConnectionInvocationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ExportConnectionToken Export a connection's access token
+	//
+	// The connection's current access credential, for the app's backend to call the provider with directly: an OAuth access token, renewed first when it is about to expire, or an API key. A refresh token is never exported. Only the customer's own provider app exports: an oauth2_code connection exports when its grant was issued to the client the app registered itself, and that client is still the connector's; a grant issued to Stream's app, or to one the router created, is refused with a 403. An api_key connection always exports, since the key is the app's own. Other schemes are refused. Each export is recorded in the connector audit as token_export. Who may export it is who may read it.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with POST /v1/agents/connections/{id}/token (the `ExportConnectionToken` operationId).
+	ExportConnectionToken(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListConnectionTools List a connection's tools
 	//
 	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
@@ -11679,6 +11705,25 @@ func (c *Client) PutConnectionCredentials(ctx context.Context, id string, body P
 // Corresponds with GET /v1/agents/connections/{id}/invocations (the `ListConnectionInvocations` operationId).
 func (c *Client) ListConnectionInvocations(ctx context.Context, id string, params *ListConnectionInvocationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListConnectionInvocationsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExportConnectionToken Export a connection's access token
+//
+// The connection's current access credential, for the app's backend to call the provider with directly: an OAuth access token, renewed first when it is about to expire, or an API key. A refresh token is never exported. Only the customer's own provider app exports: an oauth2_code connection exports when its grant was issued to the client the app registered itself, and that client is still the connector's; a grant issued to Stream's app, or to one the router created, is refused with a 403. An api_key connection always exports, since the key is the app's own. Other schemes are refused. Each export is recorded in the connector audit as token_export. Who may export it is who may read it.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with POST /v1/agents/connections/{id}/token (the `ExportConnectionToken` operationId).
+func (c *Client) ExportConnectionToken(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExportConnectionTokenRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -17592,6 +17637,40 @@ func NewListConnectionInvocationsRequest(server string, id string, params *ListC
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewExportConnectionTokenRequest constructs an http.Request for the ExportConnectionToken method
+func NewExportConnectionTokenRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connections/%s/token", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -25548,6 +25627,17 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/connections/{id}/invocations (the `ListConnectionInvocations` operationId).
 	ListConnectionInvocationsWithResponse(ctx context.Context, id string, params *ListConnectionInvocationsParams, reqEditors ...RequestEditorFn) (*ListConnectionInvocationsResponse, error)
 
+	// ExportConnectionTokenWithResponse Export a connection's access token
+	//
+	// The connection's current access credential, for the app's backend to call the provider with directly: an OAuth access token, renewed first when it is about to expire, or an API key. A refresh token is never exported. Only the customer's own provider app exports: an oauth2_code connection exports when its grant was issued to the client the app registered itself, and that client is still the connector's; a grant issued to Stream's app, or to one the router created, is refused with a 403. An api_key connection always exports, since the key is the app's own. Other schemes are refused. Each export is recorded in the connector audit as token_export. Who may export it is who may read it.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/connections/{id}/token (the `ExportConnectionToken` operationId).
+	ExportConnectionTokenWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ExportConnectionTokenResponse, error)
+
 	// ListConnectionToolsWithResponse List a connection's tools
 	//
 	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
@@ -30664,6 +30754,103 @@ func (r ListConnectionInvocationsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListConnectionInvocationsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ExportConnectionTokenResponse200Headers the declared response headers of an HTTP 200 response for ExportConnectionToken
+type ExportConnectionTokenResponse200Headers struct {
+	CacheControl *string
+}
+
+type ExportConnectionTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectionToken
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ExportConnectionTokenResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExportConnectionTokenResponse) GetJSON200() *ConnectionToken {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ExportConnectionTokenResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ExportConnectionTokenResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ExportConnectionTokenResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ExportConnectionTokenResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ExportConnectionTokenResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ExportConnectionTokenResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ExportConnectionTokenResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ExportConnectionTokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExportConnectionTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExportConnectionTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExportConnectionTokenResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -42927,6 +43114,23 @@ func (c *ClientWithResponses) ListConnectionInvocationsWithResponse(ctx context.
 	return ParseListConnectionInvocationsResponse(rsp)
 }
 
+// ExportConnectionTokenWithResponse Export a connection's access token
+//
+// The connection's current access credential, for the app's backend to call the provider with directly: an OAuth access token, renewed first when it is about to expire, or an API key. A refresh token is never exported. Only the customer's own provider app exports: an oauth2_code connection exports when its grant was issued to the client the app registered itself, and that client is still the connector's; a grant issued to Stream's app, or to one the router created, is refused with a 403. An api_key connection always exports, since the key is the app's own. Other schemes are refused. Each export is recorded in the connector audit as token_export. Who may export it is who may read it.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/connections/{id}/token (the `ExportConnectionToken` operationId).
+func (c *ClientWithResponses) ExportConnectionTokenWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ExportConnectionTokenResponse, error) {
+	rsp, err := c.ExportConnectionToken(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExportConnectionTokenResponse(rsp)
+}
+
 // ListConnectionToolsWithResponse List a connection's tools
 //
 // The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
@@ -48733,6 +48937,94 @@ func ParseListConnectionInvocationsResponse(rsp *http.Response) (*ListConnection
 		}
 		response.JSON500 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseExportConnectionTokenResponse parses an HTTP response from a ExportConnectionTokenWithResponse call
+func ParseExportConnectionTokenResponse(rsp *http.Response) (*ExportConnectionTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExportConnectionTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectionToken
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ExportConnectionTokenResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers200 = &headers
 	}
 
 	return response, nil

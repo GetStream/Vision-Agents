@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -95,6 +96,26 @@ func (s *APIKeySuite) TestASuppliedValueItDoesNotTakeIsRefused() {
 		apikey.SuppliedKey: key, apikey.SuppliedHeader: "X-Api-Key", "token": key,
 	}})
 	s.ErrorContains(err, `"token" is not a value api_key takes`)
+	s.NotContains(err.Error(), key)
+}
+
+func (s *APIKeySuite) TestExportIsTheKeyInTheHeaderTheDeveloperNamedAndNoClient() {
+	stored := s.complete(map[string]string{apikey.SuppliedKey: key, apikey.SuppliedHeader: "x-shop-access-token"})
+	credential, _, err := s.scheme.Retrieve(context.Background(), stored, core.ResolvedManifest{}, core.RetrieveOptions{})
+	s.Require().NoError(err)
+
+	exported, err := s.scheme.Export(credential)
+
+	s.Require().NoError(err)
+	s.Equal(core.ExportedCredential{Header: "X-Shop-Access-Token", Value: key}, exported)
+}
+
+func (s *APIKeySuite) TestExportRefusesACredentialItDidNotIssue() {
+	stored := s.complete(map[string]string{apikey.SuppliedKey: key, apikey.SuppliedHeader: "X-Api-Key"})
+
+	_, err := s.scheme.Export(core.NewAccessCredential("bearer", time.Time{}, stored.Payload))
+
+	s.Error(err)
 	s.NotContains(err.Error(), key)
 }
 
