@@ -35,6 +35,7 @@ env:
   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
   GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
   INWORLD_API_KEY: ${{ secrets.INWORLD_API_KEY }}
+  ROUTER_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/model_router?sslmode=disable
 
 jobs:
   # Per pull request: each pack's golden call at k=1. It fails when a trial produces no
@@ -46,6 +47,19 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.tier == 'smoke')
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # The agent syncs its config to the router, which keeps configs in Postgres.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: model_router
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d model_router"
+          --health-interval 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: benchmark
@@ -78,6 +92,19 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.tier == 'nightly')
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    # The agent syncs its config to the router, which keeps configs in Postgres.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: model_router
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d model_router"
+          --health-interval 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: benchmark
