@@ -151,16 +151,9 @@ impl StreamApp {
 
         let status = response.status();
         if !status.is_success() {
-            let said = response.text().await.unwrap_or_default();
-            return Err(Error::Router {
-                status: status.as_u16(),
-                operation,
-                message: if said.trim().is_empty() {
-                    status.to_string()
-                } else {
-                    said.trim().to_string()
-                },
-            });
+            let headers = response.headers().clone();
+            let body = response.bytes().await.unwrap_or_default();
+            return Err(Error::refused(operation, status, &headers, &body));
         }
         Ok(named)
     }

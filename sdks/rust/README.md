@@ -96,7 +96,17 @@ let guest = api.guest_user(&types::GuestUserRequest::default()).await?;
 let as_guest = api.as_guest(&guest)?;
 ```
 
-A refusal is `Error::Router`, carrying the status, the operation and what the router said.
+A refusal is `Error::Router`, holding a `RouterFailure`: the status and the operation, the
+router's `message`, `kind` (`not_found`, `rate_limited`, ...), `code` to branch on and
+`doc_url`, and `request_id`, the `X-Request-Id` to quote to support. A body that is not the
+router's envelope, such as a proxy's error page, is the message, and `kind`, `code` and
+`doc_url` are left empty.
+
+```rust
+if let Err(vision_agents::Error::Router(failure)) = api.get_session("s1").await {
+    eprintln!("{}: {} (request {})", failure.code, failure.message, failure.request_id);
+}
+```
 
 ## Agent dispatch
 
@@ -193,7 +203,7 @@ agent.knowledge()?.add_url("https://example.com/pricing", "Pricing", "", Some(24
 `sync` stores the directory as a config in one request, and `.agent_sync` records its
 fingerprint, so syncing on every startup sends nothing when nothing changed. A key
 `agent.yaml` does not know is refused; besides the models it takes `speed`, `harness`,
-`subagent`, `sandbox` and `dispatch`. With a `simulations/` directory the config's
+`thinking_llm`, `sandbox` and `dispatch`. With a `simulations/` directory the config's
 simulations become exactly what it declares, and an empty one deletes them; without one they
 are left alone. `Agent::new("jean")` finds `agents/jean` or `examples/*/jean` from the
 working directory up and syncs it before the first session.

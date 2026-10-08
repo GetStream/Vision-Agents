@@ -14,7 +14,7 @@ use axum::body::Bytes;
 use axum::extract::State;
 use axum::extract::ws::rejection::WebSocketUpgradeRejection;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::http::{HeaderMap, Method, StatusCode, Uri};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -113,8 +113,8 @@ impl Accepted {
     }
 }
 
-/// The answers queued for each route: a status and a body.
-type Routes = HashMap<(Method, String), VecDeque<(u16, String)>>;
+/// The answers queued for each route: a status, the headers and a body.
+type Routes = HashMap<(Method, String), VecDeque<(u16, Vec<(String, String)>, String)>>;
 
 #[derive(Default)]
 struct Shared {
@@ -152,18 +152,38 @@ impl Server {
     /// path it prefixes. Registering the same route again queues the answers in order; the
     /// last one keeps being given.
     pub fn route(&self, method: Method, path: &str, status: u16, body: Value) -> &Self {
-        let body = if body.is_null() {
-            String::new()
-        } else {
-            body.to_string()
-        };
+        if body.is_null() {
+            return self.route_raw(method, path, status, &[], "");
+        }
+        self.route_raw(
+            method,
+            path,
+            status,
+            &[("content-type", "application/json")],
+            &body.to_string(),
+        )
+    }
+
+    /// Answers like [`Server::route`], with `body` sent as it is and `headers` on the answer.
+    pub fn route_raw(
+        &self,
+        method: Method,
+        path: &str,
+        status: u16,
+        headers: &[(&str, &str)],
+        body: &str,
+    ) -> &Self {
+        let headers = headers
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect();
         self.shared
             .routes
             .lock()
             .unwrap()
             .entry((method, path.into()))
             .or_default()
-            .push_back((status, body));
+            .push_back((status, headers, body.into()));
         self
     }
 
@@ -296,21 +316,33 @@ async fn handle(
         })
     };
     match answer {
-        Some((status, body)) => {
-            let status = StatusCode::from_u16(status).unwrap();
-            if body.is_empty() {
-                status.into_response()
-            } else {
-                (status, [("content-type", "application/json")], body).into_response()
+        Some((status, headers, body)) => {
+            let mut response = (StatusCode::from_u16(status).unwrap(), body).into_response();
+            for (name, value) in headers {
+                response.headers_mut().insert(
+                    HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                    HeaderValue::from_str(&value).unwrap(),
+                );
             }
+            response
         }
         None => (
             StatusCode::NOT_FOUND,
             [("content-type", "application/json")],
-            json!({"error": format!("nothing at {path}")}).to_string(),
+            refusal("not_found", "not_found", &format!("nothing at {path}")).to_string(),
         )
             .into_response(),
     }
+}
+
+/// The envelope the router answers a failure with.
+pub fn refusal(kind: &str, code: &str, message: &str) -> Value {
+    json!({"error": {
+        "message": message,
+        "type": kind,
+        "code": code,
+        "doc_url": format!("https://getstream.io/agents/docs/api/errors/#{code}"),
+    }})
 }
 
 /// A session as the router describes one.

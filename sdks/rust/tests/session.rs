@@ -236,7 +236,7 @@ async fn a_socket_that_cannot_open_stops_the_session_it_was_for() {
         Method::GET,
         "/v1/agents/sessions/s1/events",
         403,
-        json!({"error": "not yours"}),
+        support::refusal("permission", "forbidden", "not yours"),
     );
 
     let refused = Session::open(
