@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -730,6 +731,36 @@ func (s *OAuthClientsOffSuite) TestAPutWithoutAClientIDIsRefusedAsBeforeProvider
 		s.Contains(string(body), `"message":"validation failed: expected required property client_id to be present (body)"`, connector)
 		s.Contains(string(body), `"type":"invalid_request","code":"validation_failed"`, connector)
 	}
+}
+
+// AI-881: with connectors off Telnyx's account put alone and a Telnyx-signed event on its
+// route answer byte for byte as on base f5462686, captured by a probe of this suite there:
+// PUT 400 validation_failed, POST 404 not_found.
+func (s *OAuthClientsOffSuite) TestATelnyxAccountAndItsEventsAnswerAsOnBase() {
+	app := "profile-" + s.utils.uuid()
+
+	status, body := s.serverClient.call(http.MethodPut, oauthClientPath("telnyx"),
+		ConnectorOAuthClientRequest{ProviderAppID: app, SigningSecret: "c2lnbmluZw=="})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(body), `"error":{"message":"validation failed: expected required property client_id to be present (body)","type":"invalid_request","code":"validation_failed","doc_url":"https://getstream.io/agents/docs/api/errors/#validation_failed"}}`)
+	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "telnyx")
+	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
+
+	request, err := http.NewRequest(http.MethodPost, s.server.URL+providerAppEventsPath+"telnyx/"+app,
+		strings.NewReader(`{"data":{"event_type":"message.received"}}`))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Telnyx-Signature-Ed25519", "c2ln")
+	request.Header.Set("Telnyx-Timestamp", "1700000000")
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	answer, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+	s.Equal(http.StatusNotFound, response.StatusCode)
+	s.Equal("application/json", response.Header.Get("Content-Type"))
+	s.Contains(string(answer), `"error":{"message":"this connector takes no events here","type":"not_found","code":"not_found","doc_url":"https://getstream.io/agents/docs/api/errors/#not_found"}}`)
 }
 
 // AI-863: Linq's account put alone answers as any put does with connectors off, and its

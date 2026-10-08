@@ -30,11 +30,23 @@ func (s *StoreSuite) revisions(id string) []ConnectorDefinition {
 // build before it seeded, adds linq at revision 1 and leaves every other built-in's latest
 // revision as it was.
 func (s *StoreSuite) TestSeedingLinqLeavesEveryOtherBuiltInsLatestRevisionAsItWas() {
+	s.seedingANewBuiltInLeavesTheOthersAsTheyWere("linq")
+}
+
+// AI-881: telnyx.yaml is a new file too.
+func (s *StoreSuite) TestSeedingTelnyxLeavesEveryOtherBuiltInsLatestRevisionAsItWas() {
+	s.seedingANewBuiltInLeavesTheOthersAsTheyWere("telnyx")
+}
+
+// seedingANewBuiltInLeavesTheOthersAsTheyWere seeds every shipped built-in but id, as the
+// build before id's file did, then every one, and checks id lands at revision 1 and no other
+// built-in's latest revision moves.
+func (s *StoreSuite) seedingANewBuiltInLeavesTheOthersAsTheyWere(id string) {
 	before := fstest.MapFS{}
 	files, err := fs.ReadDir(providers.FS, ".")
 	s.Require().NoError(err)
 	for _, file := range files {
-		if file.Name() == "linq.yaml" {
+		if file.Name() == id+".yaml" {
 			continue
 		}
 		raw, err := fs.ReadFile(providers.FS, file.Name())
@@ -56,9 +68,9 @@ func (s *StoreSuite) TestSeedingLinqLeavesEveryOtherBuiltInsLatestRevisionAsItWa
 	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS))
 
 	s.Equal(was, latest())
-	linq, err := s.store.LatestBuiltinConnectorDefinition(s.ctx, "linq")
+	added, err := s.store.LatestBuiltinConnectorDefinition(s.ctx, id)
 	s.Require().NoError(err)
-	s.Equal(1, linq.Revision)
+	s.Equal(1, added.Revision)
 }
 
 func (s *StoreSuite) TestSeedingAnEmptyTableStoresEachShippedBuiltInAtTheRevisionItNames() {
@@ -68,8 +80,8 @@ func (s *StoreSuite) TestSeedingAnEmptyTableStoresEachShippedBuiltInAtTheRevisio
 
 	listed, err := s.store.ListConnectorDefinitions(s.ctx, "acme", ConnectorDefinitionFilter{})
 	s.Require().NoError(err)
-	s.Require().Len(listed, 16)
-	for i, id := range []string{"calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "linear", "linq", "salesforce", "sentry", "shopify", "slack", "slack_bot"} {
+	s.Require().Len(listed, 17)
+	for i, id := range []string{"calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "linear", "linq", "salesforce", "sentry", "shopify", "slack", "slack_bot", "telnyx"} {
 		s.Equal(id, listed[i].ID)
 		s.Equal(BuiltinCustomer, listed[i].CustomerID)
 		s.Equal(shipped[i].Revision, listed[i].Revision, "stored at the revision its file names")
@@ -266,11 +278,11 @@ func (s *StoreSuite) TestACustomDefinitionIsOnlyItsOwnCustomers() {
 
 	theirs, err := s.store.ListConnectorDefinitions(s.ctx, "globex", ConnectorDefinitionFilter{})
 	s.Require().NoError(err)
-	s.Equal([]string{"calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "linear", "linq", "salesforce", "sentry", "shopify", "slack", "slack_bot"}, definitionIDs(theirs), "another customer sees the built-ins alone")
+	s.Equal([]string{"calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "linear", "linq", "salesforce", "sentry", "shopify", "slack", "slack_bot", "telnyx"}, definitionIDs(theirs), "another customer sees the built-ins alone")
 
 	ours, err := s.store.ListConnectorDefinitions(s.ctx, "acme", ConnectorDefinitionFilter{})
 	s.Require().NoError(err)
-	s.Equal([]string{"calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "linear", "linq", "salesforce", "sentry", "shopify", "slack", "slack_bot", "custom_crm"}, definitionIDs(ours), "built-ins first, then the customer's own")
+	s.Equal([]string{"calcom", "calendly", "github", "gmail", "gong", "google_calendar", "google_docs", "google_drive", "hubspot", "linear", "linq", "salesforce", "sentry", "shopify", "slack", "slack_bot", "telnyx", "custom_crm"}, definitionIDs(ours), "built-ins first, then the customer's own")
 }
 
 func (s *StoreSuite) TestAnUnknownRevisionIsNoDefinition() {

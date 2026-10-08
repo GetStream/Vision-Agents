@@ -41,3 +41,32 @@ func (s *BridgeSuite) TestABridgeNeedsAStoreStreamTransportsAndAResolver() {
 	_, err := New(Options{})
 	s.ErrorContains(err, "a store, Stream clients, transports and a resolver are required")
 }
+
+// AI-881: a keyword is read without its case or punctuation (CTIA 5.1.3), and only when it is
+// the whole message.
+func (s *BridgeSuite) TestAKeywordIsReadWithoutItsCaseOrPunctuation() {
+	for text, word := range map[string]string{
+		"Stop.":           "STOP",
+		"  stop  ":        "STOP",
+		"opt-out":         "OPT OUT",
+		"Stop all!":       "STOP ALL",
+		"help?":           "HELP",
+		"stop texting me": "STOP TEXTING ME",
+	} {
+		s.Equal(word, keywordOf(text), text)
+	}
+	s.Contains(stopWords, keywordOf("Opt out"))
+	s.NotContains(stopWords, keywordOf("stop texting me"), "a sentence is the agent's to read")
+}
+
+// Only a connector whose episode source names an opt-out channel has keywords: SMS today, so
+// a STOP in Slack or iMessage reaches the agent as before.
+func (s *BridgeSuite) TestOnlySMSHasKeywords() {
+	for connector, source := range episodeSources {
+		if connector == "telnyx" {
+			s.Equal("sms", source.optOuts)
+			continue
+		}
+		s.Empty(source.optOuts, connector)
+	}
+}
