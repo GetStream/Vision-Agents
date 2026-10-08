@@ -3843,7 +3843,7 @@ type ConnectorInput struct {
 	Pattern *string `json:"pattern,omitempty"`
 }
 
-// ConnectorOAuthClient The OAuth client the app registered with a connector's provider itself. The secret is write-only: no response carries it.
+// ConnectorOAuthClient The OAuth client the app registered with a connector's provider itself. The client secret and the signing secret are write-only: no response carries them.
 type ConnectorOAuthClient struct {
 	// AuthMethod How the app's own OAuth client authenticates at the token endpoint (RFC 7591 section 2): none for a public client, which has no secret, client_secret_basic or client_secret_post.
 	AuthMethod  *ConnectorOAuthClientAuthMethod `json:"auth_method,omitempty"`
@@ -3851,10 +3851,13 @@ type ConnectorOAuthClient struct {
 	ConnectorId *string                         `json:"connector_id,omitempty"`
 	CreatedAt   *time.Time                      `json:"created_at,omitempty"`
 
+	// ProviderAppId The provider's id for the app the client belongs to, as put. Absent when none was put.
+	ProviderAppId *string `json:"provider_app_id,omitempty"`
+
 	// Registration operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
 	Registration ConnectorClientRegistrationMethod `json:"registration"`
 
-	// UpdatedAt When the client, its secret or its method last changed.
+	// UpdatedAt When the client, its secrets or its method last changed.
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
@@ -3869,6 +3872,12 @@ type ConnectorOAuthClientRequest struct {
 
 	// ClientSecret Sealed at rest and never returned. Left out for a public client (auth_method none).
 	ClientSecret *string `json:"client_secret,omitempty"`
+
+	// ProviderAppId The provider's id for the app the client belongs to, such as a Slack app id (A012ABCD0A0). The app's events then reach POST /v1/connectors/events/{id}/{provider_app_id}. An app serves one customer: another customer's record naming it is a 409.
+	ProviderAppId *string `json:"provider_app_id,omitempty"`
+
+	// SigningSecret The secret the provider signs the app's events with, such as a Slack app's signing secret. Needs provider_app_id, and a connector whose events are verified with the app's own secret (channel.verifier.secret provider_app). Sealed at rest and never returned. Putting the client again without it removes it, as it does client_secret.
+	SigningSecret *string `json:"signing_secret,omitempty"`
 }
 
 // ConnectorOnInterrupt cancel stops waiting for the call when the turn is interrupted, and tells the provider to stop it unless cancellable is false. wait lets the call finish, up to the binding's timeout, and its result goes into the conversation for the next turn.
@@ -8868,7 +8877,7 @@ type ClientInterface interface {
 
 	// SetConnectorOAuthClientWithBody Set the app's own OAuth client for a connector
 	//
-	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -8879,7 +8888,7 @@ type ClientInterface interface {
 
 	// SetConnectorOAuthClient Set the app's own OAuth client for a connector
 	//
-	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -11996,7 +12005,7 @@ func (c *Client) DeleteConnectorOAuthClient(ctx context.Context, id string, reqE
 
 // SetConnectorOAuthClientWithBody Set the app's own OAuth client for a connector
 //
-// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -12017,7 +12026,7 @@ func (c *Client) SetConnectorOAuthClientWithBody(ctx context.Context, id string,
 
 // SetConnectorOAuthClient Set the app's own OAuth client for a connector
 //
-// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -25590,7 +25599,7 @@ type ClientWithResponsesInterface interface {
 
 	// SetConnectorOAuthClientWithBodyWithResponse Set the app's own OAuth client for a connector
 	//
-	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -25601,7 +25610,7 @@ type ClientWithResponsesInterface interface {
 
 	// SetConnectorOAuthClientWithResponse Set the app's own OAuth client for a connector
 	//
-	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -43027,7 +43036,7 @@ func (c *ClientWithResponses) DeleteConnectorOAuthClientWithResponse(ctx context
 
 // SetConnectorOAuthClientWithBodyWithResponse Set the app's own OAuth client for a connector
 //
-// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -43044,7 +43053,7 @@ func (c *ClientWithResponses) SetConnectorOAuthClientWithBodyWithResponse(ctx co
 
 // SetConnectorOAuthClientWithResponse Set the app's own OAuth client for a connector
 //
-// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //

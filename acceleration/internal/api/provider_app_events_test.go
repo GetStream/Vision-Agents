@@ -98,6 +98,28 @@ func (s *SlackChannelSuite) TestAMessageIsWrittenIntoANewThreadChannelAsThePerso
 	s.Equal(s.config.ID, custom[ConfigField], "the channel names the agent that answers in it")
 }
 
+// AI-906: the app's backend puts its own Slack app through the oauth-client PUT, and Slack's
+// events for that app, signed with the secret put, reach the bridge. The app the put replaced
+// takes none.
+func (s *SlackChannelSuite) TestAnAppPutThroughTheAPIHasItsSignedEventsWrittenIntoAThreadChannel() {
+	replaced, replacedSecret := s.app.ProviderAppID, s.secret
+	s.app.ProviderAppID = "A" + strings.ToUpper(strings.ReplaceAll(s.utils.uuid(), "-", ""))
+	s.secret = "synthetic-put-signing-" + s.utils.uuid()
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, oauthClientPath("slack_bot"), ConnectorOAuthClientRequest{
+		ClientID: "synthetic-client", ClientSecret: "synthetic-client-secret",
+		ProviderAppID: s.app.ProviderAppID, SigningSecret: s.secret,
+	}, nil))
+
+	status, _ := s.deliver(s.message("U0000ALICE", "Can you check the build?", "1759740000.000100", ""), 0)
+
+	s.Equal(http.StatusOK, status)
+	stored := s.written(s.threadChannel("C0000CHAN:1759740000.000100"), 1)
+	s.Equal("Can you check the build?", stored[0]["text"])
+	stale, _ := s.slack.Deliver(s.server.URL+providerAppEventsPath+"slack_bot/"+replaced, replacedSecret,
+		s.message("U0000ALICE", "still there?", "1759740000.000200", ""), 0)
+	s.Equal(http.StatusNotFound, stale, "the app the put replaced takes no events")
+}
+
 // One Slack thread is one thread channel however many people write in it: a mention starts
 // it, and two others reply in it.
 func (s *SlackChannelSuite) TestThreePeopleInOneThreadAreOneThreadChannel() {

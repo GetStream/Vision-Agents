@@ -1010,7 +1010,7 @@ export type paths = {
         readonly get?: never;
         /**
          * Set the app's own OAuth client for a connector
-         * @description Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+         * @description Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -4806,18 +4806,20 @@ export type components = {
             /** @description A regular expression the whole value must match. */
             readonly pattern?: string;
         };
-        /** @description The OAuth client the app registered with a connector's provider itself. The secret is write-only: no response carries it. */
+        /** @description The OAuth client the app registered with a connector's provider itself. The client secret and the signing secret are write-only: no response carries them. */
         readonly ConnectorOAuthClient: {
             readonly auth_method?: components["schemas"]["ConnectorOAuthClientAuthMethod"];
             readonly client_id: string;
             readonly connector_id: string;
             /** Format: date-time */
             readonly created_at: string;
+            /** @description The provider's id for the app the client belongs to, as put. Absent when none was put. */
+            readonly provider_app_id?: string;
             /** @description customer: the app's own client, which every consent and refresh of the connector's connections then uses. */
             readonly registration: components["schemas"]["ConnectorClientRegistrationMethod"];
             /**
              * Format: date-time
-             * @description When the client, its secret or its method last changed.
+             * @description When the client, its secrets or its method last changed.
              */
             readonly updated_at: string;
         };
@@ -4833,6 +4835,10 @@ export type components = {
             readonly client_id: string;
             /** @description Sealed at rest and never returned. Left out for a public client (auth_method none). */
             readonly client_secret?: string;
+            /** @description The provider's id for the app the client belongs to, such as a Slack app id (A012ABCD0A0). The app's events then reach POST /v1/connectors/events/{id}/{provider_app_id}. An app serves one customer: another customer's record naming it is a 409. */
+            readonly provider_app_id?: string;
+            /** @description The secret the provider signs the app's events with, such as a Slack app's signing secret. Needs provider_app_id, and a connector whose events are verified with the app's own secret (channel.verifier.secret provider_app). Sealed at rest and never returned. Putting the client again without it removes it, as it does client_secret. */
+            readonly signing_secret?: string;
         };
         /**
          * @description cancel stops waiting for the call when the turn is interrupted, and tells the provider to stop it unless cancellable is false. wait lets the call finish, up to the binding's timeout, and its result goes into the conversation for the next turn.
