@@ -77,16 +77,16 @@ func TestBuildManifestAcceleratedDefaults(t *testing.T) {
 		TargetName:  "accelerated",
 		SpawnTarget: true,
 	}, []scenario.Scenario{{ID: "restaurant.golden", Pack: "restaurant", Category: scenario.Golden}})
-	if manifest.TargetSTT != "gemini/gemini-3.5-transcribe-live" {
+	if manifest.TargetSTT != "deepgram/flux-general-en" {
 		t.Fatalf("stt %q", manifest.TargetSTT)
 	}
-	if manifest.TargetTTS != "inworld/inworld-tts-2-flash" {
+	if manifest.TargetTTS != "elevenlabs/eleven_v4_turbo" {
 		t.Fatalf("tts %q", manifest.TargetTTS)
 	}
-	if manifest.TargetModel != "gemini/gemini-3.8-flash" || manifest.TargetLLM != "gemini/gemini-3.8-flash" {
+	if manifest.TargetModel != "cerebras/gemma-4-31b" || manifest.TargetLLM != "cerebras/gemma-4-31b" {
 		t.Fatalf("model %q llm %q", manifest.TargetModel, manifest.TargetLLM)
 	}
-	if manifest.TargetSubagent != "openai/gpt-5.6-sol" {
+	if manifest.TargetSubagent != "openai/gpt-6.1-sol" {
 		t.Fatalf("subagent %q", manifest.TargetSubagent)
 	}
 }

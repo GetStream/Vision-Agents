@@ -15,7 +15,7 @@ import (
 
 const SchemaVersion = 3
 const BenchmarkVersion = "0.4.0"
-const MethodologyVersion = "voicebench-live-v3"
+const MethodologyVersion = "voicebench-live-v4"
 
 const KindAgent = "agent"
 const KindSTT = "stt"
