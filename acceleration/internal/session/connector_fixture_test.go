@@ -182,6 +182,14 @@ func (s *connectorFixture) chosen(alias string, tools ...string) store.Connector
 		Connection: store.ConnectionBinding{Type: selectionSession}, Tools: grants(tools...)}
 }
 
+// byName is binding with each grant naming its tool alone, as a session binding may.
+func byName(binding store.ConnectorBinding) store.ConnectorBinding {
+	for i := range binding.Tools {
+		binding.Tools[i].SchemaDigest = ""
+	}
+	return binding
+}
+
 // required is binding, required.
 func required(binding store.ConnectorBinding) store.ConnectorBinding {
 	binding.Required = true
@@ -276,6 +284,8 @@ type accountsProvider struct {
 	// limited answers tools/call of an account with 429 and the Retry-After it maps to, none
 	// when that is "" (RFC 6585 section 4: the header is a MAY).
 	limited map[string]string
+	// servers are the accounts' MCP servers, by account.
+	servers map[string]*mcpsdk.Server
 }
 
 // slowFor is how long slow takes before it answers, longer than any test lets it run; it
@@ -287,9 +297,7 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 	servers := map[string]*mcpsdk.Server{}
 	for _, account := range []string{"primary", "secondary", "moved"} {
 		server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: account, Version: "1"}, nil)
-		server.AddTool(toolWhoami, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: account}}}, nil
-		})
+		server.AddTool(toolWhoami, whoami(account))
 		server.AddTool(toolSecret, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the secret"}}}, nil
 		})
@@ -315,6 +323,7 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 		})
 		servers[account] = server
 	}
+	p.servers = servers
 	p.Server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		account := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/"), "/mcp")
 		server, found := servers[account]
@@ -385,6 +394,20 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 	return p
 }
 
+// whoami answers with account's name.
+func whoami(account string) mcpsdk.ToolHandler {
+	return func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: account}}}, nil
+	}
+}
+
+// redescribe has account list whoami with description, a schema change, until forget.
+func (p *accountsProvider) redescribe(account, description string) {
+	changed := *toolWhoami
+	changed.Description = description
+	p.servers[account].AddTool(&changed, whoami(account))
+}
+
 // streamFirst has the provider answer tools/call as an SSE stream whose headers go out first.
 func (p *accountsProvider) streamFirst() {
 	p.mu.Lock()
@@ -397,6 +420,9 @@ func (p *accountsProvider) forget() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.called, p.methods, p.streams, p.limited = map[string]int{}, map[string][]string{}, false, map[string]string{}
+	for account, server := range p.servers {
+		server.AddTool(toolWhoami, whoami(account))
+	}
 }
 
 // limit has account answer tools/call with 429 and retryAfter, until lift.

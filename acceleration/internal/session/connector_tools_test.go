@@ -4,6 +4,7 @@ package session
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -220,4 +221,106 @@ func (s *AttachConnectorsSuite) TestNoCallerIsNotAVerifiedCaller() {
 	_, _, _, err := s.attach(spec)
 
 	s.ErrorContains(err, "caller_unverified")
+}
+
+// TestAToolGrantedByNameIsPinnedOnFirstUse: a session binding's grant of whoami by name. The
+// first session on Alice's connection pins the digest it finds; the next one offers whoami on
+// that pin and writes nothing.
+func (s *AttachConnectorsSuite) TestAToolGrantedByNameIsPinnedOnFirstUse() {
+	alice := s.connection("alice", "primary")
+	config := s.config(byName(s.chosen("crm", "whoami")))
+
+	d, first, unavailable, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
+	s.Require().NoError(err)
+	pinned := s.pinOf(alice, "whoami")
+	_, again, _, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
+	s.Require().NoError(err)
+
+	s.Empty(unavailable)
+	s.Equal([]string{"crm__whoami"}, names(first))
+	s.Equal([]string{"crm__whoami"}, names(again))
+	s.Equal(grants("whoami")[0].SchemaDigest, pinned.SchemaDigest)
+	s.True(pinned.PinnedAt.Equal(s.pinOf(alice, "whoami").PinnedAt), "pinned once")
+	said, err := s.call(d, "crm__whoami", "{}")
+	s.Require().NoError(err)
+	s.Equal("primary", said)
+}
+
+// TestAToolGrantedByNameWhoseSchemaChangedSinceItsPinIsNotOffered: the provider changes
+// whoami after the first session pinned it. The next session leaves it out as it leaves out a
+// tool whose granted digest no longer matches, and the pin stays.
+func (s *AttachConnectorsSuite) TestAToolGrantedByNameWhoseSchemaChangedSinceItsPinIsNotOffered() {
+	alice := s.connection("alice", "primary")
+	config := s.config(byName(s.chosen("crm", "whoami", "secret")))
+	_, _, _, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
+	s.Require().NoError(err)
+	s.provider.redescribe("primary", "Says which account this is, and now something else too.")
+
+	_, tools, unavailable, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
+
+	s.Require().NoError(err)
+	s.Equal([]string{"crm__secret"}, names(tools))
+	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableTool}}, unavailable)
+	s.Equal(grants("whoami")[0].SchemaDigest, s.pinOf(alice, "whoami").SchemaDigest)
+}
+
+// TestAReconnectPinsAToolGrantedByNameAgain: a consent connects Alice's connection anew, a
+// new trust event, so the next session pins whoami as the provider lists it now.
+func (s *AttachConnectorsSuite) TestAReconnectPinsAToolGrantedByNameAgain() {
+	alice := s.connection("alice", "primary")
+	config := s.config(byName(s.chosen("crm", "whoami")))
+	_, _, _, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
+	s.Require().NoError(err)
+	s.provider.redescribe("primary", "Says which account this is, as changed.")
+	s.setState(alice, func(state *core.CredentialState) { state.ConnectedAt = time.Now().UTC().Add(time.Second) })
+
+	_, tools, unavailable, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
+
+	s.Require().NoError(err)
+	s.Empty(unavailable)
+	s.Equal([]string{"crm__whoami"}, names(tools))
+	s.Equal("Says which account this is, as changed.", tools[0].Description)
+	s.NotEqual(grants("whoami")[0].SchemaDigest, s.pinOf(alice, "whoami").SchemaDigest)
+}
+
+// TestEachConnectionIsPinnedOnItsOwn: Alice's pin is not Bob's. Bob's provider lists whoami
+// with another description, which his first session pins for his connection.
+func (s *AttachConnectorsSuite) TestEachConnectionIsPinnedOnItsOwn() {
+	alice, bob := s.connection("alice", "primary"), s.connection("bob", "secondary")
+	config := s.config(byName(s.chosen("crm", "whoami")))
+	s.provider.redescribe("secondary", "Says which account this is, for Bob.")
+
+	_, alices, _, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
+	s.Require().NoError(err)
+	_, bobs, unavailable, err := s.attach(s.spec(config, "bob", map[string]string{"crm": bob}))
+	s.Require().NoError(err)
+
+	s.Empty(unavailable)
+	s.Equal([]string{"crm__whoami"}, names(alices))
+	s.Equal([]string{"crm__whoami"}, names(bobs))
+	s.NotEqual(s.pinOf(alice, "whoami").SchemaDigest, s.pinOf(bob, "whoami").SchemaDigest)
+}
+
+// TestAFixedBindingNeverPinsAToolGrantedByName: the API refuses such a grant
+// (api.connectorBindingsComplaint); one stored anyway offers nothing and pins nothing.
+func (s *AttachConnectorsSuite) TestAFixedBindingNeverPinsAToolGrantedByName() {
+	app := s.connection("", "primary")
+
+	_, tools, unavailable, err := s.attach(s.spec(s.config(byName(s.fixed("crm", app, "whoami"))), "", nil))
+
+	s.Require().NoError(err)
+	s.Empty(tools)
+	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableTool}}, unavailable)
+	var pins int
+	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+		"SELECT count(*) FROM connector_tool_pins WHERE connection_id = ?", app).Scan(&pins))
+	s.Zero(pins)
+}
+
+// pinOf is connection's pin of tool, as stored.
+func (s *AttachConnectorsSuite) pinOf(connection, tool string) store.ConnectorToolPin {
+	var pin store.ConnectorToolPin
+	s.Require().NoError(s.store.DB().NewSelect().Model(&pin).
+		Where("connection_id = ?", connection).Where("tool_name = ?", tool).Scan(s.ctx))
+	return pin
 }
