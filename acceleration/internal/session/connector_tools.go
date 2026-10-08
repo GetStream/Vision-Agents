@@ -69,7 +69,8 @@ const (
 	// deployment has connectors off.
 	unavailableOpenFailed = "open_failed"
 	// unavailableTool: the provider no longer offers a granted tool with the schema it was
-	// granted against. The tools it still offers are kept.
+	// granted against, or for a grant by name, pinned at for the connection (pinGrants). The
+	// tools it still offers are kept.
 	unavailableTool = "tool_unavailable"
 	// unavailableDropped: a fork's or a reopened chat's selection for an alias its config no
 	// longer declares as a session binding.
@@ -264,6 +265,12 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 		grants = append(grants, core.ToolGrant{Name: grant.Name, SchemaDigest: grant.SchemaDigest})
 		digests[grant.Name] = grant.SchemaDigest
 	}
+	if binding.Connection.Type == selectionSession {
+		reason, err := m.pinGrants(ctx, binding.Name, connection, resolved, grants)
+		if reason != "" || err != nil {
+			return reason, err
+		}
+	}
 	timeout := defaultConnectorTimeout
 	if binding.TimeoutMs > 0 {
 		timeout = time.Duration(binding.TimeoutMs) * time.Millisecond
@@ -294,7 +301,81 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 		}
 	}
 	if offered < len(binding.Tools) {
+		var changed []string
+		for _, grant := range binding.Tools {
+			if _, found := d.routes[binding.Name+mcp.Separator+grant.Name]; !found && grant.SchemaDigest == "" {
+				changed = append(changed, grant.Name)
+			}
+		}
+		if len(changed) > 0 {
+			m.logger.Warn("a tool granted by name is not offered: the connection no longer lists it with the "+
+				"schema it was pinned at, and a reconnect approves it again", "connector", binding.Name,
+				"connection", connection.ID, "tools", changed)
+		}
 		return unavailableTool, nil
+	}
+	return "", nil
+}
+
+// pinGrants gives each of a session binding's grants that names its tool alone the digest the
+// connection's tool is pinned at for its current grant (store.ConnectorToolPin). A tool with no
+// pin yet is pinned first, at the digest the provider lists for it now: trust on first use, so
+// a tool whose schema changes after is not offered until the connection is connected again. A
+// tool the provider does not list is left with no digest, which Open does not offer. It says
+// why the binding cannot be used when the provider cannot list its tools; an error is the store
+// failing.
+//
+// Example: Slack names the signed-in user in slack_send_message's description, so Alice's and
+// Bob's digests differ and no one digest in the config fits both. A grant of the name alone
+// pins Alice's on her connection and Bob's on his.
+func (m *Manager) pinGrants(ctx context.Context, alias string, connection store.ConnectorConnection, resolved core.ResolvedBinding, grants []core.ToolGrant) (string, error) {
+	var named []int
+	for i, grant := range grants {
+		if grant.SchemaDigest == "" {
+			named = append(named, i)
+		}
+	}
+	if len(named) == 0 {
+		return "", nil
+	}
+	pins, err := m.options.Store.ConnectorToolPins(ctx, connection.ID, connection.ConnectedAt)
+	if err != nil {
+		return "", err
+	}
+	if slices.ContainsFunc(named, func(i int) bool { _, pinned := pins[grants[i].Name]; return !pinned }) {
+		listed := map[string]string{}
+		for _, kind := range sourceKinds(resolved.Manifest) {
+			source, found := m.options.Connectors.Registry.ToolSources[kind]
+			if !found {
+				m.logger.Warn("a connector binding cannot be opened: no such tool source", "connector", alias, "source", kind)
+				return unavailableOpenFailed, nil
+			}
+			specs, err := source.Discover(ctx, resolved)
+			if err != nil {
+				m.logger.Warn("a connector binding cannot be opened", "connector", alias, "error", err)
+				return unavailableOpenFailed, nil
+			}
+			for _, spec := range specs {
+				listed[spec.Name] = spec.SchemaDigest
+			}
+		}
+		first := map[string]string{}
+		for _, i := range named {
+			name := grants[i].Name
+			if _, pinned := pins[name]; pinned {
+				continue
+			}
+			if digest, found := listed[name]; found {
+				first[name] = digest
+			}
+		}
+		pins, err = m.options.Store.PinConnectorTools(ctx, connection.ID, connection.ConnectedAt, first)
+		if err != nil {
+			return "", err
+		}
+	}
+	for _, i := range named {
+		grants[i].SchemaDigest = pins[grants[i].Name]
 	}
 	return "", nil
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"reflect"
 	"slices"
@@ -190,7 +191,11 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 			writeRPCError(w, http.StatusOK, request.ID, codeInvalidParams, "invalid cursor")
 			return
 		}
-		result = map[string]any{"tools": tools[page : page+1]}
+		listed := tools[page : page+1]
+		if s.is(SlackUserToken) {
+			listed = describedFor(listed, token.grant.account)
+		}
+		result = map[string]any{"tools": listed}
 		if page == 0 {
 			result["nextCursor"] = "page-2"
 		}
@@ -238,6 +243,20 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 		result["resultType"] = "complete"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result})
+}
+
+// describedFor is listed with the user who consented named in each description, as Slack's
+// MCP server names the signed-in user in slack_send_message, slack_search_users and
+// slack_search_public («the current logged in user's user_id is U…», finding F8 of the AI-816
+// end-to-end run on 2026-10-08), so the same tool has another schema digest for every user.
+func describedFor(listed []map[string]any, account string) []map[string]any {
+	described := make([]map[string]any, 0, len(listed))
+	for _, tool := range listed {
+		copied := maps.Clone(tool)
+		copied["description"] = tool["description"].(string) + " The current logged in user's user_id is " + account + "."
+		described = append(described, copied)
+	}
+	return described
 }
 
 func serverInfo() map[string]string {
