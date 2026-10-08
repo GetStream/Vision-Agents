@@ -488,23 +488,61 @@ func (s *AgentSuite) TestAToolReachedForWithoutAWordStillTellsTheCallerToWait() 
 	// The fast models do not reliably say anything before they call a tool, and the
 	// caller cannot hear one running. Without this they ask a question and get silence,
 	// which on a phone is indistinguishable from having been cut off.
-	s.ownsTools("order 12 ships tomorrow")
+	s.ownsTools("")
 	s.join(false)
+	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
+	release := sync.OnceFunc(func() { close(runner.release) })
+	defer release()
+	s.agent.options.ToolRunner = runner
 	s.model.reply = []string{}
 	s.model.then = []string{"It ships tomorrow."}
+	s.model.composes = []string{"Pulling up order twelve now."}
 	s.asksFor("lookup_order", `{"order":"12"}`)
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
 
 	s.says(participant, "where is my order")
 
-	s.eventually(func() bool {
-		return s.spokenText("moment") || s.spokenText("check") ||
-			s.spokenText("second") || s.spokenText("Bear with me")
-	}, "the caller was left in silence while the tool ran")
-	s.eventually(func() bool {
-		return s.spokenText("ships tomorrow")
-	}, "the answer never followed the promise to check")
+	s.eventually(func() bool { return s.spokenText("Pulling up order twelve now.") },
+		"the caller was left in silence while the tool ran")
+	composed := s.model.composeRequests()
+	s.Require().Len(composed, 1)
+	s.Equal(fmt.Sprintf(composeNote, holdPurpose), composed[0].Input[len(composed[0].Input)-1].Content,
+		"the model writes the line for what the caller asked, not a stock phrase")
+	s.Empty(unanswered(composed[0].Input[:len(composed[0].Input)-1]),
+		"a provider refuses a request replaying the running call without a result")
+
+	release()
+	s.eventually(func() bool { return s.spokenText("ships tomorrow") },
+		"the answer never followed the promise to check")
+	s.Empty(unanswered(s.history()), "the line said while the call ran came between it and its result")
+	s.True(slices.ContainsFunc(s.history(), func(m llm.Message) bool {
+		return m.Content == "Pulling up order twelve now."
+	}), "what the caller heard while they waited is not in the history")
+}
+
+func (s *AgentSuite) TestALineWrittenForAWaitThatEndedIsNotSaid() {
+	// The tool came back while the model was still writing what to say over it: the
+	// answer is what the caller hears, and a hold line after it would promise a wait that
+	// is already over.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	written := make(chan struct{})
+	s.model.holdCompose = written
+	s.model.reply = []string{}
+	s.model.then = []string{"It ships tomorrow."}
+	s.model.composes = []string{"Pulling up order twelve now."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the answer never came")
+	s.Require().Len(s.model.composeRequests(), 1)
+	close(written)
+	s.eventually(func() bool { return !s.agent.floor().Composing }, "the line was never settled")
+	s.False(s.spokenText("Pulling up order twelve now."), "the agent promised a wait after it ended")
 }
 
 func (s *AgentSuite) TestATurnThatSpokeForItselfIsNotGivenAFiller() {
@@ -521,7 +559,7 @@ func (s *AgentSuite) TestATurnThatSpokeForItselfIsNotGivenAFiller() {
 	s.says(participant, "where is my order")
 
 	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the tool answer never came")
-	s.False(s.spokenText("One moment"), "the agent stacked a filler on top of its own words")
+	s.Empty(s.model.composeRequests(), "the agent stacked a line of its own on top of the model's words")
 }
 
 func (s *AgentSuite) TestAToolsPreSpeechIsSaidInsteadOfTheAgentsOwnFiller() {
@@ -546,15 +584,13 @@ func (s *AgentSuite) TestAToolsPreSpeechIsSaidInsteadOfTheAgentsOwnFiller() {
 	s.eventually(func() bool { return s.spokenText("Let me pull up your order.") },
 		"the binding's phrase was not said while its tool ran")
 	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the answer never followed")
-	for _, phrase := range workingPhrases {
-		s.False(s.spokenText(phrase), "the agent said its own filler as well: %q", phrase)
-	}
+	s.Empty(s.model.composeRequests(), "the agent asked the model for a line of its own as well")
 	s.eventually(func() bool { return countOf[ToolStarted](s.reported()) == 1 }, "the tool never started")
 	started, _ := firstOf[ToolStarted](s.reported())
 	s.Equal("Let me pull up your order.", started.PreSpeech)
 }
 
-func (s *AgentSuite) TestAToolWithoutPreSpeechGetsTheAgentsOwnFillerAsBefore() {
+func (s *AgentSuite) TestAToolWithoutPreSpeechGetsALineTheModelWrites() {
 	// A tool its binding names no phrase for, or a session with no bindings at all, is
 	// TestAToolReachedForWithoutAWordStillTellsTheCallerToWait.
 	s.ownsTools("order 12 ships tomorrow")
@@ -568,7 +604,8 @@ func (s *AgentSuite) TestAToolWithoutPreSpeechGetsTheAgentsOwnFillerAsBefore() {
 
 	s.says(participant, "where is my order")
 
-	s.eventually(func() bool { return s.spokenText(workingPhrases[0]) }, "the agent's own filler was not said")
+	s.eventually(func() bool { return len(s.model.composeRequests()) == 1 },
+		"the model was not asked for a line to fill the wait")
 	s.eventually(func() bool { return countOf[ToolStarted](s.reported()) == 1 }, "the tool never started")
 	started, _ := firstOf[ToolStarted](s.reported())
 	s.Empty(started.PreSpeech)
@@ -617,7 +654,7 @@ func (s *AgentSuite) TestTheHoldPhraseOpeningTheSentenceBeforeACallIsTheOnlyOneI
 	holds, texts := 0, make([]string, 0, len(spoken))
 	for _, request := range spoken {
 		texts = append(texts, request.Text)
-		for _, phrase := range append([]string{"One moment", "Let me pull up your order."}, workingPhrases...) {
+		for _, phrase := range []string{"One moment", "Let me pull up your order."} {
 			if strings.Contains(request.Text, phrase) {
 				holds++
 				break
@@ -625,6 +662,7 @@ func (s *AgentSuite) TestTheHoldPhraseOpeningTheSentenceBeforeACallIsTheOnlyOneI
 		}
 	}
 	s.Equal(1, holds, "one hold phrase to a wait: %q", texts)
+	s.Empty(s.model.composeRequests(), "the agent wrote a hold line of its own on top")
 }
 
 func (s *AgentSuite) TestPreSpeechIsTheFirstCallsThatNamesOne() {
@@ -652,7 +690,7 @@ func (s *AgentSuite) TestPreSpeechIsTheFirstCallsThatNamesOne() {
 
 	s.eventually(func() bool { return s.spokenText("Let me track your parcel.") },
 		"the second call's phrase was not said")
-	s.False(s.spokenText(workingPhrases[0]), "the agent said its own filler instead")
+	s.Empty(s.model.composeRequests(), "the agent asked for a line of its own instead")
 }
 
 // holdingTool answers only when released, whatever its context says, the way the
@@ -1250,6 +1288,7 @@ func (s *AgentSuite) TestAToolChainedOnAResultIsNotGivenAFillerOfItsOwn() {
 
 	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the chain was never answered")
 	s.Len(s.voice.spoken(), 1, "a link of the chain was given a filler")
+	s.Empty(s.model.composeRequests(), "a link of the chain was given a line of its own")
 }
 
 func (s *AgentSuite) TestAVoiceCallThatKeepsChainingToolsIsMadeToAnswer() {

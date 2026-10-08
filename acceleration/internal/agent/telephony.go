@@ -78,8 +78,8 @@ type ToolRunner interface {
 // ToolPolicy is what one tool asks of the agent (Options.ToolPolicy). The zero value asks
 // for nothing.
 type ToolPolicy struct {
-	// PreSpeech is what to say while the tool runs, in place of a phrase the agent picks
-	// itself (workingPhrases), and what ToolStarted carries. Empty says the agent's own.
+	// PreSpeech is what to say while the tool runs, in place of a line the model writes
+	// for the moment (holdPurpose), and what ToolStarted carries. Empty says the model's.
 	PreSpeech string
 	// Waits is set for a tool its runner lets finish after its context ends. The call is
 	// answered then with stillRunning, and its result, when it comes, is added as a

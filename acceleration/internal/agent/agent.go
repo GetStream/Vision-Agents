@@ -2015,6 +2015,7 @@ func (a *Agent) finish(response llm.Response) {
 	// turn made, and has to be on the history the result answers.
 	asked := a.harness.TakeAsked()
 	calls := append(append([]llm.ToolCall(nil), response.ToolCalls...), asked...)
+	hold := false
 	if a.options.Text {
 		// There is no voice to release it to, so the held text is reported as the last
 		// of the reply. Without this a reader would be missing whatever the harness was
@@ -2037,15 +2038,17 @@ func (a *Agent) finish(response llm.Response) {
 		// A model that reaches for a tool without a word leaves the caller listening to
 		// nothing until it comes back, which on a phone is indistinguishable from having
 		// been cut off. Prompting for it is not enough: the models that do it reliably
-		// are not the ones fast enough to hold a conversation.
+		// are not the ones fast enough to hold a conversation. What the operator asked to
+		// be said is said at once; anything else is written for what the caller asked,
+		// once the work is handed over.
 		if a.fillsPause(response.ID, calls) && strings.TrimSpace(a.spoken.String()) == "" {
-			filler := a.preSpeech(calls)
-			if filler == "" {
-				filler = a.duplex.Working()
-			}
-			a.spoken.WriteString(filler)
-			if err := a.speakSentence(response.ID, filler); err != nil {
-				a.fail(err, "tts")
+			if filler := a.preSpeech(calls); filler != "" {
+				a.spoken.WriteString(filler)
+				if err := a.speakSentence(response.ID, filler); err != nil {
+					a.fail(err, "tts")
+				}
+			} else {
+				hold = true
 			}
 		}
 		// A reply that failed before a word of it was said leaves the caller waiting for
@@ -2124,6 +2127,12 @@ func (a *Agent) finish(response llm.Response) {
 		a.pendingTools += pending
 		a.mu.Unlock()
 		currentHarness.Requested(response.ID, calls)
+	}
+	if hold {
+		a.mu.Lock()
+		participant := a.lastParticipant
+		a.mu.Unlock()
+		a.checkIn(participant, holdPurpose)
 	}
 	a.respondQueued()
 	// A note that landed while this reply was being written waited for it to finish.
