@@ -655,7 +655,7 @@ func providerAppPutFailure(err error) error {
 	case errors.Is(err, store.ErrOAuthClientRegistration):
 		return conflict("the customer's OAuth client for this connector is of another registration; remove it first")
 	case errors.Is(err, store.ErrProviderAppTaken):
-		return conflict("another customer's record already names this provider app: an app serves one customer")
+		return errProviderAppTaken
 	}
 	return err
 }

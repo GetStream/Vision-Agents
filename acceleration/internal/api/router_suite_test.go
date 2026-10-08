@@ -212,6 +212,10 @@ type RouterSuite struct {
 	// connectors is what connector adapters the router has, for a suite about connectors to
 	// set before it starts the harness. Empty has none.
 	connectors core.Registry
+	// connectorsOff gives the router no connector keyring, as a deployment with
+	// ROUTER_CONNECTORS_ENABLED unset has, for a control suite to set before it starts the
+	// harness. The suite's store, resolver and sealer are still built.
+	connectorsOff bool
 	// eventSecrets and bridge are the connector events endpoint's secrets and channel
 	// bridge, for a suite about connector events to set before it starts the harness. Nil
 	// takes no events and drops messages, as a deployment without them does.
@@ -443,6 +447,11 @@ func (s *RouterSuite) SetupSuite() {
 	s.T().Cleanup(episodes.Close)
 	s.episodes = episodes
 
+	// cmd/router passes no connector keyring with connectors off (main.go, connectorSecrets).
+	connectorSecrets := s.sealer
+	if s.connectorsOff {
+		connectorSecrets = nil
+	}
 	server, err := NewServer(Options{
 		Routers:       s.modalities,
 		Streams:       streams,
@@ -471,7 +480,7 @@ func (s *RouterSuite) SetupSuite() {
 		Policies:      policies,
 		Connectors:    s.connectors,
 		// Connector consents and credentials seal under the suite's key.
-		ConnectorSecrets:  s.sealer,
+		ConnectorSecrets:  connectorSecrets,
 		PublicURL:         s.publicURL,
 		DashboardURL:      s.dashboardURL,
 		Quota:             limiter,

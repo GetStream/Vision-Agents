@@ -101,7 +101,8 @@ func answerFailure(ctx huma.Context, status int, message string, errs ...error) 
 	}
 	if status < http.StatusInternalServerError {
 		if len(errs) > 0 {
-			recordFailure(ctx.Context(), errors.Join(errs...), "")
+			// Without a secret's value, as the answer leaves it out.
+			recordFailure(ctx.Context(), errors.Join(withoutRefusedValues(errs)...), "")
 		}
 		return huma.NewError(status, message, errs...)
 	}
