@@ -311,6 +311,41 @@ func (s *ProviderAppMessageHookSuite) slackMessage(team, user, text string) []by
 	return body
 }
 
+// ProviderAppMessageHookNoAppSuite is connectors on in app mode with no fallback to the
+// deployment's app: a customer with no app of its own is pinned to zero while the deployment's
+// own app id is known, as in a deployment-mode router in production.
+type ProviderAppMessageHookNoAppSuite struct {
+	messageHookHarness
+}
+
+func TestProviderAppMessageHookNoAppSuite(t *testing.T) {
+	runSuite(t, new(ProviderAppMessageHookNoAppSuite))
+}
+
+func (s *ProviderAppMessageHookNoAppSuite) SetupSuite() {
+	s.appRefuses = true
+	s.start(true, providerAppPublicURL)
+}
+
+func (s *ProviderAppMessageHookNoAppSuite) SetupTest() {
+	s.useApp(s.data.createApp())
+}
+
+// A pin of zero names no app, even when the deployment's own app is not zero: nothing is
+// asked of Stream, and the deployment's hooks are left alone.
+func (s *ProviderAppMessageHookNoAppSuite) TestAProviderAppPinnedToZeroPointsNoHookOfTheDeploymentsApp() {
+	before := s.asked(suiteStreamKey, http.MethodPatch, "/api/v2/app")
+
+	s.Require().Equal(http.StatusCreated, s.operatorApp())
+
+	record, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "slack_bot")
+	s.Require().NoError(err)
+	s.Zero(record.StreamAppPK)
+	s.NotZero(s.stream.DeploymentApp())
+	s.Equal(before, s.asked(suiteStreamKey, http.MethodPatch, "/api/v2/app"))
+	s.Empty(s.chat.EventHooks(suiteStreamKey))
+}
+
 // ProviderAppMessageHookWithoutPublicURLSuite is connectors on without ROUTER_PUBLIC_URL:
 // Stream's own app is set all the same, with no hook and one warning. The managed app needs
 // the URL for Slack and refuses as before.
