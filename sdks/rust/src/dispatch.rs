@@ -17,6 +17,7 @@ use crate::client::Client;
 use crate::error::{Error, Result};
 use crate::responses::{AgentResponse, Responses};
 use crate::session::Session;
+use crate::sessions::AgentRef;
 use crate::socket::{Frame, Incoming, SocketSender};
 use crate::tools::Tools;
 use crate::types;
@@ -121,7 +122,7 @@ type MessageHandler = Arc<dyn Fn(InboundMessage) -> BoxFuture<'static, Result<()
 struct Hosting {
     agent_id: String,
     tools: Tools,
-    timeout: Option<Duration>,
+    tool_timeout: Option<Duration>,
 }
 
 impl Hosting {
@@ -132,7 +133,9 @@ impl Hosting {
             .into_iter()
             .map(|tool| json!({"name": tool.name, "description": tool.description, "parameters": tool.parameters}))
             .collect();
-        let timeout_ms = self.timeout.map_or(0, |timeout| timeout.as_millis() as u64);
+        let timeout_ms = self
+            .tool_timeout
+            .map_or(0, |timeout| timeout.as_millis() as u64);
         json!({"type": "host_tools", "agent_id": self.agent_id, "tools": tools, "timeout_ms": timeout_ms})
     }
 
@@ -240,18 +243,37 @@ impl Dispatch {
         self
     }
 
-    /// Runs these functions for every session opened under `agent_id`, whoever opened it.
+    /// Runs the agent's [`tools`](AgentRef::tools) for every session opened under its name,
+    /// whoever opened it.
     ///
     /// A session's own functions run in the process that opened it, which is no use to a
     /// conversation opened from a browser. Hosting is the other direction: the router offers
     /// these functions to each session naming the agent and sends every call to a worker
-    /// hosting them. `timeout` is how long the router gives one call; `None` takes its
-    /// default. Call before [`Dispatch::run`].
-    pub fn host(&self, agent_id: &str, tools: Tools, timeout: Option<Duration>) -> &Self {
+    /// hosting them. `tool_timeout` is how long the router waits for one tool call to be
+    /// answered before telling the model it failed, not how long the worker runs; `None`
+    /// takes the router's default of two minutes. Call before [`Dispatch::run`].
+    ///
+    /// ```no_run
+    /// # async fn example(client: vision_agents::Client) -> vision_agents::Result<()> {
+    /// use vision_agents::Dispatch;
+    ///
+    /// let agent = client.agent("my-agent");
+    /// agent.tools.register(
+    ///     "get_weather",
+    ///     "The weather in a city",
+    ///     serde_json::json!({"type": "object", "properties": {"city": {"type": "string"}}}),
+    ///     async |arguments| Ok::<_, String>(format!("sunny in {}", arguments["city"])),
+    /// );
+    /// let dispatch = Dispatch::new(client);
+    /// dispatch.host(&agent, None);
+    /// dispatch.run().await
+    /// # }
+    /// ```
+    pub fn host(&self, agent: &AgentRef, tool_timeout: Option<Duration>) -> &Self {
         self.inner.hosted.lock().expect("hosted").push(Hosting {
-            agent_id: agent_id.into(),
-            tools,
-            timeout,
+            agent_id: agent.name.clone(),
+            tools: agent.tools.clone(),
+            tool_timeout,
         });
         self
     }

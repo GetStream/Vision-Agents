@@ -84,6 +84,14 @@ func (s *SyncSuite) TestSyncingAnAgentStoresWhatItLeavesToDispatch() {
 	s.Equal(Enabled, value(value(result.Config.Dispatch).Text))
 }
 
+func (s *SyncSuite) TestSyncingAnAgentStoresWhetherItsToolsAreOfferedProgressively() {
+	result := s.sync(map[string]any{"name": "concierge", "hash": "v1", "progressive_tools": true})
+	s.True(value(result.Config.ProgressiveTools))
+
+	again := s.sync(map[string]any{"name": "concierge", "hash": "v2"})
+	s.True(value(again.Config.ProgressiveTools), "a directory that says nothing leaves what is stored")
+}
+
 func (s *SyncSuite) TestSyncingAnAgentStoresHowItsSandboxIsBuilt() {
 	result := s.sync(map[string]any{
 		"name": "artist", "hash": "v1", "sandbox": "daytona",
@@ -266,6 +274,151 @@ func (s *SyncSuite) TestOnlyTheAppsOwnBackendMaySyncAnAgent() {
 		return as.do(http.MethodPost, "/v1/agents/sync",
 			map[string]any{"name": "agent-" + s.utils.uuid(), "hash": "v1"}, nil)
 	})
+}
+
+func (s *SyncSuite) TestASyncRecordsThePointTheDirectoryAndTheAgentAgreed() {
+	result := s.sync(map[string]any{"name": "support", "hash": "v1", "instructions": "Be brief."})
+
+	changes := s.changes(result.Config.Id)
+	s.Empty(changes.Items, "nothing has been changed since the sync")
+	s.Require().NotNil(changes.SyncedAt)
+	s.False(changes.SyncedAt.IsZero())
+}
+
+func (s *SyncSuite) TestTheChangesSinceTheLastSyncAreWhatTheDashboardDid() {
+	result := s.sync(map[string]any{"name": "support", "hash": "v1", "instructions": "Be brief."})
+	s.patch(result.Config.Id, map[string]any{"instructions": "Be warm."})
+
+	changes := s.changes(result.Config.Id)
+
+	s.Require().Len(changes.Items, 1)
+	s.Equal(AuditSource("dashboard"), changes.Items[0].Source)
+	s.Equal("Ada Lovelace", changes.Items[0].ActorName)
+	s.Require().NotNil(changes.LastChange)
+	s.Equal(changes.Items[0].ID, *changes.LastChange)
+}
+
+func (s *SyncSuite) TestASyncAskedToCheckIsRefusedWhenTheSameSettingWasChangedSince() {
+	result := s.sync(map[string]any{"name": "support", "hash": "v1", "instructions": "Be brief."})
+	s.patch(result.Config.Id, map[string]any{"instructions": "Be warm."})
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "support", "hash": "v2", "instructions": "Be brisk.", "check_changes": true,
+	})
+
+	s.Equal(http.StatusConflict, status)
+	s.Contains(failure, "instructions")
+	s.Equal("Be warm.", value(s.configsNamed("support")[0].Instructions),
+		"a refused sync writes nothing")
+}
+
+func (s *SyncSuite) TestASyncAskedToCheckIsNotRefusedForASettingItsDirectoryDoesNotDeclare() {
+	result := s.sync(map[string]any{"name": "support", "hash": "v1", "instructions": "Be brief."})
+	s.patch(result.Config.Id, map[string]any{"llm": "llm-fast"})
+
+	second := s.sync(map[string]any{
+		"name": "support", "hash": "v2", "instructions": "Be brisk.", "check_changes": true,
+	})
+
+	s.Equal("Be brisk.", value(second.Config.Instructions))
+	s.Equal("llm-fast", value(second.Config.Llm),
+		"a model the directory says nothing about was never at risk")
+}
+
+func (s *SyncSuite) TestASyncIsNotRefusedWhenItsDirectoryAlreadyHoldsTheChange() {
+	result := s.sync(map[string]any{"name": "support", "hash": "v1", "instructions": "Be brief."})
+	s.patch(result.Config.Id, map[string]any{"instructions": "Be warm."})
+
+	// What a client does after writing the change into its own files: the directory now
+	// says what the dashboard says, so there is nothing left to write over.
+	second := s.sync(map[string]any{
+		"name": "support", "hash": "v2", "instructions": "Be warm.", "check_changes": true,
+	})
+
+	s.Equal("Be warm.", value(second.Config.Instructions))
+}
+
+func (s *SyncSuite) TestASyncGoesAheadOnceTheChangeItWouldWriteOverIsAcknowledged() {
+	result := s.sync(map[string]any{"name": "support", "hash": "v1", "instructions": "Be brief."})
+	s.patch(result.Config.Id, map[string]any{"instructions": "Be warm."})
+	changes := s.changes(result.Config.Id)
+	s.Require().NotNil(changes.LastChange)
+
+	second := s.sync(map[string]any{
+		"name": "support", "hash": "v2", "instructions": "Be brisk.",
+		"check_changes": true, "base_change": *changes.LastChange,
+	})
+
+	s.Equal("Be brisk.", value(second.Config.Instructions))
+	s.Empty(s.changes(result.Config.Id).Items, "the sync is the newest thing on record again")
+}
+
+func (s *SyncSuite) TestASyncThatDoesNotAskToBeCheckedWritesOverTheChange() {
+	result := s.sync(map[string]any{"name": "support", "hash": "v1", "instructions": "Be brief."})
+	s.patch(result.Config.Id, map[string]any{"instructions": "Be warm."})
+
+	second := s.sync(map[string]any{
+		"name": "support", "hash": "v2", "instructions": "Be brisk.",
+	})
+
+	s.Equal("Be brisk.", value(second.Config.Instructions),
+		"a process syncing on startup is what the default is for")
+}
+
+func (s *SyncSuite) TestASkillChangedSinceTheLastSyncRefusesASyncThatWouldRewriteIt() {
+	declaration := map[string]any{"name": "support", "hash": "v1", "skills": []map[string]string{
+		{"config_id": "", "name": "refund", "description": "work out a refund",
+			"instructions": "Read the policy."},
+	}}
+	result := s.sync(declaration)
+	skill := s.skillNamed(result.Config.Id, "refund")
+	s.Require().Equal(http.StatusOK, s.dashboard().do(http.MethodPut, "/v1/agents/skills/"+skill.Id,
+		map[string]any{"config_id": result.Config.Id, "name": "refund",
+			"description": "work out a refund", "instructions": "Read the new policy."}, nil))
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "support", "hash": "v2", "check_changes": true,
+		"skills": []map[string]string{
+			{"config_id": "", "name": "refund", "description": "work out a refund",
+				"instructions": "Read the policy."},
+		},
+	})
+
+	s.Equal(http.StatusConflict, status)
+	s.Contains(failure, "skill refund")
+}
+
+// changes are the edits made to an agent since its directory was last synced.
+func (s *SyncSuite) changes(configID string) AgentChanges {
+	var answered AgentChanges
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+configID+"/changes", nil, &answered))
+	return answered
+}
+
+// patch is somebody changing a setting in the dashboard.
+func (s *SyncSuite) patch(configID string, body map[string]any) {
+	s.Require().Equal(http.StatusOK,
+		s.dashboard().do(http.MethodPatch, "/v1/agents/configs/"+configID, body, nil))
+}
+
+// dashboard is the backend saying it is the dashboard, with the operator who clicked save.
+func (s *SyncSuite) dashboard() *testClient {
+	return s.serverClient.from("dashboard", "volt-7", "Ada Lovelace")
+}
+
+// skillNamed is one of a config's skills.
+func (s *SyncSuite) skillNamed(configID, name string) Skill {
+	var listed []Skill
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/skills?config_id="+configID, nil, &listed))
+	for _, skill := range listed {
+		if skill.Name == name {
+			return skill
+		}
+	}
+	s.Require().Fail("no skill called " + name)
+	return Skill{}
 }
 
 // sync applies a directory's declaration.

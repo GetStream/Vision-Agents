@@ -36,6 +36,26 @@ func (s *LogsSuite) TestAPageOfLogsIsReadBackWithACursorToResumeFrom() {
 	s.NotEmpty(page.ResumeCursor, "a reader that wants the rest has to know where it got to")
 }
 
+func (s *LogsSuite) TestAskingForWarningsLeavesOutTheRunningCommentary() {
+	s.record("info", "Ordinary")
+	s.record("warn", "Worth a look")
+	s.record("error", "Broken")
+
+	messages := func(page AgentLogPage) []string {
+		var seen []string
+		for _, item := range page.Items {
+			seen = append(seen, item.Message)
+		}
+		return seen
+	}
+
+	s.ElementsMatch([]string{"Worth a look", "Broken"}, messages(s.page("?severity=warn")),
+		"a severity is the least serious level to show, not the only one")
+	s.ElementsMatch([]string{"Broken"}, messages(s.page("?severity=error")))
+	s.ElementsMatch([]string{"Ordinary", "Worth a look", "Broken"}, messages(s.page("")),
+		"naming no severity still shows everything")
+}
+
 func (s *LogsSuite) TestALiveStreamReplaysWhatWasRecordedAfterTheSnapshot() {
 	s.record("info", "First")
 	page := s.page("?limit=1")

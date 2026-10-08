@@ -66,7 +66,12 @@ func (s *Server) createRouterConfig(ctx context.Context, request *createRouterCo
 	if err := s.configs.CreateRouterConfig(ctx, &config); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
-	return &createRouterConfigResponse{Body: routerConfigOf(config)}, nil
+	stored := routerConfigOf(config)
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditRouterConfig, ResourceID: config.ID, ResourceName: config.Name,
+		Action: store.AuditCreated, Changes: auditDiff(nil, stored),
+	})
+	return &createRouterConfigResponse{Body: stored}, nil
 }
 
 // getRouterConfig returns one router config.
@@ -113,7 +118,12 @@ func (s *Server) updateRouterConfig(ctx context.Context, request *updateRouterCo
 	if err := s.configs.UpdateRouterConfig(ctx, &config); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
-	return &updateRouterConfigResponse{Body: routerConfigOf(config)}, nil
+	stored := routerConfigOf(config)
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditRouterConfig, ResourceID: config.ID, ResourceName: config.Name,
+		Action: store.AuditUpdated, Changes: auditDiff(routerConfigOf(existing), stored),
+	})
+	return &updateRouterConfigResponse{Body: stored}, nil
 }
 
 // deleteRouterConfig stops a router config being usable.
@@ -126,9 +136,18 @@ func (s *Server) deleteRouterConfig(ctx context.Context, request *deleteRouterCo
 		return nil, errNoRouterConfigs
 	}
 
+	// Read before it goes, so the entry recording the deletion can say what was deleted.
+	existing, err := s.configs.RouterConfig(ctx, customerID, request.Id)
+	if err != nil {
+		return nil, errUnknownRouterConfig
+	}
 	if err := s.configs.DeleteRouterConfig(ctx, customerID, request.Id); err != nil {
 		return nil, errUnknownRouterConfig
 	}
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditRouterConfig, ResourceID: existing.ID, ResourceName: existing.Name,
+		Action: store.AuditDeleted, Changes: auditDiff(routerConfigOf(existing), nil),
+	})
 	return nil, nil
 }
 

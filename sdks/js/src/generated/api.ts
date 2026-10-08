@@ -580,6 +580,30 @@ export type paths = {
         readonly patch: operations["patchAgentConfig"];
         readonly trace?: never;
     };
+    readonly "/v1/agents/configs/{id}/changes": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What was changed about an agent since its directory was last synced
+         * @description The edits a sync of the agent's directory would write over: everything changed about the agent, its skills and its knowledge since the last sync, newest first. An agent nobody has touched since answers with an empty list.
+         *
+         *     This is what a sync refused with `unsynced_changes` is asking about. Show the changes, let the person decide, and sync again with `base_change` set to `last_change` to say they have been seen -- having either written them into the directory first, or chosen to write over them.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["getAgentChanges"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/configs/{id}/plugins": {
         readonly parameters: {
             readonly query?: never;
@@ -1598,6 +1622,7 @@ export type paths = {
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a `type` and the fields of that event.
          *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
          *     `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
+         *     `connector_scope_required` says a connector tool call was refused because the caller's own connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes (what the provider asked for, empty for a claims challenge), authorization_id, launch_url, handoff_token and expires_at. A client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. The old grant keeps working until the step-up succeeds, and the same call works afterwards in the same session. While that step-up is open, calls refused for the same access send no second event.
          *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id.
          *     A respond command carrying command_id emits command_accepted with a nested command receipt (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text returns the existing IDs without invoking the model again; reuse with different text emits an error. Commands with IDs currently accept text only. After restart an interrupted command is reported, not rerun.
          *     An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `command_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
@@ -2116,6 +2141,8 @@ export type paths = {
          *
          *     knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
          *
+         *     A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
+         *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["syncAgent"];
@@ -2337,6 +2364,30 @@ export type paths = {
         readonly get: operations["listVoiceProviders"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/audit/query": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * List the changes made to the app's configuration
+         * @description Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+         *
+         *     What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["queryAudit"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3494,6 +3545,18 @@ export type components = {
                 readonly [key: string]: string;
             };
         };
+        /** @description What was changed about an agent since its directory was last synced: the edits a sync of that directory would write over. */
+        readonly AgentChanges: {
+            /** @description The changes made since the last sync, newest first, at most 200. Empty when the agent has not been touched since. */
+            readonly items: readonly components["schemas"]["AuditEntry"][];
+            /** @description The newest change's id. Send it as base_change on a sync to say these have been seen, and that sync will not be refused for them. */
+            readonly last_change?: string;
+            /**
+             * Format: date-time
+             * @description When the directory was last synced onto this agent. Absent for an agent no directory has ever been synced onto.
+             */
+            readonly synced_at?: string;
+        };
         /** @description The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is. */
         readonly AgentChannels: {
             readonly identity?: components["schemas"]["ChannelIdentity"];
@@ -3523,6 +3586,8 @@ export type components = {
             readonly mode: components["schemas"]["AgentMode"];
             readonly name: string;
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            /** @description Whether tools from plugins, MCP servers and connectors are offered by a summary, the first call to each returning its full description instead of running it. */
+            readonly progressive_tools?: boolean;
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             readonly search?: string;
@@ -3567,6 +3632,7 @@ export type components = {
             /** @description What the config is called, which is unique among the customer's own. */
             readonly name?: string;
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            readonly progressive_tools?: boolean;
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             readonly search?: string;
@@ -3618,6 +3684,8 @@ export type components = {
             readonly name: string;
             /** @description MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through. */
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            /** @description Whether the agent is offered its plugin, MCP server and connector tools by the first line of each one's description, with its arguments' descriptions left out, and the first call to a tool returns its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays. */
+            readonly progressive_tools?: boolean;
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             /** @description What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way. */
@@ -3707,7 +3775,7 @@ export type components = {
             readonly occurred_at: string;
             readonly session_id: string;
             /** @enum {string} */
-            readonly severity: "info" | "error";
+            readonly severity: "info" | "warn" | "error";
             /** @enum {string} */
             readonly source: "user" | "agent" | "tool" | "system";
             readonly user_id?: string;
@@ -3789,6 +3857,79 @@ export type components = {
             /** @description The Stream call type. Omit for "agent". */
             readonly call_type?: string;
         };
+        /**
+         * @description created, updated or deleted for a change somebody made one at a time. synced is a whole agent directory written at once by POST /v1/agents/sync, and is what a later sync measures the edits made since against.
+         * @enum {string}
+         */
+        readonly AuditAction: "created" | "updated" | "deleted" | "synced";
+        /** @description One field that moved, with what it held before and holds now, each in the shape the resource itself is read in. */
+        readonly AuditChange: {
+            /** @description What it holds now. Absent when it now holds nothing, which is what a deleted resource's fields all do. */
+            readonly after?: unknown;
+            /** @description What it held, in the shape the resource is read in. Absent when it held nothing, which is what a created resource's fields all did. */
+            readonly before?: unknown;
+            /** @description The field as the resource's own schema names it. */
+            readonly field: string;
+        };
+        /** @description One change somebody made to the app's configuration: what changed, who changed it, which client they used, and the before and after of every field that moved. Only configuration is recorded -- agents, skills, knowledge, routers, plugins and policies -- never what an agent did while it ran. */
+        readonly AuditEntry: {
+            readonly action: components["schemas"]["AuditAction"];
+            /** @description Who made it, as their client named them. Absent for a change nobody signed, such as a process syncing on startup. */
+            readonly actor_id?: string;
+            /** @description Their name, as their client named them. Never an email address: the router keeps none. */
+            readonly actor_name?: string;
+            /** @description The agent the change was to or under. Absent for a resource that belongs to no agent, such as a router. */
+            readonly agent_id?: string;
+            /** @description Every field that moved. A write that moved nothing is not recorded at all, so this is empty only on a synced entry, which marks the moment a directory and an agent agreed whether or not anything moved. */
+            readonly changes: readonly components["schemas"]["AuditChange"][];
+            /** Format: date-time */
+            readonly created_at: string;
+            readonly id: string;
+            /** @description The X-Request-Id of the request that made it. */
+            readonly request_id?: string;
+            /** @description The resource, which may since have been deleted. */
+            readonly resource_id: string;
+            /** @description What it was called when it changed, for a resource that has a name. */
+            readonly resource_name?: string;
+            readonly resource_type: components["schemas"]["AuditResourceType"];
+            readonly source: components["schemas"]["AuditSource"];
+        };
+        /** @description Which changes to list. A field not listed here is refused rather than ignored. */
+        readonly AuditFilter: {
+            readonly action?: components["schemas"]["AuditAction"];
+            /** @description One agent's history: changes to the agent itself and to the skills and knowledge under it. */
+            readonly agent_id?: string;
+            /** @description One resource's own history. */
+            readonly resource_id?: string;
+            readonly resource_type?: components["schemas"]["AuditResourceType"];
+            readonly source?: components["schemas"]["AuditSource"];
+        };
+        readonly AuditPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["AuditEntry"][];
+            /** @description Pass as cursor for the next page, with the same filter. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        readonly AuditQuery: {
+            /** @description The next_cursor of the previous page, sent with the same filter. Omitted is the first page. */
+            readonly cursor?: string;
+            readonly filter?: components["schemas"]["AuditFilter"];
+            /**
+             * Format: int64
+             * @description Up to 200. Omitted is 25.
+             */
+            readonly limit?: number;
+        };
+        /**
+         * @description What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead.
+         * @enum {string}
+         */
+        readonly AuditResourceType: "agent_config" | "skill" | "knowledge" | "knowledge_url" | "router_config" | "plugin" | "policy";
+        /**
+         * @description Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it.
+         * @enum {string}
+         */
+        readonly AuditSource: "dashboard" | "cli" | "sdk" | "api";
         /** @description A consent in flight for one connection: the page that starts it in a browser and the token that binds it to that browser. */
         readonly Authorization: {
             /**
@@ -5007,7 +5148,7 @@ export type components = {
             readonly $eq: string;
         };
         readonly ErrorDetail: {
-            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know. */
+            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know. */
             readonly code: string;
             /**
              * Format: uri
@@ -6985,8 +7126,12 @@ export type components = {
         readonly SyncAgentRequest: {
             /** @description Plugins the agent reaches with the app's own login: a catalog id, or an object naming it with how it is reached. */
             readonly agent_plugins?: readonly components["schemas"]["PluginEntry"][];
+            /** @description The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again. */
+            readonly base_change?: string;
             /** @description Lines this agent answers on besides Stream Chat, each a number the app connected. */
             readonly channels?: components["schemas"]["AgentChannels"];
+            /** @description Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants. */
+            readonly check_changes?: boolean;
             /** @description The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
@@ -7009,6 +7154,8 @@ export type components = {
             readonly name: string;
             /** @description MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives. */
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            /** @description Whether plugin, MCP server and connector tools are offered by a summary, the first call to each returning its full description and input schema instead of running it. */
+            readonly progressive_tools?: boolean;
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             readonly search?: string;
@@ -8828,6 +8975,34 @@ export interface operations {
             readonly 500: components["responses"]["InternalError"];
         };
     };
+    readonly getAgentChanges: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The agent config, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The changes since the last sync */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentChanges"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
     readonly listConfigPlugins: {
         readonly parameters: {
             readonly query?: never;
@@ -10292,7 +10467,8 @@ export interface operations {
                 readonly limit?: number;
                 readonly q?: string;
                 readonly session_id?: string;
-                readonly severity?: "info" | "error";
+                /** @description The least serious level to show, not the only one: warn is warnings and errors. */
+                readonly severity?: "info" | "warn" | "error";
                 /** @description Comma-separated user/agent/tool/system sources. */
                 readonly source?: string;
                 readonly to?: string;
@@ -10371,7 +10547,8 @@ export interface operations {
                 readonly from?: string;
                 readonly q?: string;
                 readonly session_id?: string;
-                readonly severity?: "info" | "error";
+                /** @description The least serious level to show, not the only one: warn is warnings and errors. */
+                readonly severity?: "info" | "warn" | "error";
                 /** @description Comma-separated user/agent/tool/system sources. */
                 readonly source?: string;
                 readonly to?: string;
@@ -11636,6 +11813,15 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 500: components["responses"]["InternalError"];
         };
     };
@@ -11995,6 +12181,34 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["VoiceProviders"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly queryAudit: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AuditQuery"];
+            };
+        };
+        readonly responses: {
+            /** @description A page of changes */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AuditPage"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];

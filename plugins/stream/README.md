@@ -209,22 +209,20 @@ Lists page by cursor: each returns `items`, `has_more` and `next_cursor`.
 ## Tools hosted for an agent
 
 A session's own functions run in the process that opened it. `dispatch.host` is the other
-direction: the router offers these functions to every session under an agent id, wherever it
-was opened, and sends each call to this worker.
+direction: the router offers an agent's functions to every session under that agent,
+wherever it was opened, and sends each call to this worker.
 
 ```python
-from vision_agents.core.llm import FunctionRegistry
-
-functions = FunctionRegistry()
+agent = stream.Client().agent("stream-support")
 
 
-@functions.register(description="Read the SDK's source")
+@agent.register(description="Read the SDK's source")
 async def investigate_sdk(sdk: str) -> str:
     return await read_source(sdk)
 
 
 dispatch = stream.Dispatch()
-dispatch.host("stream-support", functions, timeout=60)
+dispatch.host(agent, tool_timeout=60)
 await dispatch.run()
 ```
 

@@ -114,17 +114,18 @@ agent per channel for the same reason. An agent whose `agent.yaml` says
 answer it on that session, with the worker's own credential acting for `message.user_id`.
 `get_or_create_agent` refuses such a message.
 
-A worker can also run tools for every session under an agent id, whoever opened it, such as
-a conversation started from a browser:
+A worker can also run an agent's tools for every session under it, whoever opened it, such
+as a conversation started from a browser. The tools are hosted under the agent's config name:
 
 ```ruby
-tools = GetStream::VisionAgents::Tools.new
-tools.register("lookup_order", description: "An order by id",
-               parameters: { type: "object", properties: { id: { type: "string" } } }) do |args|
+support = GetStream::VisionAgents::Client.new.agent("support")
+support.tools.register("lookup_order", description: "An order by id",
+                       parameters: { type: "object", properties: { id: { type: "string" } } }) do |args|
   orders.find(args["id"])
 end
 
-dispatch.host("support", tools, timeout: 30)
+dispatch = GetStream::VisionAgents::Dispatch.new
+dispatch.host(support, tool_timeout: 30)
 dispatch.run
 ```
 
@@ -133,7 +134,7 @@ runs (this process still answers it, once the device has reported), and `display
 the words shown while it runs, such as `"Checking your order"`.
 
 The tools are declared each time the router says it is ready, and each call runs on its own
-thread. `timeout` is seconds per call; nil takes the router's default. Hosting alone is enough
+thread. `tool_timeout` is how many seconds the router waits for one tool call; nil takes its default of two minutes. Hosting alone is enough
 to `run`, and a router that refuses the tools ends `run` with the reason.
 
 Ringing somebody is the other direction:

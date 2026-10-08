@@ -46,7 +46,9 @@ func (s *Server) logFilter(w http.ResponseWriter, r *http.Request) (store.LogFil
 	}
 	q := r.URL.Query()
 	f := store.LogFilter{CustomerID: customer, ConfigID: q.Get("config_id"), SessionID: q.Get("session_id"), UserID: q.Get("user_id"), Search: q.Get("q"), Severity: q.Get("severity"), Limit: 250}
-	if f.Severity != "" && f.Severity != "error" && f.Severity != "info" {
+	// The least serious level to show, not the only one: `warn` is how a reader
+	// asks for the problems without the running commentary.
+	if f.Severity != "" && f.Severity != "error" && f.Severity != "warn" && f.Severity != "info" {
 		writeError(w, invalidRequest("invalid severity"))
 		return f, false
 	}

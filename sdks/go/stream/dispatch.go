@@ -206,20 +206,31 @@ func (d *Dispatch) OnMessage(handler MessageHandler) { d.message = handler }
 
 // hosting is one set of functions this worker runs for every session under an agent id.
 type hosting struct {
-	agentID   string
-	functions *tools.Registry
-	timeout   time.Duration
+	agentID     string
+	functions   *tools.Registry
+	toolTimeout time.Duration
 }
 
-// Host runs these functions for every session opened under an agent id, whoever opened it.
+// HostedAgent is an agent whose tools a worker can host: a client.Agent or an agents.Agent.
+//
+// An interface rather than either, because both of those are built on this package and it
+// cannot name them.
+type HostedAgent interface {
+	Name() string
+	Tools() *tools.Registry
+}
+
+// Host runs an agent's tools for every session opened under it, whoever opened it.
 //
 // A session's own functions run in the process that opened it, which is no use to a
 // conversation opened from a browser that wants to read a source tree. Hosting is the other
-// direction: the router offers these functions to each session naming the agent and sends
-// every call to one of them here. timeout is how long the router gives one call; zero takes
-// its default. Call before Run.
-func (d *Dispatch) Host(agentID string, functions *tools.Registry, timeout time.Duration) {
-	d.hosted = append(d.hosted, hosting{agentID: agentID, functions: functions, timeout: timeout})
+// direction: the router offers the agent's tools to each session naming the agent and sends
+// every call to one of them here. The router matches a session on its agent id or its
+// agent's name, so the name is what the agent is hosted under. toolTimeout is how long the
+// router waits for one tool call to be answered before telling the model it failed, not how
+// long the worker runs; zero takes the router's default of two minutes. Call before Run.
+func (d *Dispatch) Host(agent HostedAgent, toolTimeout time.Duration) {
+	d.hosted = append(d.hosted, hosting{agentID: agent.Name(), functions: agent.Tools(), toolTimeout: toolTimeout})
 }
 
 // host tells the router what this worker runs, once it is listening.
@@ -229,7 +240,7 @@ func (d *Dispatch) host() {
 		for _, function := range offer.functions.List() {
 			declared = append(declared, Frame{"name": function.Name, "description": function.Description, "parameters": function.Parameters})
 		}
-		d.tell(Frame{"type": "host_tools", "agent_id": offer.agentID, "tools": declared, "timeout_ms": offer.timeout.Milliseconds()})
+		d.tell(Frame{"type": "host_tools", "agent_id": offer.agentID, "tools": declared, "timeout_ms": offer.toolTimeout.Milliseconds()})
 	}
 }
 

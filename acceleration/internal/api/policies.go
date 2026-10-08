@@ -250,9 +250,20 @@ func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id str
 			return Policy{}, stack.Wrap(fmt.Errorf("allowed_models names %q, which is not a provider/model this deployment routes", model))
 		}
 	}
+	// Read before the write, so the entry can say what the setting was. The stored document
+	// is what is diffed rather than the policy as it reads out, because that one carries
+	// what the budget has spent, and a spend moving is not somebody changing a policy.
+	before, err := s.configs.Policy(ctx, scope, id)
+	if err != nil {
+		return Policy{}, err
+	}
 	if err := s.policies.Save(ctx, scope, id, document); err != nil {
 		return Policy{}, err
 	}
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditPolicy, ResourceID: id, ResourceName: string(scope),
+		Action: store.AuditUpdated, Changes: auditDiff(before, document),
+	})
 	return s.policyOf(ctx, scope, id)
 }
 

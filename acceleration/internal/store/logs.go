@@ -31,7 +31,30 @@ type AgentLog struct {
 	Details       map[string]any `bun:"details,type:jsonb" json:"details,omitempty"`
 }
 
+// severityOrder is the levels a log is written at, least serious first. A
+// filter names the least serious level it wants and gets that one and everything
+// above it, so asking for warnings is asking to be shown the problems without
+// the running commentary.
+var severityOrder = []string{"info", "warn", "error"}
+
+// severitiesFrom is the levels a filter admits. An empty filter admits all of
+// them, and so does one naming a level nothing is written at, which is the
+// reading that shows too much rather than too little.
+func severitiesFrom(least string) []string {
+	if least == "" {
+		return nil
+	}
+	for i, level := range severityOrder {
+		if level == least {
+			return severityOrder[i:]
+		}
+	}
+	return nil
+}
+
 type LogFilter struct {
+	// Severity is the least serious level to show, not the only one: see
+	// severitiesFrom.
 	CustomerID, ConfigID, SessionID, UserID, Severity, Search string
 	Sources                                                   []string
 	From, To                                                  time.Time
@@ -105,8 +128,8 @@ func (s *Store) AgentLogs(ctx context.Context, f LogFilter) ([]AgentLog, error) 
 	if f.UserID != "" {
 		q = q.Where("user_id = ?", f.UserID)
 	}
-	if f.Severity != "" {
-		q = q.Where("severity = ?", f.Severity)
+	if levels := severitiesFrom(f.Severity); len(levels) > 0 {
+		q = q.Where("severity IN (?)", bun.In(levels))
 	}
 	if len(f.Sources) > 0 {
 		q = q.Where("source IN (?)", bun.In(f.Sources))

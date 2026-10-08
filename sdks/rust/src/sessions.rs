@@ -18,6 +18,9 @@ pub struct AgentRef {
     pub name: String,
     /// This agent's conversations: opening one, and reading the old ones back.
     pub sessions: Sessions,
+    /// Functions run for every session of this agent, whoever opened it, once a dispatch
+    /// worker hosts them with [`Dispatch::host`](crate::Dispatch::host).
+    pub tools: Tools,
     client: Client,
 }
 
@@ -29,6 +32,7 @@ impl AgentRef {
                 client: client.clone(),
                 agent: name.into(),
             },
+            tools: Tools::new(),
             client,
         }
     }

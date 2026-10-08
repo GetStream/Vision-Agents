@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -501,10 +502,14 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		connectors.next = runner
 		runner = connectors
 		connectors.askIn(conv, created.chose)
+		connectors.stepUps = newStepUps(m.options.Connectors.Consents, created.broadcast, m.logger)
 		created.connectors = connectors
 		created.closers = append(created.closers, connectors.Close, connectors.closeLogins)
 	}
 	created.connectorsUnavailable = connectorsUnavailable
+	if spec.ProgressiveTools {
+		tools, runner = progressively(tools, slices.Concat(pluginTools, connectorTools), runner)
+	}
 
 	var toolStarted func(agent.ToolStarted)
 	if conv != nil {

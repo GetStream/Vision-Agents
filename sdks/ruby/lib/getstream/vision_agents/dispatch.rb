@@ -14,7 +14,7 @@ module GetStream
     #     dispatch.get_or_create_agent(message) { GetStream::VisionAgents::Agent.new(config: "support") }
     #             .reply(message)
     #   end
-    #   dispatch.host("support", tools)
+    #   dispatch.host(support) # an Agent whose tools are registered
     #   dispatch.run
     #
     # Each call, message and hosted tool call runs on its own thread. When a call or message
@@ -48,17 +48,20 @@ module GetStream
         @latency = nil
       end
 
-      # Runs these tools for every session opened under an agent id, whoever opened it.
+      # Runs an agent's tools for every session opened under it, whoever opened it.
       #
       # A session's own tools run in the process that opened it. Hosting is the other
-      # direction: the router offers these to each session naming the agent and sends every
-      # call to this worker. timeout is how many seconds the router gives one call; nil takes
-      # its default. Call before #run.
-      def host(agent_id, tools, timeout: nil)
-        raise ConfigurationError, "hosting needs an agent id" if agent_id.to_s.empty?
-        raise ConfigurationError, "#{agent_id} needs at least one tool to host" if tools.empty?
+      # direction: the router offers agent.tools to each session naming the agent's config
+      # (its name when it has none, as #sync stores it) and sends every call to this worker.
+      # tool_timeout is how many seconds the router waits for one tool call to be answered
+      # before telling the model it failed, not how long the worker runs; nil takes the
+      # router's default of two minutes. Call before #run.
+      def host(agent, tool_timeout: nil)
+        agent_id = (agent.config || agent.name).to_s
+        raise ConfigurationError, "hosting needs an agent with a name" if agent_id.empty?
+        raise ConfigurationError, "#{agent_id} needs at least one tool to host" if agent.tools.empty?
 
-        @lock.synchronize { @hosted << { agent_id: agent_id.to_s, tools: tools, timeout: timeout } }
+        @lock.synchronize { @hosted << { agent_id: agent_id, tools: agent.tools, tool_timeout: tool_timeout } }
         self
       end
 
@@ -162,7 +165,7 @@ module GetStream
 
       def offer_hosted
         @lock.synchronize { @hosted.dup }.each do |offer|
-          timeout_ms = offer[:timeout] ? (offer[:timeout] * 1000).round : 0
+          timeout_ms = offer[:tool_timeout] ? (offer[:tool_timeout] * 1000).round : 0
           @socket.send_frame(type: "host_tools", agent_id: offer[:agent_id],
                              tools: offer[:tools].declarations, timeout_ms: timeout_ms)
         end
