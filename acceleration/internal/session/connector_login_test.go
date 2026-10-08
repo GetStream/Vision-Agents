@@ -5,7 +5,9 @@ package session
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/google/uuid"
@@ -280,6 +282,43 @@ func (s *ConnectorLoginSuite) TestAConnectionConnectedBeforeOpensOnlyOnceTheChat
 	s.Contains(asked, `"status":"authorization_required"`)
 	s.Contains(still, `"status":"authorization_required"`, "connected before the chat asked is not a consent in it")
 	s.Equal("primary", said)
+}
+
+// TestAConnectionOnARevisionMarkedBrokenWaitsForALogin: the caller's connection opens while
+// its revision is unmarked. Once a later revision of the built-in marks it broken, the binding
+// waits for a login as one that needs reauthorization does, and the consent that connects it
+// on the latest revision opens it.
+func (s *ConnectorLoginSuite) TestAConnectionOnARevisionMarkedBrokenWaitsForALogin() {
+	s.connectorID, s.revision = "crm"+strings.ReplaceAll(uuid.NewString(), "-", ""), 1
+	s.seedCRM(1, "")
+	mine := s.connection("alice", "primary")
+	spec := s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", map[string]string{"crm": mine}))
+	_, before, unmarked, err := s.attachWithConsents(spec)
+	s.Require().NoError(err)
+	s.Equal([]string{"crm__whoami"}, names(before), "unmarked, it opens")
+	s.Empty(unmarked)
+
+	s.seedCRM(2, "broken_revisions:\n  - revisions: [1]\n    reason: reads the wrong path\n")
+	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM"}
+	d, tools, unavailable, err := s.attachWithConsents(spec)
+	s.Require().NoError(err)
+	asked, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+	s.Require().NoError(err)
+	s.setState(mine, func(state *core.CredentialState) { state.DefinitionRevision, state.ConnectedAt = 2, time.Now().UTC() })
+	said, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+
+	s.Equal([]string{"crm__list_tools", "crm__call_tool"}, names(tools))
+	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableReauthorize}}, unavailable)
+	s.Contains(asked, `"status":"authorization_required"`)
+	s.Require().NoError(err)
+	s.Equal("primary", said, "the login's consent moved it to the latest revision")
+}
+
+// seedCRM seeds the test's connector as a built-in at revision, with more manifest YAML in
+// extra, as a router start with that file does.
+func (s *ConnectorLoginSuite) seedCRM(revision int, extra string) {
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx,
+		fstest.MapFS{s.connectorID + ".yaml": {Data: []byte(s.crmManifest(s.connectorID, revision) + extra)}}))
 }
 
 // TestACallThroughALoginLeavesOneInvocationRow: call_tool on a binding a login opened is a

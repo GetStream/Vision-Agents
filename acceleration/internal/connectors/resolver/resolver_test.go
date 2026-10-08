@@ -186,6 +186,33 @@ func (s *ResolverSuite) TestAPendingConnectionIsNotConnected() {
 	s.ErrorIs(err, resolver.ErrNotConnected)
 }
 
+// TestAConnectionOnABrokenRevisionGetsNoCredentialAndKeepsItsStatus: a later revision of a
+// built-in marks the one a connected connection reads broken. Resolve refuses it as a
+// connection that needs a reconnect, writes nothing, and once a consent moves it to the
+// latest revision it resolves again.
+func (s *ResolverSuite) TestAConnectionOnABrokenRevisionGetsNoCredentialAndKeepsItsStatus() {
+	s.f.builtin(1, "")
+	ref := s.f.connected()
+	before := s.f.stored(ref)
+	_, err := s.f.router(s.f.srv.Client()).Resolve(s.f.ctx, ref, core.CredentialRequest{})
+	s.Require().NoError(err, "unmarked, it resolves")
+
+	s.f.builtin(2, "broken_revisions:\n  - revisions: [1]\n    reason: reads the wrong path\n")
+	_, err = s.f.router(s.f.srv.Client()).Resolve(s.f.ctx, ref, core.CredentialRequest{})
+
+	s.ErrorIs(err, resolver.ErrNotConnected)
+	s.ErrorContains(err, "revision 1 of acme is broken (reads the wrong path)")
+	after := s.f.stored(ref)
+	s.Equal(store.ConnectionConnected, after.Status)
+	s.Equal(before.Revision, after.Revision)
+	s.Equal(before.LastError, after.LastError)
+
+	s.f.update(ref, func(state *core.CredentialState) { state.DefinitionRevision = 2 })
+	credential, err := s.f.router(s.f.srv.Client()).Resolve(s.f.ctx, ref, core.CredentialRequest{})
+	s.Require().NoError(err, "on the latest revision it resolves again")
+	s.True(s.f.works(credential))
+}
+
 func (s *ResolverSuite) TestAReconnectIsHandedOutInsideTheCacheWindow() {
 	ref := s.f.connected()
 	r := s.f.router(s.f.srv.Client())
