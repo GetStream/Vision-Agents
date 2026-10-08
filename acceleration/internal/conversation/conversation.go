@@ -278,6 +278,9 @@ type FinishedReply struct {
 	CID       string
 	MessageID string
 	Text      string
+	// Files are what the agent's own code made for the reply (Message.Files), stored in
+	// Stream Chat, which the bridge sends on as links (T62a, AI-921).
+	Files []sandbox.Attachment
 }
 
 // OnFinishedReply has fn told of every reply that finished in a thread channel, after its
@@ -1730,11 +1733,12 @@ func (c *Conversation) flush() bool {
 // reply in a thread channel. Call it with mu held.
 func (c *Conversation) finishedReply(op operation) (FinishedReply, bool) {
 	m := op.Message
-	if m.Role != "assistant" || m.FinishedAt == nil || m.State != "completed" || m.Text == "" ||
+	if m.Role != "assistant" || m.FinishedAt == nil || m.State != "completed" || (m.Text == "" && len(m.Files) == 0) ||
 		!strings.HasPrefix(c.data.CID, "agent:"+ThreadChannelPrefix) {
 		return FinishedReply{}, false
 	}
-	return FinishedReply{Customer: c.data.Customer, CID: c.data.CID, MessageID: m.ID, Text: m.Text}, true
+	return FinishedReply{Customer: c.data.Customer, CID: c.data.CID, MessageID: m.ID, Text: m.Text,
+		Files: append([]sandbox.Attachment(nil), m.Files...)}, true
 }
 func (c *Conversation) run() {
 	defer close(c.done)
