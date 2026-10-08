@@ -1,0 +1,5 @@
+---
+pending: [python, dotnet, ruby, rust, php]
+---
+
+`ConnectorOAuthClientRequest` (`setConnectorOAuthClient`, `PUT /v1/agents/connectors/{id}/oauth-client`) gains two optional fields (AI-906): `provider_app_id`, the provider's id for the customer's own app (RFC 3986 unreserved characters), and `signing_secret`, write-only, the secret the provider signs that app's events with. With both, the app's events posted to `/v1/connectors/events/{connector}/{provider_app_id}` are verified with that secret. `signing_secret` needs `provider_app_id` and a connector whose `channel.verifier.secret` is `provider_app`, else a 400. Another customer naming the same app is a 409. `ConnectorOAuthClient` gains `provider_app_id`, absent when none was put; no answer carries either secret. A PUT replaces the record whole, so a PUT without `signing_secret` removes it. Go and JavaScript have the regenerated client and types. Python (`plugins/stream`), .NET, Ruby, Rust and PHP need their generated clients regenerated and the two fields on their request model, with `signing_secret` never logged or printed. Swift, Kotlin and Dart need nothing, since the operation is server-side only.

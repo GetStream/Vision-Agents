@@ -22,8 +22,8 @@ Work happens on the `accelerate` branch here, and the agents docs live in getstr
 
 ## SDK changes
 
-When you need to make an SDK change start by only changing Go
-Leave a note in the sdk skill at the bottom that other SDKs also need to udpate.
+When you need to make an SDK change start by only changing Go.
+Leave the note for the other SDKs as a new file in `.claude/skills/sdk/changes/`, not at the bottom of the sdk skill. The format is under "SDK updates" in that skill.
 We run this periodically, you don't need to change all SDKs at once.
 Go goes first, and later on we update the others.
 

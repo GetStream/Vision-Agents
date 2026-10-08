@@ -28,8 +28,9 @@ a mistake that actually happened.
     on `origin/accelerate`.
   - A database that ran an earlier build of a PR can hold a version that a later merge lands below.
     Recreate that database.
-- **Shared append files.** Every PR adds a note at the end of `.claude/skills/sdk/SKILL.md` and
-  `CHANGELOG.md`, so any two open PRs conflict there. Keep both sides, the base's entries first.
+- **Shared append files.** Every PR appends `CHANGELOG.md`, so any two open PRs conflict there.
+  Keep both sides, the base's entries first. An SDK note is a new file in
+  `.claude/skills/sdk/changes/`, not a line added to `.claude/skills/sdk/SKILL.md`.
 - **Conflict markers.** Before every `git rebase --continue`, run `git diff --check` and grep for
   `<<<<<<<`, `=======` and `>>>>>>>`. Markers were committed twice by agents that skipped this.
 - **Generated files.** Do not hand-merge `acceleration/api/openapi.yaml` or the generated clients.
