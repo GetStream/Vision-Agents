@@ -500,6 +500,27 @@ func (e ClassifyQuestionType) Valid() bool {
 	}
 }
 
+// Defines values for ConnectionDefinitionStatus.
+const (
+	Broken   ConnectionDefinitionStatus = "broken"
+	Current  ConnectionDefinitionStatus = "current"
+	Outdated ConnectionDefinitionStatus = "outdated"
+)
+
+// Valid indicates whether the value is a known member of the ConnectionDefinitionStatus enum.
+func (e ConnectionDefinitionStatus) Valid() bool {
+	switch e {
+	case Broken:
+		return true
+	case Current:
+		return true
+	case Outdated:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectionOwnerType.
 const (
 	ConnectionOwnerTypeApp  ConnectionOwnerType = "app"
@@ -2607,7 +2628,7 @@ type AgentConfigRequest struct {
 	Voice *string `json:"voice,omitempty"`
 }
 
-// AgentConnectorBinding A connector whose tools an agent config may call, under an alias. The binding is the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against.
+// AgentConnectorBinding A connector whose tools an agent config may call, under an alias. The binding is the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against, or for a tool a session binding grants by name alone, to the schema its connection first offered it with.
 type AgentConnectorBinding struct {
 	// Connection Which connection a binding's tools are called through.
 	Connection AgentConnectorSelection `json:"connection"`
@@ -2630,7 +2651,7 @@ type AgentConnectorBinding struct {
 	// TimeoutMs How long one tool call may take, in milliseconds. Omitted, the session's default applies.
 	TimeoutMs *int64 `json:"timeout_ms,omitempty"`
 
-	// Tools The exact tools allowed, each named once. There is no wildcard, and an empty list grants none.
+	// Tools The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. A session binding may grant a tool by name alone, which pins its schema per connection on first use.
 	Tools []ConnectorToolGrant `json:"tools"`
 }
 
@@ -3487,8 +3508,14 @@ type Connection struct {
 	ConnectorId string     `json:"connector_id"`
 	CreatedAt   *time.Time `json:"created_at,omitempty"`
 
-	// DefinitionRevision The connector's revision when the connection was made, which it keeps reading until it is reconnected.
+	// DefinitionBrokenReason Why the connector marked definition_revision broken. Present only when definition_status is broken.
+	DefinitionBrokenReason *string `json:"definition_broken_reason,omitempty"`
+
+	// DefinitionRevision The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there; until then it keeps this one.
 	DefinitionRevision *int64 `json:"definition_revision,omitempty"`
+
+	// DefinitionStatus current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until a consent connects it again, on the latest revision.
+	DefinitionStatus ConnectionDefinitionStatus `json:"definition_status"`
 
 	// ExpiresAt When the current credential expires. Absent when there is none or it does not.
 	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
@@ -3524,6 +3551,9 @@ type ConnectionCredentials struct {
 	// Values What the connection's auth_scheme takes, write-only. api_key: api_key and header. bearer: token. none: nothing, which activates the connection. oauth2_client_credentials: client_id and client_secret, which are tried at the token endpoint at once. oauth2_code: a grant the provider already issued, as access_token, refresh_token (optional), expires_at (RFC 3339) and scope (the granted scopes joined as the connector's scopes are); its endpoints and client are the connector's, never the caller's.
 	Values *map[string]string `json:"values,omitempty"`
 }
+
+// ConnectionDefinitionStatus current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until a consent connects it again, on the latest revision.
+type ConnectionDefinitionStatus string
 
 // ConnectionInvocation One connector tool call a session ran through the connection: the binding, the tool, how long it took and how it failed. What the call was asked and answered is never kept.
 type ConnectionInvocation struct {
@@ -3972,8 +4002,8 @@ type ConnectorToolGrant struct {
 	// Name The tool as the connector names it.
 	Name string `json:"name"`
 
-	// SchemaDigest The SHA-256 of the tool's name, description and input schema, as 64 lowercase hex characters. A tool whose schema has changed since no longer matches and is not offered.
-	SchemaDigest string `json:"schema_digest"`
+	// SchemaDigest The SHA-256 of the tool's name, description and input schema, as 64 lowercase hex characters. A tool whose schema has changed since no longer matches and is not offered. Required on a fixed binding. A session binding may leave it out: the first session that opens a person's connection pins the digest the provider lists then, later sessions offer the tool only while it still matches, and a reconnect pins again.
+	SchemaDigest *string `json:"schema_digest,omitempty"`
 }
 
 // Contact defines model for Contact.
@@ -8725,7 +8755,7 @@ type ClientInterface interface {
 
 	// CreateAuthorization Start a consent
 	//
-	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -11700,7 +11730,7 @@ func (c *Client) GetConnection(ctx context.Context, id string, reqEditors ...Req
 
 // CreateAuthorization Start a consent
 //
-// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -25960,7 +25990,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateAuthorizationWithResponse Start a consent
 	//
-	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+	// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -43963,7 +43993,7 @@ func (c *ClientWithResponses) GetConnectionWithResponse(ctx context.Context, id 
 
 // CreateAuthorizationWithResponse Start a consent
 //
-// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+// Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //

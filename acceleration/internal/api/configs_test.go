@@ -922,6 +922,31 @@ func (s *ConfigsSuite) TestAToolGrantedTwiceIsRefused() {
 	s.Contains(failure, "twice")
 }
 
+// TestASessionBindingMayGrantAToolByNameAlone: its connection is each person's own, so the
+// digest is pinned per connection on first use, and the config is read back without one.
+func (s *ConfigsSuite) TestASessionBindingMayGrantAToolByNameAlone() {
+	binding := sessionSlack("inbox")
+	binding["tools"] = []map[string]any{{"name": "search"}, {"name": "fetch", "schema_digest": toolDigest}}
+
+	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{binding}})
+
+	s.Equal([]ConnectorToolGrant{{Name: "search"}, {Name: "fetch", SchemaDigest: toolDigest}},
+		value(s.read(created.Id).Connectors)[0].Tools)
+}
+
+// TestAFixedBindingCannotGrantAToolByNameAlone: its connection is the app's own, whose tools
+// the developer lists and grants at their digests.
+func (s *ConfigsSuite) TestAFixedBindingCannotGrantAToolByNameAlone() {
+	binding := fixedSlack("inbox", s.connection(""))
+	binding["tools"] = []map[string]any{{"name": "search"}}
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support", "connectors": []map[string]any{binding}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `grants "search" with no schema_digest`)
+}
+
 func (s *ConfigsSuite) TestThirtySecondsIsTheLongestATimeoutMayBe() {
 	binding := sessionSlack("inbox")
 	binding["timeout_ms"] = 30000

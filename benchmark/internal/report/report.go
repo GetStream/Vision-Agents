@@ -47,7 +47,8 @@ type RunManifest struct {
 	GitCommit    string `json:"git_commit"`
 	GitDirty     bool   `json:"git_dirty"`
 	ScenarioHash string `json:"scenario_hash"`
-	// DatasetHash fingerprints the clip manifest and its audio, for an STT run.
+	// DatasetHash fingerprints the clip manifest and its audio for an STT run, and the text
+	// corpus for a TTS run.
 	DatasetHash              string            `json:"dataset_hash,omitempty"`
 	ContractHash             string            `json:"contract_hash"`
 	Transport                string            `json:"transport"`
@@ -86,6 +87,8 @@ type Summary struct {
 	Calls              []CallResult      `json:"calls"`
 	// STT is one row per target, for a run of kind stt.
 	STT []STTSummary `json:"stt,omitempty"`
+	// TTS is one row per target, for a run of kind tts.
+	TTS []TTSSummary `json:"tts,omitempty"`
 }
 
 // PackSummary is one vertical column.

@@ -354,6 +354,77 @@ identity: [team_id, user_id]
 	s.Equal(1, s.connectionsOf(s.client, connector))
 }
 
+// TestAToolGrantedByNameIsThereWhenTheChatCarriesOnAfterTheLogin is finding F4 of the AI-816
+// end-to-end run: a session binding's tools are granted before anybody connected, so the
+// developer had no digest to grant, and the turn that carried on after the login had no tool
+// to call. Granted by name, the consent's connection pins echo when the login opens it, and
+// the turn that carries on runs it, with no validate and no new session.
+func (s *ChatLoginsSuite) TestAToolGrantedByNameIsThereWhenTheChatCarriesOnAfterTheLogin() {
+	s.provider.Use(fakeprovider.ClientCredentials, fakeprovider.SlackUserToken)
+	opened := s.client.createSession(s.session(s.config(s.connectorWithoutTwin(), map[string]any{"name": "echo"}), nil))
+	events := s.client.opens("/v1/agents/sessions/" + opened.Id + "/events")
+	s.ask(opened.Id)
+	asked := s.loginOn(events, "")
+
+	b := newBrowser(&s.RouterSuite, s.provider)
+	b.finish(s.consent(b.handOff(s.started(asked))))
+	after := s.carryOn(events)
+
+	s.Equal(connectorEchoText, after.ran["result"], "the turn that carried on ran the tool")
+	s.Empty(after.ran["error"])
+	s.Len(s.pinsOf(asked["connection_id"].(string)), 1)
+}
+
+// TestEachPersonsToolGrantedByNameIsPinnedToTheirOwnAccount is finding F8: Slack names the
+// signed-in user in a tool's description, so Alice's echo and Bob's have different digests,
+// and no one digest in the config could grant both. Granted by name, each consent pins the
+// echo its own account lists, and both chats carry on with it.
+func (s *ChatLoginsSuite) TestEachPersonsToolGrantedByNameIsPinnedToTheirOwnAccount() {
+	s.provider.Use(fakeprovider.ClientCredentials, fakeprovider.SlackUserToken)
+	config := s.config(s.connectorWithoutTwin(), map[string]any{"name": "echo"})
+	bob := s.data.createUser()
+	pins := map[string]string{}
+	for _, user := range []*testClient{s.client, bob} {
+		s.provider.SwitchAccount()
+		opened := user.createSession(s.session(config, nil))
+		events := user.opens("/v1/agents/sessions/" + opened.Id + "/events")
+		s.askAs(user, opened.Id)
+		asked := s.loginOn(events, "")
+		b := newBrowser(&s.RouterSuite, s.provider)
+		b.finish(s.consent(b.handOff(s.started(asked))))
+
+		s.Equal(connectorEchoText, s.carryOn(events).ran["result"], user.userID)
+		pinned := s.pinsOf(asked["connection_id"].(string))
+		s.Require().Len(pinned, 1, user.userID)
+		pins[user.userID] = pinned[0]
+	}
+
+	s.NotEqual(pins[s.client.userID], pins[bob.userID], "each account lists its own echo")
+}
+
+// connectorWithoutTwin is connector with no connection of the app's to read a digest through:
+// what a developer has before anybody connected.
+func (s *ChatLoginsSuite) connectorWithoutTwin() string {
+	id := "custom_crm" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	s.define(id, oauth2code.Name, `
+client:
+  registration: [operator]
+  auth_method: client_secret_post
+  env: FAKE
+scopes:
+  list: [chat:write]
+`)
+	return id
+}
+
+// pinsOf are the schema digests connection's tools are pinned at.
+func (s *ChatLoginsSuite) pinsOf(connection string) []string {
+	var digests []string
+	s.Require().NoError(s.store.DB().NewSelect().Table("connector_tool_pins").Column("schema_digest").
+		Where("connection_id = ?", connection).Scan(context.Background(), &digests))
+	return digests
+}
+
 // echoedOn is how many times session id ran crm's echo with what it was given, as recorded.
 func (s *ChatLoginsSuite) echoedOn(id string) int {
 	var ran int

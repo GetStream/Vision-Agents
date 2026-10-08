@@ -144,7 +144,8 @@ const (
 	// team {id, name}, token_type and user_id. The example on
 	// docs.slack.dev/reference/methods/oauth.v2.user.access shows authed_user instead. The
 	// values are synthetic; token_type "user" and a refresh answering the same keys are
-	// unverified. Only Slack has this shape, so it is named for Slack.
+	// unverified. Only Slack has this shape, so it is named for Slack. Its MCP endpoint names
+	// the user who consented in every tool's description, as Slack's does (describedFor).
 	SlackUserToken Personality = "slack_user_token"
 	// CallbackRealmID adds realmId to the callback, as QuickBooks does: Intuit's SDK reads it
 	// from the redirect (oauth-jsclient src/OAuthClient.js createToken, params.realmId).

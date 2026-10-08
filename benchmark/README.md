@@ -100,7 +100,15 @@ go run ./cmd/voicebench stt --manifest clips.jsonl --target deepgram/flux-genera
 
 It reports, per target, pooled and mean WER (normalized, with the raw pooled figure beside it), substitutions, insertions and deletions, the share of clips transcribed perfectly and the share that returned anything, and three timings measured on the clock the audio went out on, from the voice in the clip rather than the file's edges: TTFS (last word spoken to the last settled transcript, P50/P95/P99), time to first words (first word spoken to the first transcript of any kind) and the transcripts that arrived while the caller was still speaking. Results go to `out/stt-<time>/`: `clips.jsonl` with every clip's transcript, timings and error, `summary.json` with `kind: stt`, and `report.md`. A clip that ends in an error, from the router or the provider, is kept and counted, and makes the command exit non-zero. The router comes from `STREAM_ACCELERATION_URL`, as for `--target accelerated`. Without `--target`, lines carry a `hypothesis` instead of `audio` and are scored as given.
 
-Score clip health without a live call:
+Benchmark text-to-speech through the router. Each line of the corpus is spoken by each `--target` over the router's `/v1/tts/stream` socket, one utterance at a time:
+
+```bash
+go run ./cmd/voicebench tts --target inworld/inworld-tts-2-flash
+```
+
+With no `--corpus`, the corpus is every scenario's `agent_replies`, the names, times, ticket numbers and refusals an agent actually has to say; `--corpus lines.jsonl` takes `{"id", "text"}` lines instead, and `--voice` picks a voice for every target. It reports, per target, TTFB (text sent to first audio, P50/P95/P99), synthesis time and real-time factor (synthesis time over audio duration), round-trip WER (the audio transcribed by the scoring ASR, Deepgram Nova-3, and compared with the text: ASR errors inflate it, so it checks intelligibility, not naturalness), and a health grid. Each clip is graded good, warn or fail on silence before and after the speech, clipping and level, and the target is graded on the share of good clips: good at 99%, warn at 95%. Those thresholds are provisional until they are recalibrated on a known-good run. Results go to `out/tts-<time>/` as `clips.jsonl`, `summary.json` with `kind: tts`, and `report.md`. A line that ends in an error is kept, counted, and makes the command exit non-zero.
+
+Score one clip's health without synthesizing anything:
 
 ```bash
 go run ./cmd/voicebench tts --wav out/run/agent.wav
