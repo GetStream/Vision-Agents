@@ -845,8 +845,9 @@ func (s *ConverseSuite) TestALongSilenceWhileWorkRunsSaysWhatIsStillGoing() {
 	state.LastSpokeAt = time.Now().Add(-11 * time.Second)
 
 	actions := s.converse.Tick(state)
-	s.Require().Equal([]ActionKind{ActBackchannel}, kinds(actions))
-	s.Equal("Still working on the render.", actions[0].Text)
+	s.Require().Equal([]ActionKind{ActCheckIn}, kinds(actions))
+	s.Equal(updatePurpose, actions[0].Compose, "the model writes what is said, not a stock line")
+	s.Empty(actions[0].Text)
 }
 
 func (s *ConverseSuite) TestAShortSilenceWhileWorkRunsIsLeftAlone() {
@@ -866,17 +867,26 @@ func (s *ConverseSuite) TestACallerWaitingOnWorkIsNeverAskedWhetherThereIsAnythi
 	state.Working = "the render"
 	state.LastSpokeAt = time.Now().Add(-time.Hour)
 
-	var said []string
+	var purposes []string
 	for range 5 {
 		for _, action := range s.converse.Tick(state) {
-			s.NotEqual(ActCheckIn, action.Kind)
-			said = append(said, action.Text)
+			purposes = append(purposes, action.Compose)
 		}
 	}
-	s.Equal([]string{
-		"Still working on the render.",
-		"Bear with me, the render is taking a little longer.",
-	}, said, "two updates, then the answer is what they are waiting for")
+	s.Equal([]string{updatePurpose, updatePurpose}, purposes,
+		"two updates, then the answer is what they are waiting for")
+}
+
+func (s *ConverseSuite) TestNothingMoreIsDecidedWhileALineIsBeingWritten() {
+	s.build(DuplexOptions{})
+
+	state := s.quiet()
+	state.Composing = true
+	state.LastSpokeAt = time.Now().Add(-time.Hour)
+
+	s.Empty(s.converse.Tick(state), "a second line would only say the first one again")
+	state.Working = "the render"
+	s.Empty(s.converse.Tick(state))
 }
 
 func (s *ConverseSuite) TestAnAnswerOwedToTheCallerIsNotTalkedOverWithACheckIn() {
@@ -908,7 +918,7 @@ func (s *ConverseSuite) TestACallNobodyHasSpokenOnIsAskedWhetherAnythingElseIsNe
 
 	actions := s.converse.Tick(state)
 	s.Require().Equal([]ActionKind{ActCheckIn}, kinds(actions))
-	s.Contains(actions[0].Text, "anything else")
+	s.Equal(idlePurpose, actions[0].Compose)
 }
 
 func (s *ConverseSuite) TestACallThatHasJustGoneQuietIsLeftAlone() {

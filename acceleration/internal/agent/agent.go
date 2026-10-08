@@ -309,8 +309,8 @@ type Agent struct {
 	// history is the conversation so far. It lives here rather than in a provider so a
 	// failover between providers mid-conversation loses nothing.
 	history []llm.Message
-	// lateResults are lateResult messages held back while the history ends in a call not
-	// yet answered (callsOpen), in the order they came.
+	// lateResults are lateResult messages, and lines said while a call ran, held back while
+	// the history ends in a call not yet answered (callsOpen), in the order they came.
 	lateResults []llm.Message
 	// listeners holds one transcription session per participant, because a speech-to-text
 	// stream is bound to a single speaker.
@@ -341,6 +341,9 @@ type Agent struct {
 	utterances int
 	// generating is true while the voice model is still writing the current reply.
 	generating bool
+	// composing is true from asking for a line the agent chose to say (compose) until it
+	// is said or dropped.
+	composing bool
 	// toolReply is set when a tool returned and the caller has not been told yet. A
 	// second tool in the same turn must not start a competing generate: it would steal
 	// speakingTurn and drop the first result unspoken.
@@ -1244,6 +1247,7 @@ func (a *Agent) floor() floor {
 		Quiet:           a.utterances == 0 && !a.generating && a.pendingTools == 0,
 		Talking:         a.utterances > 0 || a.generating,
 		Owed:            a.toolReply,
+		Composing:       a.composing,
 		Speaking:        a.speakingTurn,
 		LastSpokeAt:     a.lastSpokeAt,
 		LastHeardAt:     a.lastHeardAt,
@@ -1293,7 +1297,7 @@ func (a *Agent) perform(action Action) {
 		a.backchannel(action.Participant, action.Text)
 
 	case ActCheckIn:
-		a.checkIn(action.Participant, action.Text)
+		a.checkIn(action.Participant, action.Compose)
 
 	case ActSupersede:
 		a.dropSpeculation(action.TurnID)
@@ -1599,31 +1603,86 @@ func (a *Agent) backchannel(participant stt.Participant, phrase string) {
 	a.emitter.Send(Backchannel{Participant: participant, Text: phrase})
 }
 
-// checkIn asks a caller who has gone quiet whether there is anything else.
+// checkIn says a line the model writes for purpose to a caller who has heard nothing for
+// a while: whether there is anything else, or that what they asked for is still coming.
+//
+// The model takes a moment to write it, so it is written off the loop that decided it.
+// A line that cannot be written is not worth failing the turn over: the caller hears
+// nothing, which is what they would have heard anyway.
+func (a *Agent) checkIn(participant stt.Participant, purpose string) {
+	a.mu.Lock()
+	if a.composing || a.tts == nil {
+		a.mu.Unlock()
+		return
+	}
+	a.composing = true
+	ctx := a.ctx
+	a.mu.Unlock()
+
+	asked := time.Now()
+	go func() {
+		defer func() {
+			a.mu.Lock()
+			a.composing = false
+			a.mu.Unlock()
+		}()
+		line, err := a.compose(ctx, purpose)
+		if err != nil {
+			a.logger.Warn("could not write a line to say", "purpose", purpose, "error", err)
+			return
+		}
+		a.sayComposed(participant, line, purpose, asked)
+	}()
+}
+
+// sayComposed says a line compose wrote for purpose, asked for at asked, unless the moment
+// it was for has passed: anyone spoke since, an answer is owed or on its way, or the work
+// an update is about ended, or the silence a check-in is about turned into work.
 //
 // Unlike a murmur it is a turn the agent took, so it goes into the history and is
 // reported as speech: without that, the "no, that was everything" that comes back
-// answers a question the model cannot see it asked.
-func (a *Agent) checkIn(participant stt.Participant, phrase string) {
-	turnID := backchannelPrefix + turnStamp()
+// answers a question the model cannot see it asked. Said between a call and its result,
+// it joins the history after the result, which a provider insists comes first.
+func (a *Agent) sayComposed(participant stt.Participant, line, purpose string, asked time.Time) {
+	if line == "" {
+		return
+	}
+	state := a.floor()
+	passed := state.Talking || state.Owed || state.LastHeardAt.After(asked) ||
+		state.LastSpokeAt.After(asked) || a.converse.Listening()
+	switch purpose {
+	case updatePurpose:
+		passed = passed || state.Working == ""
+	case idlePurpose:
+		passed = passed || state.Working != ""
+	}
+	if passed {
+		a.logger.Debug("not saying a line written for a moment that passed", "line", line)
+		return
+	}
 
+	turnID := backchannelPrefix + turnStamp()
 	a.mu.Lock()
 	if a.tts == nil {
 		a.mu.Unlock()
 		return
 	}
 	a.speakingTurn = turnID
-	a.saying = phrase
-	a.history = append(a.history, llm.Message{Role: llm.Assistant, Content: phrase})
+	a.saying = line
+	said := llm.Message{Role: llm.Assistant, Content: line}
+	if callsOpen(a.history) {
+		a.lateResults = append(a.lateResults, said)
+	} else {
+		a.history = append(a.history, said)
+	}
 	a.mu.Unlock()
 
-	a.logger.Debug("asking whether anything else is needed",
-		"turn", turnID, "participant", participant.ID, "phrase", phrase)
-	if err := a.speakWhole(turnID, phrase); err != nil {
+	a.logger.Debug("saying a line the agent chose", "turn", turnID, "participant", participant.ID, "line", line)
+	if err := a.speakWhole(turnID, line); err != nil {
 		a.fail(err, "tts")
 		return
 	}
-	a.emitter.Send(Responded{TurnID: turnID, Text: phrase})
+	a.emitter.Send(Responded{TurnID: turnID, Text: line})
 }
 
 // instructions is the system prompt for a turn: what the agent was told to be, ahead of

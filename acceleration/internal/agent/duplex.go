@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -55,21 +54,6 @@ var workingPhrases = []string{
 	"Bear with me a moment.",
 }
 
-// idlePhrases are what the agent says to a call nobody is talking on, so a silence ends
-// in an invitation rather than in the caller wondering whether anyone is still there.
-//
-// They rotate across the whole call rather than restarting with each silence. A caller
-// who pauses several times over a long call would otherwise be asked the same opening
-// question every time, which is the point at which a stock phrase starts to grate.
-var idlePhrases = []string{
-	"Is there anything else I can help with?",
-	"Anything else on your mind?",
-	"Was there anything else?",
-	"What else can I do for you?",
-	"Happy to keep going if there is more.",
-	"Anything else you wanted to look at?",
-}
-
 // lostReply is what the agent says when the model fails before it has said anything, so
 // a caller waiting on an answer hears that it is not coming rather than nothing at all.
 const lostReply = "Sorry, something went wrong on my side. Could you ask me that again?"
@@ -78,12 +62,6 @@ const lostReply = "Sorry, something went wrong on my side. Could you ask me that
 // still going, one per update. After the last one the agent waits quietly: a status read
 // out every few seconds is nagging, and the answer is what they are waiting for.
 var updateGaps = []time.Duration{10 * time.Second, 15 * time.Second}
-
-// updatePhrases say that named work is still running, one per update.
-var updatePhrases = []string{
-	"Still working on %s.",
-	"Bear with me, %s is taking a little longer.",
-}
 
 // uncertainNote is what the model is told about a turn the transcriber was doubtful
 // about. Checking is cheaper than confidently answering the wrong question.
@@ -130,9 +108,6 @@ type duplex struct {
 	// asked counts how often the silence in hand has been asked about, and is cleared
 	// when somebody speaks. It caps the nagging without deciding the words.
 	asked int
-	// idle rotates what is said to a call that has gone quiet. It runs on across the
-	// whole call, so a later silence does not open with the same question as the first.
-	idle int
 	// updating is the work the caller was last told is still running, and updates how
 	// often they were told about it since they last spoke.
 	updating string
@@ -169,8 +144,7 @@ func (d *duplex) Heard(participant stt.Participant, text string, quiet bool) str
 	defer d.mu.Unlock()
 
 	// Somebody is talking, so a silence that had been given up on is over and a later
-	// one is worth asking about again. Only the count is cleared: the rotation carries
-	// on, so the next silence is not opened with the same question as the last.
+	// one is worth asking about again.
 	d.asked = 0
 	d.updates = 0
 	current := d.speakerFor(participant)
@@ -205,32 +179,31 @@ func (d *duplex) Presence(participant stt.Participant, lastSpokeAt time.Time, qu
 	return d.nextPhraseLocked()
 }
 
-// Idle returns a question to put to a call nobody has said anything on for a while, or
-// empty when it has not been quiet for long enough. A call where nothing has happened at
-// all is not idle yet: the agent has not so much as greeted anyone.
+// Idle reports whether a call nobody has said anything on for a while is due a question,
+// so a silence ends in an invitation rather than in the caller wondering whether anyone
+// is still there. A call where nothing has happened at all is not idle yet: the agent has
+// not so much as greeted anyone.
 //
-// Like Working, and unlike a murmur, it is not tied to the backchannel option: leaving
+// Like Update, and unlike a murmur, it is not tied to the backchannel option: leaving
 // somebody in silence until they hang up is never what was wanted.
-func (d *duplex) Idle(lastActivity time.Time, quiet bool) string {
+func (d *duplex) Idle(lastActivity time.Time, quiet bool) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	if !quiet || lastActivity.IsZero() || time.Since(lastActivity) < defaultIdleGap {
-		return ""
+		return false
 	}
 	if d.asked >= idleAsks {
-		return ""
+		return false
 	}
-	phrase := idlePhrases[d.idle%len(idlePhrases)]
 	d.asked++
-	d.idle++
-	return phrase
+	return true
 }
 
-// Update returns what to tell a caller who has heard nothing for a while about the work
-// they are waiting on, or empty when it is not time to. Work names what is running, so
-// the caller hears what is taking the time rather than a stock filler.
-func (d *duplex) Update(work string, lastSpokeAt time.Time) string {
+// Update reports whether a caller who has heard nothing for a while is due word that the
+// work they are waiting on is still going. Work names what is running, so new work starts
+// its updates over.
+func (d *duplex) Update(work string, lastSpokeAt time.Time) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -241,11 +214,10 @@ func (d *duplex) Update(work string, lastSpokeAt time.Time) string {
 	gaps := d.options.updateGaps
 	if work == "" || lastSpokeAt.IsZero() || d.updates >= len(gaps) ||
 		time.Since(lastSpokeAt) < gaps[d.updates] {
-		return ""
+		return false
 	}
-	phrase := fmt.Sprintf(updatePhrases[d.updates%len(updatePhrases)], work)
 	d.updates++
-	return phrase
+	return true
 }
 
 // Working returns something to say while a tool runs, for a turn where the model reached

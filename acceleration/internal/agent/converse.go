@@ -34,7 +34,8 @@ const (
 	ActShorten ActionKind = "shorten"
 	// ActBackchannel makes a short listening noise.
 	ActBackchannel ActionKind = "backchannel"
-	// ActCheckIn asks a caller who has gone quiet whether they need anything else.
+	// ActCheckIn speaks to a caller who has heard nothing for a while: whether they need
+	// anything else, or that the work they are waiting on is still going.
 	ActCheckIn ActionKind = "checkin"
 	// ActSupersede abandons a ruling asked for about words that have since changed.
 	ActSupersede ActionKind = "supersede"
@@ -96,6 +97,9 @@ type Action struct {
 	Participant stt.Participant
 	// Text is what was heard, or the murmur to make.
 	Text string
+	// Compose is what the model is asked to write a line for, when the words are only
+	// settled at the moment they are said.
+	Compose string
 	// TurnID is the reply being interrupted, shortened or abandoned.
 	TurnID string
 	// Clarify is what the model is told when the turn is owed a short question rather than
@@ -125,6 +129,9 @@ type floor struct {
 	Working string
 	// Owed reports whether something came back that the caller has not been told yet.
 	Owed bool
+	// Composing reports whether a line the agent chose to say is still being written, which
+	// another would only repeat.
+	Composing bool
 	// LastSpokeAt is when the agent last published audio.
 	LastSpokeAt time.Time
 	// LastHeardAt is when anyone on the call was last transcribed.
@@ -694,15 +701,14 @@ func (c *converse) overlapRuled(ruling harness.Decided, seen overlapState, state
 // idle invites a caller who has gone quiet back into the conversation, because a silence
 // that nobody breaks is how a call ends by accident rather than because it was over.
 func (c *converse) idle(state floor, participant stt.Participant) []Action {
-	phrase := c.duplex.Idle(state.active(), state.Quiet)
-	if phrase == "" {
+	if !c.duplex.Idle(state.active(), state.Quiet) {
 		return nil
 	}
 	return []Action{c.decide(Action{
 		Kind:        ActCheckIn,
 		Reason:      "nobody has said anything for a while, asking whether there is anything else",
 		Participant: participant,
-		Text:        phrase,
+		Compose:     idlePurpose,
 	})}
 }
 
@@ -712,15 +718,14 @@ func (c *converse) update(state floor, participant stt.Participant) []Action {
 	if state.Talking {
 		return nil
 	}
-	phrase := c.duplex.Update(state.Working, state.LastSpokeAt)
-	if phrase == "" {
+	if !c.duplex.Update(state.Working, state.LastSpokeAt) {
 		return nil
 	}
 	return []Action{c.decide(Action{
-		Kind:        ActBackchannel,
+		Kind:        ActCheckIn,
 		Reason:      "work the caller was promised is still running and they have heard nothing for a while",
 		Participant: participant,
-		Text:        phrase,
+		Compose:     updatePurpose,
 	})}
 }
 
@@ -731,6 +736,8 @@ func (c *converse) Tick(state floor) []Action {
 	if !hearing {
 		participant = state.LastParticipant
 		switch {
+		case state.Composing:
+			return nil
 		case state.Owed:
 			// The answer is on its way to them, and asking whether there is anything
 			// else would talk over the thing they asked for.
