@@ -33,6 +33,10 @@ var ErrTokenTypeNotRevocable = errors.New("oauth2code: the provider does not rev
 // no access token, rather than leave without one.
 var errNoAccessToken = errors.New("oauth2code: the credential has no access token")
 
+// errUnknownClient is Export for a credential that does not say which client its grant was
+// issued to, so whose app it is cannot be told.
+var errUnknownClient = errors.New("oauth2code: the credential does not say which client its grant was issued to")
+
 // Retrieve returns the access token in stored, renewed first when it is inside the
 // margin of its expiry, expires at or before opts.ValidUntil, or the provider refused it
 // (opts.Refused) (RFC 6749 section 6). The
@@ -94,13 +98,27 @@ func (s *Scheme) Retrieve(ctx context.Context, stored core.StoredCredentials, m 
 // it (a provider-shaped value such as "bot" is still a bearer token on the wire). A
 // credential without an access token fails each request instead.
 func (s *Scheme) Wrap(base http.RoundTripper, c core.AccessCredential) http.RoundTripper {
-	var secret struct {
-		AccessToken string `json:"access_token"`
-	}
+	var secret accessSecret
 	if c.Scheme != Name || json.Unmarshal(c.Secret(), &secret) != nil {
 		return refuse{}
 	}
 	return Bearer(base, secret.AccessToken)
+}
+
+// Export is the access token as a bearer token (RFC 6750 section 2.1), as Wrap sends it, and
+// the registration of the client it was issued to, for the caller to decide whose app that
+// is. A credential this scheme did not issue, one without an access token, or one whose
+// client it cannot tell, is refused.
+func (s *Scheme) Export(c core.AccessCredential) (core.ExportedCredential, error) {
+	var secret accessSecret
+	if c.Scheme != Name || json.Unmarshal(c.Secret(), &secret) != nil || secret.AccessToken == "" {
+		return core.ExportedCredential{}, errNoAccessToken
+	}
+	if secret.Client == "" {
+		return core.ExportedCredential{}, errUnknownClient
+	}
+	return core.ExportedCredential{Header: "Authorization", Value: "Bearer " + secret.AccessToken,
+		ExpiresAt: c.ExpiresAt, Client: secret.Client}, nil
 }
 
 // Bearer is the RoundTripper that puts accessToken on a clone of every request as a bearer
@@ -293,10 +311,18 @@ func open(stored core.StoredCredentials) (storedPayload, error) {
 	return out, nil
 }
 
-// credential is the access token in payload as a core.AccessCredential, read back by Wrap.
+// credential is the access token in payload as a core.AccessCredential, read back by Wrap,
+// with the registration of the client it was issued to, read back by Export. Never the
+// refresh token.
 func credential(payload storedPayload) core.AccessCredential {
-	secret, _ := json.Marshal(map[string]string{"access_token": payload.AccessToken})
+	secret, _ := json.Marshal(accessSecret{AccessToken: payload.AccessToken, Client: payload.Client.RegistrationMethod})
 	return core.NewAccessCredential(Name, payload.ExpiresAt, secret)
+}
+
+// accessSecret is an AccessCredential's secret.
+type accessSecret struct {
+	AccessToken string                        `json:"access_token"`
+	Client      core.ClientRegistrationMethod `json:"client,omitempty"`
 }
 
 // margin is the manifest's refresh.margin, else defaultMargin.
