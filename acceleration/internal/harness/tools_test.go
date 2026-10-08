@@ -83,10 +83,10 @@ func (s *ToolsSuite) TestTheSentenceBeforeACallOpensWithTheHoldPhraseAndRunsOnIn
 }
 
 func (s *ToolsSuite) TestAResultIsAnsweredFromWithoutAnotherHoldPhrase() {
-	// The wait has one hold phrase. A result that calls for another tool starts a wait of its
-	// own, which gets its own sentence.
+	// The wait has one hold phrase, however many tools it takes: a sentence before each
+	// link queues behind the last, and the answer waits behind them all.
 	s.Contains(usePolicy, "After a result, answer from it")
-	s.Contains(usePolicy, "if the request needs another tool, open that call with its own sentence")
+	s.Contains(usePolicy, "if the request needs another tool, call it without a word")
 }
 
 func (s *ToolsSuite) TestTheUsePolicyIsShortAndNamesNoToolOrDeployment() {

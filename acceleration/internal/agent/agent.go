@@ -2088,7 +2088,12 @@ func (a *Agent) preSpeech(calls []llm.ToolCall) string {
 // fillsPause reports whether a turn that said nothing should say something before the
 // tools it asked for are run. Only a result that earns a reply of its own is worth
 // promising: anything else leaves a promise to check as the last thing the caller heard.
+// A turn reading a result has already been promised, and a filler there only queues behind
+// the last one.
 func (a *Agent) fillsPause(completionID string, calls []llm.ToolCall) bool {
+	if strings.HasPrefix(completionID, toolPrefix) {
+		return false
+	}
 	return slices.ContainsFunc(calls, func(call llm.ToolCall) bool {
 		return a.followsTool(harness.ToolRequested{TurnID: completionID, Call: call})
 	})

@@ -1230,6 +1230,28 @@ func (s *AgentSuite) TestAChainOfToolsIsFollowedToItsAnswerOnACall() {
 		"the second tool in the chain left the caller in silence")
 }
 
+func (s *AgentSuite) TestAToolChainedOnAResultIsNotGivenAFillerOfItsOwn() {
+	// The caller was told to wait when the first tool was called. A filler for every link
+	// of a chain queues behind the one before, and the answer waits behind all of them.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	call := llm.ToolCall{ID: "first", Name: "lookup_order", Arguments: `{}`}
+	s.agent.mu.Lock()
+	s.agent.history = []llm.Message{
+		{Role: llm.User, Content: "where is my order"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{call}},
+	}
+	s.agent.mu.Unlock()
+
+	s.agent.runTool(harness.ToolRequested{TurnID: toolPrefix + "first-round", Call: call})
+
+	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the chain was never answered")
+	s.Len(s.voice.spoken(), 1, "a link of the chain was given a filler")
+}
+
 func (s *AgentSuite) TestAVoiceCallThatKeepsChainingToolsIsMadeToAnswer() {
 	// A model that answers every result by reaching for another tool would keep the
 	// caller on "one moment" forever. The reply at the cap is offered no tool, so it
