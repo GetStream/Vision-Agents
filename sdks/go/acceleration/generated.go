@@ -57,6 +57,7 @@ func (e AgentConnectorSelectionType) Valid() bool {
 const (
 	AgentLogSeverityError AgentLogSeverity = "error"
 	AgentLogSeverityInfo  AgentLogSeverity = "info"
+	AgentLogSeverityWarn  AgentLogSeverity = "warn"
 )
 
 // Valid indicates whether the value is a known member of the AgentLogSeverity enum.
@@ -65,6 +66,8 @@ func (e AgentLogSeverity) Valid() bool {
 	case AgentLogSeverityError:
 		return true
 	case AgentLogSeverityInfo:
+		return true
+	case AgentLogSeverityWarn:
 		return true
 	default:
 		return false
@@ -164,6 +167,87 @@ func (e AgentResponseItemKind) Valid() bool {
 	case AgentResponseItemKindToolCall:
 		return true
 	case AgentResponseItemKindToolResult:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AuditAction.
+const (
+	Created AuditAction = "created"
+	Deleted AuditAction = "deleted"
+	Synced  AuditAction = "synced"
+	Updated AuditAction = "updated"
+)
+
+// Valid indicates whether the value is a known member of the AuditAction enum.
+func (e AuditAction) Valid() bool {
+	switch e {
+	case Created:
+		return true
+	case Deleted:
+		return true
+	case Synced:
+		return true
+	case Updated:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AuditResourceType.
+const (
+	AuditResourceTypeAgentConfig  AuditResourceType = "agent_config"
+	AuditResourceTypeKnowledge    AuditResourceType = "knowledge"
+	AuditResourceTypeKnowledgeUrl AuditResourceType = "knowledge_url"
+	AuditResourceTypePlugin       AuditResourceType = "plugin"
+	AuditResourceTypePolicy       AuditResourceType = "policy"
+	AuditResourceTypeRouterConfig AuditResourceType = "router_config"
+	AuditResourceTypeSkill        AuditResourceType = "skill"
+)
+
+// Valid indicates whether the value is a known member of the AuditResourceType enum.
+func (e AuditResourceType) Valid() bool {
+	switch e {
+	case AuditResourceTypeAgentConfig:
+		return true
+	case AuditResourceTypeKnowledge:
+		return true
+	case AuditResourceTypeKnowledgeUrl:
+		return true
+	case AuditResourceTypePlugin:
+		return true
+	case AuditResourceTypePolicy:
+		return true
+	case AuditResourceTypeRouterConfig:
+		return true
+	case AuditResourceTypeSkill:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AuditSource.
+const (
+	AuditSourceApi       AuditSource = "api"
+	AuditSourceCli       AuditSource = "cli"
+	AuditSourceDashboard AuditSource = "dashboard"
+	AuditSourceSdk       AuditSource = "sdk"
+)
+
+// Valid indicates whether the value is a known member of the AuditSource enum.
+func (e AuditSource) Valid() bool {
+	switch e {
+	case AuditSourceApi:
+		return true
+	case AuditSourceCli:
+		return true
+	case AuditSourceDashboard:
+		return true
+	case AuditSourceSdk:
 		return true
 	default:
 		return false
@@ -617,6 +701,24 @@ func (e ConnectorOAuthClientAuthMethod) Valid() bool {
 	}
 }
 
+// Defines values for ConnectorOnInterrupt.
+const (
+	ConnectorOnInterruptCancel ConnectorOnInterrupt = "cancel"
+	ConnectorOnInterruptWait   ConnectorOnInterrupt = "wait"
+)
+
+// Valid indicates whether the value is a known member of the ConnectorOnInterrupt enum.
+func (e ConnectorOnInterrupt) Valid() bool {
+	switch e {
+	case ConnectorOnInterruptCancel:
+		return true
+	case ConnectorOnInterruptWait:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ContactState.
 const (
 	ContactStateCalling ContactState = "calling"
@@ -643,16 +745,16 @@ func (e ContactState) Valid() bool {
 
 // Defines values for CreateOptOutRequestSource.
 const (
-	Api       CreateOptOutRequestSource = "api"
-	Dashboard CreateOptOutRequestSource = "dashboard"
+	CreateOptOutRequestSourceApi       CreateOptOutRequestSource = "api"
+	CreateOptOutRequestSourceDashboard CreateOptOutRequestSource = "dashboard"
 )
 
 // Valid indicates whether the value is a known member of the CreateOptOutRequestSource enum.
 func (e CreateOptOutRequestSource) Valid() bool {
 	switch e {
-	case Api:
+	case CreateOptOutRequestSourceApi:
 		return true
-	case Dashboard:
+	case CreateOptOutRequestSourceDashboard:
 		return true
 	default:
 		return false
@@ -2169,6 +2271,7 @@ func (e VoiceBindingState) Valid() bool {
 const (
 	ListAgentLogsParamsSeverityError ListAgentLogsParamsSeverity = "error"
 	ListAgentLogsParamsSeverityInfo  ListAgentLogsParamsSeverity = "info"
+	ListAgentLogsParamsSeverityWarn  ListAgentLogsParamsSeverity = "warn"
 )
 
 // Valid indicates whether the value is a known member of the ListAgentLogsParamsSeverity enum.
@@ -2177,6 +2280,8 @@ func (e ListAgentLogsParamsSeverity) Valid() bool {
 	case ListAgentLogsParamsSeverityError:
 		return true
 	case ListAgentLogsParamsSeverityInfo:
+		return true
+	case ListAgentLogsParamsSeverityWarn:
 		return true
 	default:
 		return false
@@ -2187,6 +2292,7 @@ func (e ListAgentLogsParamsSeverity) Valid() bool {
 const (
 	StreamAgentLogsParamsSeverityError StreamAgentLogsParamsSeverity = "error"
 	StreamAgentLogsParamsSeverityInfo  StreamAgentLogsParamsSeverity = "info"
+	StreamAgentLogsParamsSeverityWarn  StreamAgentLogsParamsSeverity = "warn"
 )
 
 // Valid indicates whether the value is a known member of the StreamAgentLogsParamsSeverity enum.
@@ -2195,6 +2301,8 @@ func (e StreamAgentLogsParamsSeverity) Valid() bool {
 	case StreamAgentLogsParamsSeverityError:
 		return true
 	case StreamAgentLogsParamsSeverityInfo:
+		return true
+	case StreamAgentLogsParamsSeverityWarn:
 		return true
 	default:
 		return false
@@ -2262,6 +2370,18 @@ type AddTrunkNumberRequest struct {
 	Tags *map[string]string `json:"tags,omitempty"`
 }
 
+// AgentChanges What was changed about an agent since its directory was last synced: the edits a sync of that directory would write over.
+type AgentChanges struct {
+	// Items The changes made since the last sync, newest first, at most 200. Empty when the agent has not been touched since.
+	Items []AuditEntry `json:"items"`
+
+	// LastChange The newest change's id. Send it as base_change on a sync to say these have been seen, and that sync will not be refused for them.
+	LastChange *string `json:"last_change,omitempty"`
+
+	// SyncedAt When the directory was last synced onto this agent. Absent for an agent no directory has ever been synced onto.
+	SyncedAt *time.Time `json:"synced_at,omitempty"`
+}
+
 // AgentChannels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 type AgentChannels struct {
 	// Identity How a sender becomes an end user. phone makes each number an end user of its own, phone:+15551234567, so anybody who writes is answered. link answers only a number somebody tied to an end user with a code from POST /v1/agents/channels/links, which is what an agent reading a person's own calendar or orders needs. Omitted is phone.
@@ -2303,6 +2423,9 @@ type AgentConfig struct {
 	Mode         AgentMode      `json:"mode"`
 	Name         string         `json:"name"`
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+
+	// ProgressiveTools Whether tools from plugins, MCP servers and connectors are offered by a summary, the first call to each returning its full description instead of running it.
+	ProgressiveTools *bool `json:"progressive_tools,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -2359,8 +2482,9 @@ type AgentConfigPatch struct {
 	Mode *AgentMode `json:"mode,omitempty"`
 
 	// Name What the config is called, which is unique among the customer's own.
-	Name         *string        `json:"name,omitempty"`
-	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+	Name             *string        `json:"name,omitempty"`
+	PluginEvents     *[]PluginEvent `json:"plugin_events,omitempty"`
+	ProgressiveTools *bool          `json:"progressive_tools,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -2433,6 +2557,9 @@ type AgentConfigRequest struct {
 	// PluginEvents MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
 
+	// ProgressiveTools Whether the agent is offered its plugin, MCP server and connector tools by the first line of each one's description, with its arguments' descriptions left out, and the first call to a tool returns its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
+	ProgressiveTools *bool `json:"progressive_tools,omitempty"`
+
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
@@ -2487,6 +2614,9 @@ type AgentConnectorBinding struct {
 
 	// Name The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place.
 	Name string `json:"name"`
+
+	// Policy How a binding's tool calls behave around speech and interruptions. Every field is optional, and a field left out keeps today's behaviour.
+	Policy *ConnectorBindingPolicy `json:"policy,omitempty"`
 
 	// Required Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
 	Required *bool `json:"required,omitempty"`
@@ -2636,6 +2766,101 @@ type AttachedNumber struct {
 	SipUri  string `json:"sip_uri"`
 	TrunkId string `json:"trunk_id"`
 }
+
+// AuditAction created, updated or deleted for a change somebody made one at a time. synced is a whole agent directory written at once by POST /v1/agents/sync, and is what a later sync measures the edits made since against.
+type AuditAction string
+
+// AuditChange One field that moved, with what it held before and holds now, each in the shape the resource itself is read in.
+type AuditChange struct {
+	// After What it holds now. Absent when it now holds nothing, which is what a deleted resource's fields all do.
+	After interface{} `json:"after,omitempty"`
+
+	// Before What it held, in the shape the resource is read in. Absent when it held nothing, which is what a created resource's fields all did.
+	Before interface{} `json:"before,omitempty"`
+
+	// Field The field as the resource's own schema names it.
+	Field string `json:"field"`
+}
+
+// AuditEntry One change somebody made to the app's configuration: what changed, who changed it, which client they used, and the before and after of every field that moved. Only configuration is recorded -- agents, skills, knowledge, routers, plugins and policies -- never what an agent did while it ran.
+type AuditEntry struct {
+	// Action created, updated or deleted for a change somebody made one at a time. synced is a whole agent directory written at once by POST /v1/agents/sync, and is what a later sync measures the edits made since against.
+	Action AuditAction `json:"action"`
+
+	// ActorId Who made it, as their client named them. Absent for a change nobody signed, such as a process syncing on startup.
+	ActorId *string `json:"actor_id,omitempty"`
+
+	// ActorName Their name, as their client named them. Never an email address: the router keeps none.
+	ActorName *string `json:"actor_name,omitempty"`
+
+	// AgentId The agent the change was to or under. Absent for a resource that belongs to no agent, such as a router.
+	AgentId *string `json:"agent_id,omitempty"`
+
+	// Changes Every field that moved. A write that moved nothing is not recorded at all, so this is empty only on a synced entry, which marks the moment a directory and an agent agreed whether or not anything moved.
+	Changes   []AuditChange `json:"changes"`
+	CreatedAt time.Time     `json:"created_at"`
+	Id        string        `json:"id"`
+
+	// RequestId The X-Request-Id of the request that made it.
+	RequestId *string `json:"request_id,omitempty"`
+
+	// ResourceId The resource, which may since have been deleted.
+	ResourceId string `json:"resource_id"`
+
+	// ResourceName What it was called when it changed, for a resource that has a name.
+	ResourceName *string `json:"resource_name,omitempty"`
+
+	// ResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead.
+	ResourceType AuditResourceType `json:"resource_type"`
+
+	// Source Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it.
+	Source AuditSource `json:"source"`
+}
+
+// AuditFilter Which changes to list. A field not listed here is refused rather than ignored.
+type AuditFilter struct {
+	// Action created, updated or deleted for a change somebody made one at a time. synced is a whole agent directory written at once by POST /v1/agents/sync, and is what a later sync measures the edits made since against.
+	Action *AuditAction `json:"action,omitempty"`
+
+	// AgentId One agent's history: changes to the agent itself and to the skills and knowledge under it.
+	AgentId *string `json:"agent_id,omitempty"`
+
+	// ResourceId One resource's own history.
+	ResourceId *string `json:"resource_id,omitempty"`
+
+	// ResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead.
+	ResourceType *AuditResourceType `json:"resource_type,omitempty"`
+
+	// Source Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it.
+	Source *AuditSource `json:"source,omitempty"`
+}
+
+// AuditPage defines model for AuditPage.
+type AuditPage struct {
+	HasMore bool         `json:"has_more"`
+	Items   []AuditEntry `json:"items"`
+
+	// NextCursor Pass as cursor for the next page, with the same filter. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// AuditQuery defines model for AuditQuery.
+type AuditQuery struct {
+	// Cursor The next_cursor of the previous page, sent with the same filter. Omitted is the first page.
+	Cursor *string `json:"cursor,omitempty"`
+
+	// Filter Which changes to list. A field not listed here is refused rather than ignored.
+	Filter *AuditFilter `json:"filter,omitempty"`
+
+	// Limit Up to 200. Omitted is 25.
+	Limit *int64 `json:"limit,omitempty"`
+}
+
+// AuditResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead.
+type AuditResourceType string
+
+// AuditSource Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it.
+type AuditSource string
 
 // Authorization A consent in flight for one connection: the page that starts it in a browser and the token that binds it to that browser.
 type Authorization struct {
@@ -3525,6 +3750,18 @@ type ConnectorBindingEvent struct {
 	Instructions *string `json:"instructions,omitempty"`
 }
 
+// ConnectorBindingPolicy How a binding's tool calls behave around speech and interruptions. Every field is optional, and a field left out keeps today's behaviour.
+type ConnectorBindingPolicy struct {
+	// Cancellable Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running after an interruption, for a tool that is not safe to stop halfway, such as a payment; the binding's timeout still ends it and tells the provider to stop it. It only matters with on_interrupt cancel: a wait call is never stopped by an interruption.
+	Cancellable *bool `json:"cancellable,omitempty"`
+
+	// OnInterrupt cancel stops waiting for the call when the turn is interrupted, and tells the provider to stop it unless cancellable is false. wait lets the call finish, up to the binding's timeout, and its result goes into the conversation for the next turn.
+	OnInterrupt *ConnectorOnInterrupt `json:"on_interrupt,omitempty"`
+
+	// PreSpeech What the agent says while one of the binding's tools runs, such as "Let me pull up your calendar.", in place of the phrase it picks itself when the model reached for the tool without a word. A voice session with a separate voice says it; every session reports it on tool_started.
+	PreSpeech *string `json:"pre_speech,omitempty"`
+}
+
 // ConnectorClient How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint.
 type ConnectorClient struct {
 	// Alg How a private_key_jwt assertion is signed, and set only for it.
@@ -3633,6 +3870,9 @@ type ConnectorOAuthClientRequest struct {
 	// ClientSecret Sealed at rest and never returned. Left out for a public client (auth_method none).
 	ClientSecret *string `json:"client_secret,omitempty"`
 }
+
+// ConnectorOnInterrupt cancel stops waiting for the call when the turn is interrupted, and tells the provider to stop it unless cancellable is false. wait lets the call finish, up to the binding's timeout, and its result goes into the conversation for the next turn.
+type ConnectorOnInterrupt string
 
 // ConnectorPage defines model for ConnectorPage.
 type ConnectorPage struct {
@@ -4002,7 +4242,7 @@ type Equals1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -6221,8 +6461,14 @@ type SyncAgentRequest struct {
 	// AgentPlugins Plugins the agent reaches with the app's own login: a catalog id, or an object naming it with how it is reached.
 	AgentPlugins *[]PluginEntry `json:"agent_plugins,omitempty"`
 
+	// BaseChange The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again.
+	BaseChange *string `json:"base_change,omitempty"`
+
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
+
+	// CheckChanges Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants.
+	CheckChanges *bool `json:"check_changes,omitempty"`
 
 	// Connectors The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone.
 	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
@@ -6258,6 +6504,9 @@ type SyncAgentRequest struct {
 
 	// PluginEvents MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+
+	// ProgressiveTools Whether plugin, MCP server and connector tools are offered by a summary, the first call to each returning its full description and input schema instead of running it.
+	ProgressiveTools *bool `json:"progressive_tools,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -7172,10 +7421,12 @@ type ListKnowledgeUrlsParams struct {
 
 // ListAgentLogsParams defines parameters for ListAgentLogs.
 type ListAgentLogsParams struct {
-	ConfigId  *string                      `form:"config_id,omitempty" json:"config_id,omitempty"`
-	SessionId *string                      `form:"session_id,omitempty" json:"session_id,omitempty"`
-	UserId    *string                      `form:"user_id,omitempty" json:"user_id,omitempty"`
-	Severity  *ListAgentLogsParamsSeverity `form:"severity,omitempty" json:"severity,omitempty"`
+	ConfigId  *string `form:"config_id,omitempty" json:"config_id,omitempty"`
+	SessionId *string `form:"session_id,omitempty" json:"session_id,omitempty"`
+	UserId    *string `form:"user_id,omitempty" json:"user_id,omitempty"`
+
+	// Severity The least serious level to show, not the only one: warn is warnings and errors.
+	Severity *ListAgentLogsParamsSeverity `form:"severity,omitempty" json:"severity,omitempty"`
 
 	// Source Comma-separated user/agent/tool/system sources.
 	Source *string    `form:"source,omitempty" json:"source,omitempty"`
@@ -7191,10 +7442,12 @@ type ListAgentLogsParamsSeverity string
 
 // StreamAgentLogsParams defines parameters for StreamAgentLogs.
 type StreamAgentLogsParams struct {
-	ConfigId  *string                        `form:"config_id,omitempty" json:"config_id,omitempty"`
-	SessionId *string                        `form:"session_id,omitempty" json:"session_id,omitempty"`
-	UserId    *string                        `form:"user_id,omitempty" json:"user_id,omitempty"`
-	Severity  *StreamAgentLogsParamsSeverity `form:"severity,omitempty" json:"severity,omitempty"`
+	ConfigId  *string `form:"config_id,omitempty" json:"config_id,omitempty"`
+	SessionId *string `form:"session_id,omitempty" json:"session_id,omitempty"`
+	UserId    *string `form:"user_id,omitempty" json:"user_id,omitempty"`
+
+	// Severity The least serious level to show, not the only one: warn is warnings and errors.
+	Severity *StreamAgentLogsParamsSeverity `form:"severity,omitempty" json:"severity,omitempty"`
 
 	// Source Comma-separated user/agent/tool/system sources.
 	Source      *string    `form:"source,omitempty" json:"source,omitempty"`
@@ -7557,6 +7810,9 @@ type PreviewVoiceJSONRequestBody = VoicePreviewRequest
 
 // AddVoiceSampleJSONRequestBody defines body for AddVoiceSample for application/json ContentType.
 type AddVoiceSampleJSONRequestBody = VoiceSampleRequest
+
+// QueryAuditJSONRequestBody defines body for QueryAudit for application/json ContentType.
+type QueryAuditJSONRequestBody = AuditQuery
 
 // ClassifyJSONRequestBody defines body for Classify for application/json ContentType.
 type ClassifyJSONRequestBody = ClassifyRequest
@@ -8278,6 +8534,17 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
 	UpdateAgentConfig(ctx context.Context, id string, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAgentChanges What was changed about an agent since its directory was last synced
+	//
+	// The edits a sync of the agent's directory would write over: everything changed about the agent, its skills and its knowledge since the last sync, newest first. An agent nobody has touched since answers with an empty list.
+	//
+	// This is what a sync refused with `unsynced_changes` is asking about. Show the changes, let the person decide, and sync again with `base_change` set to `last_change` to say they have been seen -- having either written them into the directory first, or chosen to write over them.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/configs/{id}/changes (the `GetAgentChanges` operationId).
+	GetAgentChanges(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListConfigPlugins The plugin logins this agent holds
 	//
@@ -9305,6 +9572,8 @@ type ClientInterface interface {
 	//
 	// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
 	//
+	// A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
@@ -9319,6 +9588,8 @@ type ClientInterface interface {
 	// agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
 	//
 	// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+	//
+	// A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -9485,6 +9756,32 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
 	AddVoiceSample(ctx context.Context, id string, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// QueryAuditWithBody List the changes made to the app's configuration
+	//
+	// Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+	//
+	// What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
+	QueryAuditWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// QueryAudit List the changes made to the app's configuration
+	//
+	// Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+	//
+	// What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
+	QueryAudit(ctx context.Context, body QueryAuditJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ClassifyWithBody Ask a classifier typed questions about a piece of text
 	//
@@ -11000,6 +11297,27 @@ func (c *Client) UpdateAgentConfigWithBody(ctx context.Context, id string, conte
 // Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
 func (c *Client) UpdateAgentConfig(ctx context.Context, id string, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateAgentConfigRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetAgentChanges What was changed about an agent since its directory was last synced
+//
+// The edits a sync of the agent's directory would write over: everything changed about the agent, its skills and its knowledge since the last sync, newest first. An agent nobody has touched since answers with an empty list.
+//
+// This is what a sync refused with `unsynced_changes` is asking about. Show the changes, let the person decide, and sync again with `base_change` set to `last_change` to say they have been seen -- having either written them into the directory first, or chosen to write over them.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/configs/{id}/changes (the `GetAgentChanges` operationId).
+func (c *Client) GetAgentChanges(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAgentChangesRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -13166,6 +13484,8 @@ func (c *Client) UpdateSkill(ctx context.Context, id string, body UpdateSkillJSO
 //
 // knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
 //
+// A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
@@ -13190,6 +13510,8 @@ func (c *Client) SyncAgentWithBody(ctx context.Context, contentType string, body
 // agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
 //
 // knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+//
+// A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -13537,6 +13859,52 @@ func (c *Client) AddVoiceSampleWithBody(ctx context.Context, id string, contentT
 // Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
 func (c *Client) AddVoiceSample(ctx context.Context, id string, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAddVoiceSampleRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// QueryAuditWithBody List the changes made to the app's configuration
+//
+// Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+//
+// What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
+func (c *Client) QueryAuditWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewQueryAuditRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// QueryAudit List the changes made to the app's configuration
+//
+// Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+//
+// What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
+func (c *Client) QueryAudit(ctx context.Context, body QueryAuditJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewQueryAuditRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -16520,6 +16888,40 @@ func NewUpdateAgentConfigRequestWithBody(server string, id string, contentType s
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetAgentChangesRequest constructs an http.Request for the GetAgentChanges method
+func NewGetAgentChangesRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/configs/%s/changes", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -21214,6 +21616,46 @@ func NewAddVoiceSampleRequestWithBody(server string, id string, contentType stri
 	return req, nil
 }
 
+// NewQueryAuditRequest calls the generic QueryAudit builder with application/json body
+func NewQueryAuditRequest(server string, body QueryAuditJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewQueryAuditRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewQueryAuditRequestWithBody constructs an http.Request for the QueryAudit method, with any body, and a specified content type
+func NewQueryAuditRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/audit/query")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewClassifyRequest calls the generic Classify builder with application/json body
 func NewClassifyRequest(server string, body ClassifyJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -24761,6 +25203,19 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /v1/agents/configs/{id} (the `UpdateAgentConfig` operationId).
 	UpdateAgentConfigWithResponse(ctx context.Context, id string, body UpdateAgentConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAgentConfigResponse, error)
 
+	// GetAgentChangesWithResponse What was changed about an agent since its directory was last synced
+	//
+	// The edits a sync of the agent's directory would write over: everything changed about the agent, its skills and its knowledge since the last sync, newest first. An agent nobody has touched since answers with an empty list.
+	//
+	// This is what a sync refused with `unsynced_changes` is asking about. Show the changes, let the person decide, and sync again with `base_change` set to `last_change` to say they have been seen -- having either written them into the directory first, or chosen to write over them.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/configs/{id}/changes (the `GetAgentChanges` operationId).
+	GetAgentChangesWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAgentChangesResponse, error)
+
 	// ListConfigPluginsWithResponse The plugin logins this agent holds
 	//
 	// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
@@ -25905,6 +26360,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
 	//
+	// A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -25919,6 +26376,8 @@ type ClientWithResponsesInterface interface {
 	// agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
 	//
 	// knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+	//
+	// A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -26101,6 +26560,32 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
 	AddVoiceSampleWithResponse(ctx context.Context, id string, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*AddVoiceSampleResponse, error)
+
+	// QueryAuditWithBodyWithResponse List the changes made to the app's configuration
+	//
+	// Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+	//
+	// What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
+	QueryAuditWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*QueryAuditResponse, error)
+
+	// QueryAuditWithResponse List the changes made to the app's configuration
+	//
+	// Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+	//
+	// What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
+	QueryAuditWithResponse(ctx context.Context, body QueryAuditJSONRequestBody, reqEditors ...RequestEditorFn) (*QueryAuditResponse, error)
 
 	// ClassifyWithBodyWithResponse Ask a classifier typed questions about a piece of text
 	//
@@ -29031,6 +29516,82 @@ func (r UpdateAgentConfigResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r UpdateAgentConfigResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetAgentChangesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AgentChanges
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAgentChangesResponse) GetJSON200() *AgentChanges {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetAgentChangesResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetAgentChangesResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetAgentChangesResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetAgentChangesResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetAgentChangesResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAgentChangesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAgentChangesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAgentChangesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAgentChangesResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -35185,6 +35746,8 @@ type SyncAgentResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 }
@@ -35207,6 +35770,11 @@ func (r SyncAgentResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r SyncAgentResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r SyncAgentResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -36162,6 +36730,75 @@ func (r AddVoiceSampleResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AddVoiceSampleResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type QueryAuditResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AuditPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r QueryAuditResponse) GetJSON200() *AuditPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r QueryAuditResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r QueryAuditResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r QueryAuditResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r QueryAuditResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r QueryAuditResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r QueryAuditResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r QueryAuditResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r QueryAuditResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -41780,6 +42417,25 @@ func (c *ClientWithResponses) UpdateAgentConfigWithResponse(ctx context.Context,
 	return ParseUpdateAgentConfigResponse(rsp)
 }
 
+// GetAgentChangesWithResponse What was changed about an agent since its directory was last synced
+//
+// The edits a sync of the agent's directory would write over: everything changed about the agent, its skills and its knowledge since the last sync, newest first. An agent nobody has touched since answers with an empty list.
+//
+// This is what a sync refused with `unsynced_changes` is asking about. Show the changes, let the person decide, and sync again with `base_change` set to `last_change` to say they have been seen -- having either written them into the directory first, or chosen to write over them.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/configs/{id}/changes (the `GetAgentChanges` operationId).
+func (c *ClientWithResponses) GetAgentChangesWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAgentChangesResponse, error) {
+	rsp, err := c.GetAgentChanges(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAgentChangesResponse(rsp)
+}
+
 // ListConfigPluginsWithResponse The plugin logins this agent holds
 //
 // The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
@@ -43602,6 +44258,8 @@ func (c *ClientWithResponses) UpdateSkillWithResponse(ctx context.Context, id st
 //
 // knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
 //
+// A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -43622,6 +44280,8 @@ func (c *ClientWithResponses) SyncAgentWithBodyWithResponse(ctx context.Context,
 // agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
 //
 // knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
+//
+// A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -43917,6 +44577,44 @@ func (c *ClientWithResponses) AddVoiceSampleWithResponse(ctx context.Context, id
 		return nil, err
 	}
 	return ParseAddVoiceSampleResponse(rsp)
+}
+
+// QueryAuditWithBodyWithResponse List the changes made to the app's configuration
+//
+// Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+//
+// What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
+func (c *ClientWithResponses) QueryAuditWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*QueryAuditResponse, error) {
+	rsp, err := c.QueryAuditWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseQueryAuditResponse(rsp)
+}
+
+// QueryAuditWithResponse List the changes made to the app's configuration
+//
+// Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+//
+// What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
+func (c *ClientWithResponses) QueryAuditWithResponse(ctx context.Context, body QueryAuditJSONRequestBody, reqEditors ...RequestEditorFn) (*QueryAuditResponse, error) {
+	rsp, err := c.QueryAudit(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseQueryAuditResponse(rsp)
 }
 
 // ClassifyWithBodyWithResponse Ask a classifier typed questions about a piece of text
@@ -46964,6 +47662,67 @@ func ParseUpdateAgentConfigResponse(rsp *http.Response) (*UpdateAgentConfigRespo
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest AgentConfig
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetAgentChangesResponse parses an HTTP response from a GetAgentChangesWithResponse call
+func ParseGetAgentChangesResponse(rsp *http.Response) (*GetAgentChangesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAgentChangesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AgentChanges
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -51991,6 +52750,13 @@ func ParseSyncAgentResponse(rsp *http.Response) (*SyncAgentResponse, error) {
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -52729,6 +53495,60 @@ func ParseAddVoiceSampleResponse(rsp *http.Response) (*AddVoiceSampleResponse, e
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseQueryAuditResponse parses an HTTP response from a QueryAuditWithResponse call
+func ParseQueryAuditResponse(rsp *http.Response) (*QueryAuditResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &QueryAuditResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AuditPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError

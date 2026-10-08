@@ -59,6 +59,7 @@ class AgentConfigPatch:
                 speech target and a session created from it needs no call to join.
             name (str | Unset): What the config is called, which is unique among the customer's own.
             plugin_events (list[PluginEvent] | Unset):
+            progressive_tools (bool | Unset):
             sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
                 code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
                 everything out in its head.
@@ -97,6 +98,7 @@ class AgentConfigPatch:
     mode: AgentMode | Unset = UNSET
     name: str | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
+    progressive_tools: bool | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     sandbox_options: SandboxOptions | Unset = UNSET
     search: str | Unset = UNSET
@@ -180,6 +182,8 @@ class AgentConfigPatch:
             for plugin_events_item_data in self.plugin_events:
                 plugin_events_item = plugin_events_item_data.to_dict()
                 plugin_events.append(plugin_events_item)
+
+        progressive_tools = self.progressive_tools
 
         sandbox: str | Unset = UNSET
         if not isinstance(self.sandbox, Unset):
@@ -265,6 +269,8 @@ class AgentConfigPatch:
             field_dict["name"] = name
         if plugin_events is not UNSET:
             field_dict["plugin_events"] = plugin_events
+        if progressive_tools is not UNSET:
+            field_dict["progressive_tools"] = progressive_tools
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
         if sandbox_options is not UNSET:
@@ -407,6 +413,8 @@ class AgentConfigPatch:
 
                 plugin_events.append(plugin_events_item)
 
+        progressive_tools = d.pop("progressive_tools", UNSET)
+
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
         if isinstance(_sandbox, Unset):
@@ -493,6 +501,7 @@ class AgentConfigPatch:
             mode=mode,
             name=name,
             plugin_events=plugin_events,
+            progressive_tools=progressive_tools,
             sandbox=sandbox,
             sandbox_options=sandbox_options,
             search=search,

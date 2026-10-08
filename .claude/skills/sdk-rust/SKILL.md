@@ -106,7 +106,8 @@ returned. `close()` is idempotent.
   (or there was none). `active` and `handles` go on the handshake. A message with a
   `session_id` is answered with `answer`, as the server acting for the writer. `load` and `ping` every 15s. `get_or_create_agent` keeps one session
   per channel and closes them all when `run` ends.
-- `Dispatch::host` declares tools (`host_tools`) after every `ready`, runs each `tool_call` in
+- `Dispatch::host(&agent, tool_timeout)` declares the `AgentRef`'s own `tools` under its name
+  (`host_tools`) after every `ready`, runs each `tool_call` in
   the same `JoinSet`, and ends `run` with `Error::Failed` on `hosting_refused`. Unlike Go, it
   does not reconnect.
 - `Knowledge::add_url` and `Router::transcribe`/`record` poll until the job settles.

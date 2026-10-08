@@ -72,6 +72,20 @@ The Go SDK (`agents.PluginSettings`) and the Python folder reader (`PluginSettin
 `plugins/stream`) have moved, and the Python reader now accepts `scopes` and `user` on
 `mcp_servers`. Other SDKs follow.
 
+### `Dispatch.host` takes an agent and hosts its tools
+
+A dispatch worker hosts an agent's own tools under its name, in place of an agent id and a
+registry passed alongside. The router matches a hosted tool on a session's agent id or agent
+name, so the name is enough. In Python (`plugins/stream`), `Dispatch.host(agent_id, functions,
+timeout)` is `Dispatch.host(agent, tool_timeout)`, with `agent` from
+`stream.Client().agent(name)` and its tools registered with `@agent.register()`. In
+JavaScript, `host(agentId, tools, { timeoutMs })` is `host(agent, { toolTimeoutMs })`, hosting
+`client.agent(name).tools`. In Go, `Dispatch.Host(agentID, functions, timeout)` is
+`Dispatch.Host(agent, toolTimeout)`, on both `stream.Dispatch` and `agents.Dispatch`, hosting
+`client.Agent(name).Tools()` or an `agents.Agent`'s. .NET, Ruby, Rust and PHP take the agent
+the same way. The timeout is renamed to say what it is: how long the router waits for one
+tool call, not how long the worker runs.
+
 ### The connector catalog answers `Connector` and `ConnectorPage`
 
 `listConnectors`, `getConnector` and `createConnector` (`/v1/agents/connectors`) answered schemas named `ConnectorDefinition` and `ConnectorDefinitionPage`. They are `Connector` and `ConnectorPage` now; the JSON is unchanged. Go, JavaScript and Python clients use the new type names.
@@ -501,6 +515,51 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### A log severity is the least serious level to show, not the only one
+
+`severity` on `GET /v1/agents/logs` was an exact match, so asking for `error` hid the warnings
+next to it and there was no way to ask for both. It now names the floor: `warn` answers with
+warnings and errors, `info` with everything, and `error` is unchanged. `warn` is also a severity
+a log can be written at, which it was in the data but not in the enum.
+
+### The router records who changed the app's configuration
+
+Every change to an agent config, a skill, a knowledge document or url, a router config, a
+plugin credential or a policy is kept, with the fields that moved, who moved them and what
+they used. `queryAudit` (`POST /v1/audit/query`, cursor paged) answers an `AuditPage` of
+`AuditEntry` `{id, resource_type, resource_id, resource_name, agent_id, action, source,
+actor_id, actor_name, request_id, changes, created_at}`, filtered by any of `resource_type`,
+`resource_id`, `agent_id`, `source` and `action`. Only configuration is recorded: a session,
+a simulation and a run are not, because they are traffic rather than setup. A write that
+moves nothing records nothing, and a plugin's secret is never written down.
+
+Who made a change comes from three unsigned headers a server-side caller may send:
+`X-Stream-Client` (`dashboard`, `cli` or `sdk`, and `api` when nothing says), with
+`X-Stream-Actor-Id` and `X-Stream-Actor-Name` naming the person behind a client that signs
+its own users in. They buy a name beside a change somebody already had the credential to
+make, never permission. The router keeps no email addresses, so the name is a person's name.
+Go sends the client header from `Backend.Credentials`; other SDKs follow.
+
+### A sync no longer writes over an edit made since the last one
+
+`SyncAgentRequest` takes `check_changes`: a sync asking to be checked is refused with a 409
+`unsynced_changes`, naming the fields, rather than replacing an edit made in the dashboard
+since that directory last synced. Only the fields the directory declares are compared, and
+only against what is stored, so a sync whose directory already holds the change goes through.
+`getAgentChanges` (`GET /v1/agents/configs/{id}/changes`) answers an `AgentChanges`
+`{items, last_change, synced_at}`: what changed since the last sync, for a client to show.
+Syncing again with `base_change` set to the newest entry says the person has seen them and
+means it. Without `check_changes` a sync behaves exactly as before, so an SDK that syncs on
+startup is unaffected.
+
+### Tools can be loaded progressively
+
+An agent config takes `progressive_tools`, a boolean that is off by default, and so does `agent.yaml`. When it is on, the model sees each plugin, MCP server and connector tool as the first line of its description, plus its argument schema with every description, title and example removed. The first time the model calls a tool, the router returns the full description and input schema instead of running the tool, and the model calls it again. Some servers put a page of instructions and examples into a tool's description; with this setting, that page is only paid for in conversations that use the tool. The cost is one extra model turn for each tool a conversation uses. User plugins are unchanged, since they already list their tools on demand. Go and Python read the key from `agent.yaml`, and JavaScript has the regenerated types; other SDKs follow.
+
+### A connector call waits out the provider's rate limit
+
+When a provider answers a session's connector tool call with `429` and `Retry-After`, the model reads a `connector_rate_limited` result with `retry_after_seconds`, and the router sends no call on the same `rate_limit.per` key (`app`, `tenant` or `user` in the connector's manifest) until that time passes. Every router on the same Redis holds the same calls. The router never sends a call again by itself. A connector whose manifest has no `rate_limit`, a `429` with no `Retry-After`, and a router without Redis behave as before; a router with connectors on and no Redis logs one warning at start.
+
 ### A session can be opened with the history the caller kept
 
 `POST /v1/agents/sessions` takes `history`: the conversation so far, oldest first, as up to 100 `HistoryMessage`s with a `role` of `user` or `assistant`, `text`, and an optional author `name` and `created_at`. It is for a backend that keeps its own thread, such as one in its own Slack app, that outlives a session: open a new session with the thread here, then send the next message to `POST /v1/agents/sessions/{id}/responses`. The model is handed the history before the first response, the way a resumed conversation's is, and once any message names its author or time each user message is quoted with them behind a note that names are labels, not authority. The router records none of it, as turns, transcript or Chat messages; with `incognito` it keeps nothing at all. More than 100 messages or 60000 characters of text, a role other than `user` or `assistant`, and `history` with `conversation_id` are 400s, and a device sending it is a 403. Go (`client.SessionOptions.History`) and Python (`SessionOptions.history`) take it, and JavaScript's `SessionSpec` from the regenerated types; other SDKs follow.
@@ -549,6 +608,10 @@ A fixed connector binding takes `events`, a list of `{event, arguments, instruct
 ### A connection's tool calls and grants are on record, and a user's connections can be deleted
 
 Each connector tool call a session runs leaves one row: the binding, the connection, the tool, the latency and, for a call that failed, an `error_type` of `customer_auth`, `external_server`, `client_timeout`, `outcome_unknown` or `denied`. No row holds what a call was asked or answered, and an incognito session's rows name no session. `GET /v1/agents/connections/{id}/invocations` (`listConnectionInvocations`, server-side only) pages through them, newest first. Each grant a connection gets, renews or loses leaves one audit row (`grant_created` at a consent or a credentials write, `grant_refreshed` when the router renews the credential, `grant_revoked` when the provider refuses or revokes it or the connection is deleted), with the request, session and authorization attempt that caused it; `GET /v1/agents/connector-audit` (`listConnectorAudit`, server-side only) pages through the app's, a deleted connection's included. `Connection` gains `used_by`: the agent config bindings that name it as their fixed connection. `DELETE /v1/agents/users/{user_id}/connections` (`deleteUserConnections`, server-side only) deletes every connection of one user for good, with its pending consents and its tool call log, so the next session for that user attaches none of them. A deployment with connectors off writes none of this. The Go client and the JavaScript types are regenerated; other SDKs follow.
+
+### A connector binding says what its calls do on an interruption, and what the agent says while they run
+
+A connector binding takes `policy`, a `ConnectorBindingPolicy` with three optional fields. `on_interrupt: wait` lets a call finish after the caller interrupts the turn, up to the binding's timeout, and its result goes into the conversation when it comes; until then the call reads as still running, so the next turn does not wait for it; `cancel`, the default, cancels it at the provider as before. `cancellable: false` stops waiting at the interruption but does not send the provider the cancel for it, for a tool that is not safe to stop halfway; its call is logged as `outcome_unknown`. The binding's timeout still ends the call and sends the cancel, whatever the policy. `pre_speech` is what the agent says while one of the binding's tools runs, in place of its own "One moment.", and the session socket's `tool_started` carries it as `pre_speech`. A binding without `policy` behaves, and is stored and read back, as before. The Go client and the JavaScript types are regenerated; other SDKs follow.
 
 ### Episodes close and their cards hold a summary
 

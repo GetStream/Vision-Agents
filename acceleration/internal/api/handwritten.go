@@ -50,6 +50,15 @@ func documentHandWritten(api huma.API) {
 			"selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer " +
 			"declares). " +
 			"Every watcher is sent each one when it attaches.\n" +
+			"`connector_scope_required` says a connector tool call was refused because the caller's " +
+			"own connection lacks access the provider asked for (insufficient_scope or a claims " +
+			"challenge), and a step-up consent was begun for it: name (the binding's alias), " +
+			"connector_id, connection_id, scopes (what the provider asked for, empty for a claims " +
+			"challenge), authorization_id, launch_url, handoff_token and expires_at. A client opens " +
+			"launch_url in a popup and posts it handoff_token, as for createAuthorization. The old " +
+			"grant keeps working until the step-up succeeds, and the same call works afterwards in " +
+			"the same session. While that step-up is open, calls refused for the same access send " +
+			"no second event.\n" +
 			"Persistent text sessions also emit `conversation_updated` with conversation_id and a " +
 			"complete message snapshot: id, command_id, question_id, role, text, state, " +
 			"response_started_at, state_started_at, finished_at, duration_ms, saved, " +
@@ -65,7 +74,8 @@ func documentHandWritten(api huma.API) {
 			"client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. " +
 			"Once the user finishes that login the message is sent again with status connected and " +
 			"no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, " +
-			"failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; " +
+			"failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and " +
+			"pre_speech when the tool's connector binding sets one in its policy; " +
 			"tool_ran also includes tool_call_id.\n" +
 			"A respond command carrying command_id emits command_accepted with a nested command " +
 			"receipt (command_id, user_message_id, assistant_message_id, state, duplicate). Personal " +
@@ -537,7 +547,7 @@ func documentHandWritten(api huma.API) {
 			{Name: "config_id", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "session_id", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "user_id", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
-			{Name: "severity", In: "query", Schema: &huma.Schema{Type: huma.TypeString, Enum: []any{"info", "error"}}},
+			{Name: "severity", In: "query", Description: "The least serious level to show, not the only one: warn is warnings and errors.", Schema: &huma.Schema{Type: huma.TypeString, Enum: []any{"info", "warn", "error"}}},
 			{Name: "source", In: "query", Description: "Comma-separated user/agent/tool/system sources.", Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "q", In: "query", Schema: &huma.Schema{Type: huma.TypeString, MaxLength: itemLimit(256)}},
 			{Name: "from", In: "query", Schema: &huma.Schema{Type: huma.TypeString, Format: "date-time"}},
@@ -581,7 +591,7 @@ func documentHandWritten(api huma.API) {
 			{Name: "config_id", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "session_id", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "user_id", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
-			{Name: "severity", In: "query", Schema: &huma.Schema{Type: huma.TypeString, Enum: []any{"info", "error"}}},
+			{Name: "severity", In: "query", Description: "The least serious level to show, not the only one: warn is warnings and errors.", Schema: &huma.Schema{Type: huma.TypeString, Enum: []any{"info", "warn", "error"}}},
 			{Name: "source", In: "query", Description: "Comma-separated user/agent/tool/system sources.", Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "q", In: "query", Schema: &huma.Schema{Type: huma.TypeString, MaxLength: itemLimit(256)}},
 			{Name: "from", In: "query", Schema: &huma.Schema{Type: huma.TypeString, Format: "date-time"}},

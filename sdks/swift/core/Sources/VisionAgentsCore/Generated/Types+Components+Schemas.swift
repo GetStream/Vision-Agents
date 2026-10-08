@@ -298,6 +298,10 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/config_id`.
             internal var configId: Swift.String?
+            /// The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A required binding left without one fails the session; an optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/connector_bindings`.
+            internal var connectorBindings: [Components.Schemas.SessionConnectorBinding]?
             /// Older history was omitted from the model context.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/context_truncated`.
@@ -459,6 +463,7 @@ extension Components {
             ///   - callId: The call to join. Required unless the session is text.
             ///   - callType:
             ///   - configId: An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
+            ///   - connectorBindings: The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A required binding left without one fails the session; an optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.
             ///   - contextTruncated: Older history was omitted from the model context.
             ///   - conversationId: Stream Chat CID to resume; returned for persistent text sessions.
             ///   - custom: Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing.
@@ -498,6 +503,7 @@ extension Components {
                 callId: Swift.String? = nil,
                 callType: Swift.String? = nil,
                 configId: Swift.String? = nil,
+                connectorBindings: [Components.Schemas.SessionConnectorBinding]? = nil,
                 contextTruncated: Swift.Bool? = nil,
                 conversationId: Swift.String? = nil,
                 custom: Components.Schemas.CreateSessionRequest.CustomPayload? = nil,
@@ -537,6 +543,7 @@ extension Components {
                 self.callId = callId
                 self.callType = callType
                 self.configId = configId
+                self.connectorBindings = connectorBindings
                 self.contextTruncated = contextTruncated
                 self.conversationId = conversationId
                 self.custom = custom
@@ -577,6 +584,7 @@ extension Components {
                 case callId = "call_id"
                 case callType = "call_type"
                 case configId = "config_id"
+                case connectorBindings = "connector_bindings"
                 case contextTruncated = "context_truncated"
                 case conversationId = "conversation_id"
                 case custom
@@ -675,7 +683,7 @@ extension Components {
         }
         /// - Remark: Generated from `#/components/schemas/ErrorDetail`.
         internal struct ErrorDetail: Codable, Hashable, Sendable {
-            /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+            /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
             ///
             /// - Remark: Generated from `#/components/schemas/ErrorDetail/code`.
             internal var code: Swift.String
@@ -692,7 +700,7 @@ extension Components {
             /// Creates a new `ErrorDetail`.
             ///
             /// - Parameters:
-            ///   - code: What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+            ///   - code: What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
             ///   - docUrl: Where the code is explained.
             ///   - message: What went wrong, for a person to read. Its wording may change; branch on code.
             ///   - _type:
@@ -1568,6 +1576,50 @@ extension Components {
                 case userId = "user_id"
                 case video
                 case voice
+            }
+        }
+        /// The connection a session uses for one of its agent config's connector bindings chosen per session. Only a reference: the credential stays sealed on the connection.
+        ///
+        /// - Remark: Generated from `#/components/schemas/SessionConnectorBinding`.
+        internal struct SessionConnectorBinding: Codable, Hashable, Sendable {
+            /// The caller's own connection to the binding's connector.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SessionConnectorBinding/connection_id`.
+            internal var connectionId: Swift.String
+            /// The binding's alias in the agent config.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SessionConnectorBinding/name`.
+            internal var name: Swift.String
+            /// Creates a new `SessionConnectorBinding`.
+            ///
+            /// - Parameters:
+            ///   - connectionId: The caller's own connection to the binding's connector.
+            ///   - name: The binding's alias in the agent config.
+            internal init(
+                connectionId: Swift.String,
+                name: Swift.String
+            ) {
+                self.connectionId = connectionId
+                self.name = name
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case connectionId = "connection_id"
+                case name
+            }
+            internal init(from decoder: any Swift.Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                self.connectionId = try container.decode(
+                    Swift.String.self,
+                    forKey: .connectionId
+                )
+                self.name = try container.decode(
+                    Swift.String.self,
+                    forKey: .name
+                )
+                try decoder.ensureNoAdditionalProperties(knownKeys: [
+                    "connection_id",
+                    "name"
+                ])
             }
         }
         /// Which sessions to list. A field not listed here is refused rather than ignored.

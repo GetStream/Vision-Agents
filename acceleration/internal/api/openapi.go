@@ -289,6 +289,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerPlugins(api)
 	s.registerConfigPatch(api)
 	s.registerSync(api)
+	s.registerAudit(api)
 	s.registerConnectors(api)
 	s.registerOAuthClients(api)
 	s.registerConnectorProviderApps(api)

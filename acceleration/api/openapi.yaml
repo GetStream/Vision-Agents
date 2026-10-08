@@ -91,6 +91,24 @@ components:
           description: The customer's own cost labels.
           type: object
       type: object
+    AgentChanges:
+      description: 'What was changed about an agent since its directory was last synced: the edits a sync of that directory would write over.'
+      properties:
+        items:
+          description: The changes made since the last sync, newest first, at most 200. Empty when the agent has not been touched since.
+          items:
+            $ref: '#/components/schemas/AuditEntry'
+          type: array
+        last_change:
+          description: The newest change's id. Send it as base_change on a sync to say these have been seen, and that sync will not be refused for them.
+          type: string
+        synced_at:
+          description: When the directory was last synced onto this agent. Absent for an agent no directory has ever been synced onto.
+          format: date-time
+          type: string
+      required:
+        - items
+      type: object
     AgentChannels:
       description: The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
       properties:
@@ -154,6 +172,9 @@ components:
           items:
             $ref: '#/components/schemas/PluginEvent'
           type: array
+        progressive_tools:
+          description: Whether tools from plugins, MCP servers and connectors are offered by a summary, the first call to each returning its full description instead of running it.
+          type: boolean
         sandbox:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
@@ -258,6 +279,8 @@ components:
             $ref: '#/components/schemas/PluginEvent'
           maxItems: 32
           type: array
+        progressive_tools:
+          type: boolean
         sandbox:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
@@ -359,6 +382,9 @@ components:
             $ref: '#/components/schemas/PluginEvent'
           maxItems: 32
           type: array
+        progressive_tools:
+          description: Whether the agent is offered its plugin, MCP server and connector tools by the first line of each one's description, with its arguments' descriptions left out, and the first call to a tool returns its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
+          type: boolean
         sandbox:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
@@ -431,6 +457,9 @@ components:
           description: 'The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place.'
           pattern: ^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$
           type: string
+        policy:
+          $ref: '#/components/schemas/ConnectorBindingPolicy'
+          description: How the binding's tool calls behave around speech and interruptions. Omitted, a call is cancelled at the provider when the turn is interrupted, and the agent picks its own words while it runs.
         required:
           default: false
           description: Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
@@ -508,6 +537,7 @@ components:
         severity:
           enum:
             - info
+            - warn
             - error
           type: string
         source:
@@ -696,6 +726,139 @@ components:
         - sip_uri
         - trunk_id
       type: object
+    AuditAction:
+      description: created, updated or deleted for a change somebody made one at a time. synced is a whole agent directory written at once by POST /v1/agents/sync, and is what a later sync measures the edits made since against.
+      enum:
+        - created
+        - updated
+        - deleted
+        - synced
+      type: string
+    AuditChange:
+      description: One field that moved, with what it held before and holds now, each in the shape the resource itself is read in.
+      properties:
+        after:
+          description: What it holds now. Absent when it now holds nothing, which is what a deleted resource's fields all do.
+        before:
+          description: What it held, in the shape the resource is read in. Absent when it held nothing, which is what a created resource's fields all did.
+        field:
+          description: The field as the resource's own schema names it.
+          type: string
+      required:
+        - field
+      type: object
+    AuditEntry:
+      description: 'One change somebody made to the app''s configuration: what changed, who changed it, which client they used, and the before and after of every field that moved. Only configuration is recorded -- agents, skills, knowledge, routers, plugins and policies -- never what an agent did while it ran.'
+      properties:
+        action:
+          $ref: '#/components/schemas/AuditAction'
+        actor_id:
+          description: Who made it, as their client named them. Absent for a change nobody signed, such as a process syncing on startup.
+          type: string
+        actor_name:
+          description: 'Their name, as their client named them. Never an email address: the router keeps none.'
+          type: string
+        agent_id:
+          description: The agent the change was to or under. Absent for a resource that belongs to no agent, such as a router.
+          type: string
+        changes:
+          description: Every field that moved. A write that moved nothing is not recorded at all, so this is empty only on a synced entry, which marks the moment a directory and an agent agreed whether or not anything moved.
+          items:
+            $ref: '#/components/schemas/AuditChange'
+          type: array
+        created_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        request_id:
+          description: The X-Request-Id of the request that made it.
+          type: string
+        resource_id:
+          description: The resource, which may since have been deleted.
+          type: string
+        resource_name:
+          description: What it was called when it changed, for a resource that has a name.
+          type: string
+        resource_type:
+          $ref: '#/components/schemas/AuditResourceType'
+        source:
+          $ref: '#/components/schemas/AuditSource'
+      required:
+        - id
+        - resource_type
+        - resource_id
+        - action
+        - source
+        - changes
+        - created_at
+      type: object
+    AuditFilter:
+      additionalProperties: false
+      description: Which changes to list. A field not listed here is refused rather than ignored.
+      properties:
+        action:
+          $ref: '#/components/schemas/AuditAction'
+        agent_id:
+          description: 'One agent''s history: changes to the agent itself and to the skills and knowledge under it.'
+          type: string
+        resource_id:
+          description: One resource's own history.
+          type: string
+        resource_type:
+          $ref: '#/components/schemas/AuditResourceType'
+        source:
+          $ref: '#/components/schemas/AuditSource'
+      type: object
+    AuditPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/AuditEntry'
+          type: array
+        next_cursor:
+          description: Pass as cursor for the next page, with the same filter. Absent on the last one.
+          type: string
+      required:
+        - items
+        - has_more
+      type: object
+    AuditQuery:
+      additionalProperties: false
+      properties:
+        cursor:
+          description: The next_cursor of the previous page, sent with the same filter. Omitted is the first page.
+          type: string
+        filter:
+          $ref: '#/components/schemas/AuditFilter'
+        limit:
+          description: Up to 200. Omitted is 25.
+          format: int64
+          maximum: 200
+          minimum: 1
+          type: integer
+      type: object
+    AuditResourceType:
+      description: 'What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead.'
+      enum:
+        - agent_config
+        - skill
+        - knowledge
+        - knowledge_url
+        - router_config
+        - plugin
+        - policy
+      type: string
+    AuditSource:
+      description: 'Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it.'
+      enum:
+        - dashboard
+        - cli
+        - sdk
+        - api
+      type: string
     Authorization:
       description: 'A consent in flight for one connection: the page that starts it in a browser and the token that binds it to that browser.'
       properties:
@@ -2112,6 +2275,20 @@ components:
       required:
         - event
       type: object
+    ConnectorBindingPolicy:
+      description: How a binding's tool calls behave around speech and interruptions. Every field is optional, and a field left out keeps today's behaviour.
+      properties:
+        cancellable:
+          description: 'Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running after an interruption, for a tool that is not safe to stop halfway, such as a payment; the binding''s timeout still ends it and tells the provider to stop it. It only matters with on_interrupt cancel: a wait call is never stopped by an interruption.'
+          type: boolean
+        on_interrupt:
+          $ref: '#/components/schemas/ConnectorOnInterrupt'
+          description: What an interruption of the turn does to a call in flight. Omitted is cancel.
+        pre_speech:
+          description: What the agent says while one of the binding's tools runs, such as "Let me pull up your calendar.", in place of the phrase it picks itself when the model reached for the tool without a word. A voice session with a separate voice says it; every session reports it on tool_started.
+          minLength: 1
+          type: string
+      type: object
     ConnectorClient:
       additionalProperties: false
       description: How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint.
@@ -2313,6 +2490,12 @@ components:
       required:
         - client_id
       type: object
+    ConnectorOnInterrupt:
+      description: cancel stops waiting for the call when the turn is interrupted, and tells the provider to stop it unless cancellable is false. wait lets the call finish, up to the binding's timeout, and its result goes into the conversation for the next turn.
+      enum:
+        - cancel
+        - wait
+      type: string
     ConnectorPage:
       properties:
         has_more:
@@ -2873,7 +3056,7 @@ components:
     ErrorDetail:
       properties:
         code:
-          description: What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+          description: What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
           type: string
         doc_url:
           description: Where the code is explained.
@@ -6171,9 +6354,15 @@ components:
           items:
             $ref: '#/components/schemas/PluginEntry'
           type: array
+        base_change:
+          description: The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again.
+          type: string
         channels:
           $ref: '#/components/schemas/AgentChannels'
           description: Lines this agent answers on besides Stream Chat, each a number the app connected.
+        check_changes:
+          description: Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants.
+          type: boolean
         connectors:
           description: The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone.
           items:
@@ -6226,6 +6415,9 @@ components:
             $ref: '#/components/schemas/PluginEvent'
           maxItems: 32
           type: array
+        progressive_tools:
+          description: Whether plugin, MCP server and connector tools are offered by a summary, the first call to each returning its full description and input schema instead of running it.
+          type: boolean
         sandbox:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
@@ -8679,6 +8871,41 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Replace an agent config
+  /v1/agents/configs/{id}/changes:
+    get:
+      description: |-
+        The edits a sync of the agent's directory would write over: everything changed about the agent, its skills and its knowledge since the last sync, newest first. An agent nobody has touched since answers with an empty list.
+
+        This is what a sync refused with `unsynced_changes` is asking about. Show the changes, let the person decide, and sync again with `base_change` set to `last_change` to say they have been seen -- having either written them into the directory first, or chosen to write over them.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: getAgentChanges
+      parameters:
+        - description: The agent config, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The agent config, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentChanges'
+          description: The changes since the last sync
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: What was changed about an agent since its directory was last synced
   /v1/agents/configs/{id}/plugins:
     get:
       description: The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
@@ -10332,11 +10559,13 @@ paths:
           name: user_id
           schema:
             type: string
-        - in: query
+        - description: 'The least serious level to show, not the only one: warn is warnings and errors.'
+          in: query
           name: severity
           schema:
             enum:
               - info
+              - warn
               - error
             type: string
         - description: Comma-separated user/agent/tool/system sources.
@@ -10440,11 +10669,13 @@ paths:
           name: user_id
           schema:
             type: string
-        - in: query
+        - description: 'The least serious level to show, not the only one: warn is warnings and errors.'
+          in: query
           name: severity
           schema:
             enum:
               - info
+              - warn
               - error
             type: string
         - description: Comma-separated user/agent/tool/system sources.
@@ -10823,7 +11054,8 @@ paths:
         A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a `type` and the fields of that event.
         The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
         `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
-        Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
+        `connector_scope_required` says a connector tool call was refused because the caller's own connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes (what the provider asked for, empty for a claims challenge), authorization_id, launch_url, handoff_token and expires_at. A client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. The old grant keeps working until the step-up succeeds, and the same call works afterwards in the same session. While that step-up is open, calls refused for the same access send no second event.
+        Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id.
         A respond command carrying command_id emits command_accepted with a nested command receipt (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text returns the existing IDs without invoking the model again; reuse with different text emits an error. Commands with IDs currently accept text only. After restart an interrupted command is reported, not rerun.
         An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `command_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
         A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent. Together they are why the call went the way it did, and they are also written down, so a finished call replays them from `/v1/agents/calls/{id}/events`.
@@ -11843,6 +12075,8 @@ paths:
 
         knowledge/ is the whole of the knowledge base named after the agent, and simulations/ the whole of its simulations: a file taken out of the directory is taken out of the backend on the next sync.
 
+        A directory is not the only thing that writes an agent: somebody may have changed one of the same settings in the dashboard since the last sync. Send `check_changes` and such a sync is refused with `unsynced_changes` instead of writing over them -- only when it really would write over them, so a directory that already holds what the dashboard says syncs without complaint. Read the changes from `GET /v1/agents/configs/{id}/changes`, let the person decide, and sync again with `base_change` to go ahead.
+
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: syncAgent
       requestBody:
@@ -11864,6 +12098,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Store an agent directory's instructions, skills, knowledge, simulations and settings
@@ -12263,6 +12503,36 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: The providers a voice can be prepared with
+  /v1/audit/query:
+    post:
+      description: |-
+        Every change somebody made to the app's configuration, newest first: the agents, their skills, the knowledge they read, the routers, the plugin logins and the policies. Each entry names what changed, who changed it, which client they used, and the before and after of every field that moved.
+
+        What an agent does while it runs is not here: a session, a call and a simulation run are traffic rather than configuration, and are read from their own endpoints. `resource_type`, `resource_id`, `agent_id`, `source` and `action` narrow the list; a deleted resource's entries stay, and its deletion is one of them.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: queryAudit
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuditQuery'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditPage'
+          description: A page of changes
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: List the changes made to the app's configuration
   /v1/classify:
     post:
       description: |-

@@ -18,6 +18,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"golang.org/x/oauth2"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -249,6 +250,9 @@ func connect(ctx context.Context, b core.ResolvedBinding, base *http.Client, end
 		// A failed request is the caller's to retry, so a refused credential is not sent
 		// again by the SDK behind the transport's back.
 		MaxRetries: -1,
+		// The credential is the transport's, so a 401 or a 403 fails that call alone and the
+		// session stays open for the calls after it (refuseAuthorization).
+		OAuthHandler: refuseAuthorization{},
 	}, nil)
 	if err != nil {
 		return nil, nil, stack.Wrap(fmt.Errorf("mcp: connect to %s: %w", b.Manifest.ConnectorID, err))
@@ -344,6 +348,30 @@ func (denyLoader) Load(string) (any, error) {
 
 // capped hands each request to base and caps what can be read of the response at
 // maxResponseBytes.
+// refuseAuthorization is the SDK's OAuthHandler for a session whose credential the router
+// applies itself (core.Transports). It adds no header and authorizes nothing, so a 401 or a
+// 403 is the error of the call it answered, and the session stays open. Without a handler
+// the SDK ends the whole session on either status (go-sdk v1.8.0, mcp/streamable.go:2324
+// and checkResponse, «Only fail the connection for non-transient errors»): a step-up's 403
+// insufficient_scope (AI-854) would then leave no session for the call to run on once the
+// person granted the scope. A credential the provider refused is the transport's to renew
+// or invalidate, and the dispatcher refuses a later call on a connection that is no longer
+// connected before anything is sent (session.dispatcher.recheck).
+type refuseAuthorization struct{}
+
+// TokenSource is none: «In that case, the transport will not add any authorization headers
+// to the request» (go-sdk v1.8.0, auth/client.go).
+func (refuseAuthorization) TokenSource(context.Context) (oauth2.TokenSource, error) {
+	return nil, nil
+}
+
+// Authorize closes the answer's body, which «The function is responsible for» (go-sdk
+// v1.8.0, auth/client.go), and refuses.
+func (refuseAuthorization) Authorize(_ context.Context, _ *http.Request, response *http.Response) error {
+	_ = response.Body.Close()
+	return fmt.Errorf("mcp: the server refused the request with %d %s", response.StatusCode, http.StatusText(response.StatusCode))
+}
+
 type capped struct {
 	base http.RoundTripper
 }

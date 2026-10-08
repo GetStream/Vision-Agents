@@ -317,9 +317,10 @@ public sealed class DispatchTests
             answered.Add(await peer.ReceiveAsync("tool_result"));
         });
         using var client = Fixtures.Client(router);
-        var tools = new Tools().Register<Investigation, string>("investigate_sdk", "Read SDK source",
+        var agent = client.Agent("stream-support");
+        agent.Tools.Register<Investigation, string>("investigate_sdk", "Read SDK source",
             (investigation, _) => Task.FromResult("read " + investigation.Sdk));
-        var dispatch = new Dispatch(new DispatchOptions { Client = client }).Host("stream-support", tools, TimeSpan.FromMinutes(1));
+        var dispatch = new Dispatch(new DispatchOptions { Client = client }).Host(agent, TimeSpan.FromMinutes(1));
 
         await dispatch.RunAsync(TestContext.Current.CancellationToken);
 
@@ -363,9 +364,10 @@ public sealed class DispatchTests
             }
         });
         using var client = Fixtures.Client(router);
-        var tools = new Tools().Register<Investigation, string>("investigate_sdk", "Read SDK source", (_, _) => Task.FromResult(""));
+        var agent = client.Agent("stream-support");
+        agent.Tools.Register<Investigation, string>("investigate_sdk", "Read SDK source", (_, _) => Task.FromResult(""));
         var dispatch = new Dispatch(new DispatchOptions { Client = client }) { FirstRetry = TimeSpan.FromMilliseconds(10) }
-            .Host("stream-support", tools);
+            .Host(agent);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
 
         var running = dispatch.RunAsync(stop.Token);
@@ -390,7 +392,7 @@ public sealed class DispatchTests
             await peer.Closed;
         });
         using var client = Fixtures.Client(router);
-        var dispatch = new Dispatch(new DispatchOptions { Client = client }).Host("stream-support", new Tools());
+        var dispatch = new Dispatch(new DispatchOptions { Client = client }).Host(client.Agent("stream-support"));
 
         var refused = await Assert.ThrowsAsync<InvalidOperationException>(
             () => dispatch.RunAsync(TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));

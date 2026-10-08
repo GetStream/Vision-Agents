@@ -6,7 +6,7 @@ import time
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Optional, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Union
 from urllib.parse import urlencode
 
 import aiohttp
@@ -20,6 +20,9 @@ from ._backend import Backend
 from ._socket import Socket
 from .responses import Responses, RouterError
 from .sessions import _tools
+
+if TYPE_CHECKING:
+    from . import client
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +45,7 @@ class _Hosting:
 
     agent_id: str
     functions: FunctionRegistry
-    timeout: float
+    tool_timeout: float
 
 
 class Dispatch:
@@ -186,10 +189,8 @@ class Dispatch:
 
         return register
 
-    def host(
-        self, agent_id: str, functions: FunctionRegistry, timeout: float = 0.0
-    ) -> None:
-        """Run these functions for every session opened under an agent id, whoever opened it.
+    def host(self, agent: "client.Agent", tool_timeout: float = 0.0) -> None:
+        """Run an agent's functions for every session opened under it, whoever opened it.
 
         A session's own functions run in the process that opened it, which is no use to a
         conversation opened from a browser. Hosting is the other direction: the router offers
@@ -198,24 +199,25 @@ class Dispatch:
 
         Example:
             ```python
-            functions = FunctionRegistry()
+            agent = stream.Client().agent("stream-support")
 
 
-            @functions.register(description="Read the SDK's source")
+            @agent.register(description="Read the SDK's source")
             async def investigate_sdk(sdk: str) -> str:
                 return await read_source(sdk)
 
 
-            dispatch.host("stream-support", functions, timeout=60)
+            dispatch.host(agent, tool_timeout=60)
             ```
 
         Args:
-            agent_id: The agent whose sessions are offered the functions.
-            functions: The functions to run, as `agent.register` builds them.
-            timeout: How long the router gives one call, in seconds. Zero takes its
-                default.
+            agent: The agent whose sessions are offered its functions, hosted under its
+                name.
+            tool_timeout: How long the router waits for one tool call to be answered, in
+                seconds, before telling the model it failed. Not how long the worker runs.
+                Zero takes the router's default of two minutes.
         """
-        self._hosted.append(_Hosting(agent_id, functions, timeout))
+        self._hosted.append(_Hosting(agent.name, agent.functions, tool_timeout))
 
     async def get_or_create_agent(
         self, message: InboundMessage, create_agent: AgentFactory
@@ -429,7 +431,7 @@ class Dispatch:
                     "type": "host_tools",
                     "agent_id": offer.agent_id,
                     "tools": [tool.to_dict() for tool in _tools(offer.functions)],
-                    "timeout_ms": int(offer.timeout * 1000),
+                    "timeout_ms": int(offer.tool_timeout * 1000),
                 }
             )
 

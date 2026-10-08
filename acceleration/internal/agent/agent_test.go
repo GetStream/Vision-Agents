@@ -515,6 +515,8 @@ type AgentSuite struct {
 	// runner carries out the tools this package does not own, present only when a test
 	// gives the agent one.
 	runner *stubToolRunner
+	// toolPolicy is what a test's tools ask of the agent (Options.ToolPolicy).
+	toolPolicy func(tool string) ToolPolicy
 	// duplex is how the agent listens and talks at the same time, off unless a test says
 	// otherwise.
 	duplex DuplexOptions
@@ -567,6 +569,7 @@ func (s *AgentSuite) SetupTest() {
 	s.line = nil
 	s.tools = harness.Tools{}
 	s.runner = nil
+	s.toolPolicy = nil
 	s.duplex = DuplexOptions{}
 	s.speculates = false
 	s.performing = ""
@@ -741,6 +744,7 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		Skills:             s.skills,
 		Telephony:          calling,
 		ToolRunner:         running,
+		ToolPolicy:         s.toolPolicy,
 		Tools:              s.tools,
 		Duplex:             s.duplex,
 		SpeculativeReplies: s.speculates,

@@ -234,8 +234,13 @@ var (
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"note": map[string]any{"type": "string"}}}}
 	toolFails = &mcpsdk.Tool{Name: "fails", Description: "Reports its own failure.",
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}}}
+	// toolGuarded is never run: the provider refuses every call of it with a 403 that asks for
+	// the scope the call names, or a 401 with the claims challenge it names (newAccountsProvider).
+	toolGuarded = &mcpsdk.Tool{Name: "guarded", Description: "Needs a scope no grant has.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+			"scope": map[string]any{"type": "string"}, "claims": map[string]any{"type": "string"}}}}
 	providerTools = map[string]*mcpsdk.Tool{"whoami": toolWhoami, "secret": toolSecret, "slow": toolSlow,
-		"echo": toolEcho, "fails": toolFails}
+		"echo": toolEcho, "fails": toolFails, "guarded": toolGuarded}
 )
 
 // grants grant each of the provider's tools by name, at its digest.
@@ -268,6 +273,9 @@ type accountsProvider struct {
 	// tool has answered, as a server that streams progress does. Off answers in one JSON
 	// object when the tool is done.
 	streams bool
+	// limited answers tools/call of an account with 429 and the Retry-After it maps to, none
+	// when that is "" (RFC 6585 section 4: the header is a MAY).
+	limited map[string]string
 }
 
 // slowFor is how long slow takes before it answers, longer than any test lets it run; it
@@ -275,7 +283,7 @@ type accountsProvider struct {
 const slowFor = 2 * time.Second
 
 func newAccountsProvider(s *connectorFixture) *accountsProvider {
-	p := &accountsProvider{called: map[string]int{}, methods: map[string][]string{}}
+	p := &accountsProvider{called: map[string]int{}, methods: map[string][]string{}, limited: map[string]string{}}
 	servers := map[string]*mcpsdk.Server{}
 	for _, account := range []string{"primary", "secondary", "moved"} {
 		server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: account, Version: "1"}, nil)
@@ -302,6 +310,9 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 		server.AddTool(toolFails, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 			return &mcpsdk.CallToolResult{IsError: true, Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the record is locked"}}}, nil
 		})
+		server.AddTool(toolGuarded, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "guarded ran"}}}, nil
+		})
 		servers[account] = server
 	}
 	p.Server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -321,6 +332,13 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 		r.Body = io.NopCloser(bytes.NewReader(raw))
 		var message struct {
 			Method string `json:"method"`
+			Params struct {
+				Name      string `json:"name"`
+				Arguments struct {
+					Scope  string `json:"scope"`
+					Claims string `json:"claims"`
+				} `json:"arguments"`
+			} `json:"params"`
 		}
 		_ = json.Unmarshal(raw, &message)
 		p.mu.Lock()
@@ -329,7 +347,28 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 			p.called[account]++
 		}
 		streams := p.streams
+		retryAfter, limited := p.limited[account]
 		p.mu.Unlock()
+		if limited && message.Method == "tools/call" {
+			if retryAfter != "" {
+				w.Header().Set("Retry-After", retryAfter)
+			}
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		if message.Method == "tools/call" && message.Params.Name == toolGuarded.Name && message.Params.Arguments.Claims != "" {
+			// Microsoft's claims challenge: a 401 insufficient_claims with the base64 claims
+			// request (oauth2code's Classify).
+			w.Header().Set("WWW-Authenticate", `Bearer error="insufficient_claims", claims="`+message.Params.Arguments.Claims+`"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if message.Method == "tools/call" && message.Params.Name == toolGuarded.Name {
+			// RFC 6750 section 3.1: insufficient_scope, with the scope the request needs.
+			w.Header().Set("WWW-Authenticate", `Bearer error="insufficient_scope", scope="`+message.Params.Arguments.Scope+`"`)
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
 		if streams && message.Method == "tools/call" {
 			// The SSE headers go out now; the SDK's own WriteHeader after them is ignored, and
 			// its events follow on the stream once the tool answers.
@@ -357,7 +396,21 @@ func (p *accountsProvider) streamFirst() {
 func (p *accountsProvider) forget() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.called, p.methods, p.streams = map[string]int{}, map[string][]string{}, false
+	p.called, p.methods, p.streams, p.limited = map[string]int{}, map[string][]string{}, false, map[string]string{}
+}
+
+// limit has account answer tools/call with 429 and retryAfter, until lift.
+func (p *accountsProvider) limit(account, retryAfter string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.limited[account] = retryAfter
+}
+
+// lift ends every limit.
+func (p *accountsProvider) lift() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.limited = map[string]string{}
 }
 
 // calls is how many tools/call reached account.

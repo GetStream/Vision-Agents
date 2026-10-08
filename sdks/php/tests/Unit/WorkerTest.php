@@ -21,7 +21,6 @@ use GetStream\VisionAgents\Session;
 use GetStream\VisionAgents\Tests\Support\LocalRouter;
 use GetStream\VisionAgents\Tests\Support\LocalSocketServer;
 use GetStream\VisionAgents\Tests\Support\Rows;
-use GetStream\VisionAgents\Tools;
 use GetStream\VisionAgents\Worker\Dispatch;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -114,9 +113,10 @@ final class WorkerTest extends TestCase
             }
             $socket->close();
         });
-        $tools = (new Tools())->register('weather_lookup', 'The weather somewhere', [], static fn (array $args): string => 'sunny');
+        $agent = $server->client()->agent('my-agent');
+        $agent->tools->register('weather_lookup', 'The weather somewhere', [], static fn (array $args): string => 'sunny');
 
-        (new Dispatch(client: $server->client()))->host('my-agent', $tools)->run();
+        (new Dispatch(client: $server->client()))->host($agent)->run();
 
         self::assertSame('/v1/dispatch?capacity=4&active=0&handles=', $server->handshakes[0]);
         self::assertSame([['type' => 'done', 'work_id' => 'wk1', 'error' => 'this worker answers no messages']], $server->sent('done'));
@@ -232,14 +232,15 @@ final class WorkerTest extends TestCase
             }
             $socket->close();
         });
-        $tools = (new Tools())
+        $agent = $server->client()->agent('my-agent');
+        $agent->tools
             ->register('weather_lookup', 'The weather somewhere', ['type' => 'object', 'properties' => ['location' => ['type' => 'string']]], static fn (array $args): array => ['location' => $args['location'], 'sky' => 'sunny'])
             ->register('slow', 'Takes a while', [], static function (array $args): string {
                 delay(0.2);
                 return 'done';
             })
             ->register('broken', 'Always fails', [], static fn (array $args): string => throw new RuntimeException('the weather service is down'));
-        $dispatch = (new Dispatch(client: $server->client()))->host('my-agent', $tools, timeoutMs: 30000);
+        $dispatch = (new Dispatch(client: $server->client()))->host($agent, toolTimeoutMs: 30000);
 
         $dispatch->run();
 
@@ -273,8 +274,9 @@ final class WorkerTest extends TestCase
             $server->next($socket);
             $socket->close();
         });
-        $tools = (new Tools())->register('weather_lookup', 'The weather somewhere', [], static fn (array $args): string => 'sunny');
-        $dispatch = (new Dispatch(client: $server->client()))->host('my-agent', $tools);
+        $agent = $server->client()->agent('my-agent');
+        $agent->tools->register('weather_lookup', 'The weather somewhere', [], static fn (array $args): string => 'sunny');
+        $dispatch = (new Dispatch(client: $server->client()))->host($agent);
 
         $dispatch->run();
         $dispatch->run();
@@ -291,7 +293,7 @@ final class WorkerTest extends TestCase
             while ($server->next($socket) !== null) {
             }
         });
-        $dispatch = (new Dispatch(client: $server->client()))->host('my-agent', new Tools());
+        $dispatch = (new Dispatch(client: $server->client()))->host($server->client()->agent('my-agent'));
 
         try {
             $dispatch->run();
