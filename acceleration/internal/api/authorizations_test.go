@@ -144,6 +144,8 @@ func (s *AuthorizationsSuite) TestAConsentConnectsTheAccountItWasStartedFor() {
 // authed_user. Revision 4 read $.authed_user.id, so this consent failed.
 func (s *AuthorizationsSuite) TestTheSlackManifestConnectsTheUserOfTheLiveUserTokenResponse() {
 	s.provider.Use(fakeprovider.CommaScopes, fakeprovider.SlackUserToken)
+	// The suite shares one fake, and another test may have switched its user.
+	user := s.provider.SwitchAccount()
 	var created Connection
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(s.slackAtFake()), &created))
 
@@ -151,9 +153,9 @@ func (s *AuthorizationsSuite) TestTheSlackManifestConnectsTheUserOfTheLiveUserTo
 
 	connection := s.get(created.ID)
 	s.Equal(ConnectionStatus(store.ConnectionConnected), connection.Status)
-	s.Equal(map[string]string{"team_id": s.provider.TeamID, "user_id": s.provider.UserID}, connection.Metadata,
+	s.Equal(map[string]string{"team_id": s.provider.TeamID, "user_id": user}, connection.Metadata,
 		"no enterprise_id: a null enterprise is absent")
-	s.Equal(s.provider.TeamID+":"+s.provider.UserID, connection.AccountID)
+	s.Equal(s.provider.TeamID+":"+user, connection.AccountID)
 }
 
 func (s *AuthorizationsSuite) TestTheHandoffBindsTheConsentWithAnHttpOnlySecureLaxCookieOnTheCallbackAlone() {
