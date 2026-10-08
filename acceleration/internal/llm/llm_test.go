@@ -336,6 +336,58 @@ func (s *LLMSuite) TestAToolCallTheProviderDidNotIdentifyGetsAnID() {
 	s.Equal("r1-tool-0", stream.Response().ToolCalls[0].ID)
 }
 
+func (s *LLMSuite) TestAwaitStopsAtTheFirstTextAndLeavesEveryEventToNext() {
+	provider := &scripted{chunks: []chunk{
+		func(w *ResponseWriter) { w.ReasoningText("hmm") },
+		func(w *ResponseWriter) { w.OutputText("Hi") },
+		func(w *ResponseWriter) { w.OutputText(" there") },
+	}}
+	stream := NewStream(StreamOptions{ResponseID: "r1"}, provider)
+
+	s.True(stream.Await())
+	s.Len(provider.chunks, 1, "the wait ended with the first text, without reading on")
+
+	events := s.drain(stream)
+	s.Require().Len(events, 5)
+	s.IsType(ResponseCreated{}, events[0])
+	s.IsType(ReasoningTextDelta{}, events[1])
+	s.Equal("Hi", events[2].(OutputTextDelta).Delta)
+	s.Equal("Hi there", stream.Response().OutputText)
+}
+
+func (s *LLMSuite) TestAwaitStopsAtTheFirstToolCall() {
+	stream := s.stream(
+		func(w *ResponseWriter) { w.FunctionCall(0, "call_1", "transfer", `{"to":`, "") },
+		func(w *ResponseWriter) { w.FunctionCall(0, "", "", `"sales"}`, "") },
+	)
+
+	s.True(stream.Await())
+
+	s.drain(stream)
+	s.Equal(`{"to":"sales"}`, stream.Response().ToolCalls[0].Arguments)
+}
+
+func (s *LLMSuite) TestAwaitSaysSoWhenTheResponseEndsWithoutAnything() {
+	stream := s.stream(func(w *ResponseWriter) { w.ReasoningText("thinking, then nothing") })
+
+	s.False(stream.Await(), "thinking is not part of the answer")
+	s.False(stream.Await())
+
+	events := s.drain(stream)
+	s.IsType(ResponseCompleted{}, events[len(events)-1])
+	s.Equal(StatusCompleted, stream.Response().Status)
+}
+
+func (s *LLMSuite) TestAwaitLeavesAFailureForNextToSettle() {
+	stream := NewStream(StreamOptions{ResponseID: "r1"}, &scripted{err: errUnauthorized})
+
+	s.False(stream.Await())
+
+	s.drain(stream)
+	s.Equal(StatusFailed, stream.Response().Status)
+	s.ErrorIs(stream.Err(), errUnauthorized)
+}
+
 func (s *LLMSuite) TestAFailedResponseStillSettles() {
 	stream := NewStream(
 		StreamOptions{ResponseID: "r1", Provider: "deepseek", Model: "DeepSeek-V4-Flash-0731"},

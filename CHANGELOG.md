@@ -515,6 +515,22 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### A reply that is late is asked of another candidate too: `ROUTER_REPLY_HEDGE`
+
+A model now and then takes many times its usual wait to start a reply, and the caller waits that
+long. A voice reply that has said nothing, neither text nor a tool call, once `ROUTER_REPLY_HEDGE`
+(`agent.reply_hedge`) has passed, `1200ms` by default, is now asked a second time, as the same
+request, of another candidate of its target: one on a different model when the target has one and
+on a different provider when it has one, never one the router has found unavailable. Whichever
+says something first is kept, and the other is cancelled the moment it loses and still read out, so
+both calls are reported as model calls and recorded, the cancelled one as any cancelled call is.
+The wait counts from the request, so a model that is slow to answer at all is hedged as well as
+one that is slow to start streaming. A reply is hedged once, a hedge that fails leaves the first
+request going, and a target with no other candidate is asked once, as before. Replies are hedged;
+the flow controller, the guardrails, background work and a reply that continues from a response
+the provider holds are not. `0` turns it off, `cmd/agent -reply-hedge` is the same setting, and
+the router option is `llmrouter.Options.ReplyHedge`.
+
 ### A log severity is the least serious level to show, not the only one
 
 `severity` on `GET /v1/agents/logs` was an exact match, so asking for `error` hid the warnings
