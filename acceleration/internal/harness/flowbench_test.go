@@ -114,7 +114,8 @@ type flowSet struct {
 	Cases     []flowCase        `json:"cases"`
 }
 
-//go:generate go run ./testdata/ami/extract.go -out testdata/flowbench-ami.json
+// flowbench-ami.json is made by gophonic's turnset tool, not here: see testdata/ami/README.md.
+//
 //go:embed testdata/flowbench.json testdata/flowbench-ami.json
 var flowBenchFS embed.FS
 

@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
@@ -53,28 +52,20 @@ const localEnvVar = "FLOW_BENCHMARK_LOCAL"
 // localModelEnvVar is the model the local endpoint is asked for.
 const localModelEnvVar = "FLOW_BENCHMARK_LOCAL_MODEL"
 
-// effortEnvVar asks every model arm to reason this hard, such as max, with the output budget
-// of teacherOutputTokens instead of the controller's. That measures a model as a labeller of
-// training data, which may think as long as it likes, rather than as the controller.
-const effortEnvVar = "FLOW_BENCHMARK_EFFORT"
-
-// repeatsEnvVar overrides how often each case is put to a model arm, such as 1 when a judge
-// checks training cases rather than a controller being measured.
+// repeatsEnvVar overrides how often each case is put to a model arm, such as 1 for a quicker
+// pass over a large set.
 const repeatsEnvVar = "FLOW_BENCHMARK_REPEATS"
 
 // workersEnvVar puts that many cases to an arm at once. Latencies then include the contention,
-// so it is for judging a large set, not for timing a controller.
+// so it is for running a large set through quickly, not for timing a controller.
 const workersEnvVar = "FLOW_BENCHMARK_WORKERS"
-
-// teacherOutputTokens is the budget a labeller answers within, room for long thinking.
-const teacherOutputTokens = 32768
 
 // sampleEnvVar runs a fraction of each set, such as 0.05, for a sweep across many models that
 // would cost too much in full. Every model and every run is asked the same cases.
 const sampleEnvVar = "BENCHMARK_SAMPLE"
 
 // setsEnvVar picks the labelled sets, comma separated: written, ami, or the path of a set file
-// in the same format, such as generated training cases to have a judge check.
+// in the same format.
 const setsEnvVar = "FLOW_BENCHMARK_SETS"
 
 // modelRepeats is how often each case is put to a model. It samples, so one answer measures a
@@ -295,7 +286,7 @@ func (s *FlowBenchmarkSuite) modelArms() []arm {
 			continue
 		}
 		s.T().Cleanup(func() { _ = session.Close() })
-		arms = append(arms, modelArm(target, os.Getenv(effortEnvVar), session, session.Price().CostMicros))
+		arms = append(arms, modelArm(target, session, session.Price().CostMicros))
 	}
 	return arms
 }
@@ -418,51 +409,6 @@ func localInput(one flowCase, set flowSet) string {
 			"Decide only the floor. "))
 }
 
-// trainExportEnvVar is a JSONL file to write every case of the sets in trainSetsEnvVar to,
-// asked exactly as the local-choice arm asks: the question, its lettered options, the input,
-// and which options are right. It is the training data for a local controller, and, for the
-// benchmark's own sets, what that training is measured on.
-const trainExportEnvVar = "FLOW_TRAIN_EXPORT"
-
-// trainSetsEnvVar lists the sets to export, comma separated: written, ami, or the path of a
-// set file in the same format, such as one testdata/ami/extract.go -all writes.
-const trainSetsEnvVar = "FLOW_TRAIN_SETS"
-
-func TestFlowTrainExport(t *testing.T) {
-	out := os.Getenv(trainExportEnvVar)
-	if out == "" {
-		t.Skip(trainExportEnvVar + " not set")
-	}
-	file, err := os.Create(out)
-	require.NoError(t, err)
-	defer file.Close()
-	encoder := json.NewEncoder(file)
-	for _, name := range strings.Split(envOr(trainSetsEnvVar, "written,ami"), ",") {
-		set, err := loadNamedSet(name)
-		require.NoError(t, err, name)
-		for _, one := range set.Cases {
-			choices := localChoices(one)
-			labels, correct := make([]string, len(choices)), []int{}
-			for i, choice := range choices {
-				labels[i] = choice.label
-				if choice.outcome == one.Expect {
-					correct = append(correct, i)
-				}
-			}
-			if len(correct) == 0 {
-				continue // no option reaches what the case expects
-			}
-			require.NoError(t, encoder.Encode(map[string]any{
-				"id": one.ID, "set": name, "state": one.State, "question": localQuestion(one),
-				"options": labels, "input": localInput(one, set), "correct": correct,
-				// The words themselves, as they appear in input, so a trainer can vary how they
-				// are written without that varying with the label.
-				"heard": one.Heard,
-			}))
-		}
-	}
-}
-
 // localQuestion is the production policy for the situation the case is in, in the production
 // prompt's own words, less the output format the letters replace.
 func localQuestion(one flowCase) string {
@@ -484,17 +430,13 @@ func localQuestion(one flowCase) string {
 }
 
 // modelArm asks one model the production question.
-func modelArm(target, effort string, session llm.LLM, price func(routing.Usage) int64) arm {
-	name, budget := target, 512
+func modelArm(target string, session llm.LLM, price func(routing.Usage) int64) arm {
 	repeats, err := strconv.Atoi(envOr(repeatsEnvVar, strconv.Itoa(modelRepeats)))
 	if err != nil || repeats < 1 {
 		repeats = modelRepeats
 	}
-	if effort != "" {
-		name, budget = target+"@"+effort, teacherOutputTokens
-	}
 	return arm{
-		name:    name,
+		name:    target,
 		model:   session.Provider() + "/" + session.Model(),
 		repeats: repeats,
 		price:   price,
@@ -505,11 +447,9 @@ func modelArm(target, effort string, session llm.LLM, price func(routing.Usage) 
 				ID:           turn.ID,
 				Instructions: flowInstructions + "\n\nThe agent has been told:\n" + turn.Instructions,
 				Input:        []llm.Message{{Role: llm.User, Content: flowQuestion(turn)}},
-				// The same budget the controller runs with, unless it is being measured as a
-				// labeller. A thinking model that spends it before the closing brace is a real
-				// failure mode and is scored as one.
-				MaxOutputTokens: budget,
-				Reasoning:       llm.ReasoningParams{Effort: effort},
+				// The same budget the controller runs with. A thinking model that spends it
+				// before the closing brace is a real failure mode and is scored as one.
+				MaxOutputTokens: 512,
 				Text:            llm.TextParams{Format: llm.FormatJSONObject},
 			})
 			if err != nil {
